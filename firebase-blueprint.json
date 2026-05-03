@@ -1,0 +1,174 @@
+{
+  "entities": {
+    "Negocio": {
+      "title": "Business",
+      "description": "Business configuration and data",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "logo": { "type": "string" },
+        "moneda": { "type": "string" },
+        "rubro": { "type": "string" },
+        "configStock": { "type": "string" },
+        "estadosPedido": { "type": "array" },
+        "mediosPago": { "type": "array" }
+      },
+      "required": ["nombre", "moneda"]
+    },
+    "Usuario": {
+      "title": "User",
+      "description": "User profile and role",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "email": { "type": "string" },
+        "rol": { "type": "string", "enum": ["admin", "operator", "production", "cashier"] },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["nombre", "email", "rol", "negocioId"]
+    },
+    "Cliente": {
+      "title": "Client",
+      "description": "Client information",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "telefono": { "type": "string" },
+        "email": { "type": "string" },
+        "direccion": { "type": "string" },
+        "redes": { "type": "object" },
+        "etiquetas": { "type": "array" },
+        "observaciones": { "type": "string" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["nombre", "negocioId"]
+    },
+    "Proveedor": {
+      "title": "Provider",
+      "description": "Supply provider",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "contacto": { "type": "string" },
+        "rubro": { "type": "string" },
+        "notas": { "type": "string" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["nombre", "negocioId"]
+    },
+    "ProductoInsumo": {
+      "title": "Product or Supply",
+      "description": "Items in stock",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "categoria": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["producto", "insumo"] },
+        "variante": { "type": "string" },
+        "costo": { "type": "number" },
+        "precioSugerido": { "type": "number" },
+        "stockActual": { "type": "number" },
+        "stockMinimo": { "type": "number" },
+        "stockReservado": { "type": "number" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["nombre", "tipo", "negocioId"]
+    },
+    "MovimientoStock": {
+      "title": "Stock Movement",
+      "description": "Records of stock changes",
+      "type": "object",
+      "properties": {
+        "productoId": { "type": "string" },
+        "tipo": { "type": "string", "enum": ["entrada", "salida", "ajuste", "reserva", "cancelacion"] },
+        "cantidad": { "type": "number" },
+        "fecha": { "type": "string", "format": "date-time" },
+        "motivo": { "type": "string" },
+        "origenId": { "type": "string" },
+        "usuarioId": { "type": "string" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["productoId", "tipo", "cantidad", "fecha", "negocioId"]
+    },
+    "Pedido": {
+      "title": "Order",
+      "description": "Personalized order",
+      "type": "object",
+      "properties": {
+        "clienteId": { "type": "string" },
+        "estado": { "type": "string" },
+        "fechaEntrega": { "type": "string", "format": "date-time" },
+        "descripcion": { "type": "string" },
+        "total": { "type": "number" },
+        "costoReal": { "type": "number" },
+        "gananciaEstimada": { "type": "number" },
+        "margen": { "type": "number" },
+        "senia": { "type": "number" },
+        "saldo": { "type": "number" },
+        "archivos": { "type": "array" },
+        "items": { "type": "array" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["clienteId", "estado", "negocioId"]
+    },
+    "CostoExtra": {
+      "title": "Extra Cost",
+      "description": "Additional cost for transformation",
+      "type": "object",
+      "properties": {
+        "pedidoId": { "type": "string" },
+        "tipo": { "type": "string" },
+        "nombre": { "type": "string" },
+        "cantidad": { "type": "number" },
+        "costoUnitario": { "type": "number" },
+        "total": { "type": "number" },
+        "observacion": { "type": "string" }
+      },
+      "required": ["pedidoId", "nombre", "total"]
+    },
+    "Venta": {
+      "title": "Sale",
+      "description": "Final sale record",
+      "type": "object",
+      "properties": {
+        "clienteId": { "type": "string" },
+        "fecha": { "type": "string", "format": "date-time" },
+        "items": { "type": "array" },
+        "total": { "type": "number" },
+        "medioPago": { "type": "string" },
+        "pedidoId": { "type": "string" },
+        "usuarioId": { "type": "string" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["fecha", "total", "negocioId"]
+    },
+    "CajaMovimiento": {
+      "title": "Cash Movement",
+      "description": "Financial records",
+      "type": "object",
+      "properties": {
+        "tipo": { "type": "string", "enum": ["ingreso", "egreso"] },
+        "monto": { "type": "number" },
+        "medio": { "type": "string" },
+        "concepto": { "type": "string" },
+        "fecha": { "type": "string", "format": "date-time" },
+        "origenId": { "type": "string" },
+        "usuarioId": { "type": "string" },
+        "negocioId": { "type": "string" }
+      },
+      "required": ["tipo", "monto", "fecha", "negocioId"]
+    }
+  },
+  "firestore": {
+    "/negocios/{negocioId}": { "schema": "Negocio", "description": "Business documents" },
+    "/usuarios/{usuarioId}": { "schema": "Usuario", "description": "User profiles" },
+    "/negocios/{negocioId}/clientes/{clienteId}": { "schema": "Cliente", "description": "Business clients" },
+    "/negocios/{negocioId}/proveedores/{proveedorId}": { "schema": "Proveedor", "description": "Business providers" },
+    "/negocios/{negocioId}/stock/{itemId}": { "schema": "ProductoInsumo", "description": "Inventory items" },
+    "/negocios/{negocioId}/movimientos_stock/{movId}": { "schema": "MovimientoStock", "description": "Stock change history" },
+    "/negocios/{negocioId}/pedidos/{pedidoId}": { "schema": "Pedido", "description": "Customer orders" },
+    "/negocios/{negocioId}/pedidos/{pedidoId}/costos_extra/{costoId}": { "schema": "CostoExtra", "description": "Order specific extra costs" },
+    "/negocios/{negocioId}/ventas/{ventaId}": { "schema": "Venta", "description": "Sales records" },
+    "/negocios/{negocioId}/movimientos_caja/{movId}": { "schema": "CajaMovimiento", "description": "Cash flow records" }
+  }
+}
