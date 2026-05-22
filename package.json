@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx watch server.ts",
+    "emulators": "firebase emulators:start --import=./emulator-data --export-on-exit=./emulator-data",
+    "emulators:export": "firebase emulators:export ./emulator-data",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint ."
@@ -43,6 +45,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "firebase-tools": "^14.27.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.9.0",

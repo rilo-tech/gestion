@@ -8,9 +8,11 @@ import { getFirestore } from 'firebase-admin/firestore';
 import dotenv from 'dotenv';
 import clientRoutes from './backend/routes/clients.ts';
 import stockRoutes from './backend/routes/stock.ts';
+import purchaseRoutes from './backend/routes/purchases.ts';
 import orderRoutes from './backend/routes/orders.ts';
 import salesRoutes from './backend/routes/sales.ts';
 import cashRoutes from './backend/routes/cash.ts';
+import catalogConfigRoutes from './backend/routes/catalog-config.ts';
 
 dotenv.config();
 
@@ -40,17 +42,14 @@ async function startServer() {
   // API Routes
   app.use('/api/clients', clientRoutes);
   app.use('/api/stock', stockRoutes);
+  app.use('/api/purchases', purchaseRoutes);
   app.use('/api/orders', orderRoutes);
   app.use('/api/sales', salesRoutes);
   app.use('/api/cash', cashRoutes);
+  app.use('/api/config', catalogConfigRoutes);
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'RILO Gestión API is running' });
-  });
-
-  // Example API route for Clients
-  app.get('/api/clients', (req, res) => {
-    res.json([{ id: '1', nombre: 'Cliente Ejemplo' }]);
   });
 
   // Vite middleware for development
@@ -58,6 +57,7 @@ async function startServer() {
     const vite = await createViteServer({
       configFile: path.resolve(__dirname, 'vite.config.ts'),
       mode: 'development',
+      root: path.resolve(__dirname, 'frontend'),
       server: { middlewareMode: true },
       appType: 'spa',
     });

@@ -8,7 +8,6 @@ export default defineConfig(({ mode }) => {
     root: 'frontend',
     plugins: [
       angular({
-        jit: true,
         tsconfig: path.resolve(__dirname, 'tsconfig.app.json'),
       }),
       tailwindcss(),

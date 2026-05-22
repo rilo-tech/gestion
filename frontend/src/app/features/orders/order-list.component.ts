@@ -1,8 +1,17 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { OrderService, Order } from '../../core/services/order.service';
+import { OrderService, Order, formatOrderNumber } from '../../core/services/order.service';
+import { ClientService } from '../../core/services/client.service';
+import { DialogService } from '../../core/services/dialog.service';
+import {
+  getOrderStatusBadgeClass,
+  getOrderStatusLabel,
+  normalizeOrderStatus,
+  ORDER_STATUS_CARD_KEYS,
+  canRegisterSaleFromOrder,
+} from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-orders',
@@ -15,7 +24,7 @@ import { RouterLink } from '@angular/router';
           <h1 class="text-2xl font-bold text-gray-900">Pedidos</h1>
           <p class="text-gray-500">Gestiona tus pedidos personalizados y su producción.</p>
         </div>
-        <button 
+        <button
           routerLink="/orders/new"
           class="bg-primary text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-opacity-90">
           <i-lucide name="clipboard-list" class="w-4 h-4"></i-lucide>
@@ -23,22 +32,26 @@ import { RouterLink } from '@angular/router';
         </button>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+        <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+          <p class="text-xs font-bold text-gray-500 uppercase mb-1">Borradores</p>
+          <p class="text-xl font-bold text-gray-800">{{ statusCounts.borrador }}</p>
+        </div>
         <div class="bg-blue-50 p-4 rounded-xl border border-blue-100">
           <p class="text-xs font-bold text-blue-400 uppercase mb-1">Pendientes</p>
-          <p class="text-xl font-bold text-blue-700">0</p>
+          <p class="text-xl font-bold text-blue-700">{{ statusCounts.pendiente }}</p>
         </div>
         <div class="bg-purple-50 p-4 rounded-xl border border-purple-100">
           <p class="text-xs font-bold text-purple-400 uppercase mb-1">En Producción</p>
-          <p class="text-xl font-bold text-purple-700">0</p>
+          <p class="text-xl font-bold text-purple-700">{{ statusCounts.en_produccion }}</p>
         </div>
         <div class="bg-green-50 p-4 rounded-xl border border-green-100">
           <p class="text-xs font-bold text-green-400 uppercase mb-1">Listos</p>
-          <p class="text-xl font-bold text-green-700">0</p>
+          <p class="text-xl font-bold text-green-700">{{ statusCounts.listo }}</p>
         </div>
         <div class="bg-teal-50 p-4 rounded-xl border border-teal-100">
           <p class="text-xs font-bold text-teal-400 uppercase mb-1">Entregados</p>
-          <p class="text-xl font-bold text-teal-700">0</p>
+          <p class="text-xl font-bold text-teal-700">{{ statusCounts.entregado }}</p>
         </div>
       </div>
 
@@ -46,39 +59,82 @@ import { RouterLink } from '@angular/router';
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase">Pedido / Cliente</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase">Entrega</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase">Estado</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase">Monto / Saldo</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase">Acciones</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pedido / Cliente</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Entrega</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Total / Saldo</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr *ngFor="let order of orders" class="hover:bg-gray-50 transition-colors">
+            <tr
+              *ngFor="let order of orders"
+              (click)="openEditOrder(order)"
+              class="hover:bg-gray-50 transition-colors cursor-pointer">
               <td class="px-6 py-4">
-                <div class="font-medium text-gray-900 line-clamp-1">{{order.descripcion || 'Sin descripción'}}</div>
-                <div class="text-xs text-teal-600 font-bold">#{{order.id?.slice(-6)}}</div>
+                <div class="font-medium text-gray-900">{{ getClientName(order) }}</div>
+                <div *ngIf="getOrderNumber(order)" class="text-xs font-semibold text-teal-700 mb-0.5">
+                  Pedido #{{ getOrderNumber(order) }}
+                </div>
+                <div class="text-sm text-gray-500 line-clamp-1">
+                  {{ order.descripcion || 'Sin descripción' }}
+                </div>
               </td>
               <td class="px-6 py-4 text-sm text-gray-600">
-                {{order.fechaEntrega | date:'dd/MM/yyyy'}}
+                {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
               </td>
               <td class="px-6 py-4">
-                <span class="px-2 py-1 bg-yellow-50 text-yellow-700 text-xs rounded-full font-bold uppercase">
-                  {{order.estado}}
+                <span
+                  class="inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold"
+                  [ngClass]="getOrderStatusBadgeClass(order.estado)">
+                  {{ getOrderStatusLabel(order.estado) }}
                 </span>
               </td>
               <td class="px-6 py-4">
-                <div class="text-sm font-bold text-gray-900">{{ '$' + order.total }}</div>
-                <div class="text-xs text-orange-500 font-semibold" *ngIf="order.saldo > 0">Saldo: {{ '$' + order.saldo }}</div>
+                <div class="text-sm font-bold text-gray-900 tabular-nums">{{ '$' + order.total }}</div>
+                <div
+                  class="text-xs font-semibold tabular-nums"
+                  [class.text-orange-500]="(order.saldo || 0) > 0"
+                  [class.text-gray-400]="!(order.saldo || 0)">
+                  Saldo {{ '$' + (order.saldo ?? 0) }}
+                </div>
               </td>
-              <td class="px-6 py-4 text-sm font-medium">
-                <button class="text-teal-600 hover:text-teal-900 mr-3">Detalle</button>
-                <button class="text-teal-600 hover:text-teal-900">Editar</button>
+              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+                <div class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    (click)="openEditOrder(order)"
+                    [title]="isCancelledOrder(order) ? 'Ver pedido' : 'Editar'"
+                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
+                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="canRegisterSale(order)"
+                    type="button"
+                    (click)="registerSaleFromOrder(order)"
+                    title="Registrar venta / entrega"
+                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
+                    <i-lucide name="truck" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="!isCancelledOrder(order)"
+                    type="button"
+                    (click)="confirmCancelOrder(order)"
+                    title="Cancelar pedido"
+                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
+                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                  </button>
+                </div>
               </td>
             </tr>
-            <tr *ngIf="orders.length === 0">
+            <tr *ngIf="!loading && orders.length === 0">
               <td colspan="5" class="px-6 py-12 text-center text-gray-400">
                 No hay pedidos registrados.
+              </td>
+            </tr>
+            <tr *ngIf="loading">
+              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+                Cargando pedidos...
               </td>
             </tr>
           </tbody>
@@ -86,20 +142,116 @@ import { RouterLink } from '@angular/router';
       </div>
     </div>
   `,
-  styles: []
 })
 export class OrderListComponent implements OnInit {
   private orderService = inject(OrderService);
-  
+  private clientService = inject(ClientService);
+  private dialogService = inject(DialogService);
+  private router = inject(Router);
+
+  readonly getOrderStatusLabel = getOrderStatusLabel;
+  readonly getOrderStatusBadgeClass = getOrderStatusBadgeClass;
+  readonly normalizeOrderStatus = normalizeOrderStatus;
+  readonly canRegisterSale = canRegisterSaleFromOrder;
+
   orders: Order[] = [];
+  clientNameById = new Map<string, string>();
+  loading = true;
+
+  get statusCounts() {
+    const counts: Record<(typeof ORDER_STATUS_CARD_KEYS)[number], number> = {
+      borrador: 0,
+      pendiente: 0,
+      en_produccion: 0,
+      listo: 0,
+      entregado: 0,
+    };
+
+    for (const order of this.orders) {
+      const status = normalizeOrderStatus(order.estado);
+      if (status !== 'otro') {
+        counts[status]++;
+      }
+    }
+
+    return counts;
+  }
 
   ngOnInit() {
+    this.clientService.getClients().subscribe((clients) => {
+      this.clientNameById = new Map(
+        clients.filter((client) => client.id).map((client) => [client.id!, client.nombre])
+      );
+    });
     this.loadOrders();
   }
 
   loadOrders() {
-    this.orderService.getOrders().subscribe(orders => {
-      this.orders = orders;
+    this.loading = true;
+    this.orderService.getOrders().subscribe({
+      next: (orders) => {
+        this.orders = orders;
+        this.loading = false;
+      },
+      error: () => {
+        this.orders = [];
+        this.loading = false;
+      },
     });
+  }
+
+  getClientName(order: Order): string {
+    return this.clientNameById.get(order.clienteId) ?? 'Cliente sin nombre';
+  }
+
+  getOrderNumber(order: Order): string {
+    return formatOrderNumber(order);
+  }
+
+  openEditOrder(order: Order) {
+    if (!order.id) return;
+    this.router.navigate(['/orders', order.id, 'edit']);
+  }
+
+  registerSaleFromOrder(order: Order) {
+    if (!order.id || !canRegisterSaleFromOrder(order)) return;
+    this.router.navigate(['/sales'], { queryParams: { pedidoId: order.id } });
+  }
+
+  confirmCancelOrder(order: Order) {
+    if (!order.id || this.isCancelledOrder(order)) return;
+
+    const clientName = this.getClientName(order);
+    const orderNumber = this.getOrderNumber(order);
+    const orderRef = orderNumber ? ` #${orderNumber}` : '';
+
+    this.dialogService
+      .confirm({
+        title: 'Cancelar pedido',
+        message:
+          `¿Cancelar el pedido${orderRef} de ${clientName}? ` +
+          'El pedido quedará en estado Cancelado. Si ya descontó stock o registró pagos en caja, se generarán movimientos de reversa (no se borra el historial).',
+        confirmLabel: 'Cancelar pedido',
+        variant: 'danger',
+      })
+      .subscribe((confirmed) => {
+        if (!confirmed) return;
+
+        this.orderService.deleteOrder(order.id!).subscribe({
+          next: () => this.loadOrders(),
+          error: (err) =>
+            this.dialogService.alert({
+              title: 'Error',
+              message:
+                typeof err.error?.error === 'string'
+                  ? err.error.error
+                  : 'No se pudo cancelar el pedido.',
+            }),
+        });
+      });
+  }
+
+  isCancelledOrder(order: Order): boolean {
+    return normalizeOrderStatus(order.estado) === 'cancelado';
   }
 }

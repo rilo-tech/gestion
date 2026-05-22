@@ -1,8 +1,12 @@
 {
   "extends": "./tsconfig.json",
+  "compileOnSave": false,
   "compilerOptions": {
     "baseUrl": ".",
+    "outDir": "./dist/out-tsc",
     "jsx": "preserve",
+    "noEmit": false,
+    "moduleResolution": "bundler",
     "paths": {
       "@/*": ["./frontend/src/*"]
     }

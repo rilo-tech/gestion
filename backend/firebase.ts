@@ -1,14 +1,26 @@
-import { initializeApp, cert, getApp, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import path from 'path';
+import dotenv from 'dotenv';
 
-// Since we are in AI Studio, we try to use default credentials or project ID
-const projectId = 'gen-lang-client-0481869353'; // From firebase-applet-config.json
+dotenv.config();
+
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+
+const projectId =
+  process.env.FIREBASE_PROJECT_ID ?? 'gen-lang-client-0481869353';
+const useEmulator = process.env.USE_FIRESTORE_EMULATOR === 'true';
+
+if (useEmulator) {
+  process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
+}
 
 if (!getApps().length) {
-  initializeApp({
-    projectId: projectId
-  });
+  initializeApp({ projectId });
 }
 
 export const db = getFirestore();
+
+if (useEmulator) {
+  console.log(
+    `[firebase] Firestore emulator @ ${process.env.FIRESTORE_EMULATOR_HOST}`
+  );
+}

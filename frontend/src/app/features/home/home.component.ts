@@ -2,6 +2,7 @@ import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { OrderService } from '../../core/services/order.service';
 import { StockService } from '../../core/services/stock.service';
+import { normalizeOrderStatus } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
 import { RouterLink } from '@angular/router';
 
@@ -106,7 +107,7 @@ export class HomeComponent implements OnInit {
   ngOnInit() {
     this.orderService.getOrders().subscribe(orders => {
       this.recentOrders = orders.slice(0, 5);
-      this.pendingOrders = orders.filter(o => o.estado === 'pendiente').length;
+      this.pendingOrders = orders.filter((order) => normalizeOrderStatus(order.estado) === 'pendiente').length;
       this.totalSales = orders.reduce((acc, o) => acc + (o.total || 0), 0);
       this.totalGain = orders.reduce((acc, o) => acc + (o.gananciaEstimada || 0), 0);
     });
