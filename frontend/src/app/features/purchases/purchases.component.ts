@@ -9,6 +9,8 @@ import {
 } from '../../core/services/purchase.service';
 import { StockItem, StockService } from '../../core/services/stock.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import { IconActionComponent, PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 interface PurchaseDraftLine {
@@ -20,28 +22,24 @@ interface PurchaseDraftLine {
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, IconActionComponent],
   template: `
-    <div class="p-8">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Compras</h1>
-          <p class="text-gray-500">Registrá entradas de mercadería e insumos al inventario.</p>
+    <div [class]="pageShellClass">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Compras</h1>
+          <p class="text-sm sm:text-base text-gray-500">Registrá entradas de mercadería e insumos al inventario.</p>
           <p class="text-xs text-gray-400 mt-1">
             Los movimientos de stock se ven en
             <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
           </p>
         </div>
-        <button
-          type="button"
-          (click)="openPurchaseModal()"
-          class="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700">
+        <app-icon-action label="Nueva compra" (clicked)="openPurchaseModal()">
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          Nueva compra
-        </button>
+        </app-icon-action>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Compras registradas</p>
           <p class="text-2xl font-bold text-gray-900">{{ purchases.length }}</p>
@@ -57,7 +55,8 @@ interface PurchaseDraftLine {
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <table class="w-full text-left border-collapse">
+        <div class="overflow-x-auto">
+        <table class="w-full min-w-[560px] text-left border-collapse">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -95,23 +94,15 @@ interface PurchaseDraftLine {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
 
-    <div
-      *ngIf="purchaseModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true">
-      <button
-        type="button"
-        class="absolute inset-0 bg-gray-900/50 backdrop-blur-[2px]"
-        aria-label="Cerrar"
-        (click)="closePurchaseModal()">
-      </button>
-      <div class="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-2xl p-6">
-        <h2 class="text-lg font-bold text-gray-900 mb-1">Nueva compra</h2>
-        <p class="text-sm text-gray-500 mb-4">Sumá stock al inventario y registrá el movimiento automáticamente.</p>
+    <app-transaction-modal
+      [open]="purchaseModalOpen"
+      title="Nueva compra"
+      subtitle="Acción rápida desde el listado. Sumá stock al inventario automáticamente."
+      (closed)="closePurchaseModal()">
 
         <div class="space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -210,11 +201,12 @@ interface PurchaseDraftLine {
             {{ savingPurchase ? 'Guardando...' : 'Registrar compra' }}
           </button>
         </div>
-      </div>
-    </div>
+    </app-transaction-modal>
   `,
 })
 export class PurchasesComponent implements OnInit {
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+
   private purchaseService = inject(PurchaseService);
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);

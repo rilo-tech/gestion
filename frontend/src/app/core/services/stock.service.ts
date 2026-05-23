@@ -39,6 +39,8 @@ export interface StockMovement {
   origenLabel?: string;
   pedidoId?: string | null;
   numeroPedidoLabel?: string | null;
+  ventaId?: string | null;
+  ventaLabel?: string | null;
   compraId?: string | null;
   negocioId?: string;
 }

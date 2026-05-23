@@ -46,6 +46,7 @@ function resolveOrigenLabel(movement: Record<string, unknown>, grupo: OrigenGrup
     const subtipo = String(movement.origenTipo ?? '');
     if (subtipo === 'venta_pedido') return 'Venta · saldo pedido';
     if (subtipo === 'venta_mostrador') return 'Venta · mostrador';
+    if (subtipo === 'venta_mostrador_cobro') return 'Venta · cobro saldo';
     return 'Venta';
   }
   if (grupo === 'manual') {

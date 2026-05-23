@@ -169,7 +169,7 @@ async function applyStockForOrder(
       tipo: 'salida',
       cantidad: qty,
       fecha: new Date().toISOString(),
-      motivo: `Pedido #${resolveOrderLabel(order, orderId)} confirmado`,
+      motivo: `Pedido #${resolveOrderLabel(order)} confirmado`,
       origenId: orderId,
       origenTipo: 'pedido',
       origenGrupo: 'pedido',
@@ -228,7 +228,7 @@ async function registerInitialSenia(
     };
   }
 
-  const orderLabel = resolveOrderLabel(orderData, orderId);
+  const orderLabel = resolveOrderLabel(orderData);
   const movimientoCajaId = await createCashIncome(businessId, {
     monto: senia,
     concepto: `Seña pedido #${orderLabel}`,
@@ -276,7 +276,7 @@ async function reverseCashMovementsForOrder(
 
   if (movimientoIds.size === 0) return false;
 
-  const orderLabel = resolveOrderLabel(order, orderId);
+  const orderLabel = resolveOrderLabel(order);
   const movimientosRef = db.collection(`negocios/${businessId}/movimientos_caja`);
   let reverted = false;
 
@@ -317,7 +317,7 @@ async function restoreStockForOrder(
 ): Promise<boolean> {
   if (!order.stockDescontado || order.stockRestaurado) return false;
 
-  const orderLabel = resolveOrderLabel(order, orderId);
+  const orderLabel = resolveOrderLabel(order);
   let restored = false;
 
   for (const line of order.items ?? []) {
@@ -487,7 +487,7 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       });
     }
 
-    const orderLabel = resolveOrderLabel(order, orderId);
+    const orderLabel = resolveOrderLabel(order);
     const nuevosPagos: OrderPayment[] = [];
     const timestamp = Date.now();
 

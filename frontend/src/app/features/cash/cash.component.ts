@@ -1,7 +1,6 @@
 import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
 import { CashMovement, CashOrigenGrupo, CashService } from '../../core/services/cash.service';
 import {
   AppConfig,
@@ -13,44 +12,39 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
+import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import { IconActionComponent, PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-cash',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, ConfigSettingsLinkComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, ConfigSettingsLinkComponent, TransactionModalComponent, IconActionComponent, ConceptRefLinksComponent],
   template: `
-    <div class="p-8">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Caja</h1>
-          <p class="text-gray-500">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
+    <div [class]="pageShellClass">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
+          <p class="text-sm sm:text-base text-gray-500">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
           <app-config-settings-link
             settingsTab="caja"
             message="¿Falta un concepto?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
         </div>
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            (click)="openMovementModal('ingreso')"
-            class="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700">
+        <div class="flex gap-2 shrink-0">
+          <app-icon-action label="Ingreso" (clicked)="openMovementModal('ingreso')">
             <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
-            Ingreso
-          </button>
-          <button
-            type="button"
-            (click)="openMovementModal('egreso')"
-            class="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:bg-red-600">
+          </app-icon-action>
+          <app-icon-action label="Egreso" variant="danger" (clicked)="openMovementModal('egreso')">
             <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
-            Egreso
-          </button>
+          </app-icon-action>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ingresos</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + totalIngresos }}</p>
@@ -105,26 +99,19 @@ import { Subscription } from 'rxjs';
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr
-              *ngFor="let movement of filteredMovements"
-              (click)="onMovementRowClick(movement)"
-              class="transition-colors"
-              [class.hover:bg-gray-50]="isManualMovement(movement)"
-              [class.cursor-pointer]="isManualMovement(movement)">
+            <tr *ngFor="let movement of filteredMovements" class="transition-colors">
               <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(movement.fecha) }}
               </td>
-              <td class="px-6 py-4" (click)="$event.stopPropagation()">
+              <td class="px-6 py-4">
                 <div class="font-medium text-gray-900">
-                  <ng-container *ngIf="getConceptOrderLink(movement) as link; else plainConcept">
-                    {{ link.before }}<button
-                      type="button"
-                      (click)="openOrder(movement)"
-                      class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
-                      {{ link.orderRef }}
-                    </button>{{ link.after }}
-                  </ng-container>
-                  <ng-template #plainConcept>{{ movement.concepto }}</ng-template>
+                  <app-concept-ref-links
+                    [text]="movement.concepto"
+                    [pedidoId]="movement.pedidoId"
+                    [ventaId]="movement.ventaId"
+                    [numeroPedidoLabel]="getOrderNumberLabel(movement)"
+                    [ventaLabel]="movement.ventaLabel">
+                  </app-concept-ref-links>
                 </div>
               </td>
               <td class="px-6 py-4">
@@ -143,7 +130,7 @@ import { Subscription } from 'rxjs';
                 [class.text-red-500]="movement.tipo === 'egreso'">
                 {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
               </td>
-              <td class="px-6 py-4 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
+              <td class="px-6 py-4 text-sm font-medium whitespace-nowrap">
                 <div class="flex items-center justify-end gap-1">
                   <button
                     type="button"
@@ -181,24 +168,12 @@ import { Subscription } from 'rxjs';
       </div>
     </div>
 
-    <div
-      *ngIf="movementModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true">
-      <button
-        type="button"
-        class="absolute inset-0 bg-gray-900/50 backdrop-blur-[2px]"
-        aria-label="Cerrar"
-        (click)="closeMovementModal()">
-      </button>
-      <div class="relative w-full max-w-md rounded-2xl border border-gray-100 bg-white shadow-2xl p-6">
-        <h2 class="text-lg font-bold text-gray-900 mb-1">
-          {{ movementModalTitle }}
-        </h2>
-        <p class="text-sm text-gray-500 mb-4">
-          {{ movementModalSubtitle }}
-        </p>
+    <app-transaction-modal
+      [open]="movementModalOpen"
+      [title]="movementModalTitle"
+      [subtitle]="movementModalSubtitle"
+      maxWidthClass="max-w-md"
+      (closed)="closeMovementModal()">
 
         <div class="space-y-4">
           <div>
@@ -269,15 +244,15 @@ import { Subscription } from 'rxjs';
             {{ savingMovement ? 'Guardando...' : (editingMovementId ? 'Guardar' : 'Registrar') }}
           </button>
         </div>
-      </div>
-    </div>
+    </app-transaction-modal>
   `,
 })
 export class CashComponent implements OnInit, OnDestroy {
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+
   private cashService = inject(CashService);
   private configService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
-  private router = inject(Router);
   private configSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
@@ -321,6 +296,7 @@ export class CashComponent implements OnInit, OnDestroy {
         movement.concepto,
         movement.origenLabel,
         movement.numeroPedidoLabel,
+        movement.ventaLabel,
         movement.medio,
       ]
         .map((value) => String(value ?? '').toLowerCase())
@@ -378,11 +354,11 @@ export class CashComponent implements OnInit, OnDestroy {
     if (this.editingMovementId) {
       return 'Modificá los datos del movimiento manual.';
     }
-    return 'Se guarda en caja con la fecha de hoy.';
+    return 'Acción rápida desde caja. Se guarda con la fecha de hoy.';
   }
 
   isManualMovement(movement: CashMovement): boolean {
-    if (movement.pedidoId) return false;
+    if (movement.pedidoId || movement.ventaId) return false;
 
     const tipo = String(movement.origenTipo ?? '');
     if (tipo.startsWith('pedido') || tipo === 'venta' || tipo.startsWith('venta')) return false;
@@ -398,42 +374,6 @@ export class CashComponent implements OnInit, OnDestroy {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '—';
     return date.toLocaleDateString('es-AR');
-  }
-
-  onMovementRowClick(movement: CashMovement) {
-    if (!this.isManualMovement(movement)) return;
-    this.openEditMovement(movement);
-  }
-
-  getConceptOrderLink(
-    movement: CashMovement
-  ): { before: string; orderRef: string; after: string } | null {
-    if (!movement.pedidoId) return null;
-
-    const concepto = movement.concepto ?? '';
-    const orderRef = `#${this.getOrderNumberLabel(movement)}`;
-    const exactIndex = concepto.indexOf(orderRef);
-    if (exactIndex >= 0) {
-      return {
-        before: concepto.slice(0, exactIndex),
-        orderRef,
-        after: concepto.slice(exactIndex + orderRef.length),
-      };
-    }
-
-    const match = concepto.match(/^(.*?)(#\S+)(.*)$/);
-    if (!match) return null;
-
-    return {
-      before: match[1],
-      orderRef: match[2],
-      after: match[3],
-    };
-  }
-
-  openOrder(movement: CashMovement) {
-    if (!movement.pedidoId) return;
-    this.router.navigate(['/orders', movement.pedidoId, 'edit']);
   }
 
   getOrigenLabel(movement: CashMovement): string {
@@ -462,7 +402,7 @@ export class CashComponent implements OnInit, OnDestroy {
     if (movement.numeroPedido) {
       return String(movement.numeroPedido).padStart(5, '0');
     }
-    return movement.pedidoId?.slice(-6) ?? '—';
+    return '—';
   }
 
   private resolveOrigenGrupo(movement: CashMovement): CashOrigenGrupo {

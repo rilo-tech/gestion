@@ -20,10 +20,10 @@ import { Subscription } from 'rxjs';
   standalone: true,
   imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent],
   template: `
-    <div class="p-8 pb-32">
-      <div class="mb-8 flex items-center justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">{{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}</h1>
+    <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
+      <div class="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">{{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}</h1>
           <p class="text-gray-500">
             {{ isEditing ? 'Modificá los datos del producto en inventario.' : 'Cargá un producto o insumo para sumarlo al inventario.' }}
           </p>

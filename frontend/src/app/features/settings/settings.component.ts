@@ -32,8 +32,8 @@ interface ConfigModule {
   template: `
     <div class="p-4 sm:p-6 lg:p-8 w-full max-w-7xl mx-auto">
       <div class="mb-6 sm:mb-8">
-        <h1 class="text-2xl font-bold text-gray-900">Configuración</h1>
-        <p class="text-gray-500 mt-1">
+        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Configuración</h1>
+        <p class="text-sm sm:text-base text-gray-500 mt-1">
           Agregar y Quitar guardan al instante. Guardar confirma el resto de la configuración.
         </p>
       </div>
@@ -128,7 +128,6 @@ interface ConfigModule {
           class="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-opacity-90 disabled:opacity-60">
           {{ saving ? 'Guardando...' : 'Guardar' }}
         </button>
-        <span *ngIf="savedMessage" class="text-sm text-teal-600 font-medium">{{ savedMessage }}</span>
       </div>
     </div>
   `,
@@ -141,7 +140,6 @@ export class SettingsComponent implements OnInit {
   config: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   activeModuleId: ConfigModule['id'] = 'productos';
   saving = false;
-  savedMessage = '';
   optionDrafts: Record<string, string> = {};
   savingFields = new Set<string>();
 
@@ -286,7 +284,7 @@ export class SettingsComponent implements OnInit {
     );
     this.syncFieldMode(section.key);
     this.clearDraft(section.key);
-    this.persistField(section.key, true);
+    this.persistField(section.key);
   }
 
   removeValue(key: ConfigFieldKey, value: string) {
@@ -297,7 +295,7 @@ export class SettingsComponent implements OnInit {
       this.getList(key).filter((item) => item !== value)
     );
     this.syncFieldMode(key);
-    this.persistField(key, true);
+    this.persistField(key);
   }
 
   private syncFieldMode(key: ConfigFieldKey) {
@@ -315,25 +313,20 @@ export class SettingsComponent implements OnInit {
   }
 
   saveConfig() {
-    this.persistConfig(true, true);
+    this.persistConfig(true);
   }
 
-  private persistField(key: ConfigFieldKey, showSavedMessage = false) {
-    this.persistConfig(showSavedMessage, false, key);
+  private persistField(key: ConfigFieldKey) {
+    this.persistConfig(false, key);
   }
 
-  private persistConfig(
-    showSavedMessage = false,
-    showSavingState = false,
-    fieldKey?: ConfigFieldKey
-  ) {
+  private persistConfig(showSavingState = false, fieldKey?: ConfigFieldKey) {
     if (showSavingState) {
       this.saving = true;
     }
     if (fieldKey) {
       this.savingFields.add(fieldKey);
     }
-    this.savedMessage = '';
     this.syncAllFieldModes();
 
     this.catalogConfigService.updateAppConfig(this.config).subscribe({
@@ -343,9 +336,6 @@ export class SettingsComponent implements OnInit {
         this.saving = false;
         if (fieldKey) {
           this.savingFields.delete(fieldKey);
-        }
-        if (showSavedMessage) {
-          this.savedMessage = 'Guardado.';
         }
       },
       error: () => {

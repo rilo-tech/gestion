@@ -18,6 +18,8 @@ export interface CashMovement {
   pedidoId?: string | null;
   numeroPedido?: number | null;
   numeroPedidoLabel?: string | null;
+  ventaId?: string | null;
+  ventaLabel?: string | null;
   clienteId?: string | null;
   negocioId?: string;
 }

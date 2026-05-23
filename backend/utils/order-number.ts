@@ -6,12 +6,10 @@ export function formatOrderNumber(numero?: number): string {
 }
 
 export function resolveOrderLabel(
-  order: { numeroPedido?: number; numeroPedidoLabel?: string },
-  orderId?: string
+  order: { numeroPedido?: number; numeroPedidoLabel?: string }
 ): string {
   if (order.numeroPedidoLabel) return order.numeroPedidoLabel;
   if (order.numeroPedido) return formatOrderNumber(order.numeroPedido);
-  if (orderId) return orderId.slice(-6);
   return '—';
 }
 

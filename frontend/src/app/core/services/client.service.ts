@@ -26,6 +26,44 @@ export interface ClientAccountOrder {
   saldo: number;
   ventaId?: string | null;
   fechaEntrega?: string | null;
+  pagos?: ClientAccountPayment[];
+}
+
+export interface ClientAccountPayment {
+  id: string;
+  tipo: string;
+  monto: number;
+  fecha: string;
+  notas?: string;
+  movimientoCajaId?: string | null;
+}
+
+export interface ClientAccountCashMovement {
+  id: string;
+  tipo: 'ingreso' | 'egreso';
+  monto: number;
+  fecha: string;
+  concepto: string;
+  origenTipo: string;
+  origenGrupo?: string;
+  pedidoId?: string | null;
+  ventaId?: string | null;
+  ventaLabel?: string | null;
+  numeroPedidoLabel?: string | null;
+  medio?: string;
+}
+
+export interface ClientHistorialPayment {
+  id: string;
+  fecha: string;
+  monto: number;
+  concepto: string;
+  origenTipo: string;
+  pedidoId?: string | null;
+  ventaId?: string | null;
+  ventaLabel?: string | null;
+  numeroPedidoLabel?: string | null;
+  medio?: string;
 }
 
 export interface ClientAccountSale {
@@ -63,16 +101,28 @@ export interface ClientAccountCompromiso {
   fecha?: string;
 }
 
+export interface ClientCollectionAllocation {
+  kind: 'pedido' | 'venta';
+  id: string;
+  label: string;
+  monto: number;
+  movimientoCajaId: string;
+}
+
 export interface ClientAccount {
   cliente: Client;
   saldoTotal: number;
   debe: boolean;
   saldoPedidos: number;
   saldoVentasMostrador: number;
+  totalFacturado?: number;
+  totalCobrado?: number;
   pedidos: ClientAccountOrder[];
   ventas: ClientAccountSale[];
   compromisos: ClientAccountCompromiso[];
   proximosCobros: ClientAccountCuota[];
+  movimientosCaja?: ClientAccountCashMovement[];
+  historialPagos?: ClientHistorialPayment[];
 }
 
 export interface ProximoCobro {
@@ -103,6 +153,23 @@ export class ClientService {
 
   getClientAccount(clientId: string): Observable<ClientAccount> {
     return this.http.get<ClientAccount>(`/api/clients/${this.businessId}/${clientId}/cuenta`);
+  }
+
+  collectClientBalance(
+    clientId: string,
+    payload: { monto: number; medioPago?: string; notas?: string }
+  ): Observable<{
+    monto: number;
+    saldoAnterior: number;
+    saldoRestante: number;
+    allocations: ClientCollectionAllocation[];
+  }> {
+    return this.http.post<{
+      monto: number;
+      saldoAnterior: number;
+      saldoRestante: number;
+      allocations: ClientCollectionAllocation[];
+    }>(`/api/clients/${this.businessId}/${clientId}/cobros`, payload);
   }
 
   getProximosCobros(): Observable<ProximoCobro[]> {

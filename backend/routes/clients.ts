@@ -1,13 +1,42 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
+import { resolveSaleLabel } from '../utils/sale-number.ts';
 import { computeClientBalanceMap } from '../utils/client-balance.ts';
+import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData } from '../utils/client-collections.ts';
 
 const router = express.Router();
 
 function isCancelledStatus(estado?: string) {
   const value = String(estado ?? '').toLowerCase().trim();
   return value === 'cancelado' || value.includes('cancelad');
+}
+
+function sumPagosHaciaTotal(
+  pagos: Array<{ tipo?: string; monto?: number }> = []
+): number {
+  return pagos
+    .filter((pago) => pago.tipo !== 'extra')
+    .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
+}
+
+function computeTotalFacturado(ventas: Array<{ total?: number }>): number {
+  return ventas.reduce((acc, sale) => acc + (Number(sale.total) || 0), 0);
+}
+
+function computeTotalCobrado(
+  ventas: Array<{ origen?: string; montoCobrado?: number }>,
+  pedidos: Array<{ pagos?: Array<{ tipo?: string; monto?: number }>; cancelado?: boolean }>
+): number {
+  const cobradoPedidos = pedidos
+    .filter((pedido) => !pedido.cancelado)
+    .reduce((acc, pedido) => acc + sumPagosHaciaTotal(pedido.pagos), 0);
+
+  const cobradoMostrador = ventas
+    .filter((sale) => sale.origen !== 'pedido')
+    .reduce((acc, sale) => acc + (Number(sale.montoCobrado) || 0), 0);
+
+  return cobradoPedidos + cobradoMostrador;
 }
 
 router.get('/:businessId/cobros-proximos', async (req, res) => {
@@ -109,11 +138,17 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
         const total = Number(data.total) || 0;
         const saldo = Math.max(0, Number(data.saldo) || 0);
         const totalPagado = Number(data.totalPagado) || Math.max(0, total - saldo);
+        const pagos = normalizePedidoPagosFromData({
+          pagos: data.pagos as Array<{ id: string; tipo: 'seña' | 'cuota' | 'pago' | 'extra'; monto: number; fecha: string; movimientoCajaId?: string; notas?: string }>,
+          movimientoSeniaId: data.movimientoSeniaId ? String(data.movimientoSeniaId) : undefined,
+          senia: Number(data.senia) || 0,
+          createdAt: data.createdAt ? String(data.createdAt) : undefined,
+        });
 
         return {
           id: doc.id,
           numeroPedidoLabel:
-            data.numeroPedidoLabel ?? resolveOrderLabel(data, doc.id),
+            data.numeroPedidoLabel ?? resolveOrderLabel(data),
           descripcion: data.descripcion ?? '',
           estado: data.estado ?? '',
           total,
@@ -122,6 +157,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           ventaId: data.ventaId ?? null,
           fechaEntrega: data.fechaEntrega ?? null,
           cancelado: isCancelledStatus(data.estado),
+          pagos,
         };
       })
       .filter((order) => !order.cancelado)
@@ -132,13 +168,25 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
         const data = doc.data();
         return {
           id: doc.id,
-          ventaLabel: data.ventaLabel ?? doc.id.slice(-6).toUpperCase(),
+          ventaLabel: resolveSaleLabel(data),
           origen: data.origen ?? 'mostrador',
           pedidoId: data.pedidoId ?? null,
           numeroPedidoLabel: data.numeroPedidoLabel ?? null,
           total: Number(data.total) || 0,
           montoCobrado: Number(data.montoCobrado) || 0,
           saldoPendiente: Math.max(0, Number(data.saldoPendiente) || 0),
+          medioPago: String(data.medioPago ?? 'efectivo'),
+          movimientoCajaId: data.movimientoCajaId ? String(data.movimientoCajaId) : null,
+          cobros: (Array.isArray(data.cobros) ? data.cobros : []).map(
+            (cobro: Record<string, unknown>) => ({
+              id: String(cobro.id ?? ''),
+              monto: Number(cobro.monto) || 0,
+              fecha: String(cobro.fecha ?? ''),
+              medioPago: cobro.medioPago ? String(cobro.medioPago) : undefined,
+              notas: cobro.notas ? String(cobro.notas) : undefined,
+              movimientoCajaId: cobro.movimientoCajaId ? String(cobro.movimientoCajaId) : null,
+            })
+          ),
           fecha: data.fecha ?? null,
         };
       })
@@ -172,20 +220,81 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
       String(a.fechaVencimiento).localeCompare(String(b.fechaVencimiento))
     );
 
+    const cashSnap = await db
+      .collection(`negocios/${businessId}/movimientos_caja`)
+      .where('clienteId', '==', clientId)
+      .get();
+
+    const movimientosCaja = cashSnap.docs
+      .map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          tipo: data.tipo === 'egreso' ? 'egreso' : 'ingreso',
+          monto: Number(data.monto) || 0,
+          fecha: String(data.fecha ?? ''),
+          concepto: String(data.concepto ?? ''),
+          origenTipo: String(data.origenTipo ?? ''),
+          origenGrupo: String(data.origenGrupo ?? ''),
+          pedidoId: data.pedidoId ? String(data.pedidoId) : null,
+          ventaId: data.ventaId ? String(data.ventaId) : null,
+          ventaLabel: data.ventaLabel ? String(data.ventaLabel) : null,
+          numeroPedidoLabel: data.numeroPedidoLabel ? String(data.numeroPedidoLabel) : null,
+          medio: String(data.medio ?? 'efectivo'),
+        };
+      })
+      .filter((movement) => movement.monto > 0)
+      .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+
+    const totalFacturado = computeTotalFacturado(ventas);
+    const totalCobrado = computeTotalCobrado(ventas, pedidos);
+
+    const historialPagos = buildClientHistorialPagos({
+      pedidos,
+      ventas,
+      cajaIngresos: movimientosCaja.filter((movement) => movement.tipo === 'ingreso'),
+    });
+
     res.json({
       cliente: { id: clientSnap.id, ...clientSnap.data() },
       saldoTotal,
       debe: saldoTotal > 0,
       saldoPedidos,
       saldoVentasMostrador,
+      totalFacturado,
+      totalCobrado,
       pedidos,
       ventas,
       compromisos,
       proximosCobros,
+      movimientosCaja,
+      historialPagos,
     });
   } catch (error) {
     console.error('Error fetching client account:', error);
     res.status(500).json({ error: 'Error fetching client account' });
+  }
+});
+
+router.post('/:businessId/:clientId/cobros', async (req, res) => {
+  try {
+    const { businessId, clientId } = req.params;
+    const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clientId).get();
+    if (!clientSnap.exists) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    const result = await collectClientBalance(businessId, clientId, {
+      monto: Number(req.body.monto) || 0,
+      medioPago: req.body.medioPago,
+      notas: req.body.notas,
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Error collecting client balance:', error);
+    const message = error instanceof Error ? error.message : 'Error collecting client balance';
+    res.status(400).json({ error: message });
   }
 });
 

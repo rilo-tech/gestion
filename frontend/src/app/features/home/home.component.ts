@@ -4,6 +4,7 @@ import { OrderService } from '../../core/services/order.service';
 import { StockService } from '../../core/services/stock.service';
 import { normalizeOrderStatus } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
+import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { RouterLink } from '@angular/router';
 
 @Component({
@@ -11,13 +12,13 @@ import { RouterLink } from '@angular/router';
   standalone: true,
   imports: [CommonModule, LucideAngularModule, RouterLink],
   template: `
-    <div class="p-8">
-      <div class="mb-10">
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">¡Hola, RILO!</h1>
-        <p class="text-gray-500">Aquí tienes un resumen de tu negocio hoy.</p>
+    <div [class]="pageShellClass">
+      <div class="mb-6 sm:mb-10">
+        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">¡Hola, RILO!</h1>
+        <p class="text-sm sm:text-base text-gray-500">Aquí tienes un resumen de tu negocio hoy.</p>
       </div>
       
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-10">
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
           <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
             <i-lucide name="clipboard-list" class="w-6 h-6"></i-lucide>
@@ -95,6 +96,8 @@ import { RouterLink } from '@angular/router';
   styles: []
 })
 export class HomeComponent implements OnInit {
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+
   private orderService = inject(OrderService);
   private stockService = inject(StockService);
 

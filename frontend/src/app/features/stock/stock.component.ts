@@ -11,37 +11,41 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
+import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
+import {
+  ICON_ACTION_LINK_CLASS,
+  PAGE_SHELL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 
 type StockTab = 'productos' | 'movimientos';
 
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent],
   template: `
-    <div class="p-8">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Stock & Inventario</h1>
-          <p class="text-gray-500">Controlá productos, stock actual y movimientos del inventario.</p>
+    <div [class]="pageShellClass">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Stock & Inventario</h1>
+          <p class="text-sm sm:text-base text-gray-500">Controlá productos, stock actual y movimientos del inventario.</p>
           <app-config-settings-link
             settingsTab="productos"
             message="¿Falta tipo, talle o color?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
         </div>
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            routerLink="/stock/new"
-            class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-opacity-90">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-            Nuevo producto
-          </button>
-        </div>
+        <a
+          routerLink="/stock/new"
+          [class]="iconActionLinkClass"
+          aria-label="Nuevo producto"
+          title="Nuevo producto">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Nuevo producto</span>
+        </a>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
           <p class="text-2xl font-bold">{{ items.length }}</p>
@@ -224,21 +228,32 @@ type StockTab = 'productos' | 'movimientos';
                   {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
                 </td>
                 <td class="px-6 py-4 text-sm text-gray-700">
-                  <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
-                    {{ link.before }}<button
-                      *ngIf="link.kind === 'pedido'"
-                      type="button"
-                      (click)="openOrder(movement)"
-                      class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
-                      {{ link.ref }}
-                    </button><a
-                      *ngIf="link.kind === 'compra'"
-                      routerLink="/purchases"
-                      class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
-                      {{ link.ref }}
-                    </a>{{ link.after }}
+                  <ng-container *ngIf="movement.pedidoId || movement.ventaId; else motivoFallback">
+                    <app-concept-ref-links
+                      [text]="movement.motivo || '—'"
+                      [pedidoId]="movement.pedidoId"
+                      [ventaId]="movement.ventaId"
+                      [numeroPedidoLabel]="movement.numeroPedidoLabel"
+                      [ventaLabel]="movement.ventaLabel">
+                    </app-concept-ref-links>
                   </ng-container>
-                  <ng-template #plainMotivo>{{ movement.motivo || '—' }}</ng-template>
+                  <ng-template #motivoFallback>
+                    <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
+                      {{ link.before }}<button
+                        *ngIf="link.kind === 'pedido'"
+                        type="button"
+                        (click)="openOrder(movement)"
+                        class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
+                        {{ link.ref }}
+                      </button><a
+                        *ngIf="link.kind === 'compra'"
+                        routerLink="/purchases"
+                        class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
+                        {{ link.ref }}
+                      </a>{{ link.after }}
+                    </ng-container>
+                    <ng-template #plainMotivo>{{ movement.motivo || '—' }}</ng-template>
+                  </ng-template>
                 </td>
                 <td class="px-6 py-4">
                   <span
@@ -269,6 +284,9 @@ type StockTab = 'productos' | 'movimientos';
   `,
 })
 export class StockComponent implements OnInit {
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);
   private router = inject(Router);

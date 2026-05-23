@@ -1,0 +1,57 @@
+---
+description: Modal vs full-page UX patterns for RILO Gestión
+globs: frontend/src/app/features/**/*.ts
+alwaysApply: false
+---
+
+# UX flow patterns
+
+Use two patterns consistently. Do not force one pattern everywhere.
+
+## Full page (`/feature/new`, `/feature/:id/edit`)
+
+Use when the user works on a **complex entity** for a while:
+
+- Multiple sections, tabs, or economics
+- Edit over several visits; shareable URL
+- Examples: pedidos, productos/stock, clientes
+
+Include header with title, short description, and "Volver a …" link.
+
+## Transaction modal (`app-transaction-modal`)
+
+Use for **quick actions from a list** — finish and return to the list:
+
+- Short forms, few steps
+- User keeps list context
+- Examples: ventas, caja (ingreso/egreso), compras
+
+```typescript
+<app-transaction-modal
+  [open]="modalOpen"
+  title="..."
+  subtitle="Acción rápida desde el listado. ..."
+  (closed)="closeModal()">
+  <!-- form -->
+</app-transaction-modal>
+```
+
+Sub-flows inside a full page (pagos, costos extra en pedido) may use nested modals.
+
+## Decision checklist
+
+| Question | Page | Modal |
+|----------|------|-------|
+| ¿Se hace en segundos desde un listado? | | ✓ |
+| ¿Tiene tabs, historial o economía detallada? | ✓ | |
+| ¿Necesita URL para volver después? | ✓ | |
+| ¿Es registrar un movimiento puntual? | | ✓ |
+
+## Responsive (mobile-first)
+
+- Page padding: `PAGE_SHELL_CLASS` (`p-4 sm:p-6 lg:p-8`) on list and form pages.
+- Primary actions: `app-icon-action` or `ICON_ACTION_LINK_CLASS` — icon only on mobile, icon + label from `sm:` up. Always set `aria-label` and `title`.
+- Tables: wrap in `TABLE_SCROLL_CLASS` with `TABLE_MIN_WIDTH_CLASS` for horizontal scroll on small screens.
+- Navigation: sidebar is a drawer below `lg`; hamburger in topbar opens/closes it.
+- Modals: use `app-transaction-modal` with `p-4 sm:p-6` inner padding.
+- Form pages: stack header actions vertically on mobile (`flex-col sm:flex-row`).

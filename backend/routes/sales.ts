@@ -1,6 +1,7 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
+import { allocateSaleNumber, resolveSaleLabel } from '../utils/sale-number.ts';
 import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-commitments.ts';
 
 const router = express.Router();
@@ -20,6 +21,8 @@ type OrderLine = {
   nombre?: string;
   precioVenta?: number;
   costoUnitario?: number;
+  costoPersonalizacion?: number;
+  costosExtra?: Array<{ nombre?: string; costo?: number }>;
 };
 
 type OrderRecord = {
@@ -38,6 +41,12 @@ type OrderRecord = {
   numeroPedido?: number;
   numeroPedidoLabel?: string;
   descripcion?: string;
+  costoReal?: number;
+};
+
+type SaleLineExtraCost = {
+  nombre: string;
+  costo: number;
 };
 
 type SaleLine = {
@@ -46,11 +55,10 @@ type SaleLine = {
   cantidad: number;
   precioUnitario: number;
   subtotal: number;
+  costoUnitario?: number;
+  costoPersonalizacion?: number;
+  costosExtra?: SaleLineExtraCost[];
 };
-
-function formatVentaLabel(ventaId: string): string {
-  return ventaId.slice(-6).toUpperCase();
-}
 
 function normalizeEstado(estado?: string) {
   return String(estado ?? '').toLowerCase().trim();
@@ -140,6 +148,76 @@ function productControlsStock(data: Record<string, unknown> | undefined): boolea
   return data?.controlaStock !== false;
 }
 
+function normalizeSaleLineExtraCosts(
+  raw: unknown,
+  legacyPersonalizacion?: number
+): SaleLineExtraCost[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const data = entry as Record<string, unknown>;
+        const nombre = String(data.nombre ?? '').trim();
+        const costo = Number(data.costo) || 0;
+        if (!nombre && costo <= 0) return null;
+        return { nombre: nombre || 'Costo extra', costo };
+      })
+      .filter((entry): entry is SaleLineExtraCost => entry !== null);
+  }
+
+  const legacy = Number(legacyPersonalizacion) || 0;
+  return legacy > 0 ? [{ nombre: 'Personalización', costo: legacy }] : [];
+}
+
+function sumLinePersonalizationCost(line: {
+  costosExtra?: SaleLineExtraCost[];
+  costoPersonalizacion?: number;
+}): number {
+  const fromList = (line.costosExtra ?? []).reduce(
+    (acc, extra) => acc + (Number(extra.costo) || 0),
+    0
+  );
+  if (fromList > 0) return fromList;
+  return Number(line.costoPersonalizacion) || 0;
+}
+
+function calculateSaleCost(items: SaleLine[]): number {
+  return items.reduce((acc, line) => {
+    const cantidad = Number(line.cantidad) || 0;
+    const base = cantidad * (Number(line.costoUnitario) || 0);
+    const personalizacion = sumLinePersonalizationCost(line);
+    return acc + base + personalizacion;
+  }, 0);
+}
+
+function buildSaleLineFromOrderLine(line: OrderLine): SaleLine {
+  const cantidad = Number(line.cantidad) || 0;
+  const precioUnitario = Number(line.precioVenta) || 0;
+  const costosExtra = normalizeSaleLineExtraCosts(line.costosExtra, line.costoPersonalizacion);
+  const costoPersonalizacion = sumLinePersonalizationCost({
+    costosExtra,
+    costoPersonalizacion: line.costoPersonalizacion,
+  });
+
+  return {
+    stockItemId: String(line.stockItemId ?? ''),
+    nombre: String(line.nombre ?? 'Producto'),
+    cantidad,
+    precioUnitario,
+    subtotal: cantidad * precioUnitario,
+    costoUnitario: Number(line.costoUnitario) || 0,
+    costoPersonalizacion,
+    costosExtra,
+  };
+}
+
+function buildSaleEconomics(items: SaleLine[], total: number, fallbackCostoReal?: number) {
+  const costoReal =
+    Number(fallbackCostoReal) > 0 ? Number(fallbackCostoReal) : calculateSaleCost(items);
+  const gananciaEstimada = Math.round((total - costoReal) * 100) / 100;
+  return { costoReal, gananciaEstimada };
+}
+
 async function createCashIncome(
   businessId: string,
   params: {
@@ -176,6 +254,224 @@ async function createCashIncome(
   return docRef.id;
 }
 
+async function reverseCashMovement(
+  businessId: string,
+  movimientoId: string,
+  params: {
+    origenId: string;
+    origenTipo: string;
+    ventaId?: string | null;
+    ventaLabel?: string | null;
+    clienteId?: string | null;
+  }
+): Promise<boolean> {
+  const movimientosRef = db.collection(`negocios/${businessId}/movimientos_caja`);
+  const snap = await movimientosRef.doc(movimientoId).get();
+  if (!snap.exists) return false;
+
+  const data = snap.data() ?? {};
+  if (data.tipo !== 'ingreso') return false;
+
+  const conceptoBase = String(data.concepto ?? 'Cobro venta').trim();
+  await movimientosRef.add({
+    tipo: 'egreso',
+    monto: Number(data.monto) || 0,
+    medio: data.medio ?? 'efectivo',
+    concepto: `Anulación ${conceptoBase}`,
+    fecha: new Date().toISOString(),
+    origenId: params.origenId,
+    origenTipo: params.origenTipo,
+    origenGrupo: 'venta',
+    ventaId: params.ventaId ?? null,
+    ventaLabel: params.ventaLabel ?? null,
+    movimientoAnuladoId: movimientoId,
+    clienteId: params.clienteId ?? null,
+    negocioId: businessId,
+  });
+  return true;
+}
+
+async function restoreStockForVenta(
+  businessId: string,
+  ventaId: string,
+  ventaLabel: string,
+  items: SaleLine[]
+): Promise<void> {
+  const timestamp = new Date().toISOString();
+
+  for (const line of items) {
+    const qty = Number(line.cantidad) || 0;
+    if (!line.stockItemId || qty <= 0) continue;
+
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
+    const itemSnap = await itemRef.get();
+    if (!itemSnap.exists) continue;
+
+    const itemData = itemSnap.data() ?? {};
+    if (!productControlsStock(itemData)) continue;
+
+    const currentStock = Number(itemData.stockActual) || 0;
+    await itemRef.update({ stockActual: currentStock + qty, updatedAt: timestamp });
+
+    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+      productoId: line.stockItemId,
+      tipo: 'entrada',
+      cantidad: qty,
+      fecha: timestamp,
+      motivo: `Anulación venta #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta_anulada',
+      origenGrupo: 'venta',
+      ventaId,
+      usuarioId: 'admin',
+      negocioId: businessId,
+    });
+  }
+}
+
+async function applyStockForVenta(
+  businessId: string,
+  ventaId: string,
+  ventaLabel: string,
+  items: SaleLine[]
+): Promise<string | null> {
+  const timestamp = new Date().toISOString();
+
+  for (const line of items) {
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
+    const itemSnap = await itemRef.get();
+    if (!itemSnap.exists) {
+      return `Uno de los productos seleccionados no existe.`;
+    }
+
+    const itemData = itemSnap.data() as Record<string, unknown>;
+    if (!productControlsStock(itemData)) continue;
+
+    const currentStock = Number(itemData.stockActual) || 0;
+    if (currentStock - line.cantidad < 0) {
+      return `Stock insuficiente para "${line.nombre}": hay ${currentStock} u., pediste ${line.cantidad} u.`;
+    }
+
+    await itemRef.update({
+      stockActual: currentStock - line.cantidad,
+      updatedAt: timestamp,
+    });
+
+    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+      productoId: line.stockItemId,
+      tipo: 'salida',
+      cantidad: line.cantidad,
+      fecha: timestamp,
+      motivo: `Venta mostrador #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta',
+      origenGrupo: 'venta',
+      ventaId,
+      usuarioId: 'admin',
+      negocioId: businessId,
+    });
+  }
+
+  return null;
+}
+
+async function validateStockForEdit(
+  businessId: string,
+  oldItems: SaleLine[],
+  newItems: SaleLine[]
+): Promise<string | null> {
+  const deltaMap = new Map<string, { delta: number; nombre: string }>();
+
+  for (const line of oldItems) {
+    if (!line.stockItemId) continue;
+    const current = deltaMap.get(line.stockItemId) ?? { delta: 0, nombre: line.nombre };
+    current.delta += Number(line.cantidad) || 0;
+    deltaMap.set(line.stockItemId, current);
+  }
+
+  for (const line of newItems) {
+    if (!line.stockItemId) continue;
+    const current = deltaMap.get(line.stockItemId) ?? { delta: 0, nombre: line.nombre };
+    current.delta -= Number(line.cantidad) || 0;
+    current.nombre = line.nombre || current.nombre;
+    deltaMap.set(line.stockItemId, current);
+  }
+
+  for (const [stockItemId, entry] of deltaMap) {
+    if (entry.delta >= 0) continue;
+
+    const itemSnap = await db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get();
+    if (!itemSnap.exists) {
+      return `Uno de los productos seleccionados no existe.`;
+    }
+
+    const itemData = itemSnap.data() ?? {};
+    if (!productControlsStock(itemData)) continue;
+
+    const currentStock = Number(itemData.stockActual) || 0;
+    const needed = Math.abs(entry.delta);
+    if (currentStock < needed) {
+      return `Stock insuficiente para "${entry.nombre}": hay ${currentStock} u., faltan ${needed} u.`;
+    }
+  }
+
+  return null;
+}
+
+async function buildMostradorItemsFromBody(
+  businessId: string,
+  rawItems: unknown
+): Promise<{ items: SaleLine[]; total: number; error?: string }> {
+  const draftItems = (Array.isArray(rawItems) ? rawItems : [])
+    .map((line: Record<string, unknown>) => ({
+      stockItemId: String(line.stockItemId ?? '').trim(),
+      cantidad: Number(line.cantidad) || 0,
+      precioUnitario: Number(line.precioUnitario) || 0,
+      costoUnitario: Number(line.costoUnitario) || 0,
+      costosExtra: line.costosExtra,
+      costoPersonalizacion: Number(line.costoPersonalizacion) || 0,
+      nombre: String(line.nombre ?? '').trim(),
+    }))
+    .filter((line) => line.stockItemId && line.cantidad > 0);
+
+  if (draftItems.length === 0) {
+    return { items: [], total: 0, error: 'Agregá al menos un producto con cantidad.' };
+  }
+
+  const items: SaleLine[] = [];
+  let total = 0;
+
+  for (const line of draftItems) {
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
+    const itemSnap = await itemRef.get();
+    if (!itemSnap.exists) {
+      return { items: [], total: 0, error: 'Uno de los productos seleccionados no existe.' };
+    }
+
+    const itemData = itemSnap.data() ?? {};
+    const subtotal = line.cantidad * line.precioUnitario;
+    total += subtotal;
+    const costosExtra = normalizeSaleLineExtraCosts(line.costosExtra, line.costoPersonalizacion);
+    const costoPersonalizacion = sumLinePersonalizationCost({
+      costosExtra,
+      costoPersonalizacion: line.costoPersonalizacion,
+    });
+
+    items.push({
+      stockItemId: line.stockItemId,
+      nombre: line.nombre || String(itemData.nombre ?? 'Producto'),
+      cantidad: line.cantidad,
+      precioUnitario: line.precioUnitario,
+      subtotal,
+      costoUnitario: line.costoUnitario || Number(itemData.costo) || 0,
+      costoPersonalizacion,
+      costosExtra,
+    });
+  }
+
+  return { items, total };
+}
+
 async function enrichSales(businessId: string, sales: Record<string, unknown>[]) {
   const clientIds = new Set<string>();
   const orderIds = new Set<string>();
@@ -201,7 +497,7 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
       if (!snap.exists) return;
       const data = snap.data() ?? {};
       orderMap.set(orderId, {
-        numeroPedidoLabel: data.numeroPedidoLabel ?? resolveOrderLabel(data as OrderRecord, orderId),
+        numeroPedidoLabel: data.numeroPedidoLabel ?? resolveOrderLabel(data as OrderRecord),
         descripcion: data.descripcion,
       });
     })
@@ -214,7 +510,7 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
 
     return {
       ...sale,
-      ventaLabel: sale.ventaLabel ?? (sale.id ? formatVentaLabel(String(sale.id)) : null),
+      ventaLabel: resolveSaleLabel(sale),
       clienteNombre: clientMap.get(clienteId) ?? '',
       numeroPedidoLabel: sale.numeroPedidoLabel ?? orderData?.numeroPedidoLabel ?? null,
       pedidoDescripcion: orderData?.descripcion ?? null,
@@ -247,7 +543,7 @@ router.get('/:businessId/eligible-orders', async (req, res) => {
         const totalPagadoAnterior = getPagadoHaciaPedido(order);
         const saldoPedido = Math.max(0, total - totalPagadoAnterior);
         const numeroPedidoLabel =
-          order.numeroPedidoLabel ?? resolveOrderLabel(order, order.id);
+          order.numeroPedidoLabel ?? resolveOrderLabel(order);
         const clienteNombre = order.clienteId ? clientMap.get(order.clienteId) ?? '' : '';
 
         return {
@@ -262,6 +558,7 @@ router.get('/:businessId/eligible-orders', async (req, res) => {
           numeroPedido: order.numeroPedido,
           numeroPedidoLabel,
           items: order.items ?? [],
+          costoReal: Number(order.costoReal) || 0,
         };
       })
       .filter((order) => {
@@ -300,11 +597,14 @@ router.get('/:businessId', async (req, res) => {
       .orderBy('fecha', 'desc')
       .get();
 
-    const sales = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ventaLabel: formatVentaLabel(doc.id),
-      ...doc.data(),
-    }));
+    const sales = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        ventaLabel: resolveSaleLabel(data),
+      };
+    });
 
     const enriched = await enrichSales(businessId, sales);
     res.json(enriched);
@@ -390,27 +690,24 @@ router.post('/:businessId', async (req, res) => {
         });
       }
 
-      const orderLabel = resolveOrderLabel(order, pedidoId);
-      const items: SaleLine[] = (order.items ?? []).map((line) => {
-        const cantidad = Number(line.cantidad) || 0;
-        const precioUnitario = Number(line.precioVenta) || 0;
-        return {
-          stockItemId: String(line.stockItemId ?? ''),
-          nombre: String(line.nombre ?? 'Producto'),
-          cantidad,
-          precioUnitario,
-          subtotal: cantidad * precioUnitario,
-        };
-      });
+      const orderLabel = resolveOrderLabel(order);
+      const items: SaleLine[] = (order.items ?? []).map((line) => buildSaleLineFromOrderLine(line));
+      const economics = buildSaleEconomics(items, total, order.costoReal);
+
+      const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
 
       const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
         origen: 'pedido',
         pedidoId,
         numeroPedido: order.numeroPedido ?? null,
         numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+        numeroVenta,
+        ventaLabel,
         clienteId: order.clienteId ?? null,
         items,
         total,
+        costoReal: economics.costoReal,
+        gananciaEstimada: economics.gananciaEstimada,
         totalPagadoAnterior,
         montoCobrado,
         saldoPendiente: Math.max(0, total - totalPagadoAnterior - montoCobrado),
@@ -419,9 +716,6 @@ router.post('/:businessId', async (req, res) => {
         fecha: timestamp,
         negocioId: businessId,
       });
-
-      const ventaLabel = formatVentaLabel(ventaRef.id);
-      await ventaRef.update({ ventaLabel });
 
       let movimientoCajaId: string | null = null;
       if (montoCobrado > 0) {
@@ -497,47 +791,20 @@ router.post('/:businessId', async (req, res) => {
     }
 
     const clienteId = String(req.body.clienteId ?? '').trim();
-    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const rawItems = req.body.items;
 
     if (!clienteId) {
       return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
     }
 
-    const draftItems = rawItems
-      .map((line: Record<string, unknown>) => ({
-        stockItemId: String(line.stockItemId ?? '').trim(),
-        cantidad: Number(line.cantidad) || 0,
-        precioUnitario: Number(line.precioUnitario) || 0,
-        nombre: String(line.nombre ?? '').trim(),
-      }))
-      .filter((line) => line.stockItemId && line.cantidad > 0);
-
-    if (draftItems.length === 0) {
-      return res.status(400).json({ error: 'Agregá al menos un producto con cantidad.' });
+    const built = await buildMostradorItemsFromBody(businessId, rawItems);
+    if (built.error) {
+      return res.status(400).json({ error: built.error });
     }
 
-    const items: SaleLine[] = [];
-    let total = 0;
+    const { items, total } = built;
 
-    for (const line of draftItems) {
-      const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
-      const itemSnap = await itemRef.get();
-      if (!itemSnap.exists) {
-        return res.status(400).json({ error: 'Uno de los productos seleccionados no existe.' });
-      }
-
-      const itemData = itemSnap.data() ?? {};
-      const subtotal = line.cantidad * line.precioUnitario;
-      total += subtotal;
-
-      items.push({
-        stockItemId: line.stockItemId,
-        nombre: line.nombre || String(itemData.nombre ?? 'Producto'),
-        cantidad: line.cantidad,
-        precioUnitario: line.precioUnitario,
-        subtotal,
-      });
-    }
+    const economics = buildSaleEconomics(items, total);
 
     const montoCobrado =
       Number.isFinite(montoCobradoInput) && montoCobradoInput >= 0 ? montoCobradoInput : total;
@@ -548,12 +815,18 @@ router.post('/:businessId', async (req, res) => {
       });
     }
 
+    const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
+
     const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
       origen: 'mostrador',
       pedidoId: null,
+      numeroVenta,
+      ventaLabel,
       clienteId,
       items,
       total,
+      costoReal: economics.costoReal,
+      gananciaEstimada: economics.gananciaEstimada,
       totalPagadoAnterior: 0,
       montoCobrado,
       saldoPendiente: Math.max(0, total - montoCobrado),
@@ -563,42 +836,16 @@ router.post('/:businessId', async (req, res) => {
       negocioId: businessId,
     });
 
-    const ventaLabel = formatVentaLabel(ventaRef.id);
-    await ventaRef.update({ ventaLabel });
-
     for (const line of items) {
-      const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
-      const itemSnap = await itemRef.get();
-      if (!itemSnap.exists) continue;
-
-      const itemData = itemSnap.data() as Record<string, unknown>;
-      if (!productControlsStock(itemData)) continue;
-
-      const currentStock = Number(itemData.stockActual) || 0;
-      if (currentStock - line.cantidad < 0) {
-        return res.status(400).json({
-          error: `Stock insuficiente para "${line.nombre}": hay ${currentStock} u., pediste ${line.cantidad} u.`,
-        });
+      const stockError = await applyStockForVenta(
+        businessId,
+        ventaRef.id,
+        ventaLabel,
+        [line]
+      );
+      if (stockError) {
+        return res.status(400).json({ error: stockError });
       }
-
-      await itemRef.update({
-        stockActual: currentStock - line.cantidad,
-        updatedAt: timestamp,
-      });
-
-      await db.collection(`negocios/${businessId}/movimientos_stock`).add({
-        productoId: line.stockItemId,
-        tipo: 'salida',
-        cantidad: line.cantidad,
-        fecha: timestamp,
-        motivo: `Venta mostrador #${ventaLabel}`,
-        origenId: ventaRef.id,
-        origenTipo: 'venta',
-        origenGrupo: 'venta',
-        ventaId: ventaRef.id,
-        usuarioId: 'admin',
-        negocioId: businessId,
-      });
     }
 
     let movimientoCajaId: string | null = null;
@@ -643,6 +890,295 @@ router.post('/:businessId', async (req, res) => {
   } catch (error) {
     console.error('Error creating sale:', error);
     res.status(500).json({ error: 'Error creating sale' });
+  }
+});
+
+router.post('/:businessId/:ventaId/cobros', async (req, res) => {
+  try {
+    const { businessId, ventaId } = req.params;
+    const monto = Number(req.body.monto) || 0;
+    const medioPago = String(req.body.medioPago ?? 'efectivo').trim() || 'efectivo';
+    const notas = String(req.body.notas ?? '').trim();
+
+    if (monto <= 0) {
+      return res.status(400).json({ error: 'El monto debe ser mayor a cero.' });
+    }
+
+    const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+    const ventaSnap = await ventaRef.get();
+    if (!ventaSnap.exists) {
+      return res.status(404).json({ error: 'Venta no encontrada.' });
+    }
+
+    const venta = ventaSnap.data() ?? {};
+    if (venta.origen === 'pedido') {
+      return res.status(400).json({
+        error: 'Los cobros de ventas por pedido se registran desde el pedido asociado.',
+        pedidoId: venta.pedidoId ?? null,
+      });
+    }
+
+    const saldoPendiente = Math.max(0, Number(venta.saldoPendiente) || 0);
+    if (monto > saldoPendiente) {
+      return res.status(400).json({
+        error: `El monto supera el saldo pendiente de la venta ($${saldoPendiente}).`,
+        saldoPendiente,
+      });
+    }
+
+    const ventaLabel = resolveSaleLabel(venta);
+    const timestamp = new Date().toISOString();
+    const movimientoCajaId = await createCashIncome(businessId, {
+      monto,
+      concepto: `Cobro saldo venta #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta_mostrador_cobro',
+      medio: medioPago,
+      clienteId: String(venta.clienteId ?? ''),
+      ventaId,
+      ventaLabel,
+      pedidoId: null,
+    });
+
+    const montoCobrado = (Number(venta.montoCobrado) || 0) + monto;
+    const nuevoSaldo = Math.max(0, (Number(venta.total) || 0) - montoCobrado);
+    const cobrosExtra = Array.isArray(venta.cobros) ? [...venta.cobros] : [];
+    cobrosExtra.push({
+      id: `cobro_${Date.now()}`,
+      monto,
+      fecha: timestamp,
+      medioPago,
+      notas: notas || undefined,
+      movimientoCajaId,
+    });
+
+    await ventaRef.update({
+      montoCobrado,
+      saldoPendiente: nuevoSaldo,
+      cobros: cobrosExtra,
+    });
+
+    return res.status(201).json({
+      id: ventaId,
+      ventaLabel,
+      montoCobrado,
+      saldoPendiente: nuevoSaldo,
+      movimientoCajaId,
+    });
+  } catch (error) {
+    console.error('Error registering sale payment:', error);
+    res.status(500).json({ error: 'Error registering sale payment' });
+  }
+});
+
+router.get('/:businessId/:ventaId', async (req, res) => {
+  try {
+    const { businessId, ventaId } = req.params;
+    const snap = await db.collection(`negocios/${businessId}/ventas`).doc(ventaId).get();
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Venta no encontrada.' });
+    }
+
+    const data = snap.data() ?? {};
+    const sale = { id: snap.id, ...data, ventaLabel: resolveSaleLabel(data) };
+    const [enriched] = await enrichSales(businessId, [sale]);
+    res.json(enriched);
+  } catch (error) {
+    console.error('Error fetching sale:', error);
+    res.status(500).json({ error: 'Error fetching sale' });
+  }
+});
+
+router.patch('/:businessId/:ventaId', async (req, res) => {
+  try {
+    const { businessId, ventaId } = req.params;
+    const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+    const ventaSnap = await ventaRef.get();
+    if (!ventaSnap.exists) {
+      return res.status(404).json({ error: 'Venta no encontrada.' });
+    }
+
+    const venta = ventaSnap.data() ?? {};
+    if (venta.origen === 'pedido') {
+      return res.status(400).json({
+        error: 'Las ventas por pedido se editan desde el pedido asociado.',
+        pedidoId: venta.pedidoId ?? null,
+      });
+    }
+
+    const clienteId = String(req.body.clienteId ?? venta.clienteId ?? '').trim();
+    if (!clienteId) {
+      return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
+    }
+
+    const built = await buildMostradorItemsFromBody(businessId, req.body.items);
+    if (built.error) {
+      return res.status(400).json({ error: built.error });
+    }
+
+    const { items, total } = built;
+    const economics = buildSaleEconomics(items, total);
+    const ventaLabel = resolveSaleLabel(venta);
+    const cobrosExtra = Array.isArray(venta.cobros) ? venta.cobros : [];
+    const cobrosAdicionales = cobrosExtra.reduce(
+      (acc: number, entry: Record<string, unknown>) => acc + (Number(entry.monto) || 0),
+      0
+    );
+    const montoCobradoInput = req.body.montoCobrado;
+    let montoCobrado = Number(venta.montoCobrado) || 0;
+
+    if (montoCobradoInput !== undefined && montoCobradoInput !== null && cobrosExtra.length === 0) {
+      montoCobrado =
+        Number.isFinite(Number(montoCobradoInput)) && Number(montoCobradoInput) >= 0
+          ? Number(montoCobradoInput)
+          : montoCobrado;
+    } else if (cobrosExtra.length > 0) {
+      const montoInicial = Math.max(0, montoCobrado - cobrosAdicionales);
+      montoCobrado = montoInicial + cobrosAdicionales;
+    }
+
+    if (montoCobrado > total) {
+      return res.status(400).json({
+        error: `El monto cobrado no puede superar el total de la venta ($${total}).`,
+      });
+    }
+
+    const oldItems = (Array.isArray(venta.items) ? venta.items : []) as SaleLine[];
+    const stockValidationError = await validateStockForEdit(businessId, oldItems, items);
+    if (stockValidationError) {
+      return res.status(400).json({ error: stockValidationError });
+    }
+
+    await restoreStockForVenta(businessId, ventaId, ventaLabel, oldItems);
+
+    const stockError = await applyStockForVenta(businessId, ventaId, ventaLabel, items);
+    if (stockError) {
+      await restoreStockForVenta(businessId, ventaId, ventaLabel, items);
+      await applyStockForVenta(businessId, ventaId, ventaLabel, oldItems);
+      return res.status(400).json({ error: stockError });
+    }
+
+    const medioPago = String(req.body.medioPago ?? venta.medioPago ?? 'efectivo').trim() || 'efectivo';
+    const notas = String(req.body.notas ?? venta.notas ?? '').trim();
+    const saldoPendiente = Math.max(0, total - montoCobrado);
+    let movimientoCajaId = venta.movimientoCajaId ? String(venta.movimientoCajaId) : null;
+
+    if (cobrosExtra.length === 0) {
+      const montoInicialAnterior = Number(venta.montoCobrado) || 0;
+      const montoInicialNuevo = montoCobrado;
+
+      if (movimientoCajaId && montoInicialNuevo <= 0) {
+        await reverseCashMovement(businessId, movimientoCajaId, {
+          origenId: ventaId,
+          origenTipo: 'venta_anulacion',
+          ventaId,
+          ventaLabel,
+          clienteId,
+        });
+        movimientoCajaId = null;
+      } else if (movimientoCajaId && montoInicialNuevo !== montoInicialAnterior) {
+        await reverseCashMovement(businessId, movimientoCajaId, {
+          origenId: ventaId,
+          origenTipo: 'venta_ajuste',
+          ventaId,
+          ventaLabel,
+          clienteId,
+        });
+        movimientoCajaId = await createCashIncome(businessId, {
+          monto: montoInicialNuevo,
+          concepto: `Venta mostrador #${ventaLabel}`,
+          origenId: ventaId,
+          origenTipo: 'venta_mostrador',
+          medio: medioPago,
+          clienteId,
+          ventaId,
+          ventaLabel,
+          pedidoId: null,
+        });
+      } else if (!movimientoCajaId && montoInicialNuevo > 0) {
+        movimientoCajaId = await createCashIncome(businessId, {
+          monto: montoInicialNuevo,
+          concepto: `Venta mostrador #${ventaLabel}`,
+          origenId: ventaId,
+          origenTipo: 'venta_mostrador',
+          medio: medioPago,
+          clienteId,
+          ventaId,
+          ventaLabel,
+          pedidoId: null,
+        });
+      }
+    }
+
+    await ventaRef.update({
+      clienteId,
+      items,
+      total,
+      costoReal: economics.costoReal,
+      gananciaEstimada: economics.gananciaEstimada,
+      montoCobrado,
+      saldoPendiente,
+      medioPago,
+      notas,
+      movimientoCajaId: movimientoCajaId ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      id: ventaId,
+      ventaLabel,
+      total,
+      montoCobrado,
+      saldoPendiente,
+    });
+  } catch (error) {
+    console.error('Error updating sale:', error);
+    res.status(500).json({ error: 'Error updating sale' });
+  }
+});
+
+router.delete('/:businessId/:ventaId', async (req, res) => {
+  try {
+    const { businessId, ventaId } = req.params;
+    const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+    const ventaSnap = await ventaRef.get();
+    if (!ventaSnap.exists) {
+      return res.status(404).json({ error: 'Venta no encontrada.' });
+    }
+
+    const venta = ventaSnap.data() ?? {};
+    if (venta.origen === 'pedido') {
+      return res.status(400).json({
+        error: 'Las ventas por pedido no se eliminan desde acá. Gestioná el pedido asociado.',
+        pedidoId: venta.pedidoId ?? null,
+      });
+    }
+
+    const ventaLabel = resolveSaleLabel(venta);
+    const items = (Array.isArray(venta.items) ? venta.items : []) as SaleLine[];
+    await restoreStockForVenta(businessId, ventaId, ventaLabel, items);
+
+    const movimientoIds = new Set<string>();
+    if (venta.movimientoCajaId) movimientoIds.add(String(venta.movimientoCajaId));
+    for (const cobro of Array.isArray(venta.cobros) ? venta.cobros : []) {
+      if (cobro?.movimientoCajaId) movimientoIds.add(String(cobro.movimientoCajaId));
+    }
+
+    for (const movimientoId of movimientoIds) {
+      await reverseCashMovement(businessId, movimientoId, {
+        origenId: ventaId,
+        origenTipo: 'venta_eliminada',
+        ventaId,
+        ventaLabel,
+        clienteId: String(venta.clienteId ?? ''),
+      });
+    }
+
+    await ventaRef.delete();
+    res.json({ id: ventaId });
+  } catch (error) {
+    console.error('Error deleting sale:', error);
+    res.status(500).json({ error: 'Error deleting sale' });
   }
 });
 

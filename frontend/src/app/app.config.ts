@@ -1,9 +1,11 @@
 import { ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
 import { provideRouter, Routes } from '@angular/router';
 import { provideHttpClient } from '@angular/common/http';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
+import { ClientFormComponent } from './features/clients/client-form.component';
+import { ClientHistorialComponent } from './features/clients/client-historial.component';
 import { ClientsComponent } from './features/clients/clients.component';
 import { StockComponent } from './features/stock/stock.component';
 import { NewProductComponent } from './features/stock/new-product.component';
@@ -28,6 +30,18 @@ const routes: Routes = [
       {
         path: 'dashboard',
         component: HomeComponent
+      },
+      {
+        path: 'clients/new',
+        component: ClientFormComponent
+      },
+      {
+        path: 'clients/:id/historial',
+        component: ClientHistorialComponent
+      },
+      {
+        path: 'clients/:id/edit',
+        component: ClientFormComponent
       },
       {
         path: 'clients',
@@ -111,7 +125,10 @@ export const appConfig: ApplicationConfig = {
         Plus,
         Minus,
         Check,
-        Truck
+        Truck,
+        Menu,
+        X,
+        History
       })
     )
   ]

@@ -10,6 +10,12 @@ import {
   ORDER_STATUS_CARD_KEYS,
   canRegisterSaleFromOrder,
 } from '../../core/constants/order-status';
+import {
+  ICON_ACTION_LINK_CLASS,
+  PAGE_SHELL_CLASS,
+  TABLE_MIN_WIDTH_CLASS,
+  TABLE_SCROLL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink } from '@angular/router';
 
@@ -18,21 +24,23 @@ import { Router, RouterLink } from '@angular/router';
   standalone: true,
   imports: [CommonModule, LucideAngularModule, RouterLink],
   template: `
-    <div class="p-8">
-      <div class="flex justify-between items-center mb-8">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">Pedidos</h1>
-          <p class="text-gray-500">Gestiona tus pedidos personalizados y su producción.</p>
+    <div [class]="pageShellClass">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Pedidos</h1>
+          <p class="text-sm sm:text-base text-gray-500">Gestiona tus pedidos personalizados y su producción.</p>
         </div>
-        <button
+        <a
           routerLink="/orders/new"
-          class="bg-primary text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-opacity-90">
+          [class]="iconActionLinkClass"
+          aria-label="Nuevo pedido"
+          title="Nuevo pedido">
           <i-lucide name="clipboard-list" class="w-4 h-4"></i-lucide>
-          Nuevo Pedido
-        </button>
+          <span class="hidden sm:inline">Nuevo pedido</span>
+        </a>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
           <p class="text-xs font-bold text-gray-500 uppercase mb-1">Borradores</p>
           <p class="text-xl font-bold text-gray-800">{{ statusCounts.borrador }}</p>
@@ -56,7 +64,8 @@ import { Router, RouterLink } from '@angular/router';
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <table class="w-full text-left border-collapse">
+        <div [class]="tableScrollClass">
+        <table [class]="tableMinWidthClass">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pedido / Cliente</th>
@@ -139,11 +148,17 @@ import { Router, RouterLink } from '@angular/router';
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   `,
 })
 export class OrderListComponent implements OnInit {
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+
   private orderService = inject(OrderService);
   private clientService = inject(ClientService);
   private dialogService = inject(DialogService);
