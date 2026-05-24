@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export interface PurchaseLine {
   productoId: string;
@@ -13,6 +14,7 @@ export interface PurchaseLine {
 export interface Purchase {
   id?: string;
   compraLabel?: string;
+  proveedorId?: string;
   proveedor?: string;
   notas?: string;
   items: PurchaseLine[];
@@ -22,6 +24,7 @@ export interface Purchase {
 }
 
 export interface CreatePurchasePayload {
+  proveedorId?: string;
   proveedor?: string;
   notas?: string;
   items: Array<{
@@ -37,7 +40,11 @@ export interface CreatePurchasePayload {
 })
 export class PurchaseService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getPurchases(): Observable<Purchase[]> {
     return this.http.get<Purchase[]>(`/api/purchases/${this.businessId}`);

@@ -1,7 +1,7 @@
 import { Component, Input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
-export type SettingsConfigTab = 'productos' | 'clientes' | 'caja';
+export type SettingsConfigTab = 'productos' | 'clientes' | 'proveedores' | 'caja' | 'pedidos';
 
 @Component({
   selector: 'app-config-settings-link',

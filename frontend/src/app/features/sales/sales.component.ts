@@ -26,6 +26,9 @@ import {
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { AuthService } from '../../core/services/auth.service';
+import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
+import { PERMISSIONS } from '../../core/constants/permissions';
 
 interface SaleDraftLine {
   stockItemId: string;
@@ -40,7 +43,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 @Component({
   selector: 'app-sales',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -101,22 +104,20 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr *ngFor="let sale of filteredSales" class="transition-colors">
+            <tr
+              *ngFor="let sale of filteredSales"
+              (click)="openSaleDetail(sale)"
+              class="transition-colors cursor-pointer hover:bg-gray-50">
               <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(sale.fecha) }}
               </td>
-              <td class="px-6 py-4 text-sm font-semibold">
-                <button
-                  type="button"
-                  (click)="openSaleDetail(sale)"
-                  class="text-teal-700 hover:text-teal-900 hover:underline">
-                  #{{ formatSaleLabel(sale) }}
-                </button>
+              <td class="px-6 py-4 text-sm font-semibold text-teal-700">
+                #{{ formatSaleLabel(sale) }}
               </td>
               <td class="px-6 py-4 text-sm text-gray-700">
                 {{ sale.clienteNombre?.trim() || '—' }}
               </td>
-              <td class="px-6 py-4 text-sm">
+              <td class="px-6 py-4 text-sm" (click)="$event.stopPropagation()">
                 <ng-container *ngIf="sale.origen === 'pedido' && sale.pedidoId">
                   <a
                     [routerLink]="['/orders', sale.pedidoId, 'edit']"
@@ -131,7 +132,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               </td>
               <td class="px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ '$' + (sale.total || 0) }}
-                <div *ngIf="sale.costoReal != null && sale.costoReal > 0" class="text-xs font-normal text-gray-400 mt-0.5">
+                <div *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0" class="text-xs font-normal text-gray-400 mt-0.5">
                   Costo {{ '$' + sale.costoReal }}
                   · Gan. {{ '$' + (sale.gananciaEstimada || 0) }}
                 </div>
@@ -145,7 +146,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                   Saldo {{ '$' + (sale.saldoPendiente || 0) }}
                 </div>
               </td>
-              <td class="px-6 py-4 text-sm font-medium">
+              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1">
                   <button
                     type="button"
@@ -160,20 +161,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                     <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
-                    *ngIf="canEditSale(sale)"
                     type="button"
-                    (click)="openEditSale(sale)"
-                    title="Editar"
+                    (click)="openSaleDetail(sale)"
+                    title="Ver venta"
                     class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
                   </button>
-                  <a
-                    *ngIf="sale.origen === 'pedido' && sale.pedidoId"
-                    [routerLink]="['/orders', sale.pedidoId, 'edit']"
-                    title="Ver pedido"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </a>
                   <button
                     *ngIf="canDeleteSale(sale)"
                     type="button"
@@ -208,6 +201,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
       [open]="saleModalOpen"
       [title]="saleModalTitle"
       [subtitle]="saleModalSubtitle"
+      layout="fullscreen"
       (closed)="closeSaleModal()">
 
         <ng-container *ngIf="saleModalMode === 'pedido'">
@@ -257,7 +251,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <span class="text-gray-700 font-medium">Saldo a cobrar</span>
               <span class="font-bold text-orange-600 tabular-nums">{{ '$' + selectedOrder.saldoPedido }}</span>
             </div>
-            <div *ngIf="selectedOrder.costoReal" class="flex justify-between text-xs text-gray-500">
+            <div *ngIf="auth.canViewEconomics && selectedOrder.costoReal" class="flex justify-between text-xs text-gray-500">
               <span>Costo registrado en pedido</span>
               <span class="tabular-nums">{{ '$' + selectedOrder.costoReal }}</span>
             </div>
@@ -296,7 +290,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                     <option *ngFor="let item of stockItems" [value]="item.id">{{ item.nombre }}</option>
                   </select>
                   <button
-                    *ngIf="line.stockItemId"
+                    *ngIf="line.stockItemId && auth.canEditPersonalization"
                     type="button"
                     (click)="openExtraCostsModal(i)"
                     class="text-teal-600 text-xs font-medium hover:text-teal-800 mt-1">
@@ -340,9 +334,14 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                   </button>
                 </div>
               </div>
-              <p *ngIf="line.stockItemId" class="text-xs text-gray-400">
+              <p *ngIf="line.stockItemId && auth.canViewStockCosts" class="text-xs text-gray-400">
                 Costo stock: {{ '$' + line.costoUnitario }}
-                · Extras: {{ '$' + getLineExtraCostTotal(line) }}
+                <ng-container *ngIf="auth.canEditPersonalization">
+                  · Extras: {{ '$' + getLineExtraCostTotal(line) }}
+                </ng-container>
+              </p>
+              <p *ngIf="line.stockItemId && !auth.canViewStockCosts && auth.canEditPersonalization" class="text-xs text-gray-400">
+                Extras personalización: {{ '$' + getLineExtraCostTotal(line) }}
               </p>
             </div>
           </div>
@@ -352,11 +351,11 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <span class="text-gray-600">Total venta</span>
               <span class="font-bold tabular-nums">{{ '$' + draftTotal }}</span>
             </div>
-            <div class="flex justify-between text-xs text-gray-500">
+            <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-gray-500">
               <span>Costo estimado</span>
               <span class="tabular-nums">{{ '$' + draftCostTotal }}</span>
             </div>
-            <div class="flex justify-between text-xs text-teal-700 font-medium">
+            <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-teal-700 font-medium">
               <span>Ganancia estimada</span>
               <span class="tabular-nums">{{ '$' + draftProfitTotal }}</span>
             </div>
@@ -562,7 +561,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
       [open]="detailModalOpen"
       [title]="detailModalTitle"
       [subtitle]="detailModalSubtitle"
-      maxWidthClass="max-w-2xl"
+      layout="fullscreen"
       (closed)="closeDetailModal()">
       <div *ngIf="detailLoading" class="py-12 text-center text-gray-400">Cargando venta...</div>
 
@@ -647,7 +646,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               {{ '$' + (detailSale.saldoPendiente || 0) }}
             </span>
           </div>
-          <div *ngIf="detailSale.costoReal != null" class="flex justify-between gap-4 text-xs text-gray-500 pt-2 border-t border-gray-200">
+          <div *ngIf="auth.canViewEconomics && detailSale.costoReal != null" class="flex justify-between gap-4 text-xs text-gray-500 pt-2 border-t border-gray-200">
             <span>Costo · Ganancia estimada</span>
             <span class="tabular-nums">{{ '$' + detailSale.costoReal }} · {{ '$' + (detailSale.gananciaEstimada || 0) }}</span>
           </div>
@@ -706,6 +705,7 @@ export class SalesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly auth = inject(AuthService);
 
   formatSaleLabel = formatSaleLabel;
 
@@ -1050,11 +1050,11 @@ export class SalesComponent implements OnInit {
   }
 
   canEditSale(sale: Sale): boolean {
-    return sale.origen === 'mostrador' && !!sale.id;
+    return this.auth.canEditRecords && sale.origen === 'mostrador' && !!sale.id;
   }
 
   canDeleteSale(sale: Sale): boolean {
-    return sale.origen === 'mostrador' && !!sale.id;
+    return this.auth.canDeleteRecords && sale.origen === 'mostrador' && !!sale.id;
   }
 
   canCollectSaleBalance(sale: Sale): boolean {

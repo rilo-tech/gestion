@@ -12,13 +12,16 @@ import {
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { DialogService } from '../../core/services/dialog.service';
+import { AuthService } from '../../core/services/auth.service';
+import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
+import { PERMISSIONS } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-new-product',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent, HasPermissionDirective],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
       <div class="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -138,19 +141,30 @@ import { Subscription } from 'rxjs';
             </div>
           </section>
 
-          <section class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <section *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
             <h2 class="text-lg font-bold mb-4">Costos y precio</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Costo unitario</label>
                 <input type="number" [(ngModel)]="item.costo" name="costo" min="0"
+                       [disabled]="formReadOnly"
                        class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
                 <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugerido" min="0"
+                       [disabled]="formReadOnly"
                        class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
               </div>
+            </div>
+          </section>
+          <section *ngIf="!auth.canViewStockCosts" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+            <h2 class="text-lg font-bold mb-4">Precio sugerido</h2>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
+              <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugeridoPublic" min="0"
+                     [disabled]="formReadOnly"
+                     class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
             </div>
           </section>
         </div>
@@ -175,21 +189,21 @@ import { Subscription } from 'rxjs';
                 <span class="text-gray-400">Control de stock</span>
                 <span>{{ controlaStock ? 'Sí' : 'No' }}</span>
               </div>
-              <div class="flex justify-between text-sm">
+              <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="flex justify-between text-sm">
                 <span class="text-gray-400">Costo unitario</span>
                 <span>{{ '$' + (item.costo || 0) }}</span>
               </div>
-              <div class="border-t border-gray-800 pt-4 flex justify-between font-bold text-lg">
+              <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="border-t border-gray-800 pt-4 flex justify-between font-bold text-lg">
                 <span>Valor en stock</span>
                 <span>{{ '$' + inventoryValue }}</span>
               </div>
             </div>
-            <button (click)="submitProduct()"
+            <button *ngIf="!formReadOnly" (click)="submitProduct()"
                     class="w-full bg-teal-500 text-gray-900 font-bold py-4 rounded-xl hover:bg-teal-400 transition-all">
               {{ isEditing ? 'Guardar cambios' : 'Guardar producto' }}
             </button>
             <button
-              *ngIf="isEditing"
+              *ngIf="isEditing && auth.canDeleteRecords"
               type="button"
               (click)="confirmDeleteProduct()"
               class="w-full mt-3 py-3 rounded-xl border border-red-400 text-red-300 font-medium hover:bg-red-950/40 transition-all">
@@ -207,6 +221,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  readonly auth = inject(AuthService);
+  readonly permissions = PERMISSIONS;
   private configSub?: Subscription;
   private routeSub?: Subscription;
 
@@ -227,6 +243,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   get isEditing(): boolean {
     return !!this.editingItemId;
+  }
+
+  get formReadOnly(): boolean {
+    return this.isEditing && !this.auth.canEditRecords;
   }
 
   ngOnInit() {
@@ -300,6 +320,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
       costo: Number(this.item.costo) || 0,
       precioSugerido: Number(this.item.precioSugerido) || 0,
     };
+
+    if (!this.auth.canViewStockCosts) {
+      delete (payload as Partial<StockItem>).costo;
+    }
+
+    if (this.formReadOnly) return;
 
     const request = this.editingItemId
       ? this.stockService.updateItem(this.editingItemId, payload)

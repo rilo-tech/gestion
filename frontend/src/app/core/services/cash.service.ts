@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export type CashOrigenGrupo = 'pedido' | 'venta' | 'manual' | 'otro';
 
@@ -29,7 +30,11 @@ export interface CashMovement {
 })
 export class CashService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getMovements(): Observable<CashMovement[]> {
     return this.http.get<CashMovement[]>(`/api/cash/${this.businessId}`);

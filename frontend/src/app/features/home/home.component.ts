@@ -2,6 +2,7 @@ import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { OrderService } from '../../core/services/order.service';
 import { StockService } from '../../core/services/stock.service';
+import { AuthService } from '../../core/services/auth.service';
 import { normalizeOrderStatus } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
@@ -14,7 +15,7 @@ import { RouterLink } from '@angular/router';
   template: `
     <div [class]="pageShellClass">
       <div class="mb-6 sm:mb-10">
-        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">¡Hola, RILO!</h1>
+        <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">¡Hola, {{ auth.currentUserName }}!</h1>
         <p class="text-sm sm:text-base text-gray-500">Aquí tienes un resumen de tu negocio hoy.</p>
       </div>
       
@@ -46,7 +47,7 @@ import { RouterLink } from '@angular/router';
             <p class="text-xl font-bold text-gray-900">{{ '$' + totalSales }}</p>
           </div>
         </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
+        <div *ngIf="auth.canViewEconomics" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4">
           <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center">
             <i-lucide name="bar-chart-3" class="w-6 h-6"></i-lucide>
           </div>
@@ -97,6 +98,7 @@ import { RouterLink } from '@angular/router';
 })
 export class HomeComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly auth = inject(AuthService);
 
   private orderService = inject(OrderService);
   private stockService = inject(StockService);

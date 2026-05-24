@@ -3,7 +3,8 @@ export const ORDER_STATUS_OPTIONS = [
   { value: 'pendiente', label: 'Pendiente' },
   { value: 'en_produccion', label: 'En producción' },
   { value: 'listo', label: 'Listo' },
-  { value: 'entregado', label: 'Entregado' },
+  { value: 'entregado', label: 'Entregado total' },
+  { value: 'entregado_con_saldo', label: 'Entregado con saldo' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 
@@ -31,7 +32,19 @@ export function normalizeOrderStatus(estado?: string): OrderStatusValue | 'otro'
     return 'en_produccion';
   }
   if (value === 'listo' || value.includes('listo')) return 'listo';
-  if (value === 'entregado' || value.includes('entregad')) return 'entregado';
+  if (
+    value === 'entregado_con_saldo' ||
+    value.includes('entregado_con_saldo') ||
+    value.includes('entregado con saldo')
+  ) {
+    return 'entregado_con_saldo';
+  }
+  if (value === 'entregado' || value.includes('entregado total')) {
+    return 'entregado';
+  }
+  if (value.includes('entregad') && !value.includes('saldo')) {
+    return 'entregado';
+  }
   if (value === 'cancelado' || value.includes('cancelad')) return 'cancelado';
 
   return 'otro';
@@ -55,6 +68,8 @@ export function getOrderStatusBadgeClass(estado?: string): string {
       return 'bg-green-50 text-green-700';
     case 'entregado':
       return 'bg-teal-50 text-teal-700';
+    case 'entregado_con_saldo':
+      return 'bg-orange-50 text-orange-700';
     case 'cancelado':
       return 'bg-red-50 text-red-700';
     default:
@@ -87,11 +102,21 @@ export function canRegisterSaleFromOrder(order: {
   if (order.ventaId) return false;
 
   const status = normalizeOrderStatus(order.estado);
-  if (status === 'cancelado' || status === 'borrador' || status === 'entregado' || status === 'otro') {
+  if (
+    status === 'cancelado' ||
+    status === 'borrador' ||
+    status === 'entregado' ||
+    status === 'entregado_con_saldo' ||
+    status === 'otro'
+  ) {
     return false;
   }
 
   if (!orderIsConfirmedForSale(order)) return false;
 
   return status === 'listo' || status === 'en_produccion' || status === 'pendiente';
+}
+
+export function orderIsLockedForEdit(estado?: string): boolean {
+  return normalizeOrderStatus(estado) === 'entregado';
 }

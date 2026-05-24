@@ -1,6 +1,7 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { allocateOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
+import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
 
 const router = express.Router();
 
@@ -17,6 +18,10 @@ type OrderLine = {
   stockItemId?: string;
   cantidad?: number;
   nombre?: string;
+  precioVenta?: number;
+  costoUnitario?: number;
+  costoPersonalizacion?: number;
+  costosExtra?: Array<{ nombre?: string; costo?: number }>;
 };
 
 type OrderRecord = {
@@ -34,6 +39,9 @@ type OrderRecord = {
   stockRestaurado?: boolean;
   cajaRevertida?: boolean;
   cancelledAt?: string;
+  entregadoAt?: string;
+  ventaId?: string;
+  costoReal?: number;
   numeroPedido?: number;
   numeroPedidoLabel?: string;
 };
@@ -104,6 +112,138 @@ function isDraftStatus(estado?: string) {
 function isCancelledStatus(estado?: string) {
   const value = normalizeEstado(estado);
   return value === 'cancelado' || value.includes('cancelad');
+}
+
+function isEntregadoTotalStatus(estado?: string) {
+  return resolveOrderEstado(estado) === 'entregado';
+}
+
+function orderCanCreateDeliverySale(order: OrderRecord): boolean {
+  if (order.ventaId) return false;
+  if (isCancelledStatus(order.estado)) return false;
+  if (isDraftStatus(order.estado)) return false;
+  return orderAllowsPayments(order) || !!order.stockDescontado;
+}
+
+type ResolvedOrderEstado =
+  | 'borrador'
+  | 'pendiente'
+  | 'en_produccion'
+  | 'listo'
+  | 'entregado'
+  | 'entregado_con_saldo'
+  | 'cancelado'
+  | 'otro';
+
+function resolveOrderEstado(estado?: string): ResolvedOrderEstado {
+  const value = normalizeEstado(estado);
+
+  if (value === 'borrador' || value.includes('borrador')) return 'borrador';
+  if (value === 'cancelado' || value.includes('cancelad')) return 'cancelado';
+  if (
+    value === 'entregado_con_saldo' ||
+    value.includes('entregado_con_saldo') ||
+    value.includes('entregado con saldo')
+  ) {
+    return 'entregado_con_saldo';
+  }
+  if (value === 'entregado' || value.includes('entregado total') || (value.includes('entregad') && !value.includes('saldo'))) {
+    return 'entregado';
+  }
+  if (value === 'pendiente' || value.includes('pendiente')) return 'pendiente';
+  if (value === 'en_produccion' || value.includes('produccion') || value.includes('producción')) {
+    return 'en_produccion';
+  }
+  if (value === 'listo' || value.includes('listo')) return 'listo';
+
+  return 'otro';
+}
+
+async function applyEntregaCompletaPayment(
+  businessId: string,
+  orderId: string,
+  order: OrderRecord
+): Promise<Partial<OrderRecord>> {
+  const total = Number(order.total) || 0;
+  const pagosBase = normalizePagos(order);
+  const pagadoActual = sumPagosHaciaTotal(pagosBase);
+  const saldoPedido = Math.max(0, total - pagadoActual);
+
+  if (saldoPedido <= 0 || !orderAllowsPayments(order)) {
+    return { entregadoAt: new Date().toISOString() };
+  }
+
+  const orderLabel = resolveOrderLabel(order);
+  const movimientoCajaId = await createCashIncome(businessId, {
+    monto: saldoPedido,
+    concepto: `Pago pedido #${orderLabel}`,
+    origenId: orderId,
+    origenTipo: 'pedido_pago',
+    clienteId: order.clienteId,
+    pedidoId: orderId,
+    numeroPedido: order.numeroPedido,
+    numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+  });
+
+  const pagos: OrderPayment[] = [
+    ...pagosBase,
+    {
+      id: `pago_entrega_${Date.now()}`,
+      tipo: 'pago',
+      monto: saldoPedido,
+      fecha: new Date().toISOString(),
+      movimientoCajaId,
+      notas: 'Pago total',
+    },
+  ];
+
+  const totalPagado = sumPagos(pagos);
+  const saldo = Math.max(0, total - sumPagosHaciaTotal(pagos));
+
+  return {
+    pagos,
+    totalPagado,
+    saldo,
+    seniaBloqueada: true,
+    entregadoAt: new Date().toISOString(),
+  };
+}
+
+async function applyEntregaConSaldoVenta(
+  businessId: string,
+  orderId: string,
+  order: OrderRecord
+): Promise<Partial<OrderRecord> & { ventaLabel?: string }> {
+  if (order.ventaId) {
+    return { entregadoAt: new Date().toISOString() };
+  }
+
+  if (!orderCanCreateDeliverySale(order)) {
+    throw new Error('El pedido no está listo para registrar la entrega como venta.');
+  }
+  if (!(order.items?.length ?? 0)) {
+    throw new Error('El pedido no tiene productos para registrar la venta.');
+  }
+
+  const total = Number(order.total) || 0;
+  const pagosBase = normalizePagos(order);
+  const totalPagadoAnterior = sumPagosHaciaTotal(pagosBase);
+  const saldoPedido = Math.max(0, total - totalPagadoAnterior);
+
+  const sale = await createSaleFromOrder(businessId, orderId, order, {
+    montoCobrado: 0,
+    totalPagadoAnterior,
+    medioPago: 'efectivo',
+    notas: 'Entrega con saldo pendiente',
+  });
+
+  return {
+    ventaId: sale.ventaId,
+    ventaLabel: sale.ventaLabel,
+    entregadoAt: new Date().toISOString(),
+    saldo: saldoPedido,
+    totalPagado: totalPagadoAnterior,
+  };
 }
 
 function productControlsStock(data: Record<string, unknown> | undefined): boolean {
@@ -470,6 +610,9 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
     if (isCancelledStatus(order.estado)) {
       return res.status(403).json({ error: 'No se pueden registrar pagos en un pedido cancelado.' });
     }
+    if (isEntregadoTotalStatus(order.estado)) {
+      return res.status(403).json({ error: 'No se pueden registrar pagos en un pedido entregado total.' });
+    }
     if (!orderAllowsPayments(order)) {
       return res.status(400).json({ error: 'Registrá la seña al confirmar el pedido primero.' });
     }
@@ -598,6 +741,11 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     if (isCancelledStatus(existingOrder.estado)) {
       return res.status(403).json({ error: 'No se puede modificar un pedido cancelado.' });
     }
+    if (isEntregadoTotalStatus(existingOrder.estado)) {
+      return res.status(403).json({
+        error: 'Este pedido fue entregado total y no se puede modificar.',
+      });
+    }
 
     const mergedEstado = orderData.estado ?? existingOrder.estado;
     const mergedOrder: OrderRecord = {
@@ -646,7 +794,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
 
     if (orderData.total !== undefined) {
       const total = Number(orderData.total) || 0;
-      const pagado = sumPagosHaciaTotal(mergedOrder.pagos ?? []);
+      const pagado = sumPagosHaciaTotal(normalizePagos(mergedOrder));
       mergedOrder.saldo = Math.max(0, total - pagado);
       orderData.saldo = mergedOrder.saldo;
     } else if (isDraftStatus(mergedEstado) && !existingOrder.seniaBloqueada) {
@@ -660,20 +808,77 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       stockDescontado = await applyStockForOrder(businessId, orderId, mergedOrder);
     }
 
-    await orderRef.update({
+    let deliveryPatch: Partial<OrderRecord> = {};
+    const previousEstado = resolveOrderEstado(existingOrder.estado);
+    const nextEstado = resolveOrderEstado(mergedEstado);
+
+    if (nextEstado === 'entregado' && previousEstado !== 'entregado') {
+      deliveryPatch = await applyEntregaCompletaPayment(businessId, orderId, {
+        ...mergedOrder,
+        total: orderData.total ?? mergedOrder.total,
+        saldo: mergedOrder.saldo,
+      });
+      Object.assign(mergedOrder, deliveryPatch);
+    } else if (nextEstado === 'entregado_con_saldo' && previousEstado !== 'entregado_con_saldo') {
+      deliveryPatch = await applyEntregaConSaldoVenta(businessId, orderId, {
+        ...mergedOrder,
+        total: orderData.total ?? mergedOrder.total,
+        costoReal: orderData.costoReal ?? mergedOrder.costoReal,
+      });
+      Object.assign(mergedOrder, deliveryPatch);
+    }
+
+    const updatePayload: Record<string, unknown> = {
       ...orderData,
       ...orderNumberPatch,
       ...seniaPatch,
       stockDescontado,
       updatedAt: new Date().toISOString(),
-    });
+    };
 
-    res.json({ id: orderId });
+    if (deliveryPatch.pagos) {
+      updatePayload.pagos = deliveryPatch.pagos.map(sanitizePagoForFirestore);
+      updatePayload.totalPagado = deliveryPatch.totalPagado;
+      updatePayload.saldo = deliveryPatch.saldo;
+      updatePayload.seniaBloqueada = deliveryPatch.seniaBloqueada;
+    }
+    if (deliveryPatch.entregadoAt) {
+      updatePayload.entregadoAt = deliveryPatch.entregadoAt;
+    }
+    if (deliveryPatch.ventaId) {
+      updatePayload.ventaId = deliveryPatch.ventaId;
+    }
+    if (deliveryPatch.saldo !== undefined && !deliveryPatch.pagos) {
+      updatePayload.saldo = deliveryPatch.saldo;
+    }
+    if (deliveryPatch.totalPagado !== undefined && !deliveryPatch.pagos) {
+      updatePayload.totalPagado = deliveryPatch.totalPagado;
+    }
+
+    await orderRef.update(updatePayload);
+
+    const updatedSnap = await orderRef.get();
+    const updated = updatedSnap.data() as OrderRecord | undefined;
+
+    res.json({
+      id: orderId,
+      estado: updated?.estado ?? mergedEstado,
+      pagos: updated?.pagos ?? [],
+      totalPagado: updated?.totalPagado,
+      saldo: updated?.saldo,
+      entregadoAt: updated?.entregadoAt,
+      ventaId: updated?.ventaId,
+      ventaLabel: (deliveryPatch as { ventaLabel?: string }).ventaLabel,
+      deliveryPaymentApplied: !!deliveryPatch.pagos,
+      saleCreated: !!deliveryPatch.ventaId,
+      locked: resolveOrderEstado(updated?.estado ?? mergedEstado) === 'entregado',
+    });
   } catch (error) {
     if (error instanceof StockValidationError) {
       return res.status(400).json({ error: error.message });
     }
-    res.status(500).json({ error: 'Error updating order' });
+    const message = error instanceof Error ? error.message : 'Error updating order';
+    res.status(500).json({ error: message });
   }
 });
 

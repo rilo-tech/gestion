@@ -6,10 +6,11 @@ import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
-  getFieldOptions,
-  usesConfigurableList,
+  getCashConceptOptions,
+  usesCashConceptList,
 } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { AuthService } from '../../core/services/auth.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
@@ -133,6 +134,7 @@ import { Subscription } from 'rxjs';
               <td class="px-6 py-4 text-sm font-medium whitespace-nowrap">
                 <div class="flex items-center justify-end gap-1">
                   <button
+                    *ngIf="auth.canEditRecords"
                     type="button"
                     (click)="openEditMovement(movement)"
                     title="Editar movimiento"
@@ -140,6 +142,7 @@ import { Subscription } from 'rxjs';
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
+                    *ngIf="auth.canDeleteRecords"
                     type="button"
                     (click)="confirmDeleteMovement(movement)"
                     title="Eliminar movimiento"
@@ -176,6 +179,36 @@ import { Subscription } from 'rxjs';
       (closed)="closeMovementModal()">
 
         <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                (click)="setMovementTipo('ingreso')"
+                class="rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
+                [class.border-teal-500]="movementTipo === 'ingreso'"
+                [class.bg-teal-50]="movementTipo === 'ingreso'"
+                [class.text-teal-700]="movementTipo === 'ingreso'"
+                [class.border-gray-200]="movementTipo !== 'ingreso'"
+                [class.text-gray-700]="movementTipo !== 'ingreso'"
+                [class.hover:bg-gray-50]="movementTipo !== 'ingreso'">
+                Suma
+              </button>
+              <button
+                type="button"
+                (click)="setMovementTipo('egreso')"
+                class="rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
+                [class.border-red-500]="movementTipo === 'egreso'"
+                [class.bg-red-50]="movementTipo === 'egreso'"
+                [class.text-red-700]="movementTipo === 'egreso'"
+                [class.border-gray-200]="movementTipo !== 'egreso'"
+                [class.text-gray-700]="movementTipo !== 'egreso'"
+                [class.hover:bg-gray-50]="movementTipo !== 'egreso'">
+                Resta
+              </button>
+            </div>
+          </div>
+
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Concepto</label>
             <app-searchable-select
@@ -249,6 +282,7 @@ import { Subscription } from 'rxjs';
 })
 export class CashComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly auth = inject(AuthService);
 
   private cashService = inject(CashService);
   private configService = inject(CatalogConfigService);
@@ -333,21 +367,30 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.totalIngresos - this.totalEgresos;
   }
 
-  get conceptFieldKey(): 'caja.conceptosIngreso' | 'caja.conceptosEgreso' {
-    return this.movementTipo === 'ingreso' ? 'caja.conceptosIngreso' : 'caja.conceptosEgreso';
-  }
-
   get usesConceptList(): boolean {
-    return usesConfigurableList(this.appConfig, this.conceptFieldKey);
+    return usesCashConceptList(this.appConfig);
   }
 
   get conceptOptions(): string[] {
-    return getFieldOptions(this.appConfig, this.conceptFieldKey);
+    return getCashConceptOptions(this.appConfig, this.movementTipo);
+  }
+
+  setMovementTipo(tipo: 'ingreso' | 'egreso') {
+    this.movementTipo = tipo;
+    if (
+      this.usesConceptList &&
+      this.movementConcepto &&
+      !this.conceptOptions.some(
+        (option) => option.toLowerCase() === this.movementConcepto.trim().toLowerCase()
+      )
+    ) {
+      this.movementConcepto = '';
+    }
   }
 
   get movementModalTitle(): string {
     const action = this.editingMovementId ? 'Editar' : 'Registrar';
-    return `${action} ${this.movementTipo === 'ingreso' ? 'ingreso' : 'egreso'}`;
+    return `${action} movimiento`;
   }
 
   get movementModalSubtitle(): string {

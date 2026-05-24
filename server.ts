@@ -13,6 +13,15 @@ import orderRoutes from './backend/routes/orders.ts';
 import salesRoutes from './backend/routes/sales.ts';
 import cashRoutes from './backend/routes/cash.ts';
 import catalogConfigRoutes from './backend/routes/catalog-config.ts';
+import supplierRoutes from './backend/routes/suppliers.ts';
+import userRoutes from './backend/routes/users.ts';
+import authRoutes from './backend/routes/auth.ts';
+import businessRoutes from './backend/routes/business.ts';
+import platformRoutes from './backend/routes/platform.ts';
+import { ensureDefaultSupervisor } from './backend/auth/users.ts';
+import { ensureDefaultBusiness } from './backend/auth/business.ts';
+import { ensureDefaultPlatformAdmin } from './backend/auth/platform.ts';
+import { ensureDefaultPlans } from './backend/auth/plans.ts';
 
 dotenv.config();
 
@@ -40,7 +49,16 @@ async function startServer() {
   // Given the constraints, I'll provide a structure that can be easily configured.
 
   // API Routes
+  await ensureDefaultPlatformAdmin();
+  await ensureDefaultPlans();
+  await ensureDefaultBusiness();
+  await ensureDefaultSupervisor();
+  app.use('/api/auth', authRoutes);
+  app.use('/api/platform', platformRoutes);
+  app.use('/api/business', businessRoutes);
   app.use('/api/clients', clientRoutes);
+  app.use('/api/suppliers', supplierRoutes);
+  app.use('/api/users', userRoutes);
   app.use('/api/stock', stockRoutes);
   app.use('/api/purchases', purchaseRoutes);
   app.use('/api/orders', orderRoutes);

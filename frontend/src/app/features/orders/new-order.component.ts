@@ -5,9 +5,15 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClientService, Client } from '../../core/services/client.service';
 import { StockService, StockItem, itemControlsStock } from '../../core/services/stock.service';
-import { OrderLineItem, OrderLineExtraCost, OrderPayment, OrderService, Order } from '../../core/services/order.service';
+import { OrderLineItem, OrderLineExtraCost, OrderPayment, OrderService, Order, OrderUpdateResult } from '../../core/services/order.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
+import {
+  AppConfig,
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  usesDetailedOrderExtraCosts,
+} from '../../core/services/catalog-config.service';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
@@ -17,28 +23,44 @@ import {
   normalizeOrderStatus,
   ORDER_WORKFLOW_STATUS_OPTIONS,
   canRegisterSaleFromOrder,
+  orderIsLockedForEdit,
 } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
+import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
+import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import {
+  ClientFormPanelComponent,
+  ClientFormSaveEvent,
+} from '../clients/client-form-panel.component';
 
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective],
+  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective, ConfigSettingsLinkComponent, TransactionModalComponent, ClientFormPanelComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
       <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">
-            {{ isCancelledOrder ? 'Pedido cancelado' : (isEditing ? 'Editar Pedido' : 'Nuevo Pedido Personalizado') }}
+            {{ isCancelledOrder ? 'Pedido cancelado' : (isLockedOrder ? 'Pedido entregado total' : (isEditing ? 'Editar Pedido' : 'Nuevo Pedido Personalizado')) }}
           </h1>
           <p class="text-sm text-gray-500">
             <ng-container *ngIf="isCancelledOrder">
               Solo lectura. Este pedido no se puede modificar; creá uno nuevo si necesitás continuar.
             </ng-container>
-            <ng-container *ngIf="!isCancelledOrder">
+            <ng-container *ngIf="isLockedOrder && !isCancelledOrder">
+              Solo lectura. El pedido fue entregado total y ya no se puede modificar.
+            </ng-container>
+            <ng-container *ngIf="!isReadOnlyOrder">
               Cliente, productos y precios en un solo flujo compacto.
             </ng-container>
           </p>
+          <app-config-settings-link
+            *ngIf="!isReadOnlyOrder"
+            settingsTab="pedidos"
+            message="¿Preferís editar Pers. directo en lugar de costos extra?"
+            linkLabel="Configuralo acá">
+          </app-config-settings-link>
         </div>
         <button
           routerLink="/orders"
@@ -46,6 +68,12 @@ import { LucideAngularModule } from 'lucide-angular';
           <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
           Volver a pedidos
         </button>
+      </div>
+
+      <div
+        *ngIf="isLockedOrder && !isCancelledOrder"
+        class="mb-6 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
+        Pedido en estado <span class="font-semibold">Entregado total</span>. No podés editarlo, cambiar el estado ni registrar pagos.
       </div>
 
       <div
@@ -58,15 +86,28 @@ import { LucideAngularModule } from 'lucide-angular';
         <div class="lg:col-span-2 space-y-4">
           <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
             <div class="mb-4">
-              <label class="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+              <div class="flex items-center justify-between gap-3 mb-1">
+                <label class="block text-sm font-medium text-gray-700">Cliente</label>
+                <button
+                  *ngIf="!isReadOnlyOrder"
+                  type="button"
+                  (click)="goToNewClientForm()"
+                  class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
+                  + Nuevo cliente
+                </button>
+              </div>
               <app-searchable-select
                 [(ngModel)]="order.clienteId"
                 name="clienteId"
                 [labeledOptions]="clientOptions"
-                [disabled]="isCancelledOrder"
+                [disabled]="isReadOnlyOrder"
+                [creatable]="!isReadOnlyOrder"
+                createLabelPrefix="Crear cliente"
+                (createRequested)="quickCreateClient($event)"
+                (searchChange)="pendingClientName = $event"
                 placeholder="Buscar cliente..."
-                listHint=""
-                emptyOptionsMessage="No hay clientes cargados.">
+                listHint="Escribí un nombre existente o usá «Crear cliente» si todavía no está cargado."
+                emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
               </app-searchable-select>
             </div>
 
@@ -78,23 +119,25 @@ import { LucideAngularModule } from 'lucide-angular';
                   [ngModel]="fechaEntregaInput"
                   (ngModelChange)="onFechaEntregaChange($event)"
                   name="fechaEntrega"
-                  [disabled]="isCancelledOrder"
+                  [disabled]="isReadOnlyOrder"
                   class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500">
               </div>
               <div *ngIf="isEditing">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Estado</label>
                 <select
-                  *ngIf="!isCancelledOrder"
+                  *ngIf="!isReadOnlyOrder"
                   [(ngModel)]="orderEstado"
+                  (ngModelChange)="onOrderEstadoChange($event)"
                   name="estado"
-                  class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary"
+                  [disabled]="savingEstado"
+                  class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                   [ngClass]="getOrderStatusBadgeClass(orderEstado)">
                   <option *ngFor="let option of orderStatusOptions" [value]="option.value">
                     {{ option.label }}
                   </option>
                 </select>
                 <span
-                  *ngIf="isCancelledOrder"
+                  *ngIf="isReadOnlyOrder"
                   class="inline-flex px-3 py-2 rounded-lg text-sm font-semibold"
                   [ngClass]="getOrderStatusBadgeClass(order.estado)">
                   {{ getOrderStatusLabel(order.estado) }}
@@ -108,14 +151,14 @@ import { LucideAngularModule } from 'lucide-angular';
                 [(ngModel)]="order.descripcion"
                 name="descripcion"
                 rows="3"
-                [disabled]="isCancelledOrder"
+                [disabled]="isReadOnlyOrder"
                 placeholder="Ej. 13 canguros — seña recibida, faltan talles y diseños"
                 class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500">
               </textarea>
             </div>
           </section>
 
-          <section *ngIf="!isCancelledOrder" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+          <section *ngIf="!isReadOnlyOrder" class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
             <h2 class="text-base font-bold mb-3 flex items-center gap-2">
               <i-lucide name="package" class="w-4 h-4 text-teal-600"></i-lucide>
               Agregar productos
@@ -146,9 +189,12 @@ import { LucideAngularModule } from 'lucide-angular';
                   [class.bg-gray-50]="isProductAdded(item.id)">
                   <div class="min-w-0 flex-1">
                     <p class="text-sm font-medium text-gray-900 truncate">{{ item.nombre }}</p>
-                    <p *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" class="text-xs text-gray-400">
-                      Costo base: {{ '$' + (item.costo || 0) }}
-                      · Stock: {{ item.stockActual || 0 }} u.
+                    <p class="text-xs text-gray-400">
+                      <ng-container *appHasPermission="permissions.STOCK_VIEW_COSTS">
+                        Costo base: {{ '$' + (item.costo || 0) }}
+                        ·
+                      </ng-container>
+                      Stock: {{ item.stockActual || 0 }} u.
                       <span *ngIf="!itemControlsStock(item)"> · sin control</span>
                     </p>
                   </div>
@@ -186,8 +232,8 @@ import { LucideAngularModule } from 'lucide-angular';
                 <colgroup>
                   <col />
                   <col class="w-[4.5rem]" />
-                  <col *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" class="w-[5.5rem]" />
-                  <col *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" class="w-[5.5rem]" />
+                  <col *appHasPermission="permissions.STOCK_VIEW_COSTS" class="w-[5.5rem]" />
+                  <col *appHasPermission="permissions.ORDERS_PERSONALIZATION" class="w-[5.5rem]" />
                   <col *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="w-[6.5rem]" />
                   <col class="w-[2.75rem]" />
                 </colgroup>
@@ -195,9 +241,9 @@ import { LucideAngularModule } from 'lucide-angular';
                   <tr class="text-xs font-medium text-gray-400 uppercase tracking-wide">
                     <th scope="col" class="px-3 py-2 text-left font-medium">Producto</th>
                     <th scope="col" class="px-2 py-2 text-center font-medium">Cant.</th>
-                    <th *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" scope="col" class="px-2 py-2 text-right font-medium">Costo</th>
-                    <th *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" scope="col" class="px-2 py-2 text-right font-medium">Pers.</th>
-                    <th *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" scope="col" class="px-2 py-2 text-right font-medium">Venta</th>
+                    <th *appHasPermission="permissions.STOCK_VIEW_COSTS" scope="col" class="px-2 py-2 text-right font-medium">Costo u.</th>
+                    <th *appHasPermission="permissions.ORDERS_PERSONALIZATION" scope="col" class="px-2 py-2 text-right font-medium">Pers. u.</th>
+                    <th *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" scope="col" class="px-2 py-2 text-right font-medium">Venta u.</th>
                     <th scope="col" class="px-1 py-2"><span class="sr-only">Quitar</span></th>
                   </tr>
                 </thead>
@@ -205,48 +251,71 @@ import { LucideAngularModule } from 'lucide-angular';
                   <tr *ngFor="let line of orderLines; let i = index">
                     <td class="px-3 py-2.5 align-middle">
                       <p class="font-medium text-gray-900 truncate leading-snug" [title]="line.nombre">{{ line.nombre }}</p>
-                      <button
-                        *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS"
-                        type="button"
-                        [disabled]="isCancelledOrder"
-                        (click)="openExtraCostsModal(i)"
-                        class="text-teal-600 text-xs font-medium hover:text-teal-800 leading-none mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {{ getExtraCostsActionLabel(line) }}
-                      </button>
+                      <ng-container *appHasPermission="permissions.ORDERS_PERSONALIZATION">
+                        <button
+                          *ngIf="useDetailedExtraCosts"
+                          type="button"
+                          [disabled]="isReadOnlyOrder"
+                          (click)="openExtraCostsModal(i)"
+                          class="text-teal-600 text-xs font-medium hover:text-teal-800 leading-none mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                          {{ getExtraCostsActionLabel(line) }}
+                        </button>
+                      </ng-container>
+                      <ng-container *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE">
+                        <button
+                          *ngIf="getSuggestedSalePrice(line) as suggested"
+                          type="button"
+                          [disabled]="isReadOnlyOrder"
+                          (click)="applySuggestedSalePrice(line)"
+                          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline leading-none mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
+                          Precio sugerido: {{ suggested }}
+                        </button>
+                      </ng-container>
                     </td>
                     <td class="px-2 py-2.5 align-middle">
                       <input
                         type="number"
                         [(ngModel)]="line.cantidad"
                         [name]="'cantidadDesktop' + i"
-                        [disabled]="isCancelledOrder"
+                        [disabled]="isReadOnlyOrder"
                         (ngModelChange)="onLineQuantityChange(line)"
                         min="1"
                         class="block w-full px-2 py-1.5 rounded-lg border border-gray-200 text-sm text-center tabular-nums">
                     </td>
                     <td
-                      *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS"
+                      *appHasPermission="permissions.STOCK_VIEW_COSTS"
                       class="px-2 py-2.5 align-middle text-right text-sm text-gray-600 tabular-nums">
                       {{ line.costoUnitario }}
                     </td>
                     <td
-                      *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS"
-                      class="px-2 py-2.5 align-middle text-right text-sm text-gray-600 tabular-nums">
-                      {{ getLinePersTotal(line) }}
+                      *appHasPermission="permissions.ORDERS_PERSONALIZATION"
+                      class="px-2 py-2.5 align-middle text-right text-sm tabular-nums">
+                      <input
+                        *ngIf="!useDetailedExtraCosts"
+                        type="number"
+                        [ngModel]="getLinePersUnitCost(line)"
+                        (ngModelChange)="setLinePersUnitCost(line, $event)"
+                        [name]="'persUnitDesktop' + i"
+                        [disabled]="isReadOnlyOrder"
+                        min="0"
+                        class="block w-full px-2 py-1.5 rounded-lg border border-gray-200 text-sm text-right tabular-nums">
+                      <span *ngIf="useDetailedExtraCosts" class="text-gray-600">
+                        {{ getLinePersTotal(line) }}
+                      </span>
                     </td>
                     <td *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="px-2 py-2.5 align-middle">
                       <input
                         type="number"
                         [(ngModel)]="line.precioVenta"
                         [name]="'precioVentaDesktop' + i"
-                        [disabled]="isCancelledOrder"
+                        [disabled]="isReadOnlyOrder"
                         (ngModelChange)="calculateTotals()"
                         min="0"
                         class="block w-full px-2 py-1.5 rounded-lg border border-gray-200 text-sm text-right tabular-nums">
                     </td>
                     <td class="px-1 py-2.5 align-middle text-center">
                       <button
-                        *ngIf="!isCancelledOrder"
+                        *ngIf="!isReadOnlyOrder"
                         type="button"
                         (click)="removeLine(i)"
                         class="inline-flex items-center justify-center w-8 h-8 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
@@ -264,21 +333,38 @@ import { LucideAngularModule } from 'lucide-angular';
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
                       <p class="font-medium text-gray-900">{{ line.nombre }}</p>
-                      <p *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS" class="text-xs text-gray-400 mt-0.5">
-                        Costo stock: {{ line.costoUnitario }}
-                        · Pers.: {{ getLinePersTotal(line) }}
+                      <p class="text-xs text-gray-400 mt-0.5">
+                        <ng-container *appHasPermission="permissions.STOCK_VIEW_COSTS">
+                          Costo u.: {{ line.costoUnitario }}
+                          <ng-container *ngIf="useDetailedExtraCosts"> · </ng-container>
+                        </ng-container>
+                        <ng-container *ngIf="useDetailedExtraCosts && auth.canEditPersonalization">
+                          Pers. u.: {{ getLinePersTotal(line) }}
+                        </ng-container>
                       </p>
-                      <button
-                        *appHasPermission="permissions.ORDERS_VIEW_ECONOMICS"
-                        type="button"
-                        [disabled]="isCancelledOrder"
-                        (click)="openExtraCostsModal(i)"
-                        class="text-teal-600 text-xs font-medium hover:text-teal-800 mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {{ getExtraCostsActionLabel(line) }}
-                      </button>
+                      <ng-container *appHasPermission="permissions.ORDERS_PERSONALIZATION">
+                        <button
+                          *ngIf="useDetailedExtraCosts"
+                          type="button"
+                          [disabled]="isReadOnlyOrder"
+                          (click)="openExtraCostsModal(i)"
+                          class="text-teal-600 text-xs font-medium hover:text-teal-800 mt-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                          {{ getExtraCostsActionLabel(line) }}
+                        </button>
+                      </ng-container>
+                      <ng-container *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE">
+                        <button
+                          *ngIf="getSuggestedSalePrice(line) as suggested"
+                          type="button"
+                          [disabled]="isReadOnlyOrder"
+                          (click)="applySuggestedSalePrice(line)"
+                          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
+                          Precio sugerido: {{ suggested }}
+                        </button>
+                      </ng-container>
                     </div>
                     <button
-                      *ngIf="!isCancelledOrder"
+                      *ngIf="!isReadOnlyOrder"
                       type="button"
                       (click)="removeLine(i)"
                       class="text-red-400 hover:text-red-600 p-1 shrink-0"
@@ -287,31 +373,40 @@ import { LucideAngularModule } from 'lucide-angular';
                     </button>
                   </div>
 
-                  <div
-                    class="grid gap-2"
-                    [ngClass]="auth.canViewOrderSalePrice ? 'grid-cols-2' : 'grid-cols-1'">
+                  <div class="grid grid-cols-2 gap-2">
                     <div>
                       <label class="block text-xs text-gray-500 mb-1">Cantidad</label>
                       <input
                         type="number"
                         [(ngModel)]="line.cantidad"
                         [name]="'cantidadMobile' + i"
-                        [disabled]="isCancelledOrder"
+                        [disabled]="isReadOnlyOrder"
                         (ngModelChange)="onLineQuantityChange(line)"
                         min="1"
                         class="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm">
                     </div>
                     <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE">
-                      <label class="block text-xs text-gray-500 mb-1">Precio venta</label>
+                      <label class="block text-xs text-gray-500 mb-1">Precio venta u.</label>
                       <input
                         type="number"
                         [(ngModel)]="line.precioVenta"
                         [name]="'precioVentaMobile' + i"
-                        [disabled]="isCancelledOrder"
+                        [disabled]="isReadOnlyOrder"
                         (ngModelChange)="calculateTotals()"
                         min="0"
                         class="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm">
                     </div>
+                  </div>
+                  <div *ngIf="auth.canEditPersonalization && !useDetailedExtraCosts" class="mt-2">
+                    <label class="block text-xs text-gray-500 mb-1">Pers. u.</label>
+                    <input
+                      type="number"
+                      [ngModel]="getLinePersUnitCost(line)"
+                      (ngModelChange)="setLinePersUnitCost(line, $event)"
+                      [name]="'persUnitMobile' + i"
+                      [disabled]="isReadOnlyOrder"
+                      min="0"
+                      class="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm">
                   </div>
               </article>
             </div>
@@ -320,7 +415,7 @@ import { LucideAngularModule } from 'lucide-angular';
 
         <div class="space-y-4">
           <div
-            *ngIf="auth.canViewOrderEconomics"
+            *ngIf="auth.canViewEconomics"
             class="bg-gray-900 text-white p-6 rounded-2xl shadow-xl sticky top-8">
             <h2 class="text-lg font-bold mb-4 text-teal-400">Resumen Económico</h2>
 
@@ -350,7 +445,7 @@ import { LucideAngularModule } from 'lucide-angular';
                   type="number"
                   [(ngModel)]="order.senia"
                   name="senia"
-                  [disabled]="isCancelledOrder"
+                  [disabled]="isReadOnlyOrder"
                   (ngModelChange)="calculateTotals()"
                   min="0"
                   class="w-full bg-transparent text-xl font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
@@ -365,6 +460,7 @@ import { LucideAngularModule } from 'lucide-angular';
                   <button
                     type="button"
                     (click)="openPaymentModal()"
+                    *ngIf="auth.canAccessCash"
                     [disabled]="isCancelledOrder || !(order.saldo && order.saldo > 0)"
                     class="text-xs font-semibold text-teal-300 hover:text-teal-200 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Registrar pago / cuota
@@ -373,13 +469,13 @@ import { LucideAngularModule } from 'lucide-angular';
                 <div class="space-y-1 mb-3 max-h-28 overflow-auto">
                   <div
                     *ngFor="let pago of order.pagos"
-                    class="flex items-center justify-between gap-2 text-xs text-gray-300">
+                    class="flex items-center justify-between gap-2 text-[11px] leading-tight text-gray-300">
                     <span class="truncate min-w-0">
-                      {{ getPaymentLabel(pago) }}
+                      {{ getPaymentLineLabel(pago) }}
                       <span class="text-gray-500">· {{ formatPaymentDate(pago.fecha) }}</span>
-                      <span *ngIf="pago.notas" class="text-gray-500">· {{ pago.notas }}</span>
+                      <span *ngIf="shouldShowPaymentNotas(pago)" class="text-gray-500">· {{ pago.notas }}</span>
                     </span>
-                    <span class="font-semibold tabular-nums shrink-0">{{ '$' + pago.monto }}</span>
+                    <span class="text-xs font-semibold tabular-nums shrink-0">{{ '$' + pago.monto }}</span>
                   </div>
                 </div>
                 <div class="flex justify-between text-xs text-gray-400">
@@ -405,11 +501,14 @@ import { LucideAngularModule } from 'lucide-angular';
               </div>
             </div>
 
-            <ng-container *ngIf="!isCancelledOrder">
-              <div *ngIf="isEditing && order.ventaId" class="mb-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-                Venta registrada
-                <a routerLink="/sales" class="font-semibold underline hover:text-teal-900">Ver en Ventas</a>
-              </div>
+            <a
+              *ngIf="isEditing && order.ventaId"
+              [routerLink]="['/sales']"
+              [queryParams]="{ ventaId: order.ventaId }"
+              class="mb-3 inline-block text-xs font-semibold text-teal-300 hover:text-teal-200 hover:underline">
+              Ver venta registrada
+            </a>
+            <ng-container *ngIf="!isReadOnlyOrder">
               <button
                 *ngIf="canRegisterSale"
                 type="button"
@@ -434,18 +533,47 @@ import { LucideAngularModule } from 'lucide-angular';
           </div>
 
           <div
-            *ngIf="!auth.canViewOrderEconomics"
+            *ngIf="!auth.canViewEconomics"
             class="bg-white border border-gray-100 p-6 rounded-2xl shadow-sm sticky top-8">
             <h2 class="text-lg font-bold mb-4 text-gray-900">Resumen</h2>
-            <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-6">
+            <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-4">
               <p class="text-xs font-bold text-gray-400 uppercase mb-1">Total venta</p>
               <p class="text-2xl font-bold text-teal-600">{{ '$' + (order.total || 0) }}</p>
             </div>
-            <ng-container *ngIf="!isCancelledOrder">
-              <div *ngIf="isEditing && order.ventaId" class="mb-3 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-                Venta registrada
-                <a routerLink="/sales" class="font-semibold underline hover:text-teal-900">Ver en Ventas</a>
-              </div>
+            <div class="mb-4 p-3 rounded-xl border border-gray-100 bg-gray-50 space-y-2">
+              <ng-container *ngIf="!seniaBloqueada">
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
+                <input
+                  type="number"
+                  [(ngModel)]="order.senia"
+                  name="seniaStaffSummary"
+                  [disabled]="isReadOnlyOrder"
+                  (ngModelChange)="calculateTotals()"
+                  min="0"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-lg font-bold tabular-nums outline-none focus:ring-2 focus:ring-teal-500">
+                <p class="text-xs text-gray-500">
+                  Al guardar el pedido, la seña queda registrada y bloqueada.
+                </p>
+              </ng-container>
+              <ng-container *ngIf="seniaBloqueada">
+                <div class="flex justify-between text-sm">
+                  <span class="text-gray-600">Total pagado</span>
+                  <span class="font-semibold tabular-nums text-gray-900">{{ '$' + getTotalPagado() }}</span>
+                </div>
+                <div class="flex justify-between text-sm pt-2 border-t border-gray-200">
+                  <span class="text-gray-600">Saldo pendiente</span>
+                  <span class="font-semibold tabular-nums text-orange-600">{{ '$' + (order.saldo || 0) }}</span>
+                </div>
+              </ng-container>
+            </div>
+            <a
+              *ngIf="isEditing && order.ventaId"
+              [routerLink]="['/sales']"
+              [queryParams]="{ ventaId: order.ventaId }"
+              class="mb-3 inline-block text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+              Ver venta registrada
+            </a>
+            <ng-container *ngIf="!isReadOnlyOrder">
               <button
                 *ngIf="canRegisterSale"
                 type="button"
@@ -688,14 +816,29 @@ import { LucideAngularModule } from 'lucide-angular';
       </div>
     </div>
 
+    <app-transaction-modal
+      [open]="clientModalOpen"
+      title="Nuevo cliente"
+      subtitle="Al guardar queda seleccionado en este pedido."
+      maxWidthClass="max-w-lg"
+      (closed)="closeClientModal()">
+      <app-client-form-panel
+        [prefillNombre]="clientModalPrefillNombre"
+        [showHistorialLink]="false"
+        (saved)="onClientSavedFromModal($event)"
+        (cancelled)="closeClientModal()">
+      </app-client-form-panel>
+    </app-transaction-modal>
+
     <ng-template #orderActions>
       <button
+        *ngIf="!isEditing || isDraft"
         type="button"
         (click)="saveDraft()"
         class="w-full mb-2 py-2.5 rounded-xl border border-gray-600 text-gray-200 text-sm font-medium hover:bg-gray-800 transition-all"
-        [class.!border-gray-200]="!auth.canViewOrderEconomics"
-        [class.!text-gray-700]="!auth.canViewOrderEconomics"
-        [class.hover:!bg-gray-50]="!auth.canViewOrderEconomics">
+        [class.!border-gray-200]="!auth.canViewEconomics"
+        [class.!text-gray-700]="!auth.canViewEconomics"
+        [class.hover:!bg-gray-50]="!auth.canViewEconomics">
         Guardar borrador
       </button>
       <button
@@ -711,6 +854,7 @@ export class NewOrderComponent implements OnInit {
   private clientService = inject(ClientService);
   private stockService = inject(StockService);
   private orderService = inject(OrderService);
+  private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
@@ -723,6 +867,11 @@ export class NewOrderComponent implements OnInit {
   readonly itemControlsStock = itemControlsStock;
 
   clients: Client[] = [];
+  pendingClientName = '';
+  creatingClient = false;
+  clientModalOpen = false;
+  clientModalPrefillNombre = '';
+  appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   editingOrderId: string | null = null;
   isDraftOrder = false;
   productSearch = '';
@@ -738,6 +887,8 @@ export class NewOrderComponent implements OnInit {
   paymentModalOpen = false;
   paymentModo: 'total' | 'parcial' = 'total';
   paymentMonto: number | null = null;
+  savingEstado = false;
+  private savedOrderEstado = '';
 
   private productSearchTimeout?: ReturnType<typeof setTimeout>;
 
@@ -759,14 +910,60 @@ export class NewOrderComponent implements OnInit {
     return normalizeOrderStatus(this.order.estado) === 'cancelado';
   }
 
+  get isLockedOrder(): boolean {
+    return orderIsLockedForEdit(this.order.estado);
+  }
+
+  get isReadOnlyOrder(): boolean {
+    if (this.isCancelledOrder || this.isLockedOrder) return true;
+    if (this.isEditing && !this.auth.canEditRecords) return true;
+    return false;
+  }
+
   get orderEstado(): string {
     const normalized = normalizeOrderStatus(this.order.estado);
     return normalized === 'otro' ? 'pendiente' : normalized;
   }
 
   set orderEstado(value: string) {
-    if (this.isCancelledOrder) return;
+    if (this.isReadOnlyOrder) return;
     this.order.estado = value;
+  }
+
+  onOrderEstadoChange(newEstado: string) {
+    if (!this.editingOrderId || this.isReadOnlyOrder || this.savingEstado) return;
+
+    const previous = normalizeOrderStatus(this.savedOrderEstado || this.order.estado);
+    const next = normalizeOrderStatus(newEstado);
+    if (next === previous) return;
+
+    this.savingEstado = true;
+    this.orderService.updateOrderStatus(this.editingOrderId, newEstado).subscribe({
+      next: (result) => {
+        this.applyOrderUpdateResult(result);
+        this.savedOrderEstado = newEstado;
+        this.savingEstado = false;
+      },
+      error: (err: HttpErrorResponse) => {
+        this.savingEstado = false;
+        this.order.estado = this.savedOrderEstado || previous;
+        this.dialogService.alert({
+          title: 'Error',
+          message:
+            typeof err.error?.error === 'string'
+              ? err.error.error
+              : 'No se pudo actualizar el estado del pedido.',
+        });
+      },
+    });
+  }
+
+  private applyOrderUpdateResult(result: OrderUpdateResult) {
+    if (result.estado) this.order.estado = result.estado;
+    if (result.pagos) this.order.pagos = result.pagos;
+    if (result.totalPagado !== undefined) this.order.totalPagado = result.totalPagado;
+    if (result.saldo !== undefined) this.order.saldo = result.saldo;
+    if (result.ventaId) this.order.ventaId = result.ventaId;
   }
 
   get seniaBloqueada(): boolean {
@@ -778,7 +975,7 @@ export class NewOrderComponent implements OnInit {
   }
 
   get canRegisterSale(): boolean {
-    if (!this.editingOrderId || this.isCancelledOrder) return false;
+    if (!this.editingOrderId || this.isReadOnlyOrder) return false;
     return canRegisterSaleFromOrder({
       estado: this.order.estado,
       ventaId: this.order.ventaId,
@@ -802,6 +999,10 @@ export class NewOrderComponent implements OnInit {
       }));
   }
 
+  get useDetailedExtraCosts(): boolean {
+    return usesDetailedOrderExtraCosts(this.appConfig);
+  }
+
   get extraCostsModalLine(): OrderLineItem | null {
     if (this.extraCostsModalIndex === null) return null;
     return this.orderLines[this.extraCostsModalIndex] ?? null;
@@ -815,14 +1016,63 @@ export class NewOrderComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.clientService.getClients().subscribe((clients) => {
-      this.clients = clients;
+    this.catalogConfigService.getAppConfig().subscribe((config) => {
+      this.appConfig = config;
     });
 
+    this.refreshClients();
     this.editingOrderId = this.route.snapshot.paramMap.get('id');
+
     if (this.editingOrderId) {
       this.loadOrder(this.editingOrderId);
     }
+  }
+
+  private refreshClients() {
+    this.clientService.getClients().subscribe((clients) => {
+      this.clients = clients;
+    });
+  }
+
+  quickCreateClient(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || this.creatingClient || this.isReadOnlyOrder) return;
+
+    this.creatingClient = true;
+    this.clientService.createClient({ nombre: trimmed }).subscribe({
+      next: (response) => {
+        this.creatingClient = false;
+        const client: Client = { id: response.id, nombre: trimmed };
+        this.clients = [...this.clients, client];
+        this.order.clienteId = response.id;
+        this.pendingClientName = trimmed;
+      },
+      error: () => {
+        this.creatingClient = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo crear el cliente. Intentá de nuevo o usá «Nuevo cliente» para cargar la ficha completa.',
+        });
+      },
+    });
+  }
+
+  goToNewClientForm() {
+    if (this.isReadOnlyOrder) return;
+    this.clientModalPrefillNombre = this.pendingClientName.trim();
+    this.clientModalOpen = true;
+  }
+
+  closeClientModal() {
+    this.clientModalOpen = false;
+    this.clientModalPrefillNombre = '';
+  }
+
+  onClientSavedFromModal(event: ClientFormSaveEvent) {
+    this.order.clienteId = event.id;
+    this.pendingClientName = event.client.nombre ?? '';
+    this.refreshClients();
+    this.closeClientModal();
   }
 
   registerSaleFromOrder() {
@@ -907,10 +1157,23 @@ export class NewOrderComponent implements OnInit {
       cantidad: 1,
       costoUnitario,
       costosExtra: [],
-      precioVenta: precioSugerido,
+      precioVenta: null,
+      precioSugerido,
       controlaStock: itemControlsStock(item),
       stockDisponible: Number(item.stockActual) || 0,
     });
+    this.calculateTotals();
+  }
+
+  getSuggestedSalePrice(line: OrderLineItem): number | null {
+    const suggested = Number(line.precioSugerido);
+    return suggested > 0 ? suggested : null;
+  }
+
+  applySuggestedSalePrice(line: OrderLineItem) {
+    const suggested = this.getSuggestedSalePrice(line);
+    if (suggested == null) return;
+    line.precioVenta = suggested;
     this.calculateTotals();
   }
 
@@ -1044,6 +1307,16 @@ export class NewOrderComponent implements OnInit {
     return (line.costosExtra ?? []).reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
   }
 
+  getLinePersUnitCost(line: OrderLineItem): number {
+    return this.getLineCustomizationTotal(line);
+  }
+
+  setLinePersUnitCost(line: OrderLineItem, value: number | string | null) {
+    const costo = Math.max(0, Number(value) || 0);
+    line.costosExtra = costo > 0 ? [{ nombre: 'Personalización', costo }] : [];
+    this.calculateTotals();
+  }
+
   getLinePersTotal(line: OrderLineItem): number {
     return (Number(line.cantidad) || 0) * this.getLineCustomizationTotal(line);
   }
@@ -1116,9 +1389,30 @@ export class NewOrderComponent implements OnInit {
 
   getPaymentLabel(pago: OrderPayment): string {
     if (pago.tipo === 'seña') return 'Seña';
+    if (pago.notas === 'Pago total') return 'Pago total';
     if (pago.tipo === 'cuota') return 'Cuota';
     if (pago.tipo === 'extra') return 'Pago extra';
     return 'Pago';
+  }
+
+  getPaymentLineLabel(pago: OrderPayment): string {
+    const ventaCobro = this.extractVentaCobroLabel(pago.notas);
+    if (ventaCobro) return ventaCobro;
+    return this.getPaymentLabel(pago);
+  }
+
+  shouldShowPaymentNotas(pago: OrderPayment): boolean {
+    if (!pago.notas?.trim()) return false;
+    if (pago.notas === 'Pago total') return false;
+    if (this.extractVentaCobroLabel(pago.notas)) return false;
+    return true;
+  }
+
+  private extractVentaCobroLabel(notas?: string): string | null {
+    if (!notas) return null;
+    const match = notas.match(/venta\s*#(\S+)/i);
+    if (!match) return null;
+    return `Cobro venta #${match[1]}`;
   }
 
   setPaymentModo(modo: 'total' | 'parcial') {
@@ -1131,6 +1425,7 @@ export class NewOrderComponent implements OnInit {
   }
 
   openPaymentModal() {
+    if (!this.auth.canAccessCash) return;
     if (!this.ensureEditable('registrar pagos')) return;
     if (!this.editingOrderId || !(this.order.saldo && this.order.saldo > 0)) return;
     this.paymentModo = 'total';
@@ -1233,7 +1528,8 @@ export class NewOrderComponent implements OnInit {
     if (!this.order.clienteId) {
       this.dialogService.alert({
         title: 'Campo requerido',
-        message: 'Seleccioná un cliente',
+        message:
+          'Seleccioná un cliente del listado o creá uno escribiendo el nombre y eligiendo «Crear cliente».',
       });
       return false;
     }
@@ -1248,6 +1544,18 @@ export class NewOrderComponent implements OnInit {
       });
       return false;
     }
+
+    if (this.auth.canViewOrderSalePrice) {
+      const missingPrice = this.orderLines.filter((line) => !Number(line.precioVenta));
+      if (missingPrice.length > 0) {
+        this.dialogService.alert({
+          title: 'Campo requerido',
+          message: 'Ingresá el precio de venta de cada producto antes de confirmar el pedido.',
+        });
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -1321,7 +1629,8 @@ export class NewOrderComponent implements OnInit {
       : this.orderService.createOrder(payload as Order);
 
     request.subscribe({
-      next: () => {
+      next: (result) => {
+        this.applyOrderUpdateResult(result);
         this.isDraftOrder = estado === 'borrador';
         this.router.navigate(['/orders']);
       },
@@ -1361,6 +1670,7 @@ export class NewOrderComponent implements OnInit {
           ventaId: order.ventaId,
           items: order.items ?? [],
         };
+        this.savedOrderEstado = this.order.estado ?? 'pendiente';
 
         if (order.items?.length) {
           this.orderLines = order.items.map((line) => this.normalizeOrderLine(line));
@@ -1431,6 +1741,8 @@ export class NewOrderComponent implements OnInit {
             if (line.stockItemId !== stockItemId) continue;
             line.controlaStock = itemControlsStock(stockItem);
             line.stockDisponible = Number(stockItem.stockActual) || 0;
+            const costo = Number(line.costoUnitario) || Number(stockItem.costo) || 0;
+            line.precioSugerido = Number(stockItem.precioSugerido) || costo * 2 || undefined;
           }
         },
       });
@@ -1438,6 +1750,13 @@ export class NewOrderComponent implements OnInit {
   }
 
   private ensureEditable(action: string): boolean {
+    if (this.isLockedOrder) {
+      this.dialogService.alert({
+        title: 'Pedido entregado total',
+        message: `Este pedido fue entregado total y no se puede ${action}.`,
+      });
+      return false;
+    }
     if (!this.isCancelledOrder) return true;
     this.dialogService.alert({
       title: 'Pedido cancelado',

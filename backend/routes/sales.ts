@@ -76,7 +76,14 @@ function isCancelledStatus(estado?: string) {
 
 function isDeliveredStatus(estado?: string) {
   const value = normalizeEstado(estado);
-  return value === 'entregado' || value.includes('entregad');
+  if (
+    value === 'entregado_con_saldo' ||
+    value.includes('entregado_con_saldo') ||
+    value.includes('entregado con saldo')
+  ) {
+    return true;
+  }
+  return value === 'entregado' || (value.includes('entregad') && !value.includes('saldo'));
 }
 
 function normalizePagos(order: OrderRecord): OrderPayment[] {
@@ -743,7 +750,7 @@ router.post('/:businessId', async (req, res) => {
           monto: montoCobrado,
           fecha: timestamp,
           movimientoCajaId: movimientoCajaId ?? undefined,
-          notas: `Cobro en entrega · venta #${ventaLabel}`,
+          notas: `Cobro venta #${ventaLabel}`,
         });
       }
 

@@ -9,6 +9,9 @@ import {
   StockService,
 } from '../../core/services/stock.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { AuthService } from '../../core/services/auth.service';
+import { PERMISSIONS } from '../../core/constants/permissions';
+import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { LucideAngularModule } from 'lucide-angular';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
@@ -22,7 +25,7 @@ type StockTab = 'productos' | 'movimientos';
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -54,11 +57,11 @@ type StockTab = 'productos' | 'movimientos';
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
           <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Valor estimado</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + estimatedStockValue }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm" [class.col-span-2]="!auth.canViewStockCosts" [class.md:col-span-1]="auth.canViewStockCosts">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
           <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
         </div>
@@ -101,7 +104,8 @@ type StockTab = 'productos' | 'movimientos';
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Stock</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Mín. stock</th>
+              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
@@ -123,14 +127,17 @@ type StockTab = 'productos' | 'movimientos';
                 <div [class]="(item.stockActual || 0) <= (item.stockMinimo || 0) ? 'text-orange-600 font-bold' : 'text-gray-900'">
                   {{ item.stockActual }} u.
                 </div>
-                <div class="text-xs text-gray-400">Min: {{ item.stockMinimo || 0 }}</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600">
+              <td class="px-6 py-4 text-sm text-gray-600 tabular-nums">
+                {{ item.stockMinimo || 0 }} u.
+              </td>
+              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
                 {{ '$' + (item.costo || 0) }}
               </td>
               <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center gap-1">
                   <button
+                    *ngIf="auth.canEditRecords"
                     type="button"
                     (click)="openEditItem(item)"
                     title="Editar"
@@ -138,6 +145,7 @@ type StockTab = 'productos' | 'movimientos';
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
+                    *ngIf="auth.canDeleteRecords"
                     type="button"
                     (click)="confirmDeleteItem(item)"
                     title="Eliminar"
@@ -148,15 +156,15 @@ type StockTab = 'productos' | 'movimientos';
               </td>
             </tr>
             <tr *ngIf="loadingItems">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
             </tr>
             <tr *ngIf="!loadingItems && items.length === 0">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
               </td>
             </tr>
             <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron productos para "{{ searchQuery }}".
               </td>
             </tr>
@@ -286,6 +294,8 @@ type StockTab = 'productos' | 'movimientos';
 export class StockComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+  readonly auth = inject(AuthService);
+  readonly permissions = PERMISSIONS;
 
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);

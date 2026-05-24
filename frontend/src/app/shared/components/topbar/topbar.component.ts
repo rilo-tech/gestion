@@ -2,6 +2,8 @@ import { Component, inject } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../../core/services/auth.service';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
+import { ThemeService } from '../../../core/services/theme.service';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-topbar',
@@ -23,10 +25,15 @@ import { LayoutNavService } from '../../../core/services/layout-nav.service';
         <p class="text-sm font-semibold text-gray-900 truncate">RILO Gestión</p>
       </div>
 
-      <button
-        type="button"
-        title="Próximamente: tu perfil y preferencias"
-        class="inline-flex items-center gap-2.5 rounded-full border border-gray-100 bg-gray-50/90 pl-1 pr-2 sm:pr-3 py-1 hover:bg-gray-100 transition-colors max-w-[180px] sm:max-w-[220px] ml-auto lg:ml-0">
+      <div class="inline-flex items-center gap-1.5 sm:gap-2.5 ml-auto">
+        <button
+          type="button"
+          (click)="theme.toggle()"
+          [title]="theme.preference() === 'dark' ? 'Usar fondo claro' : 'Usar fondo oscuro'"
+          class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <i-lucide [name]="theme.preference() === 'dark' ? 'sun' : 'moon'" class="w-4 h-4"></i-lucide>
+        </button>
+
         <span
           class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold">
           {{ auth.userInitial }}
@@ -39,11 +46,25 @@ import { LayoutNavService } from '../../../core/services/layout-nav.service';
             {{ auth.currentRoleLabel }}
           </span>
         </span>
-      </button>
+        <button
+          type="button"
+          (click)="logout()"
+          title="Cerrar sesión"
+          class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <i-lucide name="log-out" class="w-4 h-4"></i-lucide>
+        </button>
+      </div>
     </header>
   `,
 })
 export class TopbarComponent {
   readonly auth = inject(AuthService);
   readonly nav = inject(LayoutNavService);
+  readonly theme = inject(ThemeService);
+  private router = inject(Router);
+
+  logout() {
+    this.auth.logout();
+    this.router.navigate(['/']);
+  }
 }

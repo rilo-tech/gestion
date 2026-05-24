@@ -4,6 +4,12 @@ import { db } from '../firebase.ts';
 const router = express.Router();
 
 type FieldInputMode = 'lista' | 'texto';
+type CajaConceptoTipo = 'ingreso' | 'egreso' | 'ambos';
+
+interface CajaConcepto {
+  nombre: string;
+  tipo: CajaConceptoTipo;
+}
 
 const DEFAULT_APP_CONFIG = {
   productos: {
@@ -22,13 +28,18 @@ const DEFAULT_APP_CONFIG = {
     etiquetas: [] as string[],
     modo: { etiquetas: 'texto' as FieldInputMode },
   },
+  proveedores: {
+    etiquetas: [] as string[],
+    modo: { etiquetas: 'texto' as FieldInputMode },
+  },
   caja: {
-    conceptosIngreso: [] as string[],
-    conceptosEgreso: [] as string[],
+    conceptos: [] as CajaConcepto[],
     modo: {
-      conceptosIngreso: 'texto' as FieldInputMode,
-      conceptosEgreso: 'texto' as FieldInputMode,
+      conceptos: 'texto' as FieldInputMode,
     },
+  },
+  pedidos: {
+    costosPersonalizacionDetallados: true,
   },
 };
 
@@ -37,6 +48,65 @@ function normalizeList(values: unknown): string[] {
   return [...new Set(values.map((v) => String(v).trim()).filter(Boolean))].sort(
     (a, b) => a.localeCompare(b, 'es')
   );
+}
+
+function normalizeCajaConceptoTipo(value: unknown): CajaConceptoTipo {
+  if (value === 'ingreso' || value === 'egreso' || value === 'ambos') return value;
+  if (value === 'suma') return 'ingreso';
+  if (value === 'resta') return 'egreso';
+  return 'ambos';
+}
+
+function mergeCajaConcepto(
+  map: Map<string, CajaConcepto>,
+  nombre: string,
+  tipo: CajaConceptoTipo
+) {
+  const key = nombre.toLowerCase();
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, { nombre, tipo });
+    return;
+  }
+
+  if (existing.tipo === tipo || existing.tipo === 'ambos' || tipo === 'ambos') {
+    existing.tipo = 'ambos';
+    return;
+  }
+
+  existing.tipo = 'ambos';
+}
+
+function sortCajaConceptos(conceptos: CajaConcepto[]): CajaConcepto[] {
+  return [...conceptos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+function normalizeCajaConceptos(caja: Record<string, unknown>): CajaConcepto[] {
+  const raw = caja.conceptos;
+  if (Array.isArray(raw) && raw.length > 0) {
+    const map = new Map<string, CajaConcepto>();
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const nombre = item.trim();
+        if (nombre) mergeCajaConcepto(map, nombre, 'ambos');
+        continue;
+      }
+
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      const nombre = String(obj.nombre ?? '').trim();
+      if (!nombre) continue;
+      mergeCajaConcepto(map, nombre, normalizeCajaConceptoTipo(obj.tipo));
+    }
+    return sortCajaConceptos([...map.values()]);
+  }
+
+  const ingreso = normalizeList(caja.conceptosIngreso);
+  const egreso = normalizeList(caja.conceptosEgreso);
+  const map = new Map<string, CajaConcepto>();
+  for (const nombre of ingreso) mergeCajaConcepto(map, nombre, 'ingreso');
+  for (const nombre of egreso) mergeCajaConcepto(map, nombre, 'egreso');
+  return sortCajaConceptos([...map.values()]);
 }
 
 function normalizeMode(value: unknown, fallback: FieldInputMode = 'texto'): FieldInputMode {
@@ -79,12 +149,15 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
   const productos = (data.productos as Record<string, unknown>) ?? data;
   const clientes = (data.clientes as Record<string, unknown>) ?? {};
   const clientesModo = (clientes.modo as Record<string, unknown>) ?? {};
+  const proveedores = (data.proveedores as Record<string, unknown>) ?? {};
+  const proveedoresModo = (proveedores.modo as Record<string, unknown>) ?? {};
 
   const etiquetas = normalizeList(clientes.etiquetas);
+  const etiquetasProveedores = normalizeList(proveedores.etiquetas);
   const caja = (data.caja as Record<string, unknown>) ?? {};
   const cajaModo = (caja.modo as Record<string, unknown>) ?? {};
-  const conceptosIngreso = normalizeList(caja.conceptosIngreso);
-  const conceptosEgreso = normalizeList(caja.conceptosEgreso);
+  const conceptos = normalizeCajaConceptos(caja);
+  const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
 
   return {
     productos: normalizeProductos(productos as Record<string, unknown>),
@@ -97,19 +170,30 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
         ),
       },
     },
-    caja: {
-      conceptosIngreso,
-      conceptosEgreso,
+    proveedores: {
+      etiquetas: etiquetasProveedores,
       modo: {
-        conceptosIngreso: normalizeMode(
-          cajaModo.conceptosIngreso,
-          conceptosIngreso.length > 0 ? 'lista' : 'texto'
-        ),
-        conceptosEgreso: normalizeMode(
-          cajaModo.conceptosEgreso,
-          conceptosEgreso.length > 0 ? 'lista' : 'texto'
+        etiquetas: normalizeMode(
+          proveedoresModo.etiquetas,
+          etiquetasProveedores.length > 0 ? 'lista' : 'texto'
         ),
       },
+    },
+    caja: {
+      conceptos,
+      modo: {
+        conceptos: normalizeMode(
+          cajaModo.conceptos ??
+            (cajaModo.conceptosIngreso === 'lista' || cajaModo.conceptosEgreso === 'lista'
+              ? 'lista'
+              : undefined),
+          conceptos.length > 0 ? 'lista' : 'texto'
+        ),
+      },
+    },
+    pedidos: {
+      costosPersonalizacionDetallados:
+        pedidos.costosPersonalizacionDetallados !== false,
     },
   };
 }

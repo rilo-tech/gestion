@@ -1,5 +1,6 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { OrderService, Order, formatOrderNumber } from '../../core/services/order.service';
 import { ClientService } from '../../core/services/client.service';
 import { DialogService } from '../../core/services/dialog.service';
@@ -13,16 +14,16 @@ import {
 import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
-  TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-orders',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, RouterLink],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -64,11 +65,20 @@ import { Router, RouterLink } from '@angular/router';
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
+          <input
+            [(ngModel)]="searchQuery"
+            name="ordersSearchQuery"
+            placeholder="Buscar por pedido, cliente, descripción, estado o producto..."
+            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+        </div>
         <div [class]="tableScrollClass">
         <table [class]="tableMinWidthClass">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pedido / Cliente</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Pedido</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Entrega</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Total / Saldo</th>
@@ -77,19 +87,19 @@ import { Router, RouterLink } from '@angular/router';
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let order of orders"
+              *ngFor="let order of filteredOrders"
               (click)="openEditOrder(order)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
+              <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                {{ getOrderDate(order) ? (getOrderDate(order) | date:'dd/MM/yyyy') : '—' }}
+              </td>
+              <td class="px-6 py-4 text-sm font-semibold text-teal-700 whitespace-nowrap">
+                {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : '—' }}
+              </td>
               <td class="px-6 py-4">
                 <div class="font-medium text-gray-900">{{ getClientName(order) }}</div>
-                <div *ngIf="getOrderNumber(order)" class="text-xs font-semibold text-teal-700 mb-0.5">
-                  Pedido #{{ getOrderNumber(order) }}
-                </div>
-                <div class="text-sm text-gray-500 line-clamp-1">
-                  {{ order.descripcion || 'Sin descripción' }}
-                </div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600">
+              <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
               </td>
               <td class="px-6 py-4">
@@ -113,9 +123,9 @@ import { Router, RouterLink } from '@angular/router';
                   <button
                     type="button"
                     (click)="openEditOrder(order)"
-                    [title]="isCancelledOrder(order) ? 'Ver pedido' : 'Editar'"
+                    [title]="isCancelledOrder(order) ? 'Ver pedido' : (auth.canEditRecords ? 'Editar' : 'Ver pedido')"
                     class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                    <i-lucide [name]="auth.canEditRecords ? 'pencil' : 'clipboard-list'" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
                     *ngIf="canRegisterSale(order)"
@@ -126,7 +136,7 @@ import { Router, RouterLink } from '@angular/router';
                     <i-lucide name="truck" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
-                    *ngIf="!isCancelledOrder(order)"
+                    *ngIf="!isCancelledOrder(order) && auth.canEditRecords"
                     type="button"
                     (click)="confirmCancelOrder(order)"
                     title="Cancelar pedido"
@@ -136,13 +146,18 @@ import { Router, RouterLink } from '@angular/router';
                 </div>
               </td>
             </tr>
+            <tr *ngIf="!loading && orders.length > 0 && filteredOrders.length === 0">
+              <td colspan="7" class="px-6 py-12 text-center text-gray-400">
+                No se encontraron pedidos para "{{ searchQuery }}".
+              </td>
+            </tr>
             <tr *ngIf="!loading && orders.length === 0">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+              <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 No hay pedidos registrados.
               </td>
             </tr>
             <tr *ngIf="loading">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+              <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 Cargando pedidos...
               </td>
             </tr>
@@ -156,8 +171,9 @@ import { Router, RouterLink } from '@angular/router';
 export class OrderListComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
-  readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly tableMinWidthClass = 'w-full min-w-[920px] text-left border-collapse';
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+  readonly auth = inject(AuthService);
 
   private orderService = inject(OrderService);
   private clientService = inject(ClientService);
@@ -172,6 +188,30 @@ export class OrderListComponent implements OnInit {
   orders: Order[] = [];
   clientNameById = new Map<string, string>();
   loading = true;
+  searchQuery = '';
+
+  get filteredOrders(): Order[] {
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return this.orders;
+
+    return this.orders.filter((order) => {
+      const clientName = this.getClientName(order).toLowerCase();
+      const orderNumber = this.getOrderNumber(order).toLowerCase();
+      const descripcion = (order.descripcion || '').toLowerCase();
+      const estado = getOrderStatusLabel(order.estado).toLowerCase();
+      const productos = (order.items ?? [])
+        .map((line) => line.nombre?.toLowerCase() || '')
+        .join(' ');
+
+      return (
+        clientName.includes(query) ||
+        orderNumber.includes(query) ||
+        descripcion.includes(query) ||
+        estado.includes(query) ||
+        productos.includes(query)
+      );
+    });
+  }
 
   get statusCounts() {
     const counts: Record<(typeof ORDER_STATUS_CARD_KEYS)[number], number> = {
@@ -184,7 +224,9 @@ export class OrderListComponent implements OnInit {
 
     for (const order of this.orders) {
       const status = normalizeOrderStatus(order.estado);
-      if (status !== 'otro') {
+      if (status === 'entregado_con_saldo') {
+        counts.entregado++;
+      } else if (status !== 'otro') {
         counts[status]++;
       }
     }
@@ -221,6 +263,10 @@ export class OrderListComponent implements OnInit {
 
   getOrderNumber(order: Order): string {
     return formatOrderNumber(order);
+  }
+
+  getOrderDate(order: Order): string | null {
+    return order.createdAt ?? null;
   }
 
   openEditOrder(order: Order) {

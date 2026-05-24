@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export interface OrderExtraCost {
   tipo: string;
@@ -23,7 +24,9 @@ export interface OrderLineItem {
   /** Suma de costosExtra; se mantiene por compatibilidad al guardar. */
   costoPersonalizacion?: number;
   costosExtra?: OrderLineExtraCost[];
-  precioVenta: number;
+  precioVenta: number | null;
+  /** Enriquecido desde stock al armar el pedido; no se persiste. */
+  precioSugerido?: number;
   /** Enriquecido desde stock al armar el pedido; no se persiste. */
   controlaStock?: boolean;
   stockDisponible?: number;
@@ -57,6 +60,7 @@ export interface Order {
   stockDescontado?: boolean;
   numeroPedido?: number;
   numeroPedidoLabel?: string;
+  createdAt?: string;
   ventaId?: string;
   entregadoAt?: string;
   items: OrderLineItem[];
@@ -71,12 +75,30 @@ export function formatOrderNumber(order: Pick<Order, 'numeroPedido' | 'numeroPed
   return '';
 }
 
+export interface OrderUpdateResult {
+  id: string;
+  estado?: string;
+  pagos?: OrderPayment[];
+  totalPagado?: number;
+  saldo?: number;
+  entregadoAt?: string;
+  ventaId?: string;
+  ventaLabel?: string;
+  deliveryPaymentApplied?: boolean;
+  saleCreated?: boolean;
+  locked?: boolean;
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class OrderService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getOrders(): Observable<Order[]> {
     return this.http.get<Order[]>(`/api/orders/${this.businessId}`);
@@ -90,12 +112,12 @@ export class OrderService {
     return this.http.post<{ id: string }>(`/api/orders/${this.businessId}`, order);
   }
 
-  updateOrder(orderId: string, order: Partial<Order>): Observable<{ id: string }> {
-    return this.http.patch<{ id: string }>(`/api/orders/${this.businessId}/${orderId}`, order);
+  updateOrder(orderId: string, order: Partial<Order>): Observable<OrderUpdateResult> {
+    return this.http.patch<OrderUpdateResult>(`/api/orders/${this.businessId}/${orderId}`, order);
   }
 
-  updateOrderStatus(orderId: string, status: string): Observable<{ id: string }> {
-    return this.http.patch<{ id: string }>(`/api/orders/${this.businessId}/${orderId}`, {
+  updateOrderStatus(orderId: string, status: string): Observable<OrderUpdateResult> {
+    return this.http.patch<OrderUpdateResult>(`/api/orders/${this.businessId}/${orderId}`, {
       estado: status,
     });
   }

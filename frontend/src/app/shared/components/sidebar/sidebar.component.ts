@@ -1,9 +1,17 @@
-import { Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
+import { AuthService } from '../../../core/services/auth.service';
 import { filter, Subscription } from 'rxjs';
+
+interface NavItem {
+  path: string;
+  icon: string;
+  label: string;
+  visible?: () => boolean;
+}
 
 @Component({
   selector: 'app-sidebar',
@@ -16,7 +24,9 @@ import { filter, Subscription } from 'rxjs';
       <div class="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <div class="min-w-0">
           <h1 class="text-lg sm:text-xl font-bold tracking-tight text-teal-400 truncate">RILO Gestión</h1>
-          <p class="text-[11px] text-gray-500 mt-1">Panel de gestión</p>
+          <p class="text-[11px] text-gray-500 mt-1">
+            {{ auth.isPlatformAdmin ? 'Administración plataforma' : 'Panel de gestión' }}
+          </p>
         </div>
         <button
           type="button"
@@ -30,7 +40,7 @@ import { filter, Subscription } from 'rxjs';
       <nav class="flex-1 px-3 pb-4 flex flex-col min-h-0">
         <div class="space-y-0.5 overflow-y-auto flex-1">
           <a
-            *ngFor="let item of navItems"
+            *ngFor="let item of visibleNavItems"
             [routerLink]="item.path"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
             (click)="nav.closeMobileMenu()"
@@ -40,8 +50,19 @@ import { filter, Subscription } from 'rxjs';
           </a>
         </div>
 
-        <div class="mt-3 pt-3 border-t border-gray-800 shrink-0">
+        <div class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
           <a
+            *ngIf="!auth.isPlatformAdmin"
+            routerLink="/settings"
+            [queryParams]="{ tab: 'apariencia' }"
+            routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
+            (click)="nav.closeMobileMenu()"
+            class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-800/80 transition-colors">
+            <i-lucide name="moon" class="w-5 h-5 shrink-0"></i-lucide>
+            <span class="text-sm font-medium">Apariencia</span>
+          </a>
+          <a
+            *ngIf="auth.canManageSettings"
             routerLink="/settings"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
             (click)="nav.closeMobileMenu()"
@@ -56,19 +77,48 @@ import { filter, Subscription } from 'rxjs';
 })
 export class SidebarComponent implements OnInit, OnDestroy {
   readonly nav = inject(LayoutNavService);
+  readonly auth = inject(AuthService);
   private router = inject(Router);
   private routerSub?: Subscription;
 
-  readonly navItems = [
+  readonly companyNavItems: NavItem[] = [
     { path: '/dashboard', icon: 'layout-dashboard', label: 'Dashboard' },
     { path: '/clients', icon: 'users', label: 'Clientes' },
+    { path: '/suppliers', icon: 'building-2', label: 'Proveedores' },
     { path: '/stock', icon: 'package', label: 'Stock' },
-    { path: '/purchases', icon: 'truck', label: 'Compras' },
+    {
+      path: '/purchases',
+      icon: 'truck',
+      label: 'Compras',
+      visible: () => this.auth.canViewStockCosts,
+    },
     { path: '/orders', icon: 'clipboard-list', label: 'Pedidos' },
     { path: '/sales', icon: 'shopping-cart', label: 'Ventas' },
-    { path: '/cash', icon: 'wallet', label: 'Caja' },
-    { path: '/reports', icon: 'bar-chart-3', label: 'Reportes' },
-  ] as const;
+    {
+      path: '/cash',
+      icon: 'wallet',
+      label: 'Caja',
+      visible: () => this.auth.canAccessCash,
+    },
+    {
+      path: '/reports',
+      icon: 'bar-chart-3',
+      label: 'Reportes',
+      visible: () => this.auth.canViewReports,
+    },
+  ];
+
+  readonly platformNavItems: NavItem[] = [
+    { path: '/platform', icon: 'building-2', label: 'Empresas y planes' },
+  ];
+
+  get navItems(): NavItem[] {
+    return this.auth.isPlatformAdmin ? this.platformNavItems : this.companyNavItems;
+  }
+
+  get visibleNavItems(): NavItem[] {
+    return this.navItems.filter((item) => !item.visible || item.visible());
+  }
 
   ngOnInit() {
     this.routerSub = this.router.events

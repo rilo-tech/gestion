@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, tap } from 'rxjs';
+import { BehaviorSubject, Observable, of, tap } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export type ConfigFieldKey =
   | 'productos.tipos'
@@ -8,10 +9,16 @@ export type ConfigFieldKey =
   | 'productos.talles'
   | 'productos.colores'
   | 'clientes.etiquetas'
-  | 'caja.conceptosIngreso'
-  | 'caja.conceptosEgreso';
+  | 'proveedores.etiquetas';
 
 export type FieldInputMode = 'lista' | 'texto';
+
+export type CajaConceptoTipo = 'ingreso' | 'egreso' | 'ambos';
+
+export interface CajaConcepto {
+  nombre: string;
+  tipo: CajaConceptoTipo;
+}
 
 export interface AppConfig {
   productos: {
@@ -32,13 +39,20 @@ export interface AppConfig {
       etiquetas: FieldInputMode;
     };
   };
-  caja: {
-    conceptosIngreso: string[];
-    conceptosEgreso: string[];
+  proveedores: {
+    etiquetas: string[];
     modo: {
-      conceptosIngreso: FieldInputMode;
-      conceptosEgreso: FieldInputMode;
+      etiquetas: FieldInputMode;
     };
+  };
+  caja: {
+    conceptos: CajaConcepto[];
+    modo: {
+      conceptos: FieldInputMode;
+    };
+  };
+  pedidos: {
+    costosPersonalizacionDetallados: boolean;
   };
 }
 
@@ -59,13 +73,18 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     etiquetas: [],
     modo: { etiquetas: 'texto' },
   },
+  proveedores: {
+    etiquetas: [],
+    modo: { etiquetas: 'texto' },
+  },
   caja: {
-    conceptosIngreso: [],
-    conceptosEgreso: [],
+    conceptos: [],
     modo: {
-      conceptosIngreso: 'texto',
-      conceptosEgreso: 'texto',
+      conceptos: 'texto',
     },
+  },
+  pedidos: {
+    costosPersonalizacionDetallados: true,
   },
 };
 
@@ -97,15 +116,50 @@ export function usesConfigurableList(config: AppConfig, key: ConfigFieldKey): bo
   return getFieldMode(config, key) === 'lista';
 }
 
+export function usesDetailedOrderExtraCosts(config: AppConfig): boolean {
+  return config.pedidos?.costosPersonalizacionDetallados !== false;
+}
+
+export function usesCashConceptList(config: AppConfig): boolean {
+  return config.caja?.modo?.conceptos === 'lista' && (config.caja?.conceptos?.length ?? 0) > 0;
+}
+
+export function getCashConceptOptions(
+  config: AppConfig,
+  movementTipo: 'ingreso' | 'egreso'
+): string[] {
+  if (!usesCashConceptList(config)) return [];
+
+  return (config.caja.conceptos ?? [])
+    .filter(
+      (concepto) =>
+        concepto.tipo === 'ambos' ||
+        (movementTipo === 'ingreso' && concepto.tipo === 'ingreso') ||
+        (movementTipo === 'egreso' && concepto.tipo === 'egreso')
+    )
+    .map((concepto) => concepto.nombre)
+    .sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+export function getCajaConceptoTipoLabel(tipo: CajaConceptoTipo): string {
+  if (tipo === 'ingreso') return 'Ingreso';
+  if (tipo === 'egreso') return 'Egreso';
+  return 'Ambos';
+}
+
 @Injectable({
   providedIn: 'root',
 })
 export class CatalogConfigService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
   private appConfigSubject = new BehaviorSubject<AppConfig>(
     structuredClone(DEFAULT_APP_CONFIG)
   );
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   readonly appConfig$ = this.appConfigSubject.asObservable();
 
@@ -127,5 +181,31 @@ export class CatalogConfigService {
 
   usesConfigurableList(config: AppConfig, key: ConfigFieldKey): boolean {
     return usesConfigurableList(config, key);
+  }
+
+  usesDetailedOrderExtraCosts(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesDetailedOrderExtraCosts(config);
+  }
+
+  ensureFieldOptions(key: ConfigFieldKey, values: string[]): Observable<AppConfig> {
+    const current = this.appConfigSubject.value;
+    const existing = getFieldValues(current, key);
+    const existingLower = new Set(existing.map((value) => value.toLowerCase()));
+    const toAdd = values
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .filter((value) => !existingLower.has(value.toLowerCase()));
+
+    if (toAdd.length === 0) {
+      return of(current);
+    }
+
+    const merged = [...existing, ...toAdd].sort((a, b) => a.localeCompare(b, 'es'));
+    const updated = structuredClone(current);
+    const [module, field] = key.split('.') as [keyof AppConfig, string];
+    (updated[module] as Record<string, string[]>)[field] = merged;
+    (updated[module] as { modo: Record<string, FieldInputMode> }).modo[field] = 'lista';
+
+    return this.updateAppConfig(updated);
   }
 }

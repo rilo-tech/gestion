@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export interface StockItem {
   id?: string;
@@ -50,7 +51,11 @@ export interface StockMovement {
 })
 export class StockService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getStock(): Observable<StockItem[]> {
     return this.http.get<StockItem[]>(`/api/stock/${this.businessId}`);

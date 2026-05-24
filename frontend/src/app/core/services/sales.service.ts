@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export interface SaleLineExtraCost {
   nombre: string;
@@ -116,7 +117,11 @@ export interface UpdateSalePayload {
 })
 export class SalesService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getSales(): Observable<Sale[]> {
     return this.http.get<Sale[]>(`/api/sales/${this.businessId}`);

@@ -29,9 +29,20 @@ router.get('/:businessId', async (req, res) => {
 router.post('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
-    const proveedor = String(req.body.proveedor ?? '').trim();
+    const proveedorId = String(req.body.proveedorId ?? '').trim();
+    let proveedor = String(req.body.proveedor ?? '').trim();
     const notas = String(req.body.notas ?? '').trim();
     const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+
+    if (proveedorId) {
+      const supplierSnap = await db
+        .collection(`negocios/${businessId}/proveedores`)
+        .doc(proveedorId)
+        .get();
+      if (supplierSnap.exists) {
+        proveedor = String(supplierSnap.data()?.nombre ?? proveedor).trim();
+      }
+    }
 
     const items = rawItems
       .map((line: Record<string, unknown>) => ({
@@ -70,6 +81,7 @@ router.post('/:businessId', async (req, res) => {
     }
 
     const docRef = await db.collection(`negocios/${businessId}/compras`).add({
+      proveedorId: proveedorId || null,
       proveedor,
       notas,
       items: normalizedItems,

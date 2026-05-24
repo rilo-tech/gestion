@@ -167,6 +167,14 @@ type CollectMode = 'client' | 'item';
         </section>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div class="xl:col-span-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+            <input
+              [(ngModel)]="searchQuery"
+              name="historialSearchQuery"
+              placeholder="Buscar por pedido, venta, descripción u origen..."
+              class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+          </div>
+
           <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <h2 class="text-sm font-bold text-gray-900 px-4 py-3 border-b border-gray-100">Pedidos</h2>
             <div [class]="tableScrollClass">
@@ -180,7 +188,7 @@ type CollectMode = 'client' | 'item';
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-50 text-sm">
-                  <tr *ngFor="let pedido of account.pedidos">
+                  <tr *ngFor="let pedido of filteredPedidos">
                     <td class="px-4 py-3">
                       <a [routerLink]="['/orders', pedido.id, 'edit']" class="font-semibold text-teal-700 hover:underline">
                         #{{ pedido.numeroPedidoLabel }}
@@ -195,6 +203,11 @@ type CollectMode = 'client' | 'item';
                   </tr>
                   <tr *ngIf="account.pedidos.length === 0">
                     <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin pedidos.</td>
+                  </tr>
+                  <tr *ngIf="account.pedidos.length > 0 && filteredPedidos.length === 0">
+                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">
+                      No hay pedidos que coincidan con la búsqueda.
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -214,7 +227,7 @@ type CollectMode = 'client' | 'item';
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-50 text-sm">
-                  <tr *ngFor="let venta of account.ventas" class="hover:bg-gray-50">
+                  <tr *ngFor="let venta of filteredVentas" class="hover:bg-gray-50">
                     <td class="px-4 py-3">
                       <a
                         [routerLink]="getVentaRoute(venta)"
@@ -239,6 +252,11 @@ type CollectMode = 'client' | 'item';
                   </tr>
                   <tr *ngIf="account.ventas.length === 0">
                     <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin ventas.</td>
+                  </tr>
+                  <tr *ngIf="account.ventas.length > 0 && filteredVentas.length === 0">
+                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">
+                      No hay ventas que coincidan con la búsqueda.
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -338,6 +356,7 @@ export class ClientHistorialComponent implements OnInit {
   clientName = 'Cliente';
   account: ClientAccount | null = null;
   loading = true;
+  searchQuery = '';
 
   collectModalOpen = false;
   collectMode: CollectMode = 'item';
@@ -397,6 +416,50 @@ export class ClientHistorialComponent implements OnInit {
     }
 
     return preview;
+  }
+
+  get filteredPedidos(): ClientAccountOrder[] {
+    const pedidos = this.account?.pedidos ?? [];
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return pedidos;
+
+    return pedidos.filter((pedido) => {
+      const haystack = [
+        pedido.numeroPedidoLabel,
+        pedido.descripcion,
+        pedido.estado,
+        String(pedido.total),
+        String(pedido.saldo),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ');
+
+      return haystack.includes(query);
+    });
+  }
+
+  get filteredVentas(): ClientAccountSale[] {
+    const ventas = this.account?.ventas ?? [];
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return ventas;
+
+    return ventas.filter((venta) => {
+      const origen =
+        venta.origen === 'pedido'
+          ? `pedido ${venta.numeroPedidoLabel ?? ''}`
+          : 'mostrador';
+      const haystack = [
+        venta.ventaLabel,
+        venta.numeroPedidoLabel,
+        origen,
+        String(venta.total),
+        String(venta.saldoPendiente),
+      ]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ');
+
+      return haystack.includes(query);
+    });
   }
 
   ngOnInit() {

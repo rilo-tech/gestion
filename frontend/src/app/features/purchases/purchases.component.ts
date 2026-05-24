@@ -1,15 +1,18 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
-import {
-  CreatePurchasePayload,
-  Purchase,
-  PurchaseService,
-} from '../../core/services/purchase.service';
+import { Router, RouterLink } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
+import { PurchaseService, CreatePurchasePayload, Purchase } from '../../core/services/purchase.service';
+import { Supplier, SupplierService } from '../../core/services/supplier.service';
 import { StockItem, StockService } from '../../core/services/stock.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
+import {
+  SupplierFormPanelComponent,
+  SupplierFormSaveEvent,
+} from '../suppliers/supplier-form-panel.component';
 import { IconActionComponent, PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -22,7 +25,7 @@ interface PurchaseDraftLine {
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, IconActionComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -107,12 +110,25 @@ interface PurchaseDraftLine {
         <div class="space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
-              <input
-                [(ngModel)]="purchaseProveedor"
-                name="purchaseProveedor"
-                placeholder="Opcional"
-                class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              <div class="flex items-center justify-between gap-3 mb-1">
+                <label class="block text-sm font-medium text-gray-700">Proveedor</label>
+                <button
+                  type="button"
+                  (click)="openNewSupplierModal()"
+                  class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
+                  + Nuevo proveedor
+                </button>
+              </div>
+              <app-searchable-select
+                [(ngModel)]="purchaseProveedorId"
+                name="purchaseProveedorId"
+                [labeledOptions]="supplierOptions"
+                [creatable]="false"
+                placeholder="Buscar proveedor..."
+                plainPlaceholder="Opcional"
+                emptyOptionsMessage="No hay proveedores cargados. Creá uno con + Nuevo proveedor."
+                listHint="Opcional. Elegí un proveedor de la lista.">
+              </app-searchable-select>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Notas</label>
@@ -202,29 +218,68 @@ interface PurchaseDraftLine {
           </button>
         </div>
     </app-transaction-modal>
+
+    <app-transaction-modal
+      [open]="supplierModalOpen"
+      title="Nuevo proveedor"
+      subtitle="Al guardar queda seleccionado en esta compra."
+      maxWidthClass="max-w-lg"
+      (closed)="closeSupplierModal()">
+      <app-supplier-form-panel
+        [prefillNombre]="supplierPrefillNombre"
+        (saved)="onSupplierSavedFromModal($event)"
+        (cancelled)="closeSupplierModal()">
+      </app-supplier-form-panel>
+    </app-transaction-modal>
   `,
 })
 export class PurchasesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly auth = inject(AuthService);
 
   private purchaseService = inject(PurchaseService);
+  private supplierService = inject(SupplierService);
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);
+  private router = inject(Router);
 
   purchases: Purchase[] = [];
+  suppliers: Supplier[] = [];
   stockItems: StockItem[] = [];
   loading = true;
 
   purchaseModalOpen = false;
+  supplierModalOpen = false;
+  supplierPrefillNombre = '';
   savingPurchase = false;
-  purchaseProveedor = '';
+  purchaseProveedorId = '';
   purchaseNotas = '';
   draftLines: PurchaseDraftLine[] = [this.emptyLine()];
 
+  get supplierOptions() {
+    return this.suppliers
+      .filter((supplier) => supplier.id)
+      .map((supplier) => ({
+        value: supplier.id!,
+        label: supplier.nombre,
+      }));
+  }
+
   ngOnInit() {
+    if (!this.auth.canViewStockCosts) {
+      this.router.navigate(['/dashboard']);
+      return;
+    }
     this.loadPurchases();
+    this.loadSuppliers();
     this.stockService.getStock().subscribe({
       next: (items) => (this.stockItems = items),
+    });
+  }
+
+  private loadSuppliers() {
+    this.supplierService.getSuppliers().subscribe({
+      next: (suppliers) => (this.suppliers = suppliers),
     });
   }
 
@@ -270,7 +325,7 @@ export class PurchasesComponent implements OnInit {
       return;
     }
 
-    this.purchaseProveedor = '';
+    this.purchaseProveedorId = '';
     this.purchaseNotas = '';
     this.draftLines = [this.emptyLine()];
     this.purchaseModalOpen = true;
@@ -319,7 +374,7 @@ export class PurchasesComponent implements OnInit {
     }
 
     const payload: CreatePurchasePayload = {
-      proveedor: this.purchaseProveedor.trim(),
+      proveedorId: this.purchaseProveedorId.trim() || undefined,
       notas: this.purchaseNotas.trim(),
       items,
     };
@@ -342,6 +397,22 @@ export class PurchasesComponent implements OnInit {
         });
       },
     });
+  }
+
+  openNewSupplierModal() {
+    this.supplierPrefillNombre = '';
+    this.supplierModalOpen = true;
+  }
+
+  closeSupplierModal() {
+    this.supplierModalOpen = false;
+    this.supplierPrefillNombre = '';
+  }
+
+  onSupplierSavedFromModal(event: SupplierFormSaveEvent) {
+    this.suppliers = [...this.suppliers.filter((s) => s.id !== event.id), event.supplier];
+    this.purchaseProveedorId = event.id;
+    this.closeSupplierModal();
   }
 
   private loadPurchases() {

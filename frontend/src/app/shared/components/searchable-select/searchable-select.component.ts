@@ -1,9 +1,11 @@
 import {
   Component,
   ElementRef,
+  EventEmitter,
   HostListener,
   Input,
   OnChanges,
+  Output,
   SimpleChanges,
   forwardRef,
   inject,
@@ -32,7 +34,7 @@ export interface SearchableSelectOption {
     },
   ],
   template: `
-    <div class="relative" *ngIf="hasConfiguredOptions; else plainInput">
+    <div class="relative" [class.min-w-[9rem]]="embedded" [class.flex-1]="embedded" *ngIf="hasConfiguredOptions; else plainInput">
       <input
         type="text"
         [value]="searchText"
@@ -42,12 +44,14 @@ export interface SearchableSelectOption {
         (keydown)="onInputKeydown($event)"
         [disabled]="disabled"
         [placeholder]="placeholder"
-        class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+        [class]="embedded
+          ? 'w-full min-w-[9rem] border-0 bg-transparent px-1 py-1 text-sm outline-none focus:ring-0 disabled:text-gray-400'
+          : 'w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50'">
 
       <p *ngIf="listHint" class="mt-1 text-xs text-gray-400">{{ listHint }}</p>
 
       <div
-        *ngIf="open && dropdownItems.length"
+        *ngIf="open && (dropdownItems.length || showCreateOption)"
         class="absolute z-30 mt-1 w-full max-h-48 overflow-auto bg-white border border-gray-200 rounded-lg shadow-lg">
         <button
           type="button"
@@ -56,10 +60,17 @@ export interface SearchableSelectOption {
           class="w-full text-left px-4 py-2 text-sm hover:bg-teal-50">
           {{ option.label }}
         </button>
+        <button
+          type="button"
+          *ngIf="showCreateOption"
+          (mousedown)="createFromSearch($event)"
+          class="w-full text-left px-4 py-2 text-sm text-teal-700 font-medium hover:bg-teal-50 border-t border-gray-100">
+          {{ createLabelPrefix }} «{{ searchText.trim() }}»
+        </button>
       </div>
 
       <div
-        *ngIf="open && !dropdownItems.length"
+        *ngIf="open && !dropdownItems.length && !showCreateOption"
         class="absolute z-30 mt-1 w-full px-4 py-2 text-sm text-gray-400 bg-white border border-gray-200 rounded-lg shadow-lg">
         {{ emptyListMessage }}
       </div>
@@ -88,6 +99,12 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   @Input() listHint = '';
   @Input() emptyMessage = 'Sin coincidencias';
   @Input() emptyOptionsMessage = 'No hay opciones disponibles';
+  @Input() creatable = false;
+  @Input() createLabelPrefix = 'Crear';
+  @Input() embedded = false;
+
+  @Output() createRequested = new EventEmitter<string>();
+  @Output() searchChange = new EventEmitter<string>();
 
   value = '';
   searchText = '';
@@ -108,6 +125,13 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   get emptyListMessage(): string {
     if (this.searchText.trim()) return this.emptyMessage;
     return this.emptyOptionsMessage;
+  }
+
+  get showCreateOption(): boolean {
+    if (!this.creatable) return false;
+    const query = this.searchText.trim();
+    if (!query) return false;
+    return !this.findExactOption(query);
   }
 
   get dropdownItems(): SearchableSelectOption[] {
@@ -151,6 +175,7 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
 
   onSearchInput(event: Event) {
     this.searchText = (event.target as HTMLInputElement).value;
+    this.searchChange.emit(this.searchText);
     this.open = true;
   }
 
@@ -171,6 +196,10 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
       this.selectOption(exact);
       return;
     }
+    if (this.creatable && this.searchText.trim()) {
+      this.emitCreateFromSearch();
+      return;
+    }
     if (this.dropdownItems.length === 1) {
       this.selectOption(this.dropdownItems[0]);
     }
@@ -184,12 +213,28 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     this.onTouched();
   }
 
+  createFromSearch(event: MouseEvent) {
+    event.preventDefault();
+    this.emitCreateFromSearch();
+  }
+
+  private emitCreateFromSearch() {
+    const query = this.searchText.trim();
+    if (!query) return;
+    this.open = false;
+    this.createRequested.emit(query);
+    this.onTouched();
+  }
+
   private findExactOption(text: string): SearchableSelectOption | undefined {
     const query = text.trim().toLowerCase();
     if (!query) return undefined;
 
     const source = this.useEntityMode ? (this.labeledOptions ?? []) : this.toLabeledOptions(this.options);
-    return source.find((option) => option.label.toLowerCase() === query);
+    return source.find(
+      (option) =>
+        option.value.toLowerCase() === query || option.label.toLowerCase() === query
+    );
   }
 
   private commitSearchOrRevert() {

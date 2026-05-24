@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { TenantService } from './tenant.service';
 
 export interface Client {
   id?: string;
@@ -9,6 +10,7 @@ export interface Client {
   email?: string;
   direccion?: string;
   redes?: {
+    igWeb?: string;
     instagram?: string;
   };
   etiquetas?: string[];
@@ -141,7 +143,11 @@ export interface ProximoCobro {
 })
 export class ClientService {
   private http = inject(HttpClient);
-  private businessId = 'rilo-default';
+  private tenant = inject(TenantService);
+
+  private get businessId(): string {
+    return this.tenant.businessId;
+  }
 
   getClients(): Observable<Client[]> {
     return this.http.get<Client[]>(`/api/clients/${this.businessId}`);
