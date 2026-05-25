@@ -57,8 +57,8 @@ import { LucideAngularModule } from 'lucide-angular';
             class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
         </div>
         <div [class]="tableScrollClass">
-          <table class="w-full min-w-[640px] text-left border-collapse table-fixed">
-            <colgroup>
+          <table class="w-full text-left border-collapse sm:table-fixed sm:min-w-[640px]">
+            <colgroup class="hidden sm:table-column-group">
               <col />
               <col class="w-[8rem]" />
               <col class="w-[6rem]" />
@@ -66,10 +66,10 @@ import { LucideAngularModule } from 'lucide-angular';
             </colgroup>
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Rol</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
-                <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
+                <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
+                <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Rol</th>
+                <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
+                <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -77,7 +77,7 @@ import { LucideAngularModule } from 'lucide-angular';
                 *ngFor="let user of filteredUsers"
                 (click)="openUser(user)"
                 class="hover:bg-gray-50 transition-colors cursor-pointer">
-                <td class="px-6 py-4">
+                <td class="px-4 sm:px-6 py-3 sm:py-4">
                   <div class="font-medium text-gray-900 flex items-center gap-2">
                     <span
                       class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-800 text-sm font-semibold">
@@ -86,6 +86,7 @@ import { LucideAngularModule } from 'lucide-angular';
                     <span class="min-w-0">
                       <span class="block truncate">{{ user.nombre }}</span>
                       <span *ngIf="user.email" class="block text-xs text-gray-400 truncate">{{ user.email }}</span>
+                      <span class="block text-xs text-gray-500 sm:hidden">{{ roleLabels[user.rol] }}</span>
                     </span>
                     <span
                       *ngIf="user.id === auth.currentUser?.id"
@@ -94,10 +95,10 @@ import { LucideAngularModule } from 'lucide-angular';
                     </span>
                   </div>
                 </td>
-                <td class="px-6 py-4 text-sm text-gray-600">
+                <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
                   {{ roleLabels[user.rol] }}
                 </td>
-                <td class="px-6 py-4">
+                <td class="px-4 sm:px-6 py-3 sm:py-4">
                   <span
                     class="px-2 py-0.5 text-xs rounded-full font-semibold"
                     [class.bg-green-50]="user.activo !== false"
@@ -107,7 +108,7 @@ import { LucideAngularModule } from 'lucide-angular';
                     {{ user.activo !== false ? 'Activo' : 'Inactivo' }}
                   </span>
                 </td>
-                <td class="px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+                <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
                   <div class="flex items-center justify-end gap-1">
                     <button
                       type="button"
@@ -129,10 +130,18 @@ import { LucideAngularModule } from 'lucide-angular';
                   </div>
                 </td>
               </tr>
-              <tr *ngIf="loadingUsers">
+              <tr *ngIf="loadingUsers" class="sm:hidden">
+                <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando usuarios...</td>
+              </tr>
+              <tr *ngIf="loadingUsers" class="hidden sm:table-row">
                 <td colspan="4" class="px-6 py-12 text-center text-gray-400">Cargando usuarios...</td>
               </tr>
-              <tr *ngIf="!loadingUsers && users.length === 0">
+              <tr *ngIf="!loadingUsers && users.length === 0" class="sm:hidden">
+                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                  No hay usuarios cargados.
+                </td>
+              </tr>
+              <tr *ngIf="!loadingUsers && users.length === 0" class="hidden sm:table-row">
                 <td colspan="4" class="px-6 py-12 text-center text-gray-400">
                   No hay usuarios cargados.
                 </td>
@@ -223,8 +232,12 @@ export class UsersComponent implements OnInit {
   }
 
   openUser(user: AppUser) {
-    if (!this.auth.canManageUsers) return;
     if (!user.id) return;
+    if (user.id === this.auth.currentUser?.id) {
+      this.router.navigate(['/mi-cuenta']);
+      return;
+    }
+    if (!this.auth.canManageUsers) return;
     this.editingUserId = user.id;
     this.userModalOpen = true;
   }

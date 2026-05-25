@@ -13,6 +13,7 @@ const useEmulator = process.env.USE_FIRESTORE_EMULATOR === 'true';
 if (useEmulator) {
   process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
   process.env.FIREBASE_AUTH_EMULATOR_HOST ??= '127.0.0.1:9099';
+  delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
 }
 
 if (!getApps().length) {

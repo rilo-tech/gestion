@@ -24,7 +24,7 @@ export function itemControlsStock(item: Pick<StockItem, 'controlaStock'> | undef
   return item?.controlaStock !== false;
 }
 
-export type StockOrigenGrupo = 'compra' | 'pedido' | 'ajuste' | 'carga_inicial' | 'otro';
+export type StockOrigenGrupo = 'compra' | 'pedido' | 'venta' | 'ajuste' | 'carga_inicial' | 'otro' | (string & {});
 
 export interface StockMovement {
   id?: string;
@@ -87,6 +87,12 @@ export class StockService {
 
   deleteItem(itemId: string): Observable<{ id: string }> {
     return this.http.delete<{ id: string }>(`/api/stock/${this.businessId}/${itemId}`);
+  }
+
+  deleteMovement(movementId: string): Observable<{ id: string }> {
+    return this.http.delete<{ id: string }>(
+      `/api/stock/${this.businessId}/movements/${movementId}`
+    );
   }
 
   adjustStock(itemId: string, quantity: number, motivo: string): Observable<any> {

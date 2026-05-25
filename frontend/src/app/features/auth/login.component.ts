@@ -1,8 +1,11 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
+import { isAuthEmulatorEnabled } from '../../core/config/firebase';
+import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
 
 @Component({
   selector: 'app-login',
@@ -12,7 +15,7 @@ import { AuthService } from '../../core/services/auth.service';
     <div class="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div class="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 shadow-2xl">
         <div class="mb-8 text-center">
-          <h1 class="text-2xl font-bold text-teal-400 tracking-tight">RILO Gestión</h1>
+          <h1 class="text-2xl font-bold text-teal-400 tracking-tight">RILO</h1>
           <p class="text-sm text-gray-400 mt-2">Ingresá para continuar</p>
         </div>
 
@@ -47,13 +50,21 @@ import { AuthService } from '../../core/services/auth.service';
             <p class="mt-1 text-xs text-gray-500">Código que te dio RILO al contratar el servicio.</p>
           </div>
 
+          <p *ngIf="googleRedirectPending" class="text-sm text-amber-400">
+            Completando login con Google...
+          </p>
+
+          <p *ngIf="subscriptionBlockedMessage" class="text-sm text-amber-400">
+            {{ subscriptionBlockedMessage }}
+          </p>
+
           <p *ngIf="errorMessage" class="text-sm text-red-400">{{ errorMessage }}</p>
 
           <button
             type="submit"
-            [disabled]="loading"
+            [disabled]="submitting || googleRedirectPending"
             class="w-full rounded-xl bg-teal-500 py-3 text-sm font-bold text-gray-900 hover:bg-teal-400 disabled:opacity-60">
-            {{ loading ? 'Ingresando...' : 'Ingresar' }}
+            {{ submitting ? 'Ingresando...' : 'Ingresar' }}
           </button>
         </form>
 
@@ -66,27 +77,71 @@ import { AuthService } from '../../core/services/auth.service';
         <button
           type="button"
           (click)="submitGoogleLogin()"
-          [disabled]="loading"
+          [disabled]="submitting || googleRedirectPending"
           class="w-full rounded-xl border border-gray-700 bg-gray-950 py-3 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-60">
-          Continuar con Google
+          {{ googleRedirectPending ? 'Volviendo de Google...' : 'Continuar con Google' }}
         </button>
 
         <p class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
-          Ingresá con tus credenciales. Google solo funciona si tu email ya está registrado.
+          Cargá el código de empresa antes de usar Google. Tu email debe estar registrado en Mi cuenta.
+        </p>
+
+        <p *ngIf="isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
+          Modo desarrollo: Google usa el emulador local (no es la cuenta real). Tras confirmar el email
+          volvés al login y entrás automáticamente.
         </p>
       </div>
     </div>
   `,
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   private auth = inject(AuthService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
+
+  readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
 
   businessCode = '';
   login = '';
   password = '';
-  loading = false;
+  submitting = false;
+  googleRedirectPending = false;
   errorMessage = '';
+  subscriptionBlockedMessage = '';
+
+  ngOnInit() {
+    if (this.route.snapshot.queryParamMap.get('subscription') === 'inactive') {
+      this.subscriptionBlockedMessage =
+        'La suscripción de tu empresa está desactivada. Contactá a RILO para reactivarla.';
+    }
+
+    const pendingBusinessId = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY);
+    const pendingScope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY);
+    if (pendingScope === 'platform') {
+      return;
+    }
+    if (pendingBusinessId) {
+      this.businessCode = pendingBusinessId;
+      this.googleRedirectPending = true;
+      this.errorMessage = '';
+    }
+
+    this.auth.completeGoogleRedirectLogin().subscribe({
+      next: () => {
+        this.googleRedirectPending = false;
+        this.router.navigate([this.auth.homeRoute]);
+      },
+      error: (err) => {
+        this.googleRedirectPending = false;
+        if (err?.message === 'NO_REDIRECT') {
+          sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+          return;
+        }
+        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+        this.errorMessage = mapGoogleAuthError(err);
+      },
+    });
+  }
 
   submitPasswordLogin() {
     if (!this.login.trim() || !this.password) {
@@ -99,7 +154,7 @@ export class LoginComponent {
       return;
     }
 
-    this.loading = true;
+    this.submitting = true;
     this.errorMessage = '';
 
     this.auth
@@ -109,11 +164,11 @@ export class LoginComponent {
       })
       .subscribe({
         next: () => {
-          this.loading = false;
+          this.submitting = false;
           this.router.navigate([this.auth.homeRoute]);
         },
         error: (err) => {
-          this.loading = false;
+          this.submitting = false;
           this.errorMessage = err?.error?.error || 'No se pudo iniciar sesión.';
         },
       });
@@ -125,16 +180,12 @@ export class LoginComponent {
       return;
     }
 
-    this.loading = true;
     this.errorMessage = '';
     this.auth.loginWithGoogle(this.businessCode.trim().toLowerCase()).subscribe({
-      next: () => {
-        this.loading = false;
-        this.router.navigate([this.auth.homeRoute]);
-      },
       error: (err) => {
-        this.loading = false;
-        this.errorMessage = err?.error?.error || 'No se pudo ingresar con Google.';
+        this.googleRedirectPending = false;
+        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+        this.errorMessage = mapGoogleAuthError(err);
       },
     });
   }

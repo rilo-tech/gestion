@@ -4,6 +4,8 @@ import { hashPassword } from '../auth/password.ts';
 import {
   createBusiness,
   listBusinesses,
+  listSubscriptionPayments,
+  registerSubscriptionPayment,
   toPublicBusinessInfo,
   updateBusiness,
   type SubscriptionStatus,
@@ -54,6 +56,7 @@ router.post('/plans', async (req, res) => {
           Number(req.body.limiteAdministradores ?? 1) +
             Number(req.body.limiteOperadores ?? 0)
       ),
+      precioMensual: Number(req.body.precioMensual ?? 0),
       activo: req.body.activo !== false,
     });
 
@@ -83,6 +86,10 @@ router.patch('/plans/:planId', async (req, res) => {
       limiteUsuariosTotal:
         typeof req.body.limiteUsuariosTotal === 'number'
           ? req.body.limiteUsuariosTotal
+          : undefined,
+      precioMensual:
+        typeof req.body.precioMensual === 'number'
+          ? req.body.precioMensual
           : undefined,
       activo: req.body.activo,
     });
@@ -241,6 +248,38 @@ router.get('/businesses/:businessId', async (req, res) => {
   } catch (error) {
     console.error('Error fetching business:', error);
     res.status(500).json({ error: 'No se pudo cargar la empresa.' });
+  }
+});
+
+router.get('/businesses/:businessId/payments', async (req, res) => {
+  try {
+    const payments = await listSubscriptionPayments(req.params.businessId);
+    res.json(payments);
+  } catch (error) {
+    console.error('Error listing subscription payments:', error);
+    res.status(500).json({ error: 'No se pudieron cargar los pagos.' });
+  }
+});
+
+router.post('/businesses/:businessId/payments', async (req, res) => {
+  try {
+    const business = await toPublicBusinessInfo(req.params.businessId);
+    const payment = await registerSubscriptionPayment(req.params.businessId, {
+      periodo: req.body.periodo,
+      monto:
+        req.body.monto !== undefined
+          ? Number(req.body.monto)
+          : business.montoMensualEsperado,
+      fechaPago: req.body.fechaPago,
+      notas: typeof req.body.notas === 'string' ? req.body.notas : undefined,
+    });
+    res.status(201).json(payment);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'PAYMENT_PERIOD_EXISTS') {
+      return res.status(409).json({ error: 'Ya hay un pago registrado para ese mes.' });
+    }
+    console.error('Error registering subscription payment:', error);
+    res.status(500).json({ error: 'No se pudo registrar el pago.' });
   }
 });
 

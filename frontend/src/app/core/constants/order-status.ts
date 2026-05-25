@@ -120,3 +120,9 @@ export function canRegisterSaleFromOrder(order: {
 export function orderIsLockedForEdit(estado?: string): boolean {
   return normalizeOrderStatus(estado) === 'entregado';
 }
+
+/** Pedidos confirmados (en curso) que aún no fueron entregados. */
+export function isOrderPendingDelivery(order: { estado?: string }): boolean {
+  const status = normalizeOrderStatus(order.estado);
+  return status === 'pendiente' || status === 'en_produccion' || status === 'listo';
+}

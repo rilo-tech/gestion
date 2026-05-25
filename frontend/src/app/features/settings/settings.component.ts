@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -12,10 +12,14 @@ import {
   CajaConcepto,
   CajaConceptoTipo,
   getCajaConceptoTipoLabel,
+  slugifyOrigenGrupo,
+  DEFAULT_STOCK_TIPOS,
+  normalizeCajaAmbitos,
+  slugifyCajaAmbitoId,
 } from '../../core/services/catalog-config.service';
+import { normalizeStockTipos } from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
 import { SettingsUsersPanelComponent } from './settings-users-panel.component';
-import { SettingsAppearancePanelComponent } from './settings-appearance-panel.component';
 
 interface ConfigSection {
   key: ConfigFieldKey;
@@ -25,7 +29,7 @@ interface ConfigSection {
 }
 
 interface ConfigModule {
-  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'pedidos' | 'usuarios' | 'apariencia';
+  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'stock' | 'pedidos' | 'usuarios';
   title: string;
   description: string;
   sections: ConfigSection[];
@@ -33,10 +37,13 @@ interface ConfigModule {
   everyone?: boolean;
 }
 
+const SAVE_BUTTON_COOLDOWN_MS = 1800;
+const SAVE_SUCCESS_DISPLAY_MS = 3500;
+
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, SettingsUsersPanelComponent, SettingsAppearancePanelComponent],
+  imports: [CommonModule, FormsModule, SettingsUsersPanelComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 w-full max-w-7xl mx-auto">
       <div class="mb-6 sm:mb-8">
@@ -50,7 +57,7 @@ interface ConfigModule {
         <button
           type="button"
           *ngFor="let module of visibleModules"
-          (click)="activeModuleId = module.id"
+          (click)="selectModule(module.id)"
           class="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
           [class.bg-primary]="activeModuleId === module.id"
           [class.text-white]="activeModuleId === module.id"
@@ -71,7 +78,7 @@ interface ConfigModule {
           </p>
         </div>
 
-        <article class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 max-w-2xl">
+        <article [class]="configToggleCardClass">
           <label class="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -93,10 +100,7 @@ interface ConfigModule {
 
           <p
             class="text-xs rounded-lg px-3 py-2 mt-4"
-            [class.bg-teal-50]="config.pedidos.costosPersonalizacionDetallados"
-            [class.text-teal-800]="config.pedidos.costosPersonalizacionDetallados"
-            [class.bg-gray-50]="!config.pedidos.costosPersonalizacionDetallados"
-            [class.text-gray-600]="!config.pedidos.costosPersonalizacionDetallados">
+            [ngClass]="configStatusBadgeClass(config.pedidos.costosPersonalizacionDetallados)">
             {{
               config.pedidos.costosPersonalizacionDetallados
                 ? 'Modo detallado activo en pedidos.'
@@ -110,59 +114,175 @@ interface ConfigModule {
         <div>
           <h2 class="text-xl font-bold text-gray-900">Caja</h2>
           <p class="text-sm text-gray-500 mt-1">
-            Conceptos para movimientos manuales. Elegí si aparecen al registrar ingreso, egreso o ambos.
+            Conceptos, orígenes y opciones de la grilla de caja.
           </p>
         </div>
 
-        <article class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 max-w-2xl flex flex-col">
+        <article [class]="configCardClass">
           <header class="mb-3">
-            <h3 class="text-lg font-bold text-gray-900">Conceptos</h3>
+            <h3 class="text-base font-bold text-gray-900">Etiquetas de caja</h3>
             <p class="text-sm text-gray-500 mt-1">
-              Ej. Venta mostrador (ingreso), Compra insumos (egreso), Diferencia (ambos).
+              Cada etiqueta aparece como pestaña en Caja y en Cuentas a pagar para separar movimientos y vencimientos. Con una sola (o ninguna) queda unificado.
             </p>
           </header>
 
-          <p
-            class="text-xs rounded-lg px-3 py-1.5 mb-3"
-            [class.bg-teal-50]="config.caja.conceptos.length > 0"
-            [class.text-teal-800]="config.caja.conceptos.length > 0"
-            [class.bg-gray-50]="config.caja.conceptos.length === 0"
-            [class.text-gray-600]="config.caja.conceptos.length === 0">
-            {{ getCajaConceptosHint() }}
+          <p class="mb-3" [ngClass]="configStatusBadgeClass(config.caja.ambitos.length >= 2)">
+            {{ config.caja.ambitos.length }} etiqueta{{ config.caja.ambitos.length === 1 ? '' : 's' }}
+            ·
+            {{
+              config.caja.ambitos.length >= 2
+                ? 'visible en Caja como pestañas'
+                : 'caja unificada sin pestañas'
+            }}
           </p>
 
           <div class="flex flex-col sm:flex-row gap-2 mb-4">
             <input
-              [(ngModel)]="cajaConceptoDraft"
-              name="cajaConceptoDraft"
-              placeholder="Ej. Diferencia"
-              [disabled]="isSavingCajaConceptos"
-              (keyup.enter)="addCajaConcepto()"
-              class="w-full flex-1 px-3 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50">
-            <select
-              [(ngModel)]="cajaConceptoTipoDraft"
-              name="cajaConceptoTipoDraft"
-              [disabled]="isSavingCajaConceptos"
-              class="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50 bg-white">
-              <option value="ingreso">Ingreso</option>
-              <option value="egreso">Egreso</option>
-              <option value="ambos">Ambos</option>
-            </select>
+              [(ngModel)]="cajaAmbitoDraft"
+              name="cajaAmbitoDraft"
+              placeholder="Ej. Negocio, Personal, Caja chica..."
+              [disabled]="savingCajaAmbito"
+              (keyup.enter)="addCajaAmbito()"
+              [class]="configInputClass + ' flex-1'">
             <button
               type="button"
-              (click)="addCajaConcepto()"
-              [disabled]="isSavingCajaConceptos"
-              class="w-full sm:w-auto shrink-0 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60">
+              (click)="addCajaAmbito()"
+              [disabled]="savingCajaAmbito"
+              [class]="configAddButtonClass">
+              Agregar
+            </button>
+          </div>
+
+          <ul class="space-y-2">
+            <li
+              *ngFor="let ambito of config.caja.ambitos"
+              [class]="configListItemClass">
+              <div class="min-w-0 flex-1">
+                <input
+                  [(ngModel)]="ambito.label"
+                  [name]="'cajaAmbitoLabel' + ambito.id"
+                  (change)="persistCajaAmbitos()"
+                  [disabled]="savingCajaAmbito"
+                  class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
+                <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ ambito.id }}</p>
+              </div>
+              <button
+                type="button"
+                (click)="removeCajaAmbito(ambito)"
+                [disabled]="savingCajaAmbito"
+                [class]="configRemoveButtonClass">
+                Quitar
+              </button>
+            </li>
+            <li *ngIf="config.caja.ambitos.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
+              Agregá etiquetas para separar Caja y Cuentas a pagar en pestañas (ej. Empresa, Casa).
+            </li>
+          </ul>
+        </article>
+
+        <div [class]="configGridPairClass">
+        <article [class]="configCardClass">
+          <header class="mb-3">
+            <h3 class="text-base font-bold text-gray-900">Orígenes</h3>
+            <p class="text-sm text-gray-500 mt-1">
+              Etiquetas del combobox de filtro. Por defecto: Ventas, Pedidos y Compra.
+            </p>
+          </header>
+
+          <p class="mb-3" [ngClass]="configStatusBadgeClass(config.caja.origenes.length > 0)">
+            {{ config.caja.origenes.length }} origen{{ config.caja.origenes.length === 1 ? '' : 'es' }} configurado{{ config.caja.origenes.length === 1 ? '' : 's' }} · visible en Caja
+          </p>
+
+          <div class="flex flex-col sm:flex-row gap-2 mb-4">
+            <input
+              [(ngModel)]="cajaOrigenDraft"
+              name="cajaOrigenDraft"
+              placeholder="Ej. Gastos fijos"
+              [disabled]="isSavingCajaOrigenes"
+              (keyup.enter)="addCajaOrigen()"
+              [class]="configInputClass + ' flex-1'">
+            <button
+              type="button"
+              (click)="addCajaOrigen()"
+              [disabled]="isSavingCajaOrigenes"
+              [class]="configAddButtonClass">
               Agregar
             </button>
           </div>
 
           <ul class="space-y-2 flex-1">
             <li
+              *ngFor="let origen of config.caja.origenes"
+              [class]="configListItemClass">
+              <div class="min-w-0 flex-1">
+                <input
+                  [(ngModel)]="origen.nombre"
+                  [name]="'origenNombre' + origen.grupo"
+                  (change)="persistCajaOrigenes()"
+                  [disabled]="isSavingCajaOrigenes"
+                  class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
+                <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ origen.grupo }}</p>
+              </div>
+              <button
+                type="button"
+                (click)="removeCajaOrigen(origen)"
+                [disabled]="isSavingCajaOrigenes"
+                [class]="configRemoveButtonClass">
+                Quitar
+              </button>
+            </li>
+            <li *ngIf="config.caja.origenes.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
+              Todavía no hay opciones cargadas.
+            </li>
+          </ul>
+        </article>
+
+        <article [class]="configCardClass">
+          <header class="mb-3">
+            <h3 class="text-base font-bold text-gray-900">Conceptos</h3>
+            <p class="text-sm text-gray-500 mt-1">
+              Ej. Venta mostrador (ingreso), Compra insumos (egreso), Diferencia (ambos).
+            </p>
+          </header>
+
+          <p class="mb-3" [ngClass]="configStatusBadgeClass(config.caja.conceptos.length > 0)">
+            {{ getCajaConceptosHint() }}
+          </p>
+
+          <div class="flex flex-col gap-2 mb-4">
+            <input
+              [(ngModel)]="cajaConceptoDraft"
+              name="cajaConceptoDraft"
+              placeholder="Ej. Diferencia"
+              [disabled]="isSavingCajaConceptos"
+              (keyup.enter)="addCajaConcepto()"
+              [class]="configInputClass">
+            <div class="flex flex-col sm:flex-row gap-2">
+              <select
+                [(ngModel)]="cajaConceptoTipoDraft"
+                name="cajaConceptoTipoDraft"
+                [disabled]="isSavingCajaConceptos"
+                class="w-full sm:w-40 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50 bg-white">
+                <option value="ingreso">Ingreso</option>
+                <option value="egreso">Egreso</option>
+                <option value="ambos">Ambos</option>
+              </select>
+              <button
+                type="button"
+                (click)="addCajaConcepto()"
+                [disabled]="isSavingCajaConceptos"
+                [class]="configAddButtonClass">
+                Agregar
+              </button>
+            </div>
+          </div>
+
+          <ul class="space-y-2 flex-1">
+            <li
               *ngFor="let concepto of config.caja.conceptos"
-              class="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-teal-50 border border-teal-100">
+              [class]="configListItemClass">
               <div class="min-w-0">
-                <span class="text-sm font-medium text-teal-800 underline decoration-teal-400 underline-offset-4 break-words">
+                <span class="text-sm font-medium text-teal-800 break-words">
                   {{ concepto.nombre }}
                 </span>
                 <span class="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-white text-teal-700 border border-teal-100">
@@ -173,42 +293,132 @@ interface ConfigModule {
                 type="button"
                 (click)="removeCajaConcepto(concepto)"
                 [disabled]="isSavingCajaConceptos"
-                class="shrink-0 text-teal-700 text-sm font-semibold hover:text-teal-900 disabled:opacity-50">
+                [class]="configRemoveButtonClass">
                 Quitar
               </button>
             </li>
-            <li *ngIf="config.caja.conceptos.length === 0" class="text-sm text-gray-400 px-1">
+            <li *ngIf="config.caja.conceptos.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
               Todavía no hay opciones cargadas.
             </li>
           </ul>
         </article>
+        </div>
+      </section>
+
+      <section *ngIf="activeModuleId === 'stock'" class="space-y-4 sm:space-y-6">
+        <div>
+          <h2 class="text-xl font-bold text-gray-900">Stock</h2>
+          <p class="text-sm text-gray-500 mt-1">
+            Etiquetas de tipos y orígenes en la grilla de movimientos de inventario.
+          </p>
+        </div>
+
+        <div [class]="configGridPairClass">
+          <article [class]="configCardClass">
+            <header class="mb-3">
+              <h3 class="text-base font-bold text-gray-900">Tipos</h3>
+              <p class="text-sm text-gray-500 mt-1">
+                Entrada y salida son fijos; podés cambiar solo el nombre visible.
+              </p>
+            </header>
+
+            <p class="mb-3" [ngClass]="configStatusBadgeClass(true)">
+              2 tipos · visible en Movimientos de stock
+            </p>
+
+            <ul class="space-y-2 flex-1">
+              <li
+                *ngFor="let tipo of config.stock.tipos"
+                [class]="configListItemClass">
+                <div class="min-w-0 flex-1">
+                  <input
+                    [(ngModel)]="tipo.nombre"
+                    [name]="'stockTipoNombre' + tipo.grupo"
+                    (change)="persistStockTipos()"
+                    [disabled]="isSavingStockTipos"
+                    class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
+                  <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ tipo.grupo }}</p>
+                </div>
+              </li>
+            </ul>
+          </article>
+
+          <article [class]="configCardClass">
+            <header class="mb-3">
+              <h3 class="text-base font-bold text-gray-900">Orígenes</h3>
+              <p class="text-sm text-gray-500 mt-1">
+                Etiquetas del combobox de filtro. Por defecto: Compras, Pedidos/ventas, Carga inicial y Ajuste.
+              </p>
+            </header>
+
+            <p class="mb-3" [ngClass]="configStatusBadgeClass(config.stock.origenes.length > 0)">
+              {{ config.stock.origenes.length }} origen{{ config.stock.origenes.length === 1 ? '' : 'es' }} configurado{{ config.stock.origenes.length === 1 ? '' : 's' }} · visible en Stock
+            </p>
+
+            <div class="flex flex-col sm:flex-row gap-2 mb-4">
+              <input
+                [(ngModel)]="stockOrigenDraft"
+                name="stockOrigenDraft"
+                placeholder="Ej. Devoluciones"
+                [disabled]="isSavingStockOrigenes"
+                (keyup.enter)="addStockOrigen()"
+                [class]="configInputClass + ' flex-1'">
+              <button
+                type="button"
+                (click)="addStockOrigen()"
+                [disabled]="isSavingStockOrigenes"
+                [class]="configAddButtonClass">
+                Agregar
+              </button>
+            </div>
+
+            <ul class="space-y-2 flex-1">
+              <li
+                *ngFor="let origen of config.stock.origenes"
+                [class]="configListItemClass">
+                <div class="min-w-0 flex-1">
+                  <input
+                    [(ngModel)]="origen.nombre"
+                    [name]="'stockOrigenNombre' + origen.grupo"
+                    (change)="persistStockOrigenes()"
+                    [disabled]="isSavingStockOrigenes"
+                    class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
+                  <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ origen.grupo }}</p>
+                </div>
+                <button
+                  type="button"
+                  (click)="removeStockOrigen(origen)"
+                  [disabled]="isSavingStockOrigenes"
+                  [class]="configRemoveButtonClass">
+                  Quitar
+                </button>
+              </li>
+              <li *ngIf="config.stock.origenes.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
+                Todavía no hay opciones cargadas.
+              </li>
+            </ul>
+          </article>
+        </div>
       </section>
 
       <app-settings-users-panel *ngIf="activeModuleId === 'usuarios'"></app-settings-users-panel>
 
-      <app-settings-appearance-panel *ngIf="activeModuleId === 'apariencia'"></app-settings-appearance-panel>
-
-      <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'usuarios' && activeModuleId !== 'apariencia'" class="space-y-4 sm:space-y-6">
+      <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'stock' && activeModuleId !== 'usuarios'" class="space-y-4 sm:space-y-6">
         <div>
           <h2 class="text-xl font-bold text-gray-900">{{ activeModule!.title }}</h2>
           <p class="text-sm text-gray-500 mt-1">{{ activeModule!.description }}</p>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-4 sm:gap-6">
+        <div [class]="configGridMultiClass">
           <article
             *ngFor="let section of activeModule!.sections"
-            class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 flex flex-col">
+            [class]="configCardClass">
             <header class="mb-3">
-              <h3 class="text-lg font-bold text-gray-900">{{ section.title }}</h3>
+              <h3 class="text-base font-bold text-gray-900">{{ section.title }}</h3>
               <p class="text-sm text-gray-500 mt-1">{{ section.description }}</p>
             </header>
 
-            <p
-              class="text-xs rounded-lg px-3 py-1.5 mb-3"
-              [class.bg-teal-50]="getList(section.key).length > 0"
-              [class.text-teal-800]="getList(section.key).length > 0"
-              [class.bg-gray-50]="getList(section.key).length === 0"
-              [class.text-gray-600]="getList(section.key).length === 0">
+            <p class="mb-3" [ngClass]="configStatusBadgeClass(getList(section.key).length > 0)">
               {{ getSectionHint(section.key) }}
             </p>
 
@@ -220,12 +430,12 @@ interface ConfigModule {
                 [placeholder]="section.placeholder"
                 [disabled]="isSavingField(section.key)"
                 (keyup.enter)="addValue(section)"
-                class="w-full flex-1 px-3 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50">
+                [class]="configInputClass + ' flex-1'">
               <button
                 type="button"
                 (click)="addValue(section)"
                 [disabled]="isSavingField(section.key)"
-                class="w-full sm:w-auto shrink-0 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60">
+                [class]="configAddButtonClass">
                 Agregar
               </button>
             </div>
@@ -233,19 +443,19 @@ interface ConfigModule {
             <ul class="space-y-2 flex-1">
               <li
                 *ngFor="let value of getList(section.key)"
-                class="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-teal-50 border border-teal-100">
-                <span class="text-sm font-medium text-teal-800 underline decoration-teal-400 underline-offset-4 break-words">
+                [class]="configListItemClass">
+                <span class="text-sm font-medium text-teal-800 break-words min-w-0">
                   {{ value }}
                 </span>
                 <button
                   type="button"
                   (click)="removeValue(section.key, value)"
                   [disabled]="isSavingField(section.key)"
-                  class="shrink-0 text-teal-700 text-sm font-semibold hover:text-teal-900 disabled:opacity-50">
+                  [class]="configRemoveButtonClass">
                   Quitar
                 </button>
               </li>
-              <li *ngIf="getList(section.key).length === 0" class="text-sm text-gray-400 px-1">
+              <li *ngIf="getList(section.key).length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
                 Todavía no hay opciones cargadas.
               </li>
             </ul>
@@ -272,7 +482,7 @@ interface ConfigModule {
     </div>
   `,
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, OnDestroy {
   private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
@@ -287,10 +497,36 @@ export class SettingsComponent implements OnInit {
   optionDrafts: Record<string, string> = {};
   savingFields = new Set<string>();
   savingCajaConceptos = false;
+  savingCajaOrigenes = false;
+  savingCajaAmbito = false;
+  savingStockTipos = false;
+  savingStockOrigenes = false;
   cajaConceptoDraft = '';
+  cajaOrigenDraft = '';
+  cajaAmbitoDraft = '';
+  stockOrigenDraft = '';
   cajaConceptoTipoDraft: CajaConceptoTipo = 'ingreso';
   getCajaConceptoTipoLabel = getCajaConceptoTipoLabel;
+
+  readonly configCardClass =
+    'bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col h-full';
+  readonly configToggleCardClass =
+    'bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 max-w-3xl';
+  readonly configGridPairClass =
+    'grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5 items-stretch';
+  readonly configGridMultiClass =
+    'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5 items-stretch';
+  readonly configInputClass =
+    'w-full min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50';
+  readonly configAddButtonClass =
+    'w-full sm:w-auto shrink-0 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60 whitespace-nowrap';
+  readonly configListItemClass =
+    'flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-teal-50 border border-teal-100';
+  readonly configRemoveButtonClass =
+    'shrink-0 text-teal-700 text-sm font-semibold hover:text-teal-900 disabled:opacity-50';
+
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
+  private saveCooldownTimeout?: ReturnType<typeof setTimeout>;
 
   modules: ConfigModule[] = [
     {
@@ -353,7 +589,13 @@ export class SettingsComponent implements OnInit {
     {
       id: 'caja',
       title: 'Caja',
-      description: 'Conceptos para movimientos manuales.',
+      description: 'Conceptos manuales y orígenes del filtro.',
+      sections: [],
+    },
+    {
+      id: 'stock',
+      title: 'Stock',
+      description: 'Tipos y orígenes de los movimientos de inventario.',
       sections: [],
     },
     {
@@ -361,13 +603,6 @@ export class SettingsComponent implements OnInit {
       title: 'Pedidos',
       description: 'Costos de personalización en productos del pedido.',
       sections: [],
-    },
-    {
-      id: 'apariencia',
-      title: 'Apariencia',
-      description: 'Tema claro u oscuro.',
-      sections: [],
-      everyone: true,
     },
     {
       id: 'usuarios',
@@ -380,7 +615,6 @@ export class SettingsComponent implements OnInit {
 
   get visibleModules(): ConfigModule[] {
     return this.modules.filter((module) => {
-      if (module.everyone) return true;
       if (module.supervisorOnly) return this.auth.canManageUsers;
       return this.auth.canManageSettings;
     });
@@ -392,6 +626,24 @@ export class SettingsComponent implements OnInit {
 
   get isSavingCajaConceptos(): boolean {
     return this.savingCajaConceptos;
+  }
+
+  get isSavingCajaOrigenes(): boolean {
+    return this.savingCajaOrigenes;
+  }
+
+  get isSavingStockTipos(): boolean {
+    return this.savingStockTipos;
+  }
+
+  get isSavingStockOrigenes(): boolean {
+    return this.savingStockOrigenes;
+  }
+
+  configStatusBadgeClass(active: boolean): string {
+    return active
+      ? 'text-xs rounded-lg px-3 py-1.5 bg-teal-50 text-teal-800'
+      : 'text-xs rounded-lg px-3 py-1.5 bg-gray-50 text-gray-600';
   }
 
   getCajaConceptosHint(): string {
@@ -458,14 +710,186 @@ export class SettingsComponent implements OnInit {
     });
   }
 
+  addCajaOrigen() {
+    const nombre = this.cajaOrigenDraft.trim();
+    if (!nombre || this.savingCajaOrigenes) return;
+
+    let grupo = slugifyOrigenGrupo(nombre);
+    if (this.config.caja.origenes.some((item) => item.grupo === grupo)) {
+      let suffix = 2;
+      while (this.config.caja.origenes.some((item) => item.grupo === `${grupo}_${suffix}`)) {
+        suffix += 1;
+      }
+      grupo = `${grupo}_${suffix}`;
+    }
+
+    this.config.caja.origenes = [
+      ...this.config.caja.origenes,
+      { grupo, nombre },
+    ].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    this.cajaOrigenDraft = '';
+    this.persistCajaOrigenes();
+  }
+
+  removeCajaOrigen(origen: { grupo: string; nombre: string }) {
+    if (this.savingCajaOrigenes) return;
+
+    this.config.caja.origenes = this.config.caja.origenes.filter((item) => item !== origen);
+    this.persistCajaOrigenes();
+  }
+
+  persistCajaOrigenes() {
+    this.savingCajaOrigenes = true;
+    this.config.caja.origenes = this.config.caja.origenes
+      .map((item) => ({
+        grupo: item.grupo.trim().toLowerCase(),
+        nombre: item.nombre.trim(),
+      }))
+      .filter((item) => item.grupo && item.nombre)
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+      next: (config) => {
+        this.config = config;
+        this.savingCajaOrigenes = false;
+      },
+      error: () => {
+        this.savingCajaOrigenes = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudieron guardar los orígenes de caja.',
+        });
+      },
+    });
+  }
+
+  persistCajaAmbitos() {
+    this.savingCajaAmbito = true;
+    this.config.caja.ambitos = normalizeCajaAmbitos(this.config.caja);
+    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+      next: (config) => {
+        this.config = config;
+        this.savingCajaAmbito = false;
+      },
+      error: () => {
+        this.savingCajaAmbito = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudieron guardar las etiquetas de caja.',
+        });
+      },
+    });
+  }
+
+  addCajaAmbito() {
+    const label = this.cajaAmbitoDraft.trim();
+    if (!label || this.savingCajaAmbito) return;
+
+    const exists = this.config.caja.ambitos.some(
+      (item) => item.label.trim().toLowerCase() === label.toLowerCase()
+    );
+    if (exists) {
+      this.cajaAmbitoDraft = '';
+      return;
+    }
+
+    let id = slugifyCajaAmbitoId(label);
+    if (this.config.caja.ambitos.some((item) => item.id === id)) {
+      let suffix = 2;
+      while (this.config.caja.ambitos.some((item) => item.id === `${id}_${suffix}`)) {
+        suffix += 1;
+      }
+      id = `${id}_${suffix}`;
+    }
+
+    this.config.caja.ambitos = [...this.config.caja.ambitos, { id, label }].sort((a, b) =>
+      a.label.localeCompare(b.label, 'es')
+    );
+    this.cajaAmbitoDraft = '';
+    this.persistCajaAmbitos();
+  }
+
+  removeCajaAmbito(ambito: { id: string; label: string }) {
+    if (this.savingCajaAmbito) return;
+    this.config.caja.ambitos = this.config.caja.ambitos.filter((item) => item.id !== ambito.id);
+    this.persistCajaAmbitos();
+  }
+
+  persistStockTipos() {
+    this.savingStockTipos = true;
+    this.config.stock.tipos = normalizeStockTipos(this.config.stock.tipos);
+
+    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+      next: (config) => {
+        this.config = config;
+        this.savingStockTipos = false;
+      },
+      error: () => {
+        this.savingStockTipos = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudieron guardar los tipos de movimiento.',
+        });
+      },
+    });
+  }
+
+  addStockOrigen() {
+    const nombre = this.stockOrigenDraft.trim();
+    if (!nombre || this.savingStockOrigenes) return;
+
+    let grupo = slugifyOrigenGrupo(nombre);
+    if (this.config.stock.origenes.some((item) => item.grupo === grupo)) {
+      let suffix = 2;
+      while (this.config.stock.origenes.some((item) => item.grupo === `${grupo}_${suffix}`)) {
+        suffix += 1;
+      }
+      grupo = `${grupo}_${suffix}`;
+    }
+
+    this.config.stock.origenes = [
+      ...this.config.stock.origenes,
+      { grupo, nombre },
+    ].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    this.stockOrigenDraft = '';
+    this.persistStockOrigenes();
+  }
+
+  removeStockOrigen(origen: { grupo: string; nombre: string }) {
+    if (this.savingStockOrigenes) return;
+
+    this.config.stock.origenes = this.config.stock.origenes.filter((item) => item !== origen);
+    this.persistStockOrigenes();
+  }
+
+  persistStockOrigenes() {
+    this.savingStockOrigenes = true;
+    this.config.stock.origenes = this.config.stock.origenes
+      .map((item) => ({
+        grupo: item.grupo.trim().toLowerCase(),
+        nombre: item.nombre.trim(),
+      }))
+      .filter((item) => item.grupo && item.nombre)
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+      next: (config) => {
+        this.config = config;
+        this.savingStockOrigenes = false;
+      },
+      error: () => {
+        this.savingStockOrigenes = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudieron guardar los orígenes de stock.',
+        });
+      },
+    });
+  }
+
   ngOnInit() {
     this.route.queryParamMap.subscribe((params) => {
       const tab = params.get('tab');
-
-      if (tab === 'apariencia') {
-        this.activeModuleId = 'apariencia';
-        return;
-      }
 
       if (!this.auth.canManageSettings) {
         this.router.navigate(['/dashboard']);
@@ -474,12 +898,16 @@ export class SettingsComponent implements OnInit {
 
       if (
         tab === 'caja' ||
+        tab === 'stock' ||
         tab === 'clientes' ||
         tab === 'proveedores' ||
         tab === 'productos' ||
         tab === 'pedidos' ||
         tab === 'usuarios'
       ) {
+        if (this.activeModuleId !== tab) {
+          this.clearSaveFeedback();
+        }
         this.activeModuleId = tab;
       }
     });
@@ -489,6 +917,17 @@ export class SettingsComponent implements OnInit {
         this.config = config;
         this.syncAllFieldModes();
         this.syncCajaConceptosMode();
+        if (!this.config.caja.origenes?.length) {
+          this.config.caja.origenes = structuredClone(DEFAULT_APP_CONFIG.caja.origenes);
+        }
+        if (!this.config.stock?.tipos?.length) {
+          this.config.stock = structuredClone(DEFAULT_APP_CONFIG.stock);
+        } else {
+          this.config.stock.tipos = normalizeStockTipos(this.config.stock.tipos);
+        }
+        if (!this.config.stock?.origenes?.length) {
+          this.config.stock.origenes = structuredClone(DEFAULT_APP_CONFIG.stock.origenes);
+        }
       },
       error: () => {
         if (!this.auth.canManageSettings) return;
@@ -578,6 +1017,12 @@ export class SettingsComponent implements OnInit {
     }
   }
 
+  selectModule(moduleId: ConfigModule['id']) {
+    if (this.activeModuleId === moduleId) return;
+    this.clearSaveFeedback();
+    this.activeModuleId = moduleId;
+  }
+
   saveConfig() {
     this.persistConfig(true);
   }
@@ -596,6 +1041,7 @@ export class SettingsComponent implements OnInit {
     pedidosOnly = false
   ) {
     if (showSavingState) {
+      this.clearSaveSuccess();
       this.saving = true;
     }
     if (fieldKey) {
@@ -616,7 +1062,6 @@ export class SettingsComponent implements OnInit {
           this.syncAllFieldModes();
           this.syncCajaConceptosMode();
         }
-        this.saving = false;
         if (fieldKey) {
           this.savingFields.delete(fieldKey);
         }
@@ -624,10 +1069,13 @@ export class SettingsComponent implements OnInit {
           this.savingPedidos = false;
         }
         if (showSavingState) {
-          this.showSaveSuccess('Configuración guardada correctamente.');
+          this.scheduleSaveSuccessAfterCooldown();
+        } else {
+          this.saving = false;
         }
       },
       error: () => {
+        this.cancelSaveCooldown();
         this.saving = false;
         if (fieldKey) {
           this.savingFields.delete(fieldKey);
@@ -643,6 +1091,40 @@ export class SettingsComponent implements OnInit {
     });
   }
 
+  ngOnDestroy() {
+    this.clearSaveFeedback();
+  }
+
+  private scheduleSaveSuccessAfterCooldown() {
+    this.cancelSaveCooldown();
+    this.saveCooldownTimeout = setTimeout(() => {
+      this.saving = false;
+      this.saveCooldownTimeout = undefined;
+      this.showSaveSuccess('Configuración guardada correctamente.');
+    }, SAVE_BUTTON_COOLDOWN_MS);
+  }
+
+  private cancelSaveCooldown() {
+    if (this.saveCooldownTimeout) {
+      clearTimeout(this.saveCooldownTimeout);
+      this.saveCooldownTimeout = undefined;
+    }
+  }
+
+  private clearSaveSuccess() {
+    this.saveSuccessMessage = '';
+    if (this.saveSuccessTimeout) {
+      clearTimeout(this.saveSuccessTimeout);
+      this.saveSuccessTimeout = undefined;
+    }
+  }
+
+  private clearSaveFeedback() {
+    this.clearSaveSuccess();
+    this.cancelSaveCooldown();
+    this.saving = false;
+  }
+
   private showSaveSuccess(message: string) {
     this.saveSuccessMessage = message;
     if (this.saveSuccessTimeout) {
@@ -651,6 +1133,6 @@ export class SettingsComponent implements OnInit {
     this.saveSuccessTimeout = setTimeout(() => {
       this.saveSuccessMessage = '';
       this.saveSuccessTimeout = undefined;
-    }, 3500);
+    }, SAVE_SUCCESS_DISPLAY_MS);
   }
 }

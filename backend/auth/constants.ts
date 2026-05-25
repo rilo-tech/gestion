@@ -7,10 +7,21 @@ export const ASSIGNABLE_PERMISSIONS = [
   'records.edit',
   'records.delete',
   'cash.access',
+  'accounts.viewBalance',
   'economics.view',
   'reports.view',
   'orders.viewSalePrice',
   'orders.personalization',
+  'orders.viewAll',
+  'orders.viewDelivered',
+  'orders.print',
+  'sales.create',
+  'sales.viewHistory',
+  'sales.viewSummary',
+  'purchases.access',
+  'prices.view',
+  'prices.manage',
+  'payables.access',
 ] as const;
 
 export type AssignablePermission = (typeof ASSIGNABLE_PERMISSIONS)[number];

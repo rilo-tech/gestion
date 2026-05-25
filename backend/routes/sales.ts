@@ -3,8 +3,9 @@ import { db } from '../firebase.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
 import { allocateSaleNumber, resolveSaleLabel } from '../utils/sale-number.ts';
 import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-commitments.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
 type OrderPayment = {
   id: string;
@@ -246,6 +247,7 @@ async function createCashIncome(
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
+    ambito: 'negocio',
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -285,6 +287,7 @@ async function reverseCashMovement(
     monto: Number(data.monto) || 0,
     medio: data.medio ?? 'efectivo',
     concepto: `Anulación ${conceptoBase}`,
+    ambito: data.ambito === 'personal' ? 'personal' : 'negocio',
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,

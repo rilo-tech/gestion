@@ -1,10 +1,47 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { formatOrderNumber } from '../utils/order-number.ts';
+import {
+  getCashOrigenNombre,
+  normalizeCajaOrigenes,
+  type CajaOrigen,
+  type OrigenGrupo,
+} from '../utils/cash-origenes.ts';
+import {
+  mapDeletionError,
+  validateCashMovementDeletion,
+} from '../utils/deletion-guards.ts';
+import {
+  getDefaultCashAmbitoId,
+  normalizeCajaAmbitos,
+  normalizeMovementAmbito,
+  usesCashAmbitoSeparationFromCaja,
+} from '../utils/caja-ambitos.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
-type OrigenGrupo = 'pedido' | 'venta' | 'manual' | 'otro';
+async function loadCashOrigenes(businessId: string): Promise<CajaOrigen[]> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return normalizeCajaOrigenes([]);
+  const caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+  return normalizeCajaOrigenes(caja.origenes);
+}
+
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return {};
+  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+}
+
+async function usesCashAmbitoSeparation(businessId: string): Promise<boolean> {
+  const caja = await loadCajaConfig(businessId);
+  return usesCashAmbitoSeparationFromCaja(caja);
+}
+
+function normalizeAmbito(value: unknown, caja: Record<string, unknown>): string {
+  return normalizeMovementAmbito(value, caja);
+}
 
 function isManualMovement(movement: Record<string, unknown>): boolean {
   if (movement.origenGrupo === 'manual') return true;
@@ -20,45 +57,42 @@ function isManualMovement(movement: Record<string, unknown>): boolean {
 
 function resolveOrigenGrupo(movement: Record<string, unknown>): OrigenGrupo {
   const stored = movement.origenGrupo;
-  if (stored === 'pedido' || stored === 'venta' || stored === 'manual' || stored === 'otro') {
+  if (
+    stored === 'pedido' ||
+    stored === 'venta' ||
+    stored === 'compra' ||
+    stored === 'manual' ||
+    stored === 'otro'
+  ) {
     return stored;
   }
 
   const tipo = String(movement.origenTipo ?? '');
   if (tipo.startsWith('pedido') || movement.pedidoId) return 'pedido';
+  if (tipo === 'compra' || tipo.startsWith('compra')) return 'compra';
   if (tipo === 'venta' || tipo.startsWith('venta')) return 'venta';
   if (tipo.startsWith('caja_manual')) return 'manual';
   if (isManualMovement(movement)) return 'manual';
   return 'otro';
 }
 
-function resolveOrigenLabel(movement: Record<string, unknown>, grupo: OrigenGrupo): string {
-  if (grupo === 'pedido') {
-    const subtipo = String(movement.origenTipo ?? '');
-    if (subtipo === 'pedido_senia') return 'Pedido · seña';
-    if (subtipo === 'pedido_extra') return 'Pedido · extra';
-    if (subtipo === 'pedido_cuota') return 'Pedido · cuota';
-    if (subtipo === 'pedido_pago') return 'Pedido · pago';
-    if (subtipo === 'pedido_cancelacion') return 'Pedido · anulación';
-    return 'Pedido';
-  }
-  if (grupo === 'venta') {
-    const subtipo = String(movement.origenTipo ?? '');
-    if (subtipo === 'venta_pedido') return 'Venta · saldo pedido';
-    if (subtipo === 'venta_mostrador') return 'Venta · mostrador';
-    if (subtipo === 'venta_mostrador_cobro') return 'Venta · cobro saldo';
-    return 'Venta';
-  }
+function resolveOrigenLabel(
+  movement: Record<string, unknown>,
+  grupo: OrigenGrupo,
+  origenes: CajaOrigen[]
+): string {
+  const base = getCashOrigenNombre(origenes, grupo);
   if (grupo === 'manual') {
-    return movement.tipo === 'egreso' ? 'Manual · egreso' : 'Manual · ingreso';
+    return movement.tipo === 'egreso' ? `${base} · egreso` : `${base} · ingreso`;
   }
-  return 'Otro';
+  return base;
 }
 
 async function enrichMovements(
   businessId: string,
   movements: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
+  const origenes = await loadCashOrigenes(businessId);
   const orderIds = new Set<string>();
   for (const movement of movements) {
     if (movement.pedidoId && !movement.numeroPedidoLabel) {
@@ -92,7 +126,7 @@ async function enrichMovements(
     return {
       ...movement,
       origenGrupo,
-      origenLabel: resolveOrigenLabel(movement, origenGrupo),
+      origenLabel: resolveOrigenLabel(movement, origenGrupo, origenes),
       numeroPedido: numeroPedido ?? null,
       numeroPedidoLabel: numeroPedidoLabel ?? null,
     };
@@ -130,11 +164,15 @@ router.post('/:businessId', async (req, res) => {
       return res.status(400).json({ error: 'Ingresá un concepto.' });
     }
 
+    const caja = await loadCajaConfig(businessId);
+    const ambito = normalizeAmbito(req.body.ambito, caja);
+
     const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
       tipo,
       monto,
       medio,
       concepto,
+      ambito,
       fecha: new Date().toISOString(),
       origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
       origenGrupo: 'manual',
@@ -169,6 +207,9 @@ router.put('/:businessId/:movementId', async (req, res) => {
       return res.status(400).json({ error: 'Ingresá un concepto.' });
     }
 
+    const caja = await loadCajaConfig(businessId);
+    const ambito = normalizeAmbito(req.body.ambito, caja);
+
     const movementRef = db
       .collection(`negocios/${businessId}/movimientos_caja`)
       .doc(movementId);
@@ -177,7 +218,7 @@ router.put('/:businessId/:movementId', async (req, res) => {
     if (!snap.exists) return res.status(404).json({ error: 'Movement not found' });
 
     const existing = snap.data();
-    if (!isManualMovement(existing?.origenTipo)) {
+    if (!isManualMovement(existing ?? {})) {
       return res.status(403).json({
         error: 'Solo se pueden editar movimientos manuales de caja.',
       });
@@ -188,6 +229,7 @@ router.put('/:businessId/:movementId', async (req, res) => {
       monto,
       medio,
       concepto,
+      ambito,
       origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
       origenGrupo: 'manual',
       updatedAt: new Date().toISOString(),
@@ -210,16 +252,17 @@ router.delete('/:businessId/:movementId', async (req, res) => {
 
     if (!snap.exists) return res.status(404).json({ error: 'Movement not found' });
 
-    const existing = snap.data();
-    if (!isManualMovement(existing ?? {})) {
-      return res.status(403).json({
-        error: 'Solo se pueden eliminar movimientos manuales de caja.',
-      });
-    }
+    const existing = snap.data() ?? {};
+
+    await validateCashMovementDeletion(businessId, movementId, existing);
 
     await movementRef.delete();
     res.json({ id: movementId });
   } catch (error) {
+    const mapped = mapDeletionError(error);
+    if (mapped) {
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
     console.error('Error deleting cash movement:', error);
     res.status(500).json({ error: 'Error deleting cash movement' });
   }

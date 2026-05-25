@@ -23,7 +23,7 @@ interface NavItem {
       [class.translate-x-0]="nav.mobileMenuOpen()">
       <div class="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <div class="min-w-0">
-          <h1 class="text-lg sm:text-xl font-bold tracking-tight text-teal-400 truncate">RILO Gestión</h1>
+          <h1 class="text-lg sm:text-xl font-bold tracking-tight text-teal-400 truncate">{{ auth.appBrandTitle }}</h1>
           <p class="text-[11px] text-gray-500 mt-1">
             {{ auth.isPlatformAdmin ? 'Administración plataforma' : 'Panel de gestión' }}
           </p>
@@ -50,17 +50,7 @@ interface NavItem {
           </a>
         </div>
 
-        <div class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
-          <a
-            *ngIf="!auth.isPlatformAdmin"
-            routerLink="/settings"
-            [queryParams]="{ tab: 'apariencia' }"
-            routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
-            (click)="nav.closeMobileMenu()"
-            class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-800/80 transition-colors">
-            <i-lucide name="moon" class="w-5 h-5 shrink-0"></i-lucide>
-            <span class="text-sm font-medium">Apariencia</span>
-          </a>
+        <div *ngIf="auth.canManageSettings" class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
           <a
             *ngIf="auth.canManageSettings"
             routerLink="/settings"
@@ -90,15 +80,32 @@ export class SidebarComponent implements OnInit, OnDestroy {
       path: '/purchases',
       icon: 'truck',
       label: 'Compras',
-      visible: () => this.auth.canViewStockCosts,
+      visible: () => this.auth.canAccessPurchases,
     },
     { path: '/orders', icon: 'clipboard-list', label: 'Pedidos' },
-    { path: '/sales', icon: 'shopping-cart', label: 'Ventas' },
+    {
+      path: '/sales',
+      icon: 'shopping-cart',
+      label: 'Ventas',
+      visible: () => this.auth.canAccessSales,
+    },
+    {
+      path: '/price-catalog',
+      icon: 'tags',
+      label: 'Precios de venta',
+      visible: () => this.auth.canViewPriceCatalog,
+    },
     {
       path: '/cash',
       icon: 'wallet',
       label: 'Caja',
       visible: () => this.auth.canAccessCash,
+    },
+    {
+      path: '/payables',
+      icon: 'calendar',
+      label: 'Cuentas a pagar',
+      visible: () => this.auth.canAccessPayables,
     },
     {
       path: '/reports',

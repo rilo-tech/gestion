@@ -313,6 +313,7 @@ async function createCashIncome(
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
+    ambito: 'negocio',
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,

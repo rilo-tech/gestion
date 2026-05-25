@@ -1,7 +1,11 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { PublicBusinessInfo, PublicPlanInfo } from './business.service';
+import {
+  PublicBusinessInfo,
+  PublicPlanInfo,
+  SubscriptionPayment,
+} from './business.service';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -29,6 +33,7 @@ export interface CreatePlanPayload {
   limiteAdministradores: number;
   limiteOperadores: number;
   limiteUsuariosTotal?: number;
+  precioMensual?: number;
   activo?: boolean;
 }
 
@@ -37,7 +42,15 @@ export interface UpdatePlanPayload {
   limiteAdministradores?: number;
   limiteOperadores?: number;
   limiteUsuariosTotal?: number;
+  precioMensual?: number;
   activo?: boolean;
+}
+
+export interface RegisterSubscriptionPaymentPayload {
+  periodo?: string;
+  monto?: number;
+  fechaPago?: string;
+  notas?: string;
 }
 
 @Injectable({
@@ -62,6 +75,10 @@ export class PlatformService {
     return this.http.get<PublicBusinessInfo[]>('/api/platform/businesses');
   }
 
+  getBusiness(businessId: string): Observable<PublicBusinessInfo> {
+    return this.http.get<PublicBusinessInfo>(`/api/platform/businesses/${businessId}`);
+  }
+
   createBusiness(payload: CreateBusinessPayload): Observable<{
     business: PublicBusinessInfo;
     supervisor: { id: string; nombre: string; loginUsername: string };
@@ -75,6 +92,22 @@ export class PlatformService {
   ): Observable<PublicBusinessInfo> {
     return this.http.patch<PublicBusinessInfo>(
       `/api/platform/businesses/${businessId}`,
+      payload
+    );
+  }
+
+  getBusinessPayments(businessId: string): Observable<SubscriptionPayment[]> {
+    return this.http.get<SubscriptionPayment[]>(
+      `/api/platform/businesses/${businessId}/payments`
+    );
+  }
+
+  registerBusinessPayment(
+    businessId: string,
+    payload: RegisterSubscriptionPaymentPayload
+  ): Observable<SubscriptionPayment> {
+    return this.http.post<SubscriptionPayment>(
+      `/api/platform/businesses/${businessId}/payments`,
       payload
     );
   }

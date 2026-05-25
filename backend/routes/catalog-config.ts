@@ -1,7 +1,17 @@
 import express from 'express';
 import { db } from '../firebase.ts';
+import { normalizeCajaOrigenes } from '../utils/cash-origenes.ts';
+import {
+  normalizeCajaAmbitos,
+} from '../utils/caja-ambitos.ts';
+import {
+  normalizeStockOrigenes,
+  normalizeStockTipos,
+} from '../utils/stock-movimientos.ts';
+import { createCompanyRouter } from './create-company-router.ts';
+import { requireSettingsAccess } from '../auth/middleware.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
 type FieldInputMode = 'lista' | 'texto';
 type CajaConceptoTipo = 'ingreso' | 'egreso' | 'ambos';
@@ -34,12 +44,18 @@ const DEFAULT_APP_CONFIG = {
   },
   caja: {
     conceptos: [] as CajaConcepto[],
+    origenes: normalizeCajaOrigenes([]),
+    ambitos: [] as ReturnType<typeof normalizeCajaAmbitos>,
     modo: {
       conceptos: 'texto' as FieldInputMode,
     },
   },
   pedidos: {
     costosPersonalizacionDetallados: true,
+  },
+  stock: {
+    tipos: normalizeStockTipos([]),
+    origenes: normalizeStockOrigenes([]),
   },
 };
 
@@ -157,7 +173,9 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
   const caja = (data.caja as Record<string, unknown>) ?? {};
   const cajaModo = (caja.modo as Record<string, unknown>) ?? {};
   const conceptos = normalizeCajaConceptos(caja);
+  const origenes = normalizeCajaOrigenes(caja.origenes);
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
+  const stock = (data.stock as Record<string, unknown>) ?? {};
 
   return {
     productos: normalizeProductos(productos as Record<string, unknown>),
@@ -181,6 +199,8 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
     },
     caja: {
       conceptos,
+      origenes,
+      ambitos: normalizeCajaAmbitos(caja),
       modo: {
         conceptos: normalizeMode(
           cajaModo.conceptos ??
@@ -194,6 +214,10 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
     pedidos: {
       costosPersonalizacionDetallados:
         pedidos.costosPersonalizacionDetallados !== false,
+    },
+    stock: {
+      tipos: normalizeStockTipos(stock.tipos),
+      origenes: normalizeStockOrigenes(stock.origenes),
     },
   };
 }
@@ -221,7 +245,7 @@ router.get('/:businessId', async (req, res) => {
   }
 });
 
-router.patch('/:businessId', async (req, res) => {
+router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
   try {
     const { businessId } = req.params;
     const payload = {

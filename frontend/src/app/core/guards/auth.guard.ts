@@ -1,6 +1,7 @@
 import { inject } from '@angular/core';
 import { CanActivateFn, Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
+import { Permission } from '../constants/permissions';
 import { map } from 'rxjs';
 
 function redirectIfAuthenticated(auth: AuthService, router: Router) {
@@ -34,6 +35,23 @@ export const loginGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
   return redirectIfAuthenticated(auth, router);
+};
+
+/** Permite /acceso-plataforma salvo que ya haya sesión de superadmin plataforma. */
+export const platformLoginGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+
+  const resolve = (authenticated: boolean) => {
+    if (!authenticated) return true;
+    return auth.isPlatformAdmin ? router.createUrlTree(['/platform']) : true;
+  };
+
+  if (auth.currentUser) {
+    return resolve(true);
+  }
+
+  return auth.initialize().pipe(map((authenticated) => resolve(authenticated)));
 };
 
 export const platformGuard: CanActivateFn = () => {
@@ -73,3 +91,21 @@ export const supervisorGuard: CanActivateFn = () => {
   const router = inject(Router);
   return auth.canManageUsers ? true : router.createUrlTree([auth.homeRoute]);
 };
+
+export function requirePermission(permission: Permission): CanActivateFn {
+  return () => {
+    const auth = inject(AuthService);
+    const router = inject(Router);
+    return auth.hasPermission(permission) ? true : router.createUrlTree(['/dashboard']);
+  };
+}
+
+export function requireAnyPermission(...permissions: Permission[]): CanActivateFn {
+  return () => {
+    const auth = inject(AuthService);
+    const router = inject(Router);
+    return permissions.some((permission) => auth.hasPermission(permission))
+      ? true
+      : router.createUrlTree(['/dashboard']);
+  };
+}

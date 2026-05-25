@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { verifyAuthToken } from './jwt.ts';
+import { assertBusinessActive } from './business.ts';
 import { getStoredUser, toPublicUser, type PublicUser } from './users.ts';
-import { DEFAULT_BUSINESS_ID } from './constants.ts';
+import { DEFAULT_BUSINESS_ID, userHasPermission, type AssignablePermission } from './constants.ts';
 import {
   getPlatformAdmin,
   PLATFORM_SCOPE,
@@ -65,6 +66,27 @@ export async function requireAuth(
     return res.status(401).json({ error: 'Usuario inactivo o inexistente.' });
   }
 
+  try {
+    await assertBusinessActive(payload.businessId);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'SUBSCRIPTION_SUSPENDED') {
+      return res.status(403).json({
+        error: 'La suscripción de esta empresa está desactivada.',
+      });
+    }
+    if (code === 'SUBSCRIPTION_EXPIRED') {
+      return res.status(403).json({
+        error: 'La suscripción de esta empresa está vencida.',
+      });
+    }
+    if (code === 'PLAN_INACTIVE') {
+      return res.status(403).json({
+        error: 'El plan asignado a esta empresa no está activo.',
+      });
+    }
+  }
+
   req.auth = {
     scope: 'company',
     businessId: payload.businessId,
@@ -114,6 +136,21 @@ export function requireSettingsAccess(
   next();
 }
 
+export function requirePermission(permission: AssignablePermission) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.auth?.scope !== 'company') {
+      return res.status(403).json({ error: 'No tenés permiso para esta acción.' });
+    }
+
+    const user = req.auth.user;
+    if (!userHasPermission(user.rol, user.permisos, permission)) {
+      return res.status(403).json({ error: 'No tenés permiso para acceder a este módulo.' });
+    }
+
+    next();
+  };
+}
+
 export function assertCompanyTenantAccess(
   req: AuthenticatedRequest,
   res: Response,
@@ -124,11 +161,11 @@ export function assertCompanyTenantAccess(
     return res.status(400).json({ error: 'Empresa no especificada.' });
   }
 
-  if (req.auth?.scope === 'platform') {
-    return next();
+  if (req.auth?.scope !== 'company') {
+    return res.status(403).json({ error: 'No podés acceder a otra empresa.' });
   }
 
-  if (req.auth?.scope === 'company' && req.auth.businessId === targetBusinessId) {
+  if (req.auth.businessId === targetBusinessId) {
     return next();
   }
 

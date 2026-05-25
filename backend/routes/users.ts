@@ -19,11 +19,9 @@ import {
   requireSupervisor,
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
-
-router.use(requireAuth);
-router.use('/:businessId', assertCompanyTenantAccess);
+const router = createCompanyRouter();
 
 router.patch('/:businessId/me/preferences', async (req: AuthenticatedRequest, res) => {
   try {
@@ -89,7 +87,7 @@ function mapUserMutationError(error: unknown): { status: number; message: string
     };
   }
   if (code === 'SUBSCRIPTION_SUSPENDED') {
-    return { status: 403, message: 'La suscripción está suspendida.' };
+    return { status: 403, message: 'La suscripción de esta empresa está desactivada.' };
   }
   if (code === 'SUBSCRIPTION_EXPIRED') {
     return { status: 403, message: 'La suscripción está vencida.' };

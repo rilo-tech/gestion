@@ -27,6 +27,8 @@ export interface OrderLineItem {
   precioVenta: number | null;
   /** Enriquecido desde stock al armar el pedido; no se persiste. */
   precioSugerido?: number;
+  /** Referencia del catálogo de precios; no se persiste. */
+  priceCatalogId?: string;
   /** Enriquecido desde stock al armar el pedido; no se persiste. */
   controlaStock?: boolean;
   stockDisponible?: number;

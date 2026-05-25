@@ -1,20 +1,31 @@
 import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CashMovement, CashOrigenGrupo, CashService } from '../../core/services/cash.service';
+import { CashMovement, CashService } from '../../core/services/cash.service';
 import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
   getCashConceptOptions,
+  getCashOrigenes,
+  getCashOrigenNombre,
+  getCajaAmbitos,
+  getDefaultCashAmbitoId,
   usesCashConceptList,
+  usesCashAmbitoSeparation,
+  resolveCashAmbito,
+  getCashAmbitoLabel,
+  CashAmbito,
+  CajaAmbitoConfig,
+  CajaOrigen,
 } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
+import { isDeletableCashMovement } from '../../core/utils/deletion-rules';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import { IconActionComponent, PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
@@ -31,7 +42,7 @@ import { Subscription } from 'rxjs';
           <p class="text-sm sm:text-base text-gray-500">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
           <app-config-settings-link
             settingsTab="caja"
-            message="¿Falta un concepto?"
+            message="¿Falta un concepto u origen?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
         </div>
@@ -45,7 +56,38 @@ import { Subscription } from 'rxjs';
         </div>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+      <div *ngIf="usesAmbitoSeparation" class="mb-6 sm:mb-8 space-y-4">
+        <div class="flex gap-2 border-b border-gray-200 overflow-x-auto">
+          <button
+            *ngFor="let ambito of cajaAmbitos"
+            type="button"
+            (click)="activeAmbitoTab = ambito.id"
+            class="px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
+            [class.border-teal-600]="activeAmbitoTab === ambito.id"
+            [class.text-teal-700]="activeAmbitoTab === ambito.id"
+            [class.border-transparent]="activeAmbitoTab !== ambito.id"
+            [class.text-gray-500]="activeAmbitoTab !== ambito.id">
+            {{ ambito.label }}
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Ingresos</p>
+            <p class="text-xl font-bold text-teal-600 tabular-nums">{{ '$' + activeAmbitoIngresos }}</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Egresos</p>
+            <p class="text-xl font-bold text-red-500 tabular-nums">{{ '$' + activeAmbitoEgresos }}</p>
+          </div>
+          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm col-span-2 sm:col-span-1">
+            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Saldo</p>
+            <p class="text-xl font-bold text-gray-900 tabular-nums">{{ '$' + activeAmbitoSaldo }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div *ngIf="!usesAmbitoSeparation" class="grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ingresos</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + totalIngresos }}</p>
@@ -73,39 +115,39 @@ import { Subscription } from 'rxjs';
               name="origenFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los orígenes</option>
-              <option value="pedido">Pedidos</option>
-              <option value="venta">Ventas</option>
-              <option value="manual">Manuales</option>
+              <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
+                {{ origen.nombre }}
+              </option>
             </select>
           </div>
           <p *ngIf="!loading && movements.length > 0" class="text-xs text-gray-500">
             Ingresos por origen:
-            <span class="font-medium text-teal-700">Pedidos {{ '$' + ingresosPedidos }}</span>
-            ·
-            <span class="font-medium text-purple-700">Ventas {{ '$' + ingresosVentas }}</span>
-            ·
-            <span class="font-medium text-gray-700">Manuales {{ '$' + ingresosManuales }}</span>
+            <ng-container *ngFor="let origen of cashOrigenes; let last = last">
+              <span class="font-medium" [ngClass]="getOrigenSummaryTextClass(origen.grupo)">
+                {{ origen.nombre }} {{ '$' + sumIngresosByOrigen(origen.grupo) }}
+              </span><span *ngIf="!last"> · </span>
+            </ng-container>
           </p>
         </div>
-        <div class="overflow-x-auto">
-        <table class="w-full min-w-[820px] text-left border-collapse">
+        <div [class]="tableScrollClass">
+        <table class="w-full text-left border-collapse sm:min-w-[820px]">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Concepto</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Medio</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Monto</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Concepto</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Medio</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Monto</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr *ngFor="let movement of filteredMovements" class="transition-colors">
-              <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(movement.fecha) }}
               </td>
-              <td class="px-6 py-4">
-                <div class="font-medium text-gray-900">
+              <td class="px-4 sm:px-6 py-3 sm:py-4">
+                <div class="font-medium text-gray-900 text-sm">
                   <app-concept-ref-links
                     [text]="movement.concepto"
                     [pedidoId]="movement.pedidoId"
@@ -114,24 +156,46 @@ import { Subscription } from 'rxjs';
                     [ventaLabel]="movement.ventaLabel">
                   </app-concept-ref-links>
                 </div>
+                <div class="text-xs text-gray-400 mt-0.5 sm:hidden">
+                  {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }}
+                </div>
+                <div class="flex items-center gap-1 mt-2 sm:hidden" (click)="$event.stopPropagation()">
+                  <button
+                    *ngIf="auth.canEditRecords"
+                    type="button"
+                    (click)="openEditMovement(movement)"
+                    title="Editar movimiento"
+                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
+                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
+                    type="button"
+                    (click)="confirmDeleteMovement(movement)"
+                    title="Eliminar movimiento"
+                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
+                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                  </button>
+                </div>
               </td>
-              <td class="px-6 py-4">
+              <td class="hidden sm:table-cell px-6 py-4">
                 <span
                   class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
                   [ngClass]="getOrigenBadgeClass(movement)">
                   {{ getOrigenLabel(movement) }}
                 </span>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-500 capitalize">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-500 capitalize">
                 {{ movement.medio || '—' }}
               </td>
               <td
-                class="px-6 py-4 text-sm font-semibold text-right tabular-nums"
+                class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-right tabular-nums"
                 [class.text-teal-600]="movement.tipo === 'ingreso'"
                 [class.text-red-500]="movement.tipo === 'egreso'">
                 {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+                <div class="text-xs font-normal text-gray-400 sm:hidden capitalize">{{ movement.medio || '—' }}</div>
               </td>
-              <td class="px-6 py-4 text-sm font-medium whitespace-nowrap">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap">
                 <div class="flex items-center justify-end gap-1">
                   <button
                     *ngIf="auth.canEditRecords"
@@ -142,7 +206,7 @@ import { Subscription } from 'rxjs';
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
-                    *ngIf="auth.canDeleteRecords"
+                    *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
                     type="button"
                     (click)="confirmDeleteMovement(movement)"
                     title="Eliminar movimiento"
@@ -152,15 +216,28 @@ import { Subscription } from 'rxjs';
                 </div>
               </td>
             </tr>
-            <tr *ngIf="loading">
-              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
+            <tr *ngIf="loading" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando movimientos...</td>
             </tr>
-            <tr *ngIf="!loading && movements.length === 0">
+            <tr *ngIf="loading" class="hidden sm:table-row">
+              <td [attr.colspan]="6" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
+            </tr>
+            <tr *ngIf="!loading && movements.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && movements.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
               </td>
             </tr>
-            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0">
+            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No se encontraron movimientos con los filtros actuales.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron movimientos con los filtros actuales.
               </td>
@@ -234,6 +311,24 @@ import { Subscription } from 'rxjs';
             </app-config-settings-link>
           </div>
 
+          <div *ngIf="usesAmbitoSeparation">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Ámbito</label>
+            <div class="grid gap-2" [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
+              <button
+                *ngFor="let ambito of cajaAmbitos"
+                type="button"
+                (click)="movementAmbito = ambito.id"
+                class="rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
+                [class.border-teal-500]="movementAmbito === ambito.id"
+                [class.bg-teal-50]="movementAmbito === ambito.id"
+                [class.text-teal-700]="movementAmbito === ambito.id"
+                [class.border-gray-200]="movementAmbito !== ambito.id"
+                [class.text-gray-700]="movementAmbito !== ambito.id">
+                {{ ambito.label }}
+              </button>
+            </div>
+          </div>
+
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Monto</label>
             <input
@@ -282,6 +377,7 @@ import { Subscription } from 'rxjs';
 })
 export class CashComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly auth = inject(AuthService);
 
   private cashService = inject(CashService);
@@ -292,7 +388,8 @@ export class CashComponent implements OnInit, OnDestroy {
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   movements: CashMovement[] = [];
   searchQuery = '';
-  origenFilter: 'all' | CashOrigenGrupo = 'all';
+  origenFilter: 'all' | string = 'all';
+  activeAmbitoTab = '';
   loading = true;
 
   movementModalOpen = false;
@@ -301,11 +398,13 @@ export class CashComponent implements OnInit, OnDestroy {
   movementConcepto = '';
   movementMonto: number | null = null;
   movementMedio = 'efectivo';
+  movementAmbito = '';
   savingMovement = false;
 
   ngOnInit() {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
+      this.syncActiveAmbitoTab();
     });
     this.configService.getAppConfig().subscribe();
     this.loadMovements();
@@ -315,11 +414,45 @@ export class CashComponent implements OnInit, OnDestroy {
     this.configSub?.unsubscribe();
   }
 
+  get cashOrigenes(): CajaOrigen[] {
+    return getCashOrigenes(this.appConfig.caja.origenes);
+  }
+
+  get cajaAmbitos(): CajaAmbitoConfig[] {
+    return getCajaAmbitos(this.appConfig);
+  }
+
+  get usesAmbitoSeparation(): boolean {
+    return usesCashAmbitoSeparation(this.appConfig);
+  }
+
+  get activeAmbitoLabel(): string {
+    return getCashAmbitoLabel(this.activeAmbitoTab, this.appConfig);
+  }
+
+  get activeAmbitoIngresos(): number {
+    return this.sumByTipo('ingreso', this.activeAmbitoTab);
+  }
+
+  get activeAmbitoEgresos(): number {
+    return this.sumByTipo('egreso', this.activeAmbitoTab);
+  }
+
+  get activeAmbitoSaldo(): number {
+    return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
+  }
+
   get filteredMovements(): CashMovement[] {
     let list = this.movements;
 
     if (this.origenFilter !== 'all') {
       list = list.filter((movement) => this.resolveOrigenGrupo(movement) === this.origenFilter);
+    }
+
+    if (this.usesAmbitoSeparation) {
+      list = list.filter(
+        (movement) => resolveCashAmbito(movement, this.appConfig) === this.activeAmbitoTab
+      );
     }
 
     const query = this.searchQuery.trim().toLowerCase();
@@ -332,6 +465,9 @@ export class CashComponent implements OnInit, OnDestroy {
         movement.numeroPedidoLabel,
         movement.ventaLabel,
         movement.medio,
+        this.usesAmbitoSeparation
+          ? getCashAmbitoLabel(resolveCashAmbito(movement, this.appConfig), this.appConfig)
+          : '',
       ]
         .map((value) => String(value ?? '').toLowerCase())
         .join(' ');
@@ -339,28 +475,12 @@ export class CashComponent implements OnInit, OnDestroy {
     });
   }
 
-  get ingresosPedidos(): number {
-    return this.sumIngresosByOrigen('pedido');
-  }
-
-  get ingresosVentas(): number {
-    return this.sumIngresosByOrigen('venta');
-  }
-
-  get ingresosManuales(): number {
-    return this.sumIngresosByOrigen('manual');
-  }
-
   get totalIngresos(): number {
-    return this.movements
-      .filter((movement) => movement.tipo === 'ingreso')
-      .reduce((acc, movement) => acc + (Number(movement.monto) || 0), 0);
+    return this.sumByTipo('ingreso');
   }
 
   get totalEgresos(): number {
-    return this.movements
-      .filter((movement) => movement.tipo === 'egreso')
-      .reduce((acc, movement) => acc + (Number(movement.monto) || 0), 0);
+    return this.sumByTipo('egreso');
   }
 
   get saldoCaja(): number {
@@ -422,21 +542,45 @@ export class CashComponent implements OnInit, OnDestroy {
   getOrigenLabel(movement: CashMovement): string {
     if (movement.origenLabel) return movement.origenLabel;
     const grupo = this.resolveOrigenGrupo(movement);
-    if (grupo === 'pedido') return 'Pedido';
-    if (grupo === 'venta') return 'Venta';
+    const base = getCashOrigenNombre(this.appConfig.caja.origenes, grupo);
     if (grupo === 'manual') {
-      return movement.tipo === 'egreso' ? 'Manual · egreso' : 'Manual · ingreso';
+      return movement.tipo === 'egreso' ? `${base} · egreso` : `${base} · ingreso`;
     }
-    return 'Otro';
+    return base;
   }
 
   getOrigenBadgeClass(movement: CashMovement): Record<string, boolean> {
     const grupo = this.resolveOrigenGrupo(movement);
+    return this.getOrigenBadgeClassByGrupo(grupo);
+  }
+
+  getAmbitoLabel(movement: CashMovement): string {
+    return getCashAmbitoLabel(resolveCashAmbito(movement, this.appConfig), this.appConfig);
+  }
+
+  getAmbitoBadgeClass(_movement: CashMovement): Record<string, boolean> {
+    return { 'bg-gray-100 text-gray-700': true };
+  }
+
+  getOrigenSummaryTextClass(grupo: string): Record<string, boolean> {
+    return {
+      'text-teal-700': grupo === 'pedido',
+      'text-purple-700': grupo === 'venta',
+      'text-amber-700': grupo === 'compra',
+      'text-gray-700': grupo === 'manual',
+      'text-slate-700':
+        grupo !== 'pedido' && grupo !== 'venta' && grupo !== 'compra' && grupo !== 'manual',
+    };
+  }
+
+  private getOrigenBadgeClassByGrupo(grupo: string): Record<string, boolean> {
     return {
       'bg-teal-50 text-teal-700': grupo === 'pedido',
       'bg-purple-50 text-purple-700': grupo === 'venta',
+      'bg-amber-50 text-amber-700': grupo === 'compra',
       'bg-gray-100 text-gray-700': grupo === 'manual',
-      'bg-amber-50 text-amber-700': grupo === 'otro',
+      'bg-slate-100 text-slate-700':
+        grupo !== 'pedido' && grupo !== 'venta' && grupo !== 'compra' && grupo !== 'manual',
     };
   }
 
@@ -448,10 +592,11 @@ export class CashComponent implements OnInit, OnDestroy {
     return '—';
   }
 
-  private resolveOrigenGrupo(movement: CashMovement): CashOrigenGrupo {
+  private resolveOrigenGrupo(movement: CashMovement): string {
     if (movement.origenGrupo) return movement.origenGrupo;
     const tipo = String(movement.origenTipo ?? '');
     if (tipo.startsWith('pedido') || movement.pedidoId) return 'pedido';
+    if (tipo === 'compra' || tipo.startsWith('compra')) return 'compra';
     if (tipo === 'venta' || tipo.startsWith('venta')) return 'venta';
     if (tipo.startsWith('caja_manual')) return 'manual';
     if (!movement.pedidoId && !tipo.startsWith('pedido') && tipo !== 'venta' && !tipo.startsWith('venta')) {
@@ -460,7 +605,7 @@ export class CashComponent implements OnInit, OnDestroy {
     return 'otro';
   }
 
-  private sumIngresosByOrigen(grupo: CashOrigenGrupo): number {
+  private sumIngresosByOrigen(grupo: string): number {
     return this.movements
       .filter(
         (movement) =>
@@ -469,12 +614,38 @@ export class CashComponent implements OnInit, OnDestroy {
       .reduce((acc, movement) => acc + (Number(movement.monto) || 0), 0);
   }
 
+  private syncActiveAmbitoTab() {
+    const ambitos = this.cajaAmbitos;
+    if (!ambitos.length) {
+      this.activeAmbitoTab = getDefaultCashAmbitoId(this.appConfig);
+      return;
+    }
+    if (!ambitos.some((ambito) => ambito.id === this.activeAmbitoTab)) {
+      this.activeAmbitoTab = ambitos[0].id;
+    }
+  }
+
+  private sumByTipo(tipo: 'ingreso' | 'egreso', ambito?: string): number {
+    return this.movements
+      .filter((movement) => {
+        if (movement.tipo !== tipo) return false;
+        if (!ambito) return true;
+        return resolveCashAmbito(movement, this.appConfig) === ambito;
+      })
+      .reduce((acc, movement) => acc + (Number(movement.monto) || 0), 0);
+  }
+
+  isDeletableCashMovement = isDeletableCashMovement;
+
   openMovementModal(tipo: 'ingreso' | 'egreso') {
     this.editingMovementId = null;
     this.movementTipo = tipo;
     this.movementConcepto = '';
     this.movementMonto = null;
     this.movementMedio = 'efectivo';
+    this.movementAmbito = this.usesAmbitoSeparation
+      ? this.activeAmbitoTab
+      : getDefaultCashAmbitoId(this.appConfig);
     this.movementModalOpen = true;
   }
 
@@ -494,6 +665,7 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementConcepto = movement.concepto ?? '';
     this.movementMonto = Number(movement.monto) || null;
     this.movementMedio = movement.medio || 'efectivo';
+    this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
     this.movementModalOpen = true;
   }
 
@@ -504,6 +676,15 @@ export class CashComponent implements OnInit, OnDestroy {
 
   confirmDeleteMovement(movement: CashMovement) {
     if (!movement.id) return;
+
+    if (!isDeletableCashMovement(movement)) {
+      this.dialogService.alert({
+        title: 'Movimiento vinculado',
+        message:
+          'Este movimiento está vinculado a otro documento y no se puede eliminar. Registrá un documento con signo contrario desde el pedido, la venta o la compra que lo generó.',
+      });
+      return;
+    }
 
     if (!this.isManualMovement(movement)) {
       this.dialogService.alert({
@@ -527,7 +708,7 @@ export class CashComponent implements OnInit, OnDestroy {
           next: () => this.loadMovements(),
           error: (err) =>
             this.dialogService.alert({
-              title: 'Error',
+              title: 'No se puede eliminar',
               message:
                 typeof err.error?.error === 'string'
                   ? err.error.error
@@ -566,6 +747,7 @@ export class CashComponent implements OnInit, OnDestroy {
       monto,
       concepto,
       medio: this.movementMedio,
+      ...(this.usesAmbitoSeparation ? { ambito: this.movementAmbito } : {}),
     };
 
     this.savingMovement = true;

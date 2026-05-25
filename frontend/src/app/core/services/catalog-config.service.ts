@@ -3,6 +3,26 @@ import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, of, tap } from 'rxjs';
 import { TenantService } from './tenant.service';
 
+import {
+  CajaOrigen,
+  DEFAULT_CAJA_ORIGENES,
+  getCashOrigenes,
+  getCashOrigenNombre,
+  slugifyOrigenGrupo,
+  CashOrigenGrupo,
+} from '../constants/cash-origenes';
+import {
+  DEFAULT_STOCK_ORIGENES,
+  DEFAULT_STOCK_TIPOS,
+  StockOrigenMovimiento,
+  StockTipoMovimiento,
+} from '../constants/stock-movimientos';
+
+export type { CajaOrigen, CashOrigenGrupo };
+export { DEFAULT_CAJA_ORIGENES, getCashOrigenes, getCashOrigenNombre, slugifyOrigenGrupo };
+export type { StockOrigenMovimiento, StockTipoMovimiento };
+export { DEFAULT_STOCK_ORIGENES, DEFAULT_STOCK_TIPOS };
+
 export type ConfigFieldKey =
   | 'productos.tipos'
   | 'productos.categorias'
@@ -47,12 +67,18 @@ export interface AppConfig {
   };
   caja: {
     conceptos: CajaConcepto[];
+    origenes: CajaOrigen[];
+    ambitos: CajaAmbitoConfig[];
     modo: {
       conceptos: FieldInputMode;
     };
   };
   pedidos: {
     costosPersonalizacionDetallados: boolean;
+  };
+  stock: {
+    tipos: StockTipoMovimiento[];
+    origenes: StockOrigenMovimiento[];
   };
 }
 
@@ -79,12 +105,18 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   },
   caja: {
     conceptos: [],
+    origenes: [...DEFAULT_CAJA_ORIGENES],
+    ambitos: [],
     modo: {
       conceptos: 'texto',
     },
   },
   pedidos: {
     costosPersonalizacionDetallados: true,
+  },
+  stock: {
+    tipos: [...DEFAULT_STOCK_TIPOS],
+    origenes: [...DEFAULT_STOCK_ORIGENES],
   },
 };
 
@@ -122,6 +154,68 @@ export function usesDetailedOrderExtraCosts(config: AppConfig): boolean {
 
 export function usesCashConceptList(config: AppConfig): boolean {
   return config.caja?.modo?.conceptos === 'lista' && (config.caja?.conceptos?.length ?? 0) > 0;
+}
+
+export type CashAmbito = string;
+
+export interface CajaAmbitoConfig {
+  id: string;
+  label: string;
+}
+
+export const DEFAULT_CASH_AMBITO_ID = 'general';
+
+export function slugifyCajaAmbitoId(label: string): string {
+  return slugifyOrigenGrupo(label);
+}
+
+export function normalizeCajaAmbitos(caja: { ambitos?: unknown } = {}): CajaAmbitoConfig[] {
+  const raw = caja.ambitos;
+  if (!Array.isArray(raw)) return [];
+
+  const parsed: CajaAmbitoConfig[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const id = String(obj.id ?? '').trim().toLowerCase();
+    const label = String(obj.label ?? '').trim();
+    if (!id || !label || parsed.some((entry) => entry.id === id)) continue;
+    parsed.push({ id, label });
+  }
+
+  return parsed.sort((a, b) => a.label.localeCompare(b.label, 'es'));
+}
+
+export function getCajaAmbitos(config: AppConfig): CajaAmbitoConfig[] {
+  return normalizeCajaAmbitos(config.caja ?? {});
+}
+
+export function getDefaultCashAmbitoId(config: AppConfig = DEFAULT_APP_CONFIG): string {
+  const ambitos = getCajaAmbitos(config);
+  return ambitos[0]?.id ?? DEFAULT_CASH_AMBITO_ID;
+}
+
+export function usesCashAmbitoSeparation(config: AppConfig): boolean {
+  return getCajaAmbitos(config).length >= 2;
+}
+
+export function resolveCashAmbito(
+  movement: { ambito?: string } | undefined,
+  config: AppConfig = DEFAULT_APP_CONFIG
+): string {
+  const raw = String(movement?.ambito ?? '').trim().toLowerCase();
+  const ambitos = getCajaAmbitos(config);
+  const defaultId = getDefaultCashAmbitoId(config);
+  if (raw && ambitos.some((entry) => entry.id === raw)) return raw;
+  return defaultId;
+}
+
+export function getCashAmbitoLabel(
+  ambito: string,
+  config: AppConfig = DEFAULT_APP_CONFIG
+): string {
+  const match = getCajaAmbitos(config).find((entry) => entry.id === ambito);
+  return match?.label ?? ambito;
 }
 
 export function getCashConceptOptions(

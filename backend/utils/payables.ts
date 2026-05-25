@@ -1,0 +1,370 @@
+import { db } from '../firebase.ts';
+
+export type PayableTipo = 'unico' | 'mensual';
+export type PayableCuotaEstado = 'pendiente' | 'pagada';
+export type PayableDisplayEstado = PayableCuotaEstado | 'vencida';
+
+export interface PayableObligationRecord {
+  id: string;
+  beneficiario: string;
+  monto: number;
+  tipo: PayableTipo;
+  cantidadCuotas: number;
+  fechaPrimerVencimiento: string;
+  activo: boolean;
+  ambito?: string;
+  notas?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PayableCuotaRecord {
+  id: string;
+  obligacionId: string;
+  beneficiario: string;
+  numeroCuota: number;
+  fechaVencimiento: string;
+  monto: number;
+  estado: PayableCuotaEstado;
+  fechaPago?: string;
+  tipo: PayableTipo;
+  ambito?: string;
+  createdAt?: string;
+}
+
+export interface CreatePayableObligationInput {
+  beneficiario: string;
+  monto: number;
+  tipo: PayableTipo;
+  cantidadCuotas: number;
+  fechaPrimerVencimiento: string;
+  ambito?: string;
+  notas?: string;
+}
+
+const MENSUAL_HORIZON_MONTHS = 12;
+
+function obligationsCollection(businessId: string) {
+  return db.collection(`negocios/${businessId}/cuentas_pagar_obligaciones`);
+}
+
+function cuotasCollection(businessId: string) {
+  return db.collection(`negocios/${businessId}/cuentas_pagar_cuotas`);
+}
+
+function normalizeDate(value: unknown): string | null {
+  const raw = String(value ?? '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const date = new Date(`${raw}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return raw;
+}
+
+function addMonths(dateStr: string, months: number): string {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setMonth(date.getMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function resolveDisplayEstado(
+  estado: PayableCuotaEstado,
+  fechaVencimiento: string,
+  referenceDate = todayIso()
+): PayableDisplayEstado {
+  if (estado === 'pagada') return 'pagada';
+  if (fechaVencimiento < referenceDate) return 'vencida';
+  return 'pendiente';
+}
+
+export function parseCreatePayableInput(raw: unknown): CreatePayableObligationInput | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+
+  const beneficiario = String(data.beneficiario ?? '').trim();
+  const monto = Math.max(0, Number(data.monto) || 0);
+  const tipo: PayableTipo = data.tipo === 'mensual' ? 'mensual' : 'unico';
+  const cantidadCuotas = Math.min(Math.max(1, Math.round(Number(data.cantidadCuotas) || 1)), 120);
+  const fechaPrimerVencimiento = normalizeDate(data.fechaPrimerVencimiento);
+  const notas = String(data.notas ?? '').trim();
+
+  if (!beneficiario || monto <= 0 || !fechaPrimerVencimiento) return null;
+
+  return {
+    beneficiario,
+    monto,
+    tipo,
+    cantidadCuotas: tipo === 'unico' ? cantidadCuotas : Math.max(cantidadCuotas, 1),
+    fechaPrimerVencimiento,
+    ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
+    notas: notas || undefined,
+  };
+}
+
+function mapObligation(id: string, data: Record<string, unknown>): PayableObligationRecord {
+  return {
+    id,
+    beneficiario: String(data.beneficiario ?? '').trim(),
+    monto: Math.max(0, Number(data.monto) || 0),
+    tipo: data.tipo === 'mensual' ? 'mensual' : 'unico',
+    cantidadCuotas: Math.max(1, Number(data.cantidadCuotas) || 1),
+    fechaPrimerVencimiento: normalizeDate(data.fechaPrimerVencimiento) ?? todayIso(),
+    activo: data.activo !== false,
+    ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
+    notas: data.notas ? String(data.notas).trim() : undefined,
+    createdAt: data.createdAt ? String(data.createdAt) : undefined,
+    updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
+  };
+}
+
+function mapCuota(id: string, data: Record<string, unknown>): PayableCuotaRecord {
+  return {
+    id,
+    obligacionId: String(data.obligacionId ?? '').trim(),
+    beneficiario: String(data.beneficiario ?? '').trim(),
+    numeroCuota: Math.max(1, Number(data.numeroCuota) || 1),
+    fechaVencimiento: normalizeDate(data.fechaVencimiento) ?? todayIso(),
+    monto: Math.max(0, Number(data.monto) || 0),
+    estado: data.estado === 'pagada' ? 'pagada' : 'pendiente',
+    fechaPago: data.fechaPago ? String(data.fechaPago) : undefined,
+    tipo: data.tipo === 'mensual' ? 'mensual' : 'unico',
+    ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
+    createdAt: data.createdAt ? String(data.createdAt) : undefined,
+  };
+}
+
+function buildInitialCuotas(
+  obligation: CreatePayableObligationInput
+): Array<Omit<PayableCuotaRecord, 'id'>> {
+  const count =
+    obligation.tipo === 'unico'
+      ? obligation.cantidadCuotas
+      : Math.max(obligation.cantidadCuotas, MENSUAL_HORIZON_MONTHS);
+
+  const cuotas: Array<Omit<PayableCuotaRecord, 'id'>> = [];
+  for (let i = 0; i < count; i++) {
+    cuotas.push({
+      obligacionId: '',
+      beneficiario: obligation.beneficiario,
+      numeroCuota: i + 1,
+      fechaVencimiento: addMonths(obligation.fechaPrimerVencimiento, i),
+      monto: obligation.monto,
+      estado: 'pendiente',
+      tipo: obligation.tipo,
+      ambito: obligation.ambito,
+    });
+  }
+  return cuotas;
+}
+
+async function getLatestCuotaNumber(
+  businessId: string,
+  obligacionId: string
+): Promise<number> {
+  const snapshot = await cuotasCollection(businessId)
+    .where('obligacionId', '==', obligacionId)
+    .get();
+
+  return snapshot.docs.reduce((max, doc) => {
+    const numero = Number(doc.data().numeroCuota) || 0;
+    return Math.max(max, numero);
+  }, 0);
+}
+
+async function getLatestCuotaDate(
+  businessId: string,
+  obligacionId: string
+): Promise<string | null> {
+  const snapshot = await cuotasCollection(businessId)
+    .where('obligacionId', '==', obligacionId)
+    .get();
+
+  let latest: string | null = null;
+  for (const doc of snapshot.docs) {
+    const fecha = normalizeDate(doc.data().fechaVencimiento);
+    if (!fecha) continue;
+    if (!latest || fecha > latest) latest = fecha;
+  }
+  return latest;
+}
+
+export async function ensureMensualCuotasHorizon(businessId: string): Promise<void> {
+  const snapshot = await obligationsCollection(businessId).get();
+
+  const mensualActivas = snapshot.docs
+    .map((doc) => mapObligation(doc.id, doc.data() as Record<string, unknown>))
+    .filter((obligation) => obligation.tipo === 'mensual' && obligation.activo);
+
+  if (mensualActivas.length === 0) return;
+
+  const targetDate = addMonths(todayIso(), MENSUAL_HORIZON_MONTHS);
+  const batch = db.batch();
+  let writes = 0;
+
+  for (const doc of snapshot.docs) {
+    const obligation = mapObligation(doc.id, doc.data() as Record<string, unknown>);
+    if (obligation.tipo !== 'mensual' || !obligation.activo) continue;
+    let latestDate =
+      (await getLatestCuotaDate(businessId, obligation.id)) ??
+      obligation.fechaPrimerVencimiento;
+    let numero = await getLatestCuotaNumber(businessId, obligation.id);
+
+    while (latestDate < targetDate && writes < 400) {
+      numero += 1;
+      latestDate = addMonths(latestDate, 1);
+      const ref = cuotasCollection(businessId).doc();
+      batch.set(ref, {
+        obligacionId: obligation.id,
+        beneficiario: obligation.beneficiario,
+        numeroCuota: numero,
+        fechaVencimiento: latestDate,
+        monto: obligation.monto,
+        estado: 'pendiente',
+        tipo: 'mensual',
+        ambito: obligation.ambito ?? '',
+        createdAt: new Date().toISOString(),
+      });
+      writes += 1;
+    }
+  }
+
+  if (writes > 0) {
+    await batch.commit();
+  }
+}
+
+export async function listPayableObligations(
+  businessId: string
+): Promise<PayableObligationRecord[]> {
+  const snapshot = await obligationsCollection(businessId).orderBy('beneficiario').get();
+  return snapshot.docs.map((doc) => mapObligation(doc.id, doc.data() as Record<string, unknown>));
+}
+
+export async function listPayableInstallments(
+  businessId: string
+): Promise<Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>> {
+  await ensureMensualCuotasHorizon(businessId);
+
+  const snapshot = await cuotasCollection(businessId).orderBy('fechaVencimiento').get();
+  return snapshot.docs
+    .map((doc) => {
+      const cuota = mapCuota(doc.id, doc.data() as Record<string, unknown>);
+      return {
+        ...cuota,
+        displayEstado: resolveDisplayEstado(cuota.estado, cuota.fechaVencimiento),
+      };
+    })
+    .sort((a, b) => {
+      const dateCompare = a.fechaVencimiento.localeCompare(b.fechaVencimiento);
+      if (dateCompare !== 0) return dateCompare;
+      return a.beneficiario.localeCompare(b.beneficiario, 'es');
+    });
+}
+
+export async function createPayableObligation(
+  businessId: string,
+  input: CreatePayableObligationInput
+): Promise<{ obligation: PayableObligationRecord; cuotasCreated: number }> {
+  const now = new Date().toISOString();
+  const obligationRef = await obligationsCollection(businessId).add({
+    beneficiario: input.beneficiario,
+    monto: input.monto,
+    tipo: input.tipo,
+    cantidadCuotas: input.cantidadCuotas,
+    fechaPrimerVencimiento: input.fechaPrimerVencimiento,
+    activo: input.tipo === 'mensual',
+    ambito: input.ambito ?? '',
+    notas: input.notas ?? '',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const initialCuotas = buildInitialCuotas(input).map((cuota) => ({
+    ...cuota,
+    obligacionId: obligationRef.id,
+    createdAt: now,
+  }));
+
+  const batch = db.batch();
+  for (const cuota of initialCuotas) {
+    batch.set(cuotasCollection(businessId).doc(), cuota);
+  }
+  await batch.commit();
+
+  const obligationDoc = await obligationRef.get();
+  return {
+    obligation: mapObligation(obligationDoc.id, obligationDoc.data() as Record<string, unknown>),
+    cuotasCreated: initialCuotas.length,
+  };
+}
+
+export async function setPayableInstallmentPaid(
+  businessId: string,
+  cuotaId: string,
+  paid: boolean
+): Promise<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }> {
+  const ref = cuotasCollection(businessId).doc(cuotaId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('CUOTA_NOT_FOUND');
+  }
+
+  await ref.update({
+    estado: paid ? 'pagada' : 'pendiente',
+    fechaPago: paid ? new Date().toISOString() : null,
+  });
+
+  const updated = await ref.get();
+  const cuota = mapCuota(updated.id, updated.data() as Record<string, unknown>);
+  return {
+    ...cuota,
+    displayEstado: resolveDisplayEstado(cuota.estado, cuota.fechaVencimiento),
+  };
+}
+
+export async function setPayableObligationActive(
+  businessId: string,
+  obligacionId: string,
+  activo: boolean
+): Promise<PayableObligationRecord> {
+  const ref = obligationsCollection(businessId).doc(obligacionId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('OBLIGATION_NOT_FOUND');
+  }
+
+  await ref.update({
+    activo,
+    updatedAt: new Date().toISOString(),
+  });
+
+  if (activo) {
+    await ensureMensualCuotasHorizon(businessId);
+  }
+
+  const updated = await ref.get();
+  return mapObligation(updated.id, updated.data() as Record<string, unknown>);
+}
+
+export async function deletePayableObligation(
+  businessId: string,
+  obligacionId: string
+): Promise<void> {
+  const ref = obligationsCollection(businessId).doc(obligacionId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('OBLIGATION_NOT_FOUND');
+  }
+
+  const cuotasSnap = await cuotasCollection(businessId)
+    .where('obligacionId', '==', obligacionId)
+    .get();
+
+  const batch = db.batch();
+  cuotasSnap.docs.forEach((doc) => batch.delete(doc.ref));
+  batch.delete(ref);
+  await batch.commit();
+}

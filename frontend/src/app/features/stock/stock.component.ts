@@ -1,15 +1,29 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   StockItem,
   StockMovement,
   StockOrigenGrupo,
   StockService,
 } from '../../core/services/stock.service';
+import {
+  AppConfig,
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+} from '../../core/services/catalog-config.service';
+import {
+  getStockOrigenes,
+  getStockOrigenNombre,
+  getStockTipoNombre,
+  getStockTipos,
+  matchesStockOrigenFilter,
+} from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
+import { isDeletableStockMovement } from '../../core/utils/deletion-rules';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { LucideAngularModule } from 'lucide-angular';
@@ -48,20 +62,26 @@ type StockTab = 'productos' | 'movimientos';
         </a>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+      <div
+        class="grid grid-cols-2 gap-3 sm:gap-6 mb-6 sm:mb-8 w-full"
+        [class.lg:grid-cols-3]="!auth.canViewStockCosts"
+        [class.lg:grid-cols-4]="auth.canViewStockCosts">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
           <p class="text-2xl font-bold">{{ items.length }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
           <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
         </div>
-        <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Valor estimado</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + estimatedStockValue }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm" [class.col-span-2]="!auth.canViewStockCosts" [class.md:col-span-1]="auth.canViewStockCosts">
+        <div
+          class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0"
+          [class.col-span-2]="!auth.canViewStockCosts"
+          [class.lg:col-span-1]="!auth.canViewStockCosts">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
           <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
         </div>
@@ -90,8 +110,15 @@ type StockTab = 'productos' | 'movimientos';
         </button>
       </div>
 
+      <div
+        *ngIf="lowStockOnly && activeTab === 'productos'"
+        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+        <span>Productos con stock en o por debajo del mínimo.</span>
+        <a routerLink="/stock" class="font-semibold text-orange-700 hover:underline">Ver todos</a>
+      </div>
+
       <div *ngIf="activeTab === 'productos'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
             name="searchQuery"
@@ -101,12 +128,12 @@ type StockTab = 'productos' | 'movimientos';
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Stock</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Mín. stock</th>
-              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Stock</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Mín. stock</th>
+              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -114,27 +141,31 @@ type StockTab = 'productos' | 'movimientos';
               *ngFor="let item of filteredItems"
               (click)="openEditItem(item)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
-              <td class="px-6 py-4">
-                <div class="font-medium text-gray-900">{{ item.nombre }}</div>
-                <div *ngIf="getItemDetails(item)" class="text-xs text-gray-400">{{ getItemDetails(item) }}</div>
+              <td class="px-4 sm:px-6 py-3 sm:py-4">
+                <div class="font-medium text-gray-900 truncate">{{ item.nombre }}</div>
+                <div *ngIf="getItemDetails(item)" class="text-xs text-gray-400 truncate">{{ getItemDetails(item) }}</div>
+                <span class="inline-flex sm:hidden mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-teal-50 text-teal-700">
+                  {{ item.tipo || '—' }}
+                </span>
               </td>
-              <td class="px-6 py-4">
+              <td class="hidden sm:table-cell px-6 py-4">
                 <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
                   {{ item.tipo || '—' }}
                 </span>
               </td>
-              <td class="px-6 py-4">
-                <div [class]="(item.stockActual || 0) <= (item.stockMinimo || 0) ? 'text-orange-600 font-bold' : 'text-gray-900'">
+              <td class="px-4 sm:px-6 py-3 sm:py-4">
+                <div [class]="isLowStock(item) ? 'text-orange-600 font-bold' : 'text-gray-900'">
                   {{ item.stockActual }} u.
                 </div>
+                <div class="text-xs text-gray-400 sm:hidden">Mín. {{ item.stockMinimo || 0 }} u.</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600 tabular-nums">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 tabular-nums">
                 {{ item.stockMinimo || 0 }} u.
               </td>
-              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
+              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
                 {{ '$' + (item.costo || 0) }}
               </td>
-              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center gap-1">
                   <button
                     *ngIf="auth.canEditRecords"
@@ -155,17 +186,40 @@ type StockTab = 'productos' | 'movimientos';
                 </div>
               </td>
             </tr>
-            <tr *ngIf="loadingItems">
+            <tr *ngIf="loadingItems" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando productos...</td>
+            </tr>
+            <tr *ngIf="loadingItems" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length === 0">
+            <tr *ngIf="!loadingItems && items.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
+              </td>
+            </tr>
+            <tr *ngIf="!loadingItems && items.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
               </td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0">
+            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
+                  No hay productos con stock bajo.
+                </ng-container>
+                <ng-container *ngIf="!lowStockOnly || searchQuery.trim()">
+                  No se encontraron productos para "{{ searchQuery }}".
+                </ng-container>
+              </td>
+            </tr>
+            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
-                No se encontraron productos para "{{ searchQuery }}".
+                <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
+                  No hay productos con stock bajo.
+                </ng-container>
+                <ng-container *ngIf="!lowStockOnly || searchQuery.trim()">
+                  No se encontraron productos para "{{ searchQuery }}".
+                </ng-container>
               </td>
             </tr>
           </tbody>
@@ -185,57 +239,70 @@ type StockTab = 'productos' | 'movimientos';
               name="movementTipoFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los tipos</option>
-              <option value="entrada">Entradas</option>
-              <option value="salida">Salidas</option>
+              <option value="entrada">{{ getTipoLabel('entrada') }}</option>
+              <option value="salida">{{ getTipoLabel('salida') }}</option>
             </select>
             <select
               [(ngModel)]="movementOrigenFilter"
               name="movementOrigenFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los orígenes</option>
-              <option value="compra">Compras</option>
-              <option value="pedido">Pedidos</option>
-              <option value="ajuste">Ajustes</option>
-              <option value="carga_inicial">Carga inicial</option>
+              <option *ngFor="let origen of stockOrigenes" [value]="origen.grupo">{{ origen.nombre }}</option>
             </select>
           </div>
+          <app-config-settings-link
+            settingsTab="stock"
+            message="¿Querés renombrar tipos u orígenes?"
+            linkLabel="Configuralo acá"
+            [compact]="true">
+          </app-config-settings-link>
         </div>
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[860px] text-left border-collapse">
+        <div class="overflow-x-auto sm:overflow-x-visible">
+          <table class="w-full sm:min-w-[860px] text-left border-collapse">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Producto</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Cantidad</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Motivo</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
+                <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+                <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Producto</th>
+                <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
+                <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Cantidad</th>
+                <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Motivo</th>
+                <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
+                <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
               <tr *ngFor="let movement of filteredMovements" class="hover:bg-gray-50 transition-colors">
-                <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                   {{ formatDate(movement.fecha) }}
                 </td>
-                <td class="px-6 py-4 text-sm font-medium text-gray-900">
-                  {{ movement.productoNombre || '—' }}
+                <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-medium text-gray-900">
+                  <div class="truncate">{{ movement.productoNombre || '—' }}</div>
+                  <div class="text-xs text-gray-400 sm:hidden">{{ formatDate(movement.fecha) }}</div>
                 </td>
-                <td class="px-6 py-4">
+                <td class="hidden sm:table-cell px-6 py-4">
                   <span
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
                     [class.bg-teal-50]="movement.tipo === 'entrada'"
                     [class.text-teal-700]="movement.tipo === 'entrada'"
                     [class.bg-red-50]="movement.tipo === 'salida'"
                     [class.text-red-600]="movement.tipo === 'salida'">
-                    {{ movement.tipo === 'entrada' ? 'Entrada' : 'Salida' }}
+                    {{ getTipoLabel(movement.tipo === 'entrada' ? 'entrada' : 'salida') }}
                   </span>
                 </td>
-                <td class="px-6 py-4 text-sm font-semibold text-right tabular-nums"
+                <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-right tabular-nums"
                   [class.text-teal-600]="movement.tipo === 'entrada'"
                   [class.text-red-500]="movement.tipo === 'salida'">
+                  <span
+                    class="inline-flex sm:hidden items-center rounded-full px-2 py-0.5 text-[10px] font-medium mr-1 align-middle"
+                    [class.bg-teal-50]="movement.tipo === 'entrada'"
+                    [class.text-teal-700]="movement.tipo === 'entrada'"
+                    [class.bg-red-50]="movement.tipo === 'salida'"
+                    [class.text-red-600]="movement.tipo === 'salida'">
+                    {{ movement.tipo === 'entrada' ? getTipoShortLabel('entrada') : getTipoShortLabel('salida') }}
+                  </span>
                   {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
                 </td>
-                <td class="px-6 py-4 text-sm text-gray-700">
+                <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-700">
                   <ng-container *ngIf="movement.pedidoId || movement.ventaId; else motivoFallback">
                     <app-concept-ref-links
                       [text]="movement.motivo || '—'"
@@ -263,24 +330,47 @@ type StockTab = 'productos' | 'movimientos';
                     <ng-template #plainMotivo>{{ movement.motivo || '—' }}</ng-template>
                   </ng-template>
                 </td>
-                <td class="px-6 py-4">
+                <td class="hidden sm:table-cell px-6 py-4">
                   <span
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
                     [ngClass]="getOrigenBadgeClass(movement)">
                     {{ getOrigenLabel(movement) }}
                   </span>
                 </td>
+                <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+                  <button
+                    *ngIf="auth.canDeleteRecords && isDeletableStockMovement(movement)"
+                    type="button"
+                    (click)="confirmDeleteMovement(movement)"
+                    title="Eliminar movimiento"
+                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
+                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                  </button>
+                </td>
               </tr>
-              <tr *ngIf="loadingMovements">
-                <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
+              <tr *ngIf="loadingMovements" class="sm:hidden">
+                <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando movimientos...</td>
               </tr>
-              <tr *ngIf="!loadingMovements && movements.length === 0">
-                <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+              <tr *ngIf="loadingMovements" class="hidden sm:table-row">
+                <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
+              </tr>
+              <tr *ngIf="!loadingMovements && movements.length === 0" class="sm:hidden">
+                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
                   Todavía no hay movimientos de stock.
                 </td>
               </tr>
-              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0">
-                <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+              <tr *ngIf="!loadingMovements && movements.length === 0" class="hidden sm:table-row">
+                <td colspan="7" class="px-6 py-12 text-center text-gray-400">
+                  Todavía no hay movimientos de stock.
+                </td>
+              </tr>
+              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0" class="sm:hidden">
+                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                  No se encontraron movimientos para los filtros aplicados.
+                </td>
+              </tr>
+              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0" class="hidden sm:table-row">
+                <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                   No se encontraron movimientos con los filtros actuales.
                 </td>
               </tr>
@@ -291,35 +381,68 @@ type StockTab = 'productos' | 'movimientos';
     </div>
   `,
 })
-export class StockComponent implements OnInit {
+export class StockComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
+  isDeletableStockMovement = isDeletableStockMovement;
 
   private stockService = inject(StockService);
+  private configService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private configSub?: Subscription;
 
+  appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   items: StockItem[] = [];
   movements: StockMovement[] = [];
   searchQuery = '';
   movementSearchQuery = '';
   movementTipoFilter: 'all' | 'entrada' | 'salida' = 'all';
-  movementOrigenFilter: 'all' | StockOrigenGrupo = 'all';
+  movementOrigenFilter: 'all' | string = 'all';
   activeTab: StockTab = 'productos';
+  lowStockOnly = false;
   loadingItems = true;
   loadingMovements = true;
 
   ngOnInit() {
-    const tab = this.route.snapshot.queryParamMap.get('tab');
-    if (tab === 'movimientos') {
-      this.activeTab = 'movimientos';
-    }
+    this.configSub = this.configService.appConfig$.subscribe((config) => {
+      this.appConfig = config;
+    });
+    this.configService.getAppConfig().subscribe();
+
+    this.route.queryParamMap.subscribe((params) => {
+      const tab = params.get('tab');
+      if (tab === 'movimientos') {
+        this.activeTab = 'movimientos';
+      } else {
+        this.activeTab = 'productos';
+      }
+
+      this.lowStockOnly = params.get('filter') === 'stock-bajo';
+    });
 
     this.loadStock();
     this.loadMovements();
+  }
+
+  ngOnDestroy() {
+    this.configSub?.unsubscribe();
+  }
+
+  get stockOrigenes() {
+    return getStockOrigenes(this.appConfig.stock?.origenes);
+  }
+
+  getTipoLabel(grupo: 'entrada' | 'salida'): string {
+    return getStockTipoNombre(this.appConfig.stock?.tipos, grupo);
+  }
+
+  getTipoShortLabel(grupo: 'entrada' | 'salida'): string {
+    const label = this.getTipoLabel(grupo);
+    return label.length > 4 ? `${label.slice(0, 3)}.` : label;
   }
 
   setTab(tab: StockTab) {
@@ -356,10 +479,16 @@ export class StockComponent implements OnInit {
   }
 
   get filteredItems(): StockItem[] {
-    const query = this.searchQuery.trim().toLowerCase();
-    if (!query) return this.items;
+    let list = this.items;
 
-    return this.items.filter((item) => {
+    if (this.lowStockOnly) {
+      list = list.filter((item) => this.isLowStock(item));
+    }
+
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return list;
+
+    return list.filter((item) => {
       const searchable = [item.nombre, item.nombreBase, item.tipo, item.categoria, item.talle, item.color]
         .filter(Boolean)
         .join(' ')
@@ -376,8 +505,8 @@ export class StockComponent implements OnInit {
     }
 
     if (this.movementOrigenFilter !== 'all') {
-      list = list.filter(
-        (movement) => this.resolveOrigenGrupo(movement) === this.movementOrigenFilter
+      list = list.filter((movement) =>
+        matchesStockOrigenFilter(this.resolveOrigenGrupo(movement), this.movementOrigenFilter)
       );
     }
 
@@ -403,21 +532,20 @@ export class StockComponent implements OnInit {
     return [item.categoria, item.talle, item.color].filter(Boolean).join(' · ');
   }
 
+  isLowStock(item: StockItem): boolean {
+    return (item.stockActual || 0) <= (item.stockMinimo || 0);
+  }
+
   getOrigenLabel(movement: StockMovement): string {
     if (movement.origenLabel) return movement.origenLabel;
-    const grupo = this.resolveOrigenGrupo(movement);
-    if (grupo === 'compra') return 'Compra';
-    if (grupo === 'pedido') return 'Pedido';
-    if (grupo === 'ajuste') return 'Ajuste manual';
-    if (grupo === 'carga_inicial') return 'Carga inicial';
-    return 'Otro';
+    return getStockOrigenNombre(this.appConfig.stock?.origenes, this.resolveOrigenGrupo(movement));
   }
 
   getOrigenBadgeClass(movement: StockMovement): Record<string, boolean> {
     const grupo = this.resolveOrigenGrupo(movement);
     return {
       'bg-purple-50 text-purple-700': grupo === 'compra',
-      'bg-teal-50 text-teal-700': grupo === 'pedido',
+      'bg-teal-50 text-teal-700': grupo === 'pedido' || grupo === 'venta',
       'bg-gray-100 text-gray-700': grupo === 'ajuste',
       'bg-amber-50 text-amber-700': grupo === 'carga_inicial',
       'bg-slate-100 text-slate-700': grupo === 'otro',
@@ -498,11 +626,50 @@ export class StockComponent implements OnInit {
       });
   }
 
+  confirmDeleteMovement(movement: StockMovement) {
+    if (!movement.id) return;
+
+    if (!isDeletableStockMovement(movement)) {
+      this.dialogService.alert({
+        title: 'Movimiento vinculado',
+        message:
+          'Este movimiento está vinculado a un pedido, compra u otro documento y no se puede eliminar. Registrá un ajuste o documento con signo contrario desde el origen.',
+      });
+      return;
+    }
+
+    this.dialogService
+      .confirm({
+        title: 'Eliminar movimiento',
+        message:
+          `¿Eliminar este movimiento de ${movement.productoNombre || 'stock'}? ` +
+          'Se revertirá la cantidad en el producto.',
+        confirmLabel: 'Eliminar',
+        variant: 'danger',
+      })
+      .subscribe((confirmed) => {
+        if (!confirmed || !movement.id) return;
+
+        this.stockService.deleteMovement(movement.id).subscribe({
+          next: () => {
+            this.loadMovements();
+            this.loadStock();
+          },
+          error: (err) =>
+            this.dialogService.alert({
+              title: 'No se puede eliminar',
+              message: err?.error?.error || 'No se pudo eliminar el movimiento.',
+            }),
+        });
+      });
+  }
+
   private resolveOrigenGrupo(movement: StockMovement): StockOrigenGrupo {
     if (movement.origenGrupo) return movement.origenGrupo;
     const tipo = String(movement.origenTipo ?? '');
     if (tipo === 'compra' || movement.compraId) return 'compra';
     if (tipo.startsWith('pedido')) return 'pedido';
+    if (tipo === 'venta' || tipo.startsWith('venta')) return 'venta';
     if (tipo === 'carga_inicial') return 'carga_inicial';
     if (tipo.startsWith('ajuste')) return 'ajuste';
     return 'otro';

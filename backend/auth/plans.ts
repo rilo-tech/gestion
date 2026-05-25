@@ -8,6 +8,7 @@ export interface PlanRecord {
   limiteAdministradores: number;
   limiteOperadores: number;
   limiteUsuariosTotal: number;
+  precioMensual: number;
   activo: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -19,6 +20,7 @@ export interface PublicPlanInfo {
   limiteAdministradores: number;
   limiteOperadores: number;
   limiteUsuariosTotal: number;
+  precioMensual: number;
   activo: boolean;
 }
 
@@ -29,6 +31,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteAdministradores: 1,
     limiteOperadores: 2,
     limiteUsuariosTotal: 3,
+    precioMensual: 15000,
     activo: true,
   },
   {
@@ -37,6 +40,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteAdministradores: 2,
     limiteOperadores: 5,
     limiteUsuariosTotal: 7,
+    precioMensual: 35000,
     activo: true,
   },
   {
@@ -45,6 +49,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteAdministradores: 3,
     limiteOperadores: 10,
     limiteUsuariosTotal: 13,
+    precioMensual: 65000,
     activo: true,
   },
 ];
@@ -73,6 +78,7 @@ function mapPlan(id: string, data: Record<string, unknown>): PlanRecord {
     limiteAdministradores,
     limiteOperadores,
     limiteUsuariosTotal,
+    precioMensual: Math.max(0, Number(data.precioMensual) || 0),
     activo: data.activo !== false,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
@@ -86,6 +92,7 @@ export function toPublicPlanInfo(plan: PlanRecord): PublicPlanInfo {
     limiteAdministradores: plan.limiteAdministradores,
     limiteOperadores: plan.limiteOperadores,
     limiteUsuariosTotal: plan.limiteUsuariosTotal,
+    precioMensual: plan.precioMensual,
     activo: plan.activo,
   };
 }
@@ -148,6 +155,7 @@ export async function createPlan(
       payload.limiteUsuariosTotal > 0
         ? payload.limiteUsuariosTotal
         : payload.limiteAdministradores + payload.limiteOperadores,
+    precioMensual: Math.max(0, Number(payload.precioMensual) || 0),
     activo: payload.activo !== false,
     createdAt: new Date().toISOString(),
   };
@@ -184,6 +192,10 @@ export async function updatePlan(
       typeof payload.limiteUsuariosTotal === 'number'
         ? payload.limiteUsuariosTotal
         : current.limiteUsuariosTotal,
+    precioMensual:
+      typeof payload.precioMensual === 'number'
+        ? Math.max(0, payload.precioMensual)
+        : current.precioMensual,
     activo: payload.activo !== undefined ? payload.activo !== false : current.activo,
     updatedAt: new Date().toISOString(),
   };

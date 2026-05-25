@@ -20,6 +20,10 @@ import { DialogService } from '../../core/services/dialog.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
+  ClientFormPanelComponent,
+  ClientFormSaveEvent,
+} from '../clients/client-form-panel.component';
+import {
   IconActionComponent,
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
@@ -43,7 +47,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 @Component({
   selector: 'app-sales',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective, ClientFormPanelComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -54,16 +58,16 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </p>
         </div>
         <div class="flex gap-2 shrink-0">
-          <app-icon-action label="Venta mostrador" (clicked)="openSaleModal('mostrador')">
+          <app-icon-action *ngIf="auth.canCreateSales" label="Venta mostrador" (clicked)="openSaleModal('mostrador')">
             <i-lucide name="plus" class="w-4 h-4"></i-lucide>
           </app-icon-action>
-          <app-icon-action label="Entrega pedido" variant="secondary" (clicked)="openSaleModal('pedido')">
+          <app-icon-action *ngIf="auth.canCreateSales" label="Entrega pedido" variant="secondary" (clicked)="openSaleModal('pedido')">
             <i-lucide name="truck" class="w-4 h-4"></i-lucide>
           </app-icon-action>
         </div>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
+      <div *ngIf="auth.canViewSalesSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ventas registradas</p>
           <p class="text-2xl font-bold text-gray-900">{{ sales.length }}</p>
@@ -82,7 +86,13 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         </div>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div
+        *ngIf="auth.canCreateSales && !auth.canViewSalesHistory"
+        class="mb-6 rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-800">
+        Podés registrar ventas y entregas de pedidos. El historial completo lo ve quien tenga ese permiso.
+      </div>
+
+      <div *ngIf="auth.canViewSalesHistory" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
@@ -94,13 +104,13 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         <table [class]="tableMinWidthClass">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Venta</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Cobrado / Saldo</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Venta</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
+              <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
+              <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Cobrado / Saldo</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -108,16 +118,21 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               *ngFor="let sale of filteredSales"
               (click)="openSaleDetail(sale)"
               class="transition-colors cursor-pointer hover:bg-gray-50">
-              <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(sale.fecha) }}
               </td>
-              <td class="px-6 py-4 text-sm font-semibold text-teal-700">
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
                 #{{ formatSaleLabel(sale) }}
+                <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(sale.fecha) }}</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-700">
-                {{ sale.clienteNombre?.trim() || '—' }}
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-700">
+                <div class="truncate">{{ sale.clienteNombre?.trim() || '—' }}</div>
+                <div class="text-xs text-gray-400 sm:hidden truncate">
+                  <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
+                  <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
+                </div>
               </td>
-              <td class="px-6 py-4 text-sm" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm" (click)="$event.stopPropagation()">
                 <ng-container *ngIf="sale.origen === 'pedido' && sale.pedidoId">
                   <a
                     [routerLink]="['/orders', sale.pedidoId, 'edit']"
@@ -130,14 +145,14 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                 </ng-container>
                 <span *ngIf="sale.origen !== 'pedido'" class="text-gray-600">Mostrador</span>
               </td>
-              <td class="px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
+              <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ '$' + (sale.total || 0) }}
                 <div *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0" class="text-xs font-normal text-gray-400 mt-0.5">
                   Costo {{ '$' + sale.costoReal }}
                   · Gan. {{ '$' + (sale.gananciaEstimada || 0) }}
                 </div>
               </td>
-              <td class="px-6 py-4 text-sm text-right tabular-nums">
+              <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-sm text-right tabular-nums">
                 <div class="font-semibold text-teal-700">{{ '$' + (sale.montoCobrado || 0) }}</div>
                 <div
                   class="text-xs font-semibold"
@@ -146,11 +161,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                   Saldo {{ '$' + (sale.saldoPendiente || 0) }}
                 </div>
               </td>
-              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1">
                   <button
                     type="button"
                     (click)="openCollectModal(sale)"
+                    *ngIf="auth.canAccessCash"
                     [disabled]="!canCollectSaleBalance(sale)"
                     title="Cobrar saldo"
                     class="p-2 rounded-lg disabled:cursor-not-allowed"
@@ -178,15 +194,28 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                 </div>
               </td>
             </tr>
-            <tr *ngIf="loading">
+            <tr *ngIf="loading" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando ventas...</td>
+            </tr>
+            <tr *ngIf="loading" class="hidden sm:table-row">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando ventas...</td>
             </tr>
-            <tr *ngIf="!loading && sales.length === 0">
+            <tr *ngIf="!loading && sales.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && sales.length === 0" class="hidden sm:table-row">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
               </td>
             </tr>
-            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0">
+            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No hay ventas que coincidan con la búsqueda.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" class="hidden sm:table-row">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 No hay ventas que coincidan con la búsqueda.
               </td>
@@ -263,14 +292,26 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
         <ng-container *ngIf="saleModalMode === 'mostrador' || saleModalMode === 'edit'">
           <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+            <div class="flex items-center justify-between gap-3 mb-1">
+              <label class="block text-sm font-medium text-gray-700">Cliente</label>
+              <button
+                type="button"
+                (click)="goToNewClientForm()"
+                class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
+                + Nuevo cliente
+              </button>
+            </div>
             <app-searchable-select
               [(ngModel)]="saleClienteId"
               name="saleClienteId"
               [labeledOptions]="clientOptions"
+              [creatable]="true"
+              createLabelPrefix="Crear cliente"
+              (createRequested)="quickCreateClient($event)"
+              (searchChange)="pendingClientName = $event"
               placeholder="Buscar cliente..."
-              listHint=""
-              emptyOptionsMessage="No hay clientes cargados.">
+              listHint="Escribí un nombre existente o usá «Crear cliente» si todavía no está cargado."
+              emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
             </app-searchable-select>
           </div>
 
@@ -558,6 +599,21 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     </app-transaction-modal>
 
     <app-transaction-modal
+      [open]="clientModalOpen"
+      title="Nuevo cliente"
+      subtitle="Al guardar queda seleccionado en esta venta."
+      maxWidthClass="max-w-lg"
+      zIndexClass="z-[60]"
+      (closed)="closeClientModal()">
+      <app-client-form-panel
+        [prefillNombre]="clientModalPrefillNombre"
+        [showHistorialLink]="false"
+        (saved)="onClientSavedFromModal($event)"
+        (cancelled)="closeClientModal()">
+      </app-client-form-panel>
+    </app-transaction-modal>
+
+    <app-transaction-modal
       [open]="detailModalOpen"
       [title]="detailModalTitle"
       [subtitle]="detailModalSubtitle"
@@ -743,6 +799,10 @@ export class SalesComponent implements OnInit {
   detailLoading = false;
 
   saleClienteId = '';
+  pendingClientName = '';
+  creatingClient = false;
+  clientModalOpen = false;
+  clientModalPrefillNombre = '';
   draftLines: SaleDraftLine[] = [this.emptyLine()];
   selectedOrderId = '';
   orderFilterClienteId = '';
@@ -879,14 +939,29 @@ export class SalesComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.loadSales();
+    if (this.auth.canViewSalesHistory) {
+      this.loadSales();
+    } else {
+      this.loading = false;
+    }
+
     this.clientService.getClients().subscribe((clients) => (this.clients = clients));
     this.stockService.getStock().subscribe((items) => (this.stockItems = items));
-    this.loadEligibleOrders();
+    if (this.auth.canCreateSales) {
+      this.loadEligibleOrders();
+    }
 
     this.route.queryParamMap.subscribe((params) => {
       const pedidoId = params.get('pedidoId');
       if (pedidoId) {
+        if (!this.auth.canCreateSales) {
+          this.dialogService.alert({
+            title: 'Sin acceso',
+            message: 'No tenés permiso para registrar ventas.',
+          });
+          this.clearSalesQueryParam('pedidoId');
+          return;
+        }
         this.openSaleModal('pedido', pedidoId);
         this.clearSalesQueryParam('pedidoId');
         return;
@@ -894,6 +969,10 @@ export class SalesComponent implements OnInit {
 
       const ventaId = params.get('ventaId');
       if (ventaId) {
+        if (!this.auth.canViewSalesHistory) {
+          this.clearSalesQueryParam('ventaId');
+          return;
+        }
         this.openSaleFromQueryParam(ventaId);
       }
     });
@@ -994,12 +1073,61 @@ export class SalesComponent implements OnInit {
     return this.clients.find((client) => client.id === clienteId)?.nombre ?? 'Cliente';
   }
 
+  private refreshClients() {
+    this.clientService.getClients().subscribe((clients) => {
+      this.clients = clients;
+    });
+  }
+
+  quickCreateClient(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || this.creatingClient) return;
+
+    this.creatingClient = true;
+    this.clientService.createClient({ nombre: trimmed }).subscribe({
+      next: (response) => {
+        this.creatingClient = false;
+        const client: Client = { id: response.id, nombre: trimmed };
+        this.clients = [...this.clients, client];
+        this.saleClienteId = response.id;
+        this.pendingClientName = trimmed;
+      },
+      error: () => {
+        this.creatingClient = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo crear el cliente. Intentá de nuevo o usá «Nuevo cliente» para cargar la ficha completa.',
+        });
+      },
+    });
+  }
+
+  goToNewClientForm() {
+    this.clientModalPrefillNombre = this.pendingClientName.trim();
+    this.clientModalOpen = true;
+  }
+
+  closeClientModal() {
+    this.clientModalOpen = false;
+    this.clientModalPrefillNombre = '';
+  }
+
+  onClientSavedFromModal(event: ClientFormSaveEvent) {
+    this.saleClienteId = event.id;
+    this.pendingClientName = event.client.nombre ?? '';
+    this.refreshClients();
+    this.closeClientModal();
+  }
+
   openSaleModal(mode: SaleModalMode, preselectedOrderId?: string) {
+    if (!this.auth.canCreateSales) return;
+
     this.saleModalMode = mode;
     this.editingSaleId = null;
     this.editingSaleLabel = '';
     this.editHasExtraCobros = false;
     this.saleClienteId = '';
+    this.pendingClientName = '';
     this.draftLines = [this.emptyLine()];
     this.selectedOrderId = preselectedOrderId ?? '';
     this.orderFilterClienteId = '';
@@ -1046,6 +1174,8 @@ export class SalesComponent implements OnInit {
     this.editingSaleId = null;
     this.editingSaleLabel = '';
     this.editHasExtraCobros = false;
+    this.pendingClientName = '';
+    this.closeClientModal();
     this.cancelExtraCostsModal();
   }
 
@@ -1579,6 +1709,11 @@ export class SalesComponent implements OnInit {
   }
 
   private loadSales() {
+    if (!this.auth.canViewSalesHistory) {
+      this.loading = false;
+      return;
+    }
+
     this.loading = true;
     this.salesService.getSales().subscribe({
       next: (sales) => {

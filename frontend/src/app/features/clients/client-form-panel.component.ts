@@ -64,7 +64,7 @@ export interface ClientFormSaveEvent {
           <p class="text-xs text-teal-800 mt-0.5">Ver pedidos, ventas y registrar cobros.</p>
         </div>
         <div class="flex items-center gap-3 shrink-0">
-          <span *ngIf="clientSaldo > 0" class="text-sm font-bold tabular-nums text-orange-700">
+          <span *ngIf="auth.canViewAccountBalance && clientSaldo > 0" class="text-sm font-bold tabular-nums text-orange-700">
             {{ '$' + clientSaldo }}
           </span>
           <i-lucide name="history" class="w-5 h-5 text-teal-700"></i-lucide>

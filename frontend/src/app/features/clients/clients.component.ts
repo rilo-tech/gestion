@@ -62,8 +62,8 @@ import { AuthService } from '../../core/services/auth.service';
             class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
         </div>
         <div [class]="tableScrollClass">
-        <table class="w-full min-w-[640px] text-left border-collapse table-fixed">
-          <colgroup>
+        <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
+          <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
             <col class="w-[7.5rem]" />
             <col class="w-[14rem]" />
@@ -73,12 +73,12 @@ import { AuthService } from '../../core/services/auth.service';
           </colgroup>
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Contacto</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Dirección</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Etiquetas</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Saldo</th>
-              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Contacto</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Dirección</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Etiquetas</th>
+              <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Saldo</th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -86,16 +86,16 @@ import { AuthService } from '../../core/services/auth.service';
               *ngFor="let client of filteredClients"
               (click)="openClient(client)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
-              <td class="px-6 py-4">
+              <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div class="font-medium text-gray-900 truncate">{{ client.nombre }}</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600 truncate">
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-600 truncate">
                 {{ getContactDisplay(client) }}
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
                 <span class="line-clamp-2 break-words">{{ client.direccion?.trim() || '—' }}</span>
               </td>
-              <td class="px-6 py-4">
+              <td class="hidden sm:table-cell px-6 py-4">
                 <div class="flex gap-1 flex-wrap">
                   <span
                     *ngFor="let tag of client.etiquetas"
@@ -104,7 +104,7 @@ import { AuthService } from '../../core/services/auth.service';
                   </span>
                 </div>
               </td>
-              <td class="px-6 py-4 text-right whitespace-nowrap">
+              <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-right whitespace-nowrap">
                 <div
                   class="text-sm font-bold tabular-nums"
                   [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
@@ -113,7 +113,7 @@ import { AuthService } from '../../core/services/auth.service';
                 </div>
                 <div *ngIf="client.debe" class="text-xs font-semibold text-orange-500">Debe</div>
               </td>
-              <td class="px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
                 <div class="flex items-center justify-end gap-1">
                   <a
                     *ngIf="client.id"
@@ -140,15 +140,28 @@ import { AuthService } from '../../core/services/auth.service';
                 </div>
               </td>
             </tr>
-            <tr *ngIf="loading">
+            <tr *ngIf="loading" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando clientes...</td>
+            </tr>
+            <tr *ngIf="loading" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando clientes...</td>
             </tr>
-            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0">
+            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No se encontraron clientes para "{{ searchQuery }}".
+              </td>
+            </tr>
+            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron clientes para "{{ searchQuery }}".
               </td>
             </tr>
-            <tr *ngIf="!loading && clients.length === 0">
+            <tr *ngIf="!loading && clients.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No se encontraron clientes.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && clients.length === 0" class="hidden sm:table-row">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron clientes.
               </td>

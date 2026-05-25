@@ -1,7 +1,25 @@
 import express from 'express';
 import { db } from '../firebase.ts';
+import {
+  mapDeletionError,
+  validateOrderCancellation,
+  validateStockMovementDeletion,
+} from '../utils/deletion-guards.ts';
+import {
+  getStockOrigenNombre,
+  normalizeStockOrigenes,
+  type StockOrigenMovimiento,
+} from '../utils/stock-movimientos.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
+
+async function loadStockOrigenes(businessId: string): Promise<StockOrigenMovimiento[]> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return normalizeStockOrigenes([]);
+  const stock = (appDoc.data()?.stock as Record<string, unknown>) ?? {};
+  return normalizeStockOrigenes(stock.origenes);
+}
 
 // Get stock items
 router.get('/:businessId', async (req, res) => {
@@ -77,13 +95,14 @@ router.get('/:businessId/search', async (req, res) => {
   }
 });
 
-type StockOrigenGrupo = 'compra' | 'pedido' | 'ajuste' | 'carga_inicial' | 'otro';
+type StockOrigenGrupo = 'compra' | 'pedido' | 'venta' | 'ajuste' | 'carga_inicial' | 'otro';
 
 function resolveOrigenGrupo(movement: Record<string, unknown>): StockOrigenGrupo {
   const stored = movement.origenGrupo;
   if (
     stored === 'compra' ||
     stored === 'pedido' ||
+    stored === 'venta' ||
     stored === 'ajuste' ||
     stored === 'carga_inicial' ||
     stored === 'otro'
@@ -94,28 +113,31 @@ function resolveOrigenGrupo(movement: Record<string, unknown>): StockOrigenGrupo
   const tipo = String(movement.origenTipo ?? '');
   if (tipo === 'compra' || movement.compraId) return 'compra';
   if (tipo.startsWith('pedido')) return 'pedido';
+  if (tipo === 'venta' || tipo.startsWith('venta')) return 'venta';
   if (tipo === 'carga_inicial') return 'carga_inicial';
   if (tipo.startsWith('ajuste') || tipo === 'ajuste_manual') return 'ajuste';
   return 'otro';
 }
 
-function resolveOrigenLabel(grupo: StockOrigenGrupo, movement: Record<string, unknown>): string {
-  if (grupo === 'compra') return 'Compra';
+function resolveOrigenLabel(
+  grupo: StockOrigenGrupo,
+  movement: Record<string, unknown>,
+  origenes: StockOrigenMovimiento[]
+): string {
+  const base = getStockOrigenNombre(origenes, grupo);
   if (grupo === 'pedido') {
     const subtipo = String(movement.origenTipo ?? '');
-    if (subtipo === 'pedido_cancelado') return 'Pedido · cancelación';
-    if (subtipo === 'pedido_eliminado') return 'Pedido · restauración';
-    return 'Pedido';
+    if (subtipo === 'pedido_cancelado') return `${base} · cancelación`;
+    if (subtipo === 'pedido_eliminado') return `${base} · restauración`;
   }
-  if (grupo === 'ajuste') return 'Ajuste manual';
-  if (grupo === 'carga_inicial') return 'Carga inicial';
-  return 'Otro';
+  return base;
 }
 
 async function enrichStockMovements(
   businessId: string,
   movements: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
+  const origenes = await loadStockOrigenes(businessId);
   const productIds = new Set<string>();
   const orderIds = new Set<string>();
 
@@ -162,7 +184,7 @@ async function enrichStockMovements(
       ...movement,
       productoNombre: productData?.nombre ?? null,
       origenGrupo,
-      origenLabel: resolveOrigenLabel(origenGrupo, movement),
+      origenLabel: resolveOrigenLabel(origenGrupo, movement, origenes),
       pedidoId,
       numeroPedidoLabel:
         orderData?.numeroPedidoLabel ??
@@ -187,6 +209,47 @@ router.get('/:businessId/movements', async (req, res) => {
   } catch (error) {
     console.error('Error fetching stock movements:', error);
     res.status(500).json({ error: 'Error fetching stock movements' });
+  }
+});
+
+router.delete('/:businessId/movements/:movementId', async (req, res) => {
+  try {
+    const { businessId, movementId } = req.params;
+    const movementRef = db
+      .collection(`negocios/${businessId}/movimientos_stock`)
+      .doc(movementId);
+    const snap = await movementRef.get();
+    if (!snap.exists) return res.status(404).json({ error: 'Movement not found' });
+
+    const movement = snap.data() ?? {};
+    await validateStockMovementDeletion(businessId, movement);
+
+    const productoId = String(movement.productoId ?? '');
+    const cantidad = Number(movement.cantidad) || 0;
+    const tipo = movement.tipo === 'salida' ? 'salida' : 'entrada';
+
+    if (productoId && cantidad > 0) {
+      const itemRef = db.collection(`negocios/${businessId}/stock`).doc(productoId);
+      const itemSnap = await itemRef.get();
+      if (itemSnap.exists) {
+        const currentStock = Number(itemSnap.data()?.stockActual) || 0;
+        const delta = tipo === 'entrada' ? -cantidad : cantidad;
+        await itemRef.update({
+          stockActual: currentStock + delta,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    await movementRef.delete();
+    res.json({ id: movementId });
+  } catch (error) {
+    const mapped = mapDeletionError(error);
+    if (mapped) {
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
+    console.error('Error deleting stock movement:', error);
+    res.status(500).json({ error: 'Error deleting stock movement' });
   }
 });
 

@@ -61,81 +61,105 @@ import { AuthService } from '../../core/services/auth.service';
             class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
         </div>
         <div [class]="tableScrollClass">
-          <table class="w-full min-w-[640px] text-left border-collapse table-fixed">
-            <colgroup>
-              <col />
-              <col class="w-[7.5rem]" />
-              <col class="w-[10rem]" />
-              <col class="w-[8rem]" />
-              <col class="w-[5.5rem]" />
-            </colgroup>
-            <thead>
-              <tr class="bg-gray-50 border-b border-gray-100">
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Contacto</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Dirección</th>
-                <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Etiquetas</th>
-                <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              <tr
-                *ngFor="let supplier of filteredSuppliers"
-                (click)="openSupplier(supplier)"
-                class="hover:bg-gray-50 transition-colors cursor-pointer">
-                <td class="px-6 py-4">
-                  <div class="font-medium text-gray-900">{{ supplier.nombre }}</div>
-                </td>
-                <td class="px-6 py-4 text-sm text-gray-600">
-                  {{ getContactDisplay(supplier) }}
-                </td>
-                <td class="px-6 py-4 text-sm text-gray-600">
-                  {{ supplier.direccion?.trim() || '—' }}
-                </td>
-                <td class="px-6 py-4">
-                  <div class="flex gap-1 flex-wrap">
-                    <span
-                      *ngFor="let tag of supplier.etiquetas"
-                      class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">
-                      {{ tag }}
-                    </span>
-                  </div>
-                </td>
-                <td class="px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
-                  <div class="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      (click)="openSupplier(supplier)"
-                      [title]="auth.canEditRecords ? 'Editar' : 'Ver proveedor'"
-                      class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                      <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                    </button>
-                    <button
-                      *ngIf="auth.canDeleteRecords"
-                      type="button"
-                      (click)="confirmDeleteSupplier(supplier)"
-                      title="Eliminar"
-                      class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                      <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              <tr *ngIf="loading">
-                <td colspan="5" class="px-6 py-12 text-center text-gray-400">Cargando proveedores...</td>
-              </tr>
-              <tr *ngIf="!loading && suppliers.length > 0 && filteredSuppliers.length === 0">
-                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
-                  No se encontraron proveedores para "{{ searchQuery }}".
-                </td>
-              </tr>
-              <tr *ngIf="!loading && suppliers.length === 0">
-                <td colspan="5" class="px-6 py-12 text-center text-gray-400">
-                  No se encontraron proveedores.
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
+          <colgroup class="hidden sm:table-column-group">
+            <col class="w-[9rem]" />
+            <col class="w-[7.5rem]" />
+            <col class="w-[14rem]" />
+            <col class="w-[8rem]" />
+            <col class="w-[5.5rem]" />
+            <col class="w-[9rem]" />
+          </colgroup>
+          <thead>
+            <tr class="bg-gray-50 border-b border-gray-100">
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Contacto</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Dirección</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Etiquetas</th>
+              <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">A pagar</th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            <tr
+              *ngFor="let supplier of filteredSuppliers"
+              (click)="openSupplier(supplier)"
+              class="hover:bg-gray-50 transition-colors cursor-pointer">
+              <td class="px-4 sm:px-6 py-3 sm:py-4">
+                <div class="font-medium text-gray-900 truncate">{{ supplier.nombre }}</div>
+              </td>
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-600 truncate">
+                {{ getContactDisplay(supplier) }}
+              </td>
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
+                <span class="line-clamp-2 break-words">{{ supplier.direccion?.trim() || '—' }}</span>
+              </td>
+              <td class="hidden sm:table-cell px-6 py-4">
+                <div class="flex gap-1 flex-wrap">
+                  <span
+                    *ngFor="let tag of supplier.etiquetas"
+                    class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">
+                    {{ tag }}
+                  </span>
+                </div>
+              </td>
+              <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-right whitespace-nowrap">
+                <div
+                  class="text-sm font-bold tabular-nums"
+                  [class.text-orange-600]="(supplier.saldoPendiente || 0) > 0"
+                  [class.text-gray-400]="!(supplier.saldoPendiente || 0)">
+                  {{ '$' + (supplier.saldoPendiente || 0) }}
+                </div>
+                <div *ngIf="supplier.debe" class="text-xs font-semibold text-orange-500">Pendiente de pago</div>
+              </td>
+              <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    (click)="openSupplier(supplier)"
+                    [title]="auth.canEditRecords ? 'Editar' : 'Ver proveedor'"
+                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
+                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="auth.canDeleteRecords"
+                    type="button"
+                    (click)="confirmDeleteSupplier(supplier)"
+                    title="Eliminar"
+                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
+                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr *ngIf="loading" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando proveedores...</td>
+            </tr>
+            <tr *ngIf="loading" class="hidden sm:table-row">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando proveedores...</td>
+            </tr>
+            <tr *ngIf="!loading && suppliers.length > 0 && filteredSuppliers.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No se encontraron proveedores para "{{ searchQuery }}".
+              </td>
+            </tr>
+            <tr *ngIf="!loading && suppliers.length > 0 && filteredSuppliers.length === 0" class="hidden sm:table-row">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+                No se encontraron proveedores para "{{ searchQuery }}".
+              </td>
+            </tr>
+            <tr *ngIf="!loading && suppliers.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                No se encontraron proveedores.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && suppliers.length === 0" class="hidden sm:table-row">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+                No se encontraron proveedores.
+              </td>
+            </tr>
+          </tbody>
+        </table>
         </div>
       </div>
     </div>
@@ -284,13 +308,9 @@ export class SuppliersComponent implements OnInit {
       return supplier.telefono.trim();
     }
 
-    const igWeb = supplier.redes?.igWeb?.trim();
+    const igWeb = supplier.redes?.igWeb?.trim() || supplier.redes?.instagram?.trim();
     if (igWeb) {
       return igWeb.startsWith('http') ? igWeb : igWeb.startsWith('@') ? igWeb : `@${igWeb}`;
-    }
-
-    if (supplier.email?.trim()) {
-      return supplier.email.trim();
     }
 
     return 'Sin contacto';

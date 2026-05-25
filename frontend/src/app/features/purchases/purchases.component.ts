@@ -13,7 +13,7 @@ import {
   SupplierFormPanelComponent,
   SupplierFormSaveEvent,
 } from '../suppliers/supplier-form-panel.component';
-import { IconActionComponent, PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 interface PurchaseDraftLine {
@@ -42,55 +42,65 @@ interface PurchaseDraftLine {
         </app-icon-action>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+      <div *ngIf="auth.canViewEconomics" class="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Compras registradas</p>
           <p class="text-2xl font-bold text-gray-900">{{ purchases.length }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total comprado</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + totalComprado }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Este mes</p>
           <p class="text-2xl font-bold text-gray-900">{{ '$' + totalMes }}</p>
         </div>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="overflow-x-auto">
-        <table class="w-full min-w-[560px] text-left border-collapse">
+        <div [class]="tableScrollClass">
+        <table class="w-full text-left border-collapse sm:min-w-[560px]">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Compra</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Items</th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Compra</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Items</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr *ngFor="let purchase of purchases" class="hover:bg-gray-50 transition-colors">
-              <td class="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(purchase.fecha) }}
               </td>
-              <td class="px-6 py-4 text-sm font-semibold text-teal-700">
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
                 #{{ purchase.compraLabel || purchase.id?.slice(-6) }}
+                <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(purchase.fecha) }}</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-700">
-                {{ purchase.proveedor?.trim() || '—' }}
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-700">
+                <div class="truncate">{{ purchase.proveedor?.trim() || '—' }}</div>
+                <div class="text-xs text-gray-400 sm:hidden">{{ purchase.items?.length || 0 }} producto(s)</div>
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
                 {{ purchase.items?.length || 0 }} producto(s)
               </td>
-              <td class="px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ '$' + (purchase.total || 0) }}
               </td>
             </tr>
-            <tr *ngIf="loading">
+            <tr *ngIf="loading" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando compras...</td>
+            </tr>
+            <tr *ngIf="loading" class="hidden sm:table-row">
               <td colspan="5" class="px-6 py-12 text-center text-gray-400">Cargando compras...</td>
             </tr>
-            <tr *ngIf="!loading && purchases.length === 0">
+            <tr *ngIf="!loading && purchases.length === 0" class="sm:hidden">
+              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
+                Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && purchases.length === 0" class="hidden sm:table-row">
               <td colspan="5" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
               </td>
@@ -123,11 +133,14 @@ interface PurchaseDraftLine {
                 [(ngModel)]="purchaseProveedorId"
                 name="purchaseProveedorId"
                 [labeledOptions]="supplierOptions"
-                [creatable]="false"
+                [creatable]="true"
+                createLabelPrefix="Crear proveedor"
+                (createRequested)="quickCreateSupplier($event)"
+                (searchChange)="pendingSupplierName = $event"
                 placeholder="Buscar proveedor..."
                 plainPlaceholder="Opcional"
-                emptyOptionsMessage="No hay proveedores cargados. Creá uno con + Nuevo proveedor."
-                listHint="Opcional. Elegí un proveedor de la lista.">
+                emptyOptionsMessage="No hay proveedores cargados. Escribí el nombre para crearlo."
+                listHint="Opcional. Elegí un proveedor o creá uno nuevo.">
               </app-searchable-select>
             </div>
             <div>
@@ -235,6 +248,7 @@ interface PurchaseDraftLine {
 })
 export class PurchasesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly auth = inject(AuthService);
 
   private purchaseService = inject(PurchaseService);
@@ -251,6 +265,8 @@ export class PurchasesComponent implements OnInit {
   purchaseModalOpen = false;
   supplierModalOpen = false;
   supplierPrefillNombre = '';
+  pendingSupplierName = '';
+  creatingSupplier = false;
   savingPurchase = false;
   purchaseProveedorId = '';
   purchaseNotas = '';
@@ -327,12 +343,15 @@ export class PurchasesComponent implements OnInit {
 
     this.purchaseProveedorId = '';
     this.purchaseNotas = '';
+    this.pendingSupplierName = '';
     this.draftLines = [this.emptyLine()];
     this.purchaseModalOpen = true;
   }
 
   closePurchaseModal() {
     this.purchaseModalOpen = false;
+    this.pendingSupplierName = '';
+    this.closeSupplierModal();
   }
 
   addLine() {
@@ -400,8 +419,31 @@ export class PurchasesComponent implements OnInit {
   }
 
   openNewSupplierModal() {
-    this.supplierPrefillNombre = '';
+    this.supplierPrefillNombre = this.pendingSupplierName.trim();
     this.supplierModalOpen = true;
+  }
+
+  quickCreateSupplier(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || this.creatingSupplier) return;
+
+    this.creatingSupplier = true;
+    this.supplierService.createSupplier({ nombre: trimmed }).subscribe({
+      next: (response) => {
+        this.creatingSupplier = false;
+        const supplier: Supplier = { id: response.id, nombre: trimmed };
+        this.suppliers = [...this.suppliers, supplier];
+        this.purchaseProveedorId = response.id;
+        this.pendingSupplierName = trimmed;
+      },
+      error: () => {
+        this.creatingSupplier = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo crear el proveedor. Intentá de nuevo o usá «Nuevo proveedor» para cargar la ficha completa.',
+        });
+      },
+    });
   }
 
   closeSupplierModal() {

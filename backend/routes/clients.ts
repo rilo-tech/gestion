@@ -4,8 +4,9 @@ import { resolveOrderLabel } from '../utils/order-number.ts';
 import { resolveSaleLabel } from '../utils/sale-number.ts';
 import { computeClientBalanceMap } from '../utils/client-balance.ts';
 import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData } from '../utils/client-collections.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
 function isCancelledStatus(estado?: string) {
   const value = String(estado ?? '').toLowerCase().trim();

@@ -14,7 +14,20 @@ const app = initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
-const useAuthEmulator = import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR === 'true';
+function resolveAuthEmulatorHost(): string {
+  if (typeof window !== 'undefined' && window.location.hostname) {
+    return window.location.hostname;
+  }
+  return '127.0.0.1';
+}
+
+const useAuthEmulator =
+  import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR === 'true' ||
+  (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR !== 'false');
+
+export const isAuthEmulatorEnabled = useAuthEmulator;
+
 if (useAuthEmulator) {
-  connectAuthEmulator(firebaseAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const host = resolveAuthEmulatorHost();
+  connectAuthEmulator(firebaseAuth, `http://${host}:9099`, { disableWarnings: true });
 }

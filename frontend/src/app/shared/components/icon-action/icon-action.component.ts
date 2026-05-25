@@ -50,4 +50,4 @@ export const PAGE_SHELL_CLASS = 'p-4 sm:p-6 lg:p-8';
 
 export const TABLE_SCROLL_CLASS = 'overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0';
 
-export const TABLE_MIN_WIDTH_CLASS = 'w-full min-w-[640px] text-left border-collapse';
+export const TABLE_MIN_WIDTH_CLASS = 'w-full text-left border-collapse sm:min-w-[640px]';

@@ -20,6 +20,7 @@ import {
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { AuthService } from '../../core/services/auth.service';
 
 type CollectTarget =
   | { kind: 'pedido'; item: ClientAccountOrder }
@@ -58,7 +59,7 @@ type CollectMode = 'client' | 'item';
         </div>
         <div class="flex flex-col sm:flex-row gap-2 shrink-0">
           <app-icon-action
-            *ngIf="account?.debe"
+            *ngIf="auth.canAccessCash && account?.debe"
             label="Cobrar cuenta"
             (clicked)="openClientCollectModal()">
             <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
@@ -76,7 +77,7 @@ type CollectMode = 'client' | 'item';
       <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando historial...</div>
 
       <ng-container *ngIf="!loading && account">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        <div *ngIf="auth.canViewAccountBalance" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
             <p
@@ -105,7 +106,7 @@ type CollectMode = 'client' | 'item';
           </div>
         </div>
 
-        <section *ngIf="pendingItems.length" class="mb-6 rounded-xl border border-orange-100 bg-orange-50 p-4 sm:p-5">
+        <section *ngIf="auth.canViewAccountBalance && pendingItems.length" class="mb-6 rounded-xl border border-orange-100 bg-orange-50 p-4 sm:p-5">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
             <h2 class="text-sm font-bold text-orange-900">Saldos pendientes de cobro</h2>
             <p class="text-xs text-orange-800">
@@ -125,7 +126,10 @@ type CollectMode = 'client' | 'item';
               </a>
               <div class="flex items-center gap-3 shrink-0">
                 <span class="font-bold tabular-nums text-orange-700">{{ '$' + entry.saldo }}</span>
-                <app-icon-action label="Cobrar" (clicked)="openCollectModal(entry.target)">
+                <app-icon-action
+                  *ngIf="auth.canAccessCash"
+                  label="Cobrar"
+                  (clicked)="openCollectModal(entry.target)">
                   <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
                 </app-icon-action>
               </div>
@@ -183,8 +187,8 @@ type CollectMode = 'client' | 'item';
                   <tr>
                     <th class="px-4 py-3">Pedido</th>
                     <th class="px-4 py-3">Estado</th>
-                    <th class="px-4 py-3 text-right">Total</th>
-                    <th class="px-4 py-3 text-right">Saldo</th>
+                    <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right">Total</th>
+                    <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right">Saldo</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-50 text-sm">
@@ -196,16 +200,16 @@ type CollectMode = 'client' | 'item';
                       <p class="text-xs text-gray-500 truncate">{{ pedido.descripcion || '—' }}</p>
                     </td>
                     <td class="px-4 py-3 text-gray-600">{{ pedido.estado || '—' }}</td>
-                    <td class="px-4 py-3 text-right tabular-nums">{{ '$' + pedido.total }}</td>
-                    <td class="px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="pedido.saldo > 0">
+                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ '$' + pedido.total }}</td>
+                    <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="pedido.saldo > 0">
                       {{ '$' + pedido.saldo }}
                     </td>
                   </tr>
                   <tr *ngIf="account.pedidos.length === 0">
-                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin pedidos.</td>
+                    <td [attr.colspan]="2 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">Sin pedidos visibles.</td>
                   </tr>
                   <tr *ngIf="account.pedidos.length > 0 && filteredPedidos.length === 0">
-                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">
+                    <td [attr.colspan]="2 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">
                       No hay pedidos que coincidan con la búsqueda.
                     </td>
                   </tr>
@@ -221,9 +225,9 @@ type CollectMode = 'client' | 'item';
                 <thead class="bg-gray-50 text-xs uppercase text-gray-400">
                   <tr>
                     <th class="px-4 py-3">Venta</th>
-                    <th class="px-4 py-3">Origen</th>
-                    <th class="px-4 py-3 text-right">Total</th>
-                    <th class="px-4 py-3 text-right">Saldo</th>
+                    <th class="hidden sm:table-cell px-4 py-3">Origen</th>
+                    <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right">Total</th>
+                    <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right">Saldo</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-50 text-sm">
@@ -235,8 +239,12 @@ type CollectMode = 'client' | 'item';
                         class="font-semibold text-teal-700 hover:underline">
                         #{{ venta.ventaLabel }}
                       </a>
+                      <p class="text-xs text-gray-500 sm:hidden truncate">
+                        <ng-container *ngIf="venta.origen === 'pedido'">Pedido #{{ venta.numeroPedidoLabel || '—' }}</ng-container>
+                        <ng-container *ngIf="venta.origen !== 'pedido'">Mostrador</ng-container>
+                      </p>
                     </td>
-                    <td class="px-4 py-3 text-gray-600">
+                    <td class="hidden sm:table-cell px-4 py-3 text-gray-600">
                       <a
                         *ngIf="venta.origen === 'pedido' && venta.pedidoId"
                         [routerLink]="['/orders', venta.pedidoId, 'edit']"
@@ -245,8 +253,8 @@ type CollectMode = 'client' | 'item';
                       </a>
                       <span *ngIf="venta.origen !== 'pedido'">Mostrador</span>
                     </td>
-                    <td class="px-4 py-3 text-right tabular-nums">{{ '$' + venta.total }}</td>
-                    <td class="px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="venta.saldoPendiente > 0">
+                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ '$' + venta.total }}</td>
+                    <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="venta.saldoPendiente > 0">
                       {{ '$' + venta.saldoPendiente }}
                     </td>
                   </tr>
@@ -344,6 +352,7 @@ export class ClientHistorialComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly auth = inject(AuthService);
 
   private clientService = inject(ClientService);
   private orderService = inject(OrderService);
@@ -419,7 +428,9 @@ export class ClientHistorialComponent implements OnInit {
   }
 
   get filteredPedidos(): ClientAccountOrder[] {
-    const pedidos = this.account?.pedidos ?? [];
+    const pedidos = (this.account?.pedidos ?? []).filter((pedido) =>
+      this.auth.canViewOrder(pedido.estado)
+    );
     const query = this.searchQuery.trim().toLowerCase();
     if (!query) return pedidos;
 

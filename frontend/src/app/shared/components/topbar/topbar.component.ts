@@ -22,30 +22,36 @@ import { Router } from '@angular/router';
       </button>
 
       <div class="flex-1 min-w-0 lg:hidden">
-        <p class="text-sm font-semibold text-gray-900 truncate">RILO Gestión</p>
+        <p class="text-sm font-semibold text-gray-900 truncate">{{ auth.appBrandTitle }}</p>
       </div>
 
       <div class="inline-flex items-center gap-1.5 sm:gap-2.5 ml-auto">
         <button
           type="button"
-          (click)="theme.toggle()"
-          [title]="theme.preference() === 'dark' ? 'Usar fondo claro' : 'Usar fondo oscuro'"
+          (click)="openAppearance()"
+          [title]="theme.preference() === 'dark' ? 'Apariencia · fondo oscuro activo' : 'Apariencia · fondo claro activo'"
           class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800">
           <i-lucide [name]="theme.preference() === 'dark' ? 'sun' : 'moon'" class="w-4 h-4"></i-lucide>
         </button>
 
-        <span
-          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold">
-          {{ auth.userInitial }}
-        </span>
-        <span class="min-w-0 text-left hidden sm:block">
-          <span class="block text-sm font-medium text-gray-900 truncate leading-tight">
-            {{ auth.currentUserName }}
+        <button
+          type="button"
+          (click)="openAccount()"
+          title="Mi cuenta"
+          class="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-gray-100 min-w-0">
+          <span
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold">
+            {{ auth.userInitial }}
           </span>
-          <span class="block text-[11px] text-gray-500 truncate leading-tight">
-            {{ auth.currentRoleLabel }}
+          <span class="min-w-0 text-left hidden sm:block">
+            <span class="block text-sm font-medium text-gray-900 truncate leading-tight">
+              {{ auth.currentUserName }}
+            </span>
+            <span class="block text-[11px] text-gray-500 truncate leading-tight">
+              {{ auth.currentRoleLabel }}
+            </span>
           </span>
-        </span>
+        </button>
         <button
           type="button"
           (click)="logout()"
@@ -62,6 +68,16 @@ export class TopbarComponent {
   readonly nav = inject(LayoutNavService);
   readonly theme = inject(ThemeService);
   private router = inject(Router);
+
+  openAccount() {
+    const route = this.auth.isPlatformAdmin ? '/platform/mi-cuenta' : '/mi-cuenta';
+    this.router.navigate([route]);
+  }
+
+  openAppearance() {
+    const route = this.auth.isPlatformAdmin ? '/platform/apariencia' : '/apariencia';
+    this.router.navigate([route]);
+  }
 
   logout() {
     this.auth.logout();

@@ -1,9 +1,14 @@
 import express from 'express';
 import { db } from '../firebase.ts';
+import {
+  mapDeletionError,
+  validateOrderCancellation,
+} from '../utils/deletion-guards.ts';
 import { allocateOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
 import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
 type OrderPayment = {
   id: string;
@@ -339,6 +344,7 @@ async function createCashIncome(
     monto: params.monto,
     medio: 'efectivo',
     concepto: params.concepto,
+    ambito: 'negocio',
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -433,6 +439,7 @@ async function reverseCashMovementsForOrder(
       monto: Number(data.monto) || 0,
       medio: data.medio ?? 'efectivo',
       concepto: `Anulación ${conceptoBase}`,
+      ambito: data.ambito === 'personal' ? 'personal' : 'negocio',
       fecha: new Date().toISOString(),
       origenId: orderId,
       origenTipo: 'pedido_cancelacion',
@@ -894,6 +901,8 @@ router.delete('/:businessId/:orderId', async (req, res) => {
       return res.status(400).json({ error: 'El pedido ya está cancelado.' });
     }
 
+    await validateOrderCancellation(businessId, orderId, order as Record<string, unknown>);
+
     const stockRestored = await restoreStockForOrder(businessId, orderId, order);
     const cajaReverted = await reverseCashMovementsForOrder(businessId, orderId, order);
 
@@ -908,6 +917,10 @@ router.delete('/:businessId/:orderId', async (req, res) => {
 
     res.json({ id: orderId, estado: 'cancelado', stockRestored, cajaReverted });
   } catch (error) {
+    const mapped = mapDeletionError(error);
+    if (mapped) {
+      return res.status(mapped.status).json({ error: mapped.message });
+    }
     res.status(500).json({ error: 'Error cancelling order' });
   }
 });

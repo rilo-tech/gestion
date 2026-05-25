@@ -3,7 +3,9 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
 
-export type CashOrigenGrupo = 'pedido' | 'venta' | 'manual' | 'otro';
+export type CashOrigenGrupo = 'pedido' | 'venta' | 'compra' | 'manual' | 'otro' | (string & {});
+
+export type CashAmbito = string;
 
 export interface CashMovement {
   id?: string;
@@ -12,6 +14,7 @@ export interface CashMovement {
   medio?: string;
   concepto: string;
   fecha: string;
+  ambito?: CashAmbito;
   origenId?: string;
   origenTipo?: string;
   origenGrupo?: CashOrigenGrupo;
@@ -46,7 +49,7 @@ export class CashService {
 
   updateMovement(
     movementId: string,
-    movement: Pick<CashMovement, 'tipo' | 'monto' | 'concepto' | 'medio'>
+    movement: Pick<CashMovement, 'tipo' | 'monto' | 'concepto' | 'medio' | 'ambito'>
   ): Observable<{ id: string }> {
     return this.http.put<{ id: string }>(
       `/api/cash/${this.businessId}/${movementId}`,

@@ -101,6 +101,30 @@ html.dark .bg-teal-50 {
   background-color: rgb(19 78 74 / 0.35) !important;
 }
 
+html.dark .bg-teal-50\/40 {
+  background-color: rgb(19 78 74 / 0.28) !important;
+}
+
+html.dark .bg-sky-50\/60 {
+  background-color: rgb(12 74 110 / 0.35) !important;
+}
+
+html.dark .bg-violet-50\/60 {
+  background-color: rgb(76 29 149 / 0.3) !important;
+}
+
+html.dark .border-teal-100 {
+  border-color: rgb(19 78 74 / 0.5) !important;
+}
+
+html.dark .border-sky-100 {
+  border-color: rgb(12 74 110 / 0.5) !important;
+}
+
+html.dark .border-violet-100 {
+  border-color: rgb(76 29 149 / 0.45) !important;
+}
+
 html.dark .text-teal-800 {
   color: rgb(153 246 228) !important;
 }

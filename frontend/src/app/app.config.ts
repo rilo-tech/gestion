@@ -4,8 +4,9 @@ import { AuthService } from './core/services/auth.service';
 import { provideRouter, Routes } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
-import { authGuard, loginGuard, platformGuard, companyGuard } from './core/guards/auth.guard';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun } from 'lucide-angular';
+import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
+import { PERMISSIONS } from './core/constants/permissions';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, Printer } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -25,6 +26,11 @@ import { SalesComponent } from './features/sales/sales.component';
 import { LoginComponent } from './features/auth/login.component';
 import { PlatformLoginComponent } from './features/auth/platform-login.component';
 import { PlatformComponent } from './features/platform/platform.component';
+import { AccountComponent } from './features/account/account.component';
+import { AppearancePageComponent } from './features/settings/appearance-page.component';
+import { PriceCatalogComponent } from './features/price-catalog/price-catalog.component';
+import { PriceCatalogFormComponent } from './features/price-catalog/price-catalog-form.component';
+import { PayablesComponent } from './features/payables/payables.component';
 
 const companyRoutes: Routes = [
   {
@@ -79,6 +85,7 @@ const companyRoutes: Routes = [
   {
     path: 'purchases',
     component: PurchasesComponent,
+    canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
   },
   {
     path: 'orders/new',
@@ -95,10 +102,33 @@ const companyRoutes: Routes = [
   {
     path: 'sales',
     component: SalesComponent,
+    canActivate: [
+      requireAnyPermission(PERMISSIONS.SALES_CREATE, PERMISSIONS.SALES_VIEW_HISTORY),
+    ],
+  },
+  {
+    path: 'price-catalog/new',
+    component: PriceCatalogFormComponent,
+    canActivate: [requirePermission(PERMISSIONS.PRICES_VIEW)],
+  },
+  {
+    path: 'price-catalog/:id/edit',
+    component: PriceCatalogFormComponent,
+    canActivate: [requirePermission(PERMISSIONS.PRICES_VIEW)],
+  },
+  {
+    path: 'price-catalog',
+    component: PriceCatalogComponent,
+    canActivate: [requirePermission(PERMISSIONS.PRICES_VIEW)],
   },
   {
     path: 'cash',
     component: CashComponent,
+  },
+  {
+    path: 'payables',
+    component: PayablesComponent,
+    canActivate: [requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
   },
   {
     path: 'reports',
@@ -109,13 +139,21 @@ const companyRoutes: Routes = [
     path: 'settings',
     component: SettingsComponent,
   },
+  {
+    path: 'mi-cuenta',
+    component: AccountComponent,
+  },
+  {
+    path: 'apariencia',
+    component: AppearancePageComponent,
+  },
 ];
 
 const routes: Routes = [
   {
     path: 'acceso-plataforma',
     component: PlatformLoginComponent,
-    canActivate: [loginGuard],
+    canActivate: [platformLoginGuard],
   },
   {
     path: '',
@@ -136,6 +174,14 @@ const routes: Routes = [
       {
         path: '',
         component: PlatformComponent,
+      },
+      {
+        path: 'mi-cuenta',
+        component: AccountComponent,
+      },
+      {
+        path: 'apariencia',
+        component: AppearancePageComponent,
       },
     ],
   },
@@ -186,6 +232,11 @@ export const appConfig: ApplicationConfig = {
         LogOut,
         Moon,
         Sun,
+        Tags,
+        Calendar,
+        ChevronDown,
+        ChevronUp,
+        Printer,
       })
     ),
     {

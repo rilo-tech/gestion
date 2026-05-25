@@ -7,12 +7,18 @@ import {
   userHasPermission,
   canManageSettings,
   canManageUsers,
+  canStaffViewOrder,
 } from '../constants/permissions';
 import { AppUser } from './user.service';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, map, tap, catchError, of } from 'rxjs';
-import { signInWithPopup } from 'firebase/auth';
+import { BehaviorSubject, Observable, from, of, throwError, NEVER } from 'rxjs';
+import { catchError, map, switchMap, tap, timeout } from 'rxjs/operators';
+import {
+  getRedirectResult,
+  signInWithRedirect,
+} from 'firebase/auth';
 import { firebaseAuth, googleAuthProvider } from '../config/firebase';
+import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../constants/google-auth-storage';
 import { PublicBusinessInfo } from './business.service';
 import {
   AUTH_BUSINESS_STORAGE_KEY,
@@ -72,6 +78,11 @@ export class AuthService {
 
   get currentBusiness(): PublicBusinessInfo | null {
     return this.businessSubject.value;
+  }
+
+  get appBrandTitle(): string {
+    if (this.isPlatformAdmin) return 'RILO Plataforma';
+    return this.currentBusiness?.nombre?.trim() || 'RILO Gestión';
   }
 
   get authScope(): AuthScope {
@@ -144,12 +155,66 @@ export class AuthService {
     return this.hasPermission(PERMISSIONS.CASH_ACCESS);
   }
 
+  get canViewAccountBalance(): boolean {
+    return this.hasPermission(PERMISSIONS.ACCOUNT_BALANCE_VIEW);
+  }
+
   get canEditPersonalization(): boolean {
     return this.hasPermission(PERMISSIONS.ORDERS_PERSONALIZATION);
   }
 
   get canViewOrderSalePrice(): boolean {
     return this.hasPermission(PERMISSIONS.ORDERS_VIEW_SALE_PRICE);
+  }
+
+  get canViewAllOrders(): boolean {
+    return this.hasPermission(PERMISSIONS.ORDERS_VIEW_ALL);
+  }
+
+  get canViewDeliveredOrders(): boolean {
+    return this.hasPermission(PERMISSIONS.ORDERS_VIEW_DELIVERED);
+  }
+
+  get canPrintOrders(): boolean {
+    return this.hasPermission(PERMISSIONS.ORDERS_PRINT);
+  }
+
+  get canCreateSales(): boolean {
+    return this.hasPermission(PERMISSIONS.SALES_CREATE);
+  }
+
+  get canViewSalesHistory(): boolean {
+    return this.hasPermission(PERMISSIONS.SALES_VIEW_HISTORY);
+  }
+
+  get canViewSalesSummary(): boolean {
+    return this.hasPermission(PERMISSIONS.SALES_VIEW_SUMMARY);
+  }
+
+  get canAccessSales(): boolean {
+    return this.canCreateSales || this.canViewSalesHistory;
+  }
+
+  get canAccessPurchases(): boolean {
+    return this.hasPermission(PERMISSIONS.PURCHASES_ACCESS);
+  }
+
+  get canAccessPayables(): boolean {
+    return this.hasPermission(PERMISSIONS.PAYABLES_ACCESS);
+  }
+
+  get canViewPriceCatalog(): boolean {
+    return this.hasPermission(PERMISSIONS.PRICES_VIEW);
+  }
+
+  get canManagePriceCatalog(): boolean {
+    return this.hasPermission(PERMISSIONS.PRICES_MANAGE);
+  }
+
+  canViewOrder(estado?: string): boolean {
+    const user = this.currentUser;
+    if (!user || user.activo === false) return false;
+    return canStaffViewOrder(user.rol as UserRole, user.permisos, estado);
   }
 
   get canManageUsers(): boolean {
@@ -199,21 +264,65 @@ export class AuthService {
   }
 
   loginWithGoogle(businessId: string): Observable<AuthSession> {
-    return new Observable((observer) => {
-      signInWithPopup(firebaseAuth, googleAuthProvider)
-        .then(async (credential) => {
-          const idToken = await credential.user.getIdToken();
-          this.http.post<AuthSession>('/api/auth/google', { idToken, businessId }).subscribe({
-            next: (session) => {
-              this.applySession(session);
-              observer.next(session);
-              observer.complete();
-            },
-            error: (err) => observer.error(err),
-          });
-        })
-        .catch((err) => observer.error(err));
-    });
+    sessionStorage.setItem(GOOGLE_LOGIN_SCOPE_KEY, 'company');
+    sessionStorage.setItem(GOOGLE_LOGIN_BUSINESS_KEY, businessId);
+    return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(
+      switchMap(() => NEVER)
+    );
+  }
+
+  loginWithGooglePlatform(): Observable<AuthSession> {
+    sessionStorage.setItem(GOOGLE_LOGIN_SCOPE_KEY, 'platform');
+    sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+    return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(
+      switchMap(() => NEVER)
+    );
+  }
+
+  completeGoogleRedirectLogin(): Observable<AuthSession> {
+    return from(firebaseAuth.authStateReady()).pipe(
+      switchMap(() =>
+        from(getRedirectResult(firebaseAuth)).pipe(
+          timeout(10000),
+          catchError((error) => {
+            if (error?.name === 'TimeoutError') {
+              return of(null);
+            }
+            return throwError(() => error);
+          })
+        )
+      ),
+      switchMap((credential) => {
+        if (!credential?.user) {
+          return throwError(() => new Error('NO_REDIRECT'));
+        }
+
+        const scope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY) ?? 'company';
+        const businessId = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY)?.trim();
+        sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+
+        if (scope === 'platform') {
+          return from(credential.user.getIdToken()).pipe(
+            switchMap((idToken) =>
+              this.http.post<AuthSession>('/api/auth/google', { idToken, scope: 'platform' })
+            ),
+            tap((session) => this.applySession(session))
+          );
+        }
+
+        if (!businessId) {
+          return throwError(() => new Error('Falta el código de empresa. Volvé a intentarlo.'));
+        }
+
+        return from(credential.user.getIdToken()).pipe(
+          switchMap((idToken) =>
+            this.http.post<AuthSession>('/api/auth/google', { idToken, businessId, scope: 'company' })
+          ),
+          tap((session) => this.applySession(session))
+        );
+      })
+    );
   }
 
   logout() {
@@ -231,6 +340,32 @@ export class AuthService {
             this.currentUserSubject.next(updated);
           }
         }
+      })
+    );
+  }
+
+  changePassword(payload: {
+    currentPassword?: string;
+    newPassword: string;
+  }): Observable<{ ok: boolean }> {
+    return this.http.patch<{ ok: boolean }>('/api/auth/me/password', payload).pipe(
+      tap(() => {
+        const current = this.currentUser;
+        if (current) {
+          this.currentUserSubject.next({ ...current, hasPassword: true });
+        }
+      })
+    );
+  }
+
+  updateProfile(payload: {
+    nombre: string;
+    email?: string;
+    loginUsername: string;
+  }): Observable<{ user: SessionUser }> {
+    return this.http.patch<{ user: SessionUser }>('/api/auth/me/profile', payload).pipe(
+      tap(({ user }) => {
+        this.currentUserSubject.next(user);
       })
     );
   }

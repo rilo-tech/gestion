@@ -6,6 +6,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClientService, Client } from '../../core/services/client.service';
 import { StockService, StockItem, itemControlsStock } from '../../core/services/stock.service';
 import { OrderLineItem, OrderLineExtraCost, OrderPayment, OrderService, Order, OrderUpdateResult } from '../../core/services/order.service';
+import { OrderPrintService } from '../../core/services/order-print.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
@@ -32,6 +33,12 @@ import {
   ClientFormPanelComponent,
   ClientFormSaveEvent,
 } from '../clients/client-form-panel.component';
+import {
+  matchCatalogEntry,
+  PriceCatalogEntry,
+  PriceCatalogService,
+  resolveVariantUnitPrice,
+} from '../../core/services/price-catalog.service';
 
 @Component({
   selector: 'app-new-order',
@@ -61,13 +68,29 @@ import {
             message="¿Preferís editar Pers. directo en lugar de costos extra?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
+          <a
+            *ngIf="!isReadOnlyOrder && auth.canViewPriceCatalog"
+            routerLink="/price-catalog"
+            class="inline-flex items-center gap-1 text-sm text-teal-700 hover:text-teal-900 font-medium mt-1">
+            Consultar catálogo de precios
+          </a>
         </div>
-        <button
-          routerLink="/orders"
-          class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
-          <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
-          Volver a pedidos
-        </button>
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            *ngIf="isEditing && auth.canPrintOrders"
+            type="button"
+            (click)="printCurrentOrder()"
+            class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900">
+            <i-lucide name="printer" class="w-4 h-4"></i-lucide>
+            Imprimir
+          </button>
+          <button
+            routerLink="/orders"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
+            <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
+            Volver a pedidos
+          </button>
+        </div>
       </div>
 
       <div
@@ -261,14 +284,24 @@ import {
                           {{ getExtraCostsActionLabel(line) }}
                         </button>
                       </ng-container>
+                      <ng-container *ngIf="auth.canViewPriceCatalog">
+                        <button
+                          *ngFor="let option of getCatalogPriceOptions(line)"
+                          type="button"
+                          [disabled]="isReadOnlyOrder || !auth.canViewOrderSalePrice"
+                          (click)="applyCatalogPrice(line, option.price)"
+                          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline leading-none mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
+                          {{ option.label }}: {{ '$' + option.price }}
+                        </button>
+                      </ng-container>
                       <ng-container *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE">
                         <button
-                          *ngIf="getSuggestedSalePrice(line) as suggested"
+                          *ngIf="!line.priceCatalogId && getStockSuggestedPrice(line) as suggested"
                           type="button"
                           [disabled]="isReadOnlyOrder"
-                          (click)="applySuggestedSalePrice(line)"
+                          (click)="applyStockSuggestedPrice(line)"
                           class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline leading-none mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
-                          Precio sugerido: {{ suggested }}
+                          Precio sugerido stock: {{ '$' + suggested }}
                         </button>
                       </ng-container>
                     </td>
@@ -352,14 +385,24 @@ import {
                           {{ getExtraCostsActionLabel(line) }}
                         </button>
                       </ng-container>
+                      <ng-container *ngIf="auth.canViewPriceCatalog">
+                        <button
+                          *ngFor="let option of getCatalogPriceOptions(line)"
+                          type="button"
+                          [disabled]="isReadOnlyOrder || !auth.canViewOrderSalePrice"
+                          (click)="applyCatalogPrice(line, option.price)"
+                          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
+                          {{ option.label }}: {{ '$' + option.price }}
+                        </button>
+                      </ng-container>
                       <ng-container *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE">
                         <button
-                          *ngIf="getSuggestedSalePrice(line) as suggested"
+                          *ngIf="!line.priceCatalogId && getStockSuggestedPrice(line) as suggested"
                           type="button"
                           [disabled]="isReadOnlyOrder"
-                          (click)="applySuggestedSalePrice(line)"
+                          (click)="applyStockSuggestedPrice(line)"
                           class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline mt-0.5 block disabled:opacity-40 disabled:cursor-not-allowed">
-                          Precio sugerido: {{ suggested }}
+                          Precio sugerido stock: {{ '$' + suggested }}
                         </button>
                       </ng-container>
                     </div>
@@ -438,7 +481,7 @@ import {
               </div>
             </div>
 
-            <div class="mb-4 p-3 bg-gray-800/60 rounded-xl border border-gray-700">
+            <div *ngIf="auth.canViewAccountBalance" class="mb-4 p-3 bg-gray-800/60 rounded-xl border border-gray-700">
               <ng-container *ngIf="!seniaBloqueada">
                 <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Seña recibida</label>
                 <input
@@ -510,7 +553,7 @@ import {
             </a>
             <ng-container *ngIf="!isReadOnlyOrder">
               <button
-                *ngIf="canRegisterSale"
+                *ngIf="canRegisterSale && auth.canCreateSales"
                 type="button"
                 (click)="registerSaleFromOrder()"
                 class="w-full mb-3 py-3 rounded-xl border border-teal-500 bg-teal-50 text-teal-800 text-sm font-bold hover:bg-teal-100 transition-all flex items-center justify-center gap-2">
@@ -540,7 +583,7 @@ import {
               <p class="text-xs font-bold text-gray-400 uppercase mb-1">Total venta</p>
               <p class="text-2xl font-bold text-teal-600">{{ '$' + (order.total || 0) }}</p>
             </div>
-            <div class="mb-4 p-3 rounded-xl border border-gray-100 bg-gray-50 space-y-2">
+            <div *ngIf="auth.canViewAccountBalance" class="mb-4 p-3 rounded-xl border border-gray-100 bg-gray-50 space-y-2">
               <ng-container *ngIf="!seniaBloqueada">
                 <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
                 <input
@@ -575,7 +618,7 @@ import {
             </a>
             <ng-container *ngIf="!isReadOnlyOrder">
               <button
-                *ngIf="canRegisterSale"
+                *ngIf="canRegisterSale && auth.canCreateSales"
                 type="button"
                 (click)="registerSaleFromOrder()"
                 class="w-full mb-3 py-3 rounded-xl border border-teal-500 bg-teal-50 text-teal-800 text-sm font-bold hover:bg-teal-100 transition-all flex items-center justify-center gap-2">
@@ -854,7 +897,9 @@ export class NewOrderComponent implements OnInit {
   private clientService = inject(ClientService);
   private stockService = inject(StockService);
   private orderService = inject(OrderService);
+  private orderPrintService = inject(OrderPrintService);
   private catalogConfigService = inject(CatalogConfigService);
+  private priceCatalogService = inject(PriceCatalogService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
@@ -873,12 +918,14 @@ export class NewOrderComponent implements OnInit {
   clientModalPrefillNombre = '';
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   editingOrderId: string | null = null;
+  private loadedOrderSnapshot: Order | null = null;
   isDraftOrder = false;
   productSearch = '';
   productSearchResults: StockItem[] = [];
   productSearchOpen = false;
   searchingProducts = false;
   orderLines: OrderLineItem[] = [];
+  priceCatalogEntries: PriceCatalogEntry[] = [];
   extraCostsModalIndex: number | null = null;
   extraCostsDraft: OrderLineExtraCost[] = [];
   extraCostInputNombre = '';
@@ -1020,6 +1067,15 @@ export class NewOrderComponent implements OnInit {
       this.appConfig = config;
     });
 
+    if (this.auth.canViewPriceCatalog) {
+      this.priceCatalogService.getEntries().subscribe({
+        next: (entries) => {
+          this.priceCatalogEntries = entries.filter((entry) => entry.activo !== false);
+          this.refreshOrderLineCatalogLinks();
+        },
+      });
+    }
+
     this.refreshClients();
     this.editingOrderId = this.route.snapshot.paramMap.get('id');
 
@@ -1076,8 +1132,31 @@ export class NewOrderComponent implements OnInit {
   }
 
   registerSaleFromOrder() {
-    if (!this.editingOrderId || !this.canRegisterSale) return;
+    if (!this.editingOrderId || !this.canRegisterSale || !this.auth.canCreateSales) return;
     this.router.navigate(['/sales'], { queryParams: { pedidoId: this.editingOrderId } });
+  }
+
+  printCurrentOrder() {
+    if (!this.auth.canPrintOrders || !this.loadedOrderSnapshot?.id) return;
+
+    const snapshot: Order = {
+      ...this.loadedOrderSnapshot,
+      clienteId: this.order.clienteId ?? this.loadedOrderSnapshot.clienteId,
+      descripcion: this.order.descripcion ?? this.loadedOrderSnapshot.descripcion,
+      estado: this.order.estado ?? this.loadedOrderSnapshot.estado,
+      fechaEntrega: this.order.fechaEntrega ?? this.loadedOrderSnapshot.fechaEntrega,
+      total: this.order.total ?? this.loadedOrderSnapshot.total,
+      saldo: this.order.saldo ?? this.loadedOrderSnapshot.saldo,
+      totalPagado: this.order.totalPagado ?? this.loadedOrderSnapshot.totalPagado,
+      senia: this.order.senia ?? this.loadedOrderSnapshot.senia,
+      pagos: this.order.pagos ?? this.loadedOrderSnapshot.pagos,
+      items: this.orderLines.length ? this.orderLines : this.loadedOrderSnapshot.items,
+    };
+
+    const clientsById = new Map(
+      this.clients.filter((client) => client.id).map((client) => [client.id!, client])
+    );
+    this.orderPrintService.printOrders([snapshot], clientsById);
   }
 
   onFechaEntregaChange(value: string) {
@@ -1151,7 +1230,7 @@ export class NewOrderComponent implements OnInit {
     const costoUnitario = Number(item.costo) || 0;
     const precioSugerido = Number(item.precioSugerido) || costoUnitario * 2;
 
-    this.orderLines.push({
+    const line: OrderLineItem = {
       stockItemId: item.id,
       nombre: item.nombre,
       cantidad: 1,
@@ -1161,17 +1240,44 @@ export class NewOrderComponent implements OnInit {
       precioSugerido,
       controlaStock: itemControlsStock(item),
       stockDisponible: Number(item.stockActual) || 0,
-    });
+    };
+    this.attachCatalogToLine(line, item);
+    this.orderLines.push(line);
     this.calculateTotals();
   }
 
-  getSuggestedSalePrice(line: OrderLineItem): number | null {
+  getCatalogPriceOptions(line: OrderLineItem): Array<{ label: string; price: number }> {
+    const entry = this.getCatalogEntry(line);
+    if (!entry) return [];
+
+    const options: Array<{ label: string; price: number }> = [];
+    for (const variant of entry.variantes ?? []) {
+      const nombre = variant.nombre.trim();
+      if (!nombre) continue;
+      const price = resolveVariantUnitPrice(variant, line.cantidad);
+      if (price > 0) {
+        options.push({
+          label: `${nombre} (${line.cantidad} u.)`,
+          price,
+        });
+      }
+    }
+    return options;
+  }
+
+  getStockSuggestedPrice(line: OrderLineItem): number | null {
     const suggested = Number(line.precioSugerido);
     return suggested > 0 ? suggested : null;
   }
 
-  applySuggestedSalePrice(line: OrderLineItem) {
-    const suggested = this.getSuggestedSalePrice(line);
+  applyCatalogPrice(line: OrderLineItem, price: number) {
+    if (!this.auth.canViewOrderSalePrice || !price) return;
+    line.precioVenta = price;
+    this.calculateTotals();
+  }
+
+  applyStockSuggestedPrice(line: OrderLineItem) {
+    const suggested = this.getStockSuggestedPrice(line);
     if (suggested == null) return;
     line.precioVenta = suggested;
     this.calculateTotals();
@@ -1648,8 +1754,18 @@ export class NewOrderComponent implements OnInit {
   private loadOrder(orderId: string) {
     this.orderService.getOrder(orderId).subscribe({
       next: (order) => {
+        if (!this.auth.canViewOrder(order.estado)) {
+          this.dialogService.alert({
+            title: 'Sin acceso',
+            message: 'No tenés permiso para ver este pedido.',
+          });
+          this.router.navigate(['/orders']);
+          return;
+        }
+
         const normalizedStatus = normalizeOrderStatus(order.estado);
         this.isDraftOrder = normalizedStatus === 'borrador';
+        this.loadedOrderSnapshot = order;
 
         this.order = {
           clienteId: order.clienteId ?? '',
@@ -1743,10 +1859,45 @@ export class NewOrderComponent implements OnInit {
             line.stockDisponible = Number(stockItem.stockActual) || 0;
             const costo = Number(line.costoUnitario) || Number(stockItem.costo) || 0;
             line.precioSugerido = Number(stockItem.precioSugerido) || costo * 2 || undefined;
+            this.attachCatalogToLine(line, stockItem);
           }
         },
       });
     }
+  }
+
+  private refreshOrderLineCatalogLinks() {
+    if (!this.priceCatalogEntries.length) return;
+
+    const ids = [...new Set(this.orderLines.map((line) => line.stockItemId).filter(Boolean))];
+    for (const stockItemId of ids) {
+      this.stockService.getItem(stockItemId).subscribe({
+        next: (stockItem) => {
+          for (const line of this.orderLines) {
+            if (line.stockItemId !== stockItemId) continue;
+            this.attachCatalogToLine(line, stockItem);
+          }
+        },
+      });
+    }
+  }
+
+  private attachCatalogToLine(
+    line: OrderLineItem,
+    item: Pick<StockItem, 'nombre' | 'nombreBase'>
+  ) {
+    if (!this.auth.canViewPriceCatalog || !this.priceCatalogEntries.length) {
+      line.priceCatalogId = undefined;
+      return;
+    }
+
+    const match = matchCatalogEntry(this.priceCatalogEntries, item);
+    line.priceCatalogId = match?.id;
+  }
+
+  private getCatalogEntry(line: OrderLineItem): PriceCatalogEntry | undefined {
+    if (!line.priceCatalogId) return undefined;
+    return this.priceCatalogEntries.find((entry) => entry.id === line.priceCatalogId);
   }
 
   private ensureEditable(action: string): boolean {

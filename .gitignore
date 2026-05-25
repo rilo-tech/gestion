@@ -8,3 +8,8 @@ coverage/
 !.env.example
 emulator-data/*
 !emulator-data/.gitkeep
+credentials/*
+!credentials/.gitkeep
+!credentials/README.md
+*-firebase-adminsdk*.json
+*.pem

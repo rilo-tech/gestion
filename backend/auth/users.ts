@@ -179,6 +179,59 @@ export async function linkGoogleId(
   });
 }
 
+export async function assertUserLoginAndEmailAvailable(
+  businessId: string,
+  params: { loginUsername: string; email?: string; excludeUserId: string }
+): Promise<void> {
+  const snapshot = await usersCollection(businessId).get();
+  for (const doc of snapshot.docs) {
+    if (doc.id === params.excludeUserId) continue;
+    const user = mapStoredUser(doc.id, doc.data());
+    if (user.loginUsername === params.loginUsername) {
+      throw new Error('LOGIN_USERNAME_TAKEN');
+    }
+    if (params.email && user.email && user.email === params.email) {
+      throw new Error('EMAIL_TAKEN');
+    }
+  }
+}
+
+export async function updateUserProfile(
+  businessId: string,
+  userId: string,
+  payload: { nombre: string; email: string; loginUsername: string }
+): Promise<StoredUser> {
+  const nombre = String(payload.nombre ?? '').trim();
+  const email = normalizeEmail(payload.email);
+  const loginUsername = normalizeLogin(payload.loginUsername);
+
+  if (!nombre) {
+    throw new Error('NAME_REQUIRED');
+  }
+  if (!loginUsername) {
+    throw new Error('LOGIN_REQUIRED');
+  }
+
+  await assertUserLoginAndEmailAvailable(businessId, {
+    loginUsername,
+    email: email || undefined,
+    excludeUserId: userId,
+  });
+
+  await usersCollection(businessId).doc(userId).update({
+    nombre,
+    email,
+    loginUsername,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const updated = await getStoredUser(businessId, userId);
+  if (!updated) {
+    throw new Error('USER_NOT_FOUND');
+  }
+  return updated;
+}
+
 export async function countActiveSupervisors(businessId: string): Promise<number> {
   const snapshot = await usersCollection(businessId)
     .where('rol', '==', 'supervisor')

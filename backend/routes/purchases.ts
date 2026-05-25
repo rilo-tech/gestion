@@ -1,7 +1,8 @@
 import express from 'express';
 import { db } from '../firebase.ts';
+import { createCompanyRouter } from './create-company-router.ts';
 
-const router = express.Router();
+const router = createCompanyRouter();
 
 function formatCompraLabel(compraId: string): string {
   return compraId.slice(-6).toUpperCase();

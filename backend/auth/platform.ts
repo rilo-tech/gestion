@@ -9,6 +9,7 @@ export interface PlatformAdmin {
   email: string;
   loginUsername: string;
   passwordHash?: string;
+  googleId?: string;
   rol: 'superadmin';
   activo: boolean;
   createdAt?: string;
@@ -22,6 +23,8 @@ export interface PublicPlatformAdmin {
   loginUsername: string;
   rol: 'superadmin';
   activo: boolean;
+  hasPassword?: boolean;
+  hasGoogle?: boolean;
 }
 
 function platformAdminsCollection() {
@@ -39,6 +42,7 @@ function mapPlatformAdmin(id: string, data: Record<string, unknown>): PlatformAd
       .trim()
       .toLowerCase(),
     passwordHash: data.passwordHash ? String(data.passwordHash) : undefined,
+    googleId: data.googleId ? String(data.googleId) : undefined,
     rol: 'superadmin',
     activo: data.activo !== false,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
@@ -54,6 +58,8 @@ export function toPublicPlatformAdmin(admin: PlatformAdmin): PublicPlatformAdmin
     loginUsername: admin.loginUsername,
     rol: 'superadmin',
     activo: admin.activo,
+    hasPassword: !!admin.passwordHash,
+    hasGoogle: !!admin.googleId,
   };
 }
 
@@ -65,12 +71,15 @@ export async function ensureDefaultPlatformAdmin(): Promise<void> {
   const loginUsername = String(process.env.PLATFORM_ADMIN_USER ?? 'rilo')
     .trim()
     .toLowerCase();
+  const email = String(process.env.PLATFORM_ADMIN_EMAIL ?? '')
+    .trim()
+    .toLowerCase();
   const password = String(process.env.PLATFORM_ADMIN_PASSWORD ?? 'superadmin');
   const passwordHash = await hashPassword(password);
 
   await col.add({
     nombre: 'RILO Plataforma',
-    email: '',
+    email,
     loginUsername,
     passwordHash,
     rol: 'superadmin',
@@ -98,10 +107,93 @@ export async function findPlatformAdminByLogin(
   return null;
 }
 
+export async function findPlatformAdminByEmail(
+  email: string
+): Promise<PlatformAdmin | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const snapshot = await platformAdminsCollection().get();
+  for (const doc of snapshot.docs) {
+    const admin = mapPlatformAdmin(doc.id, doc.data());
+    if (admin.email && admin.email === normalized) {
+      return admin;
+    }
+  }
+  return null;
+}
+
+export async function linkPlatformGoogleId(
+  adminId: string,
+  googleId: string
+): Promise<void> {
+  await platformAdminsCollection().doc(adminId).update({
+    googleId,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export async function getPlatformAdmin(
   adminId: string
 ): Promise<PlatformAdmin | null> {
   const doc = await platformAdminsCollection().doc(adminId).get();
   if (!doc.exists) return null;
   return mapPlatformAdmin(doc.id, doc.data()!);
+}
+
+export async function assertPlatformLoginAndEmailAvailable(params: {
+  loginUsername: string;
+  email?: string;
+  excludeAdminId: string;
+}): Promise<void> {
+  const snapshot = await platformAdminsCollection().get();
+  for (const doc of snapshot.docs) {
+    if (doc.id === params.excludeAdminId) continue;
+    const admin = mapPlatformAdmin(doc.id, doc.data());
+    if (admin.loginUsername === params.loginUsername) {
+      throw new Error('LOGIN_USERNAME_TAKEN');
+    }
+    if (params.email && admin.email && admin.email === params.email) {
+      throw new Error('EMAIL_TAKEN');
+    }
+  }
+}
+
+export async function updatePlatformAdminProfile(
+  adminId: string,
+  payload: { nombre: string; email: string; loginUsername: string }
+): Promise<PlatformAdmin> {
+  const nombre = String(payload.nombre ?? '').trim();
+  const email = String(payload.email ?? '')
+    .trim()
+    .toLowerCase();
+  const loginUsername = String(payload.loginUsername ?? '')
+    .trim()
+    .toLowerCase();
+
+  if (!nombre) {
+    throw new Error('NAME_REQUIRED');
+  }
+  if (!loginUsername) {
+    throw new Error('LOGIN_REQUIRED');
+  }
+
+  await assertPlatformLoginAndEmailAvailable({
+    loginUsername,
+    email: email || undefined,
+    excludeAdminId: adminId,
+  });
+
+  await platformAdminsCollection().doc(adminId).update({
+    nombre,
+    email,
+    loginUsername,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const updated = await getPlatformAdmin(adminId);
+  if (!updated) {
+    throw new Error('USER_NOT_FOUND');
+  }
+  return updated;
 }

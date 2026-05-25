@@ -13,11 +13,13 @@ import orderRoutes from './backend/routes/orders.ts';
 import salesRoutes from './backend/routes/sales.ts';
 import cashRoutes from './backend/routes/cash.ts';
 import catalogConfigRoutes from './backend/routes/catalog-config.ts';
+import priceCatalogRoutes from './backend/routes/price-catalog.ts';
 import supplierRoutes from './backend/routes/suppliers.ts';
 import userRoutes from './backend/routes/users.ts';
 import authRoutes from './backend/routes/auth.ts';
 import businessRoutes from './backend/routes/business.ts';
 import platformRoutes from './backend/routes/platform.ts';
+import payablesRoutes from './backend/routes/payables.ts';
 import { ensureDefaultSupervisor } from './backend/auth/users.ts';
 import { ensureDefaultBusiness } from './backend/auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './backend/auth/platform.ts';
@@ -51,8 +53,10 @@ async function startServer() {
   // API Routes
   await ensureDefaultPlatformAdmin();
   await ensureDefaultPlans();
-  await ensureDefaultBusiness();
-  await ensureDefaultSupervisor();
+  if (process.env.SKIP_DEFAULT_BUSINESS !== 'true') {
+    await ensureDefaultBusiness();
+    await ensureDefaultSupervisor();
+  }
   app.use('/api/auth', authRoutes);
   app.use('/api/platform', platformRoutes);
   app.use('/api/business', businessRoutes);
@@ -65,6 +69,8 @@ async function startServer() {
   app.use('/api/sales', salesRoutes);
   app.use('/api/cash', cashRoutes);
   app.use('/api/config', catalogConfigRoutes);
+  app.use('/api/price-catalog', priceCatalogRoutes);
+  app.use('/api/payables', payablesRoutes);
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'RILO Gestión API is running' });

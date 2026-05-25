@@ -11,8 +11,11 @@ export interface Supplier {
   direccion?: string;
   redes?: {
     igWeb?: string;
+    instagram?: string;
   };
   etiquetas?: string[];
+  saldoPendiente?: number;
+  debe?: boolean;
 }
 
 @Injectable({

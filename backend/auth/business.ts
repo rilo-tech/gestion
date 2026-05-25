@@ -14,6 +14,12 @@ import {
   type PlanRecord,
   type PublicPlanInfo,
 } from './plans.ts';
+import {
+  getSubscriptionPaymentSummary,
+  listSubscriptionPayments,
+  type SubscriptionPaymentRecord,
+  type SubscriptionPaymentStatus,
+} from './subscription-payments.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -33,6 +39,13 @@ export interface PublicBusinessInfo {
   planId: string;
   plan: PublicPlanInfo;
   estadoSuscripcion: SubscriptionStatus;
+  estadoPago: SubscriptionPaymentStatus;
+  periodoPagoActual: string;
+  montoMensualEsperado: number;
+  ultimoPagoPeriodo?: string;
+  ultimoPagoFecha?: string;
+  ultimoPagoMonto?: number;
+  createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
   usuariosActivos: number;
@@ -40,6 +53,8 @@ export interface PublicBusinessInfo {
   operadoresDisponibles: number;
   usuariosDisponibles: number;
 }
+
+export type { SubscriptionPaymentRecord, SubscriptionPaymentStatus };
 
 const BUSINESS_MUTABLE_FIELDS = new Set([
   'nombre',
@@ -229,6 +244,7 @@ export async function toPublicBusinessInfo(
   const administradoresActivos = await countActiveAdministrators(businessId);
   const operadoresActivos = await countActiveOperators(businessId);
   const usuariosActivos = await countActiveUsers(businessId);
+  const paymentSummary = await getSubscriptionPaymentSummary(businessId, plan.precioMensual);
 
   return {
     id: business.id,
@@ -236,6 +252,13 @@ export async function toPublicBusinessInfo(
     planId: plan.id,
     plan: toPublicPlanInfo(plan),
     estadoSuscripcion: business.estadoSuscripcion,
+    estadoPago: paymentSummary.estadoPago,
+    periodoPagoActual: paymentSummary.periodoActual,
+    montoMensualEsperado: paymentSummary.montoEsperado,
+    ultimoPagoPeriodo: paymentSummary.ultimoPagoPeriodo,
+    ultimoPagoFecha: paymentSummary.ultimoPagoFecha,
+    ultimoPagoMonto: paymentSummary.ultimoPagoMonto,
+    createdAt: business.createdAt,
     administradoresActivos,
     operadoresActivos,
     usuariosActivos,
@@ -356,3 +379,5 @@ export async function assertCanActivateUser(
     throw new Error('USER_LIMIT_REACHED');
   }
 }
+
+export { listSubscriptionPayments, registerSubscriptionPayment } from './subscription-payments.ts';
