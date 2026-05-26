@@ -7,8 +7,39 @@ import {
 import { allocateOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
 import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
+import {
+  applyOrderStockPreparation,
+  buildStockPreparationView,
+  consumeOrderStockOnStatusChange,
+  ensureStockReservationsSynced,
+  listReservationSourcesForProduct,
+  listReservationTargetsForProduct,
+  mergeOrderItemsPreservingStock,
+  normalizeOrderItemsStock,
+  OrderStockError,
+  releaseOrderStockReservations,
+  transferReservedStockBetweenOrders,
+} from '../utils/order-stock-reservations.ts';
+import {
+  normalizeOrderPedidosConfig,
+  orderEstadoMatchesTrigger,
+  orderUsesReservedStock,
+} from '../utils/order-config.ts';
 
 const router = createCompanyRouter();
+
+async function loadOrderPedidosConfig(businessId: string) {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  const data = appDoc.exists ? (appDoc.data() as Record<string, unknown>) : {};
+  const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
+  return normalizeOrderPedidosConfig(pedidos);
+}
+
+function estadoMatchesStockTrigger(estado: string | undefined, trigger: string): boolean {
+  return orderEstadoMatchesTrigger(estado, trigger);
+}
 
 type OrderPayment = {
   id: string;
@@ -27,6 +58,10 @@ type OrderLine = {
   costoUnitario?: number;
   costoPersonalizacion?: number;
   costosExtra?: Array<{ nombre?: string; costo?: number }>;
+  cantidadReservada?: number;
+  cantidadUsada?: number;
+  cantidadFaltante?: number;
+  estadoStockItem?: string;
 };
 
 type OrderRecord = {
@@ -41,7 +76,9 @@ type OrderRecord = {
   pagos?: OrderPayment[];
   items?: OrderLine[];
   stockDescontado?: boolean;
+  stockPreparado?: boolean;
   stockRestaurado?: boolean;
+  estadoStock?: string;
   cajaRevertida?: boolean;
   cancelledAt?: string;
   entregadoAt?: string;
@@ -468,7 +505,7 @@ async function restoreStockForOrder(
   let restored = false;
 
   for (const line of order.items ?? []) {
-    const qty = Number(line.cantidad) || 0;
+    const qty = Math.max(0, Number(line.cantidadUsada) || Number(line.cantidad) || 0);
     if (!line.stockItemId || qty <= 0) continue;
 
     const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
@@ -513,9 +550,44 @@ router.get('/:businessId', async (req, res) => {
   }
 });
 
+router.get('/:businessId/stock-reservation-sources', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const stockItemId = String(req.query.stockItemId ?? '').trim();
+    const excludeOrderId = String(req.query.excludeOrderId ?? '').trim() || undefined;
+
+    if (!stockItemId) {
+      return res.status(400).json({ error: 'Indicá el producto de stock.' });
+    }
+
+    const sources = await listReservationSourcesForProduct(businessId, stockItemId, excludeOrderId);
+    res.json(sources);
+  } catch (error) {
+    res.status(500).json({ error: 'Error listing reservation sources' });
+  }
+});
+
+router.get('/:businessId/stock-reservation-targets', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const stockItemId = String(req.query.stockItemId ?? '').trim();
+    const sourceOrderId = String(req.query.sourceOrderId ?? '').trim() || undefined;
+
+    if (!stockItemId) {
+      return res.status(400).json({ error: 'Indicá el producto de stock.' });
+    }
+
+    const targets = await listReservationTargetsForProduct(businessId, stockItemId, sourceOrderId);
+    res.json(targets);
+  } catch (error) {
+    res.status(500).json({ error: 'Error listing reservation targets' });
+  }
+});
+
 router.get('/:businessId/:orderId', async (req, res) => {
   try {
     const { businessId, orderId } = req.params;
+    await ensureStockReservationsSynced(businessId);
     const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
     res.json({ id: doc.id, ...doc.data() });
@@ -530,16 +602,9 @@ router.post('/:businessId', async (req, res) => {
     const { senia, ...orderData } = req.body;
     const seniaAmount = Number(senia) || 0;
     const isDraft = isDraftStatus(orderData.estado);
-    const willDiscountStock = !isDraft;
-
-    if (willDiscountStock) {
-      await validateStockForOrder(businessId, {
-        items: orderData.items,
-        estado: orderData.estado,
-      });
-    }
 
     const total = Number(orderData.total) || 0;
+    const normalizedItems = normalizeOrderItemsStock(orderData.items ?? []);
 
     let orderNumberPatch: Partial<OrderRecord> = {};
     if (!isDraft) {
@@ -552,6 +617,7 @@ router.post('/:businessId', async (req, res) => {
 
     const docRef = await db.collection(`negocios/${businessId}/pedidos`).add({
       ...orderData,
+      items: normalizedItems,
       ...orderNumberPatch,
       senia: isDraft ? seniaAmount : 0,
       totalPagado: 0,
@@ -559,6 +625,8 @@ router.post('/:businessId', async (req, res) => {
       pagos: [],
       seniaBloqueada: false,
       stockDescontado: false,
+      stockPreparado: false,
+      estadoStock: 'sin_preparar',
       negocioId: businessId,
       createdAt: new Date().toISOString(),
     });
@@ -576,21 +644,30 @@ router.post('/:businessId', async (req, res) => {
       ...orderData,
       ...orderNumberPatch,
       ...seniaPatch,
-      items: orderData.items,
+      items: normalizedItems,
       estado: orderData.estado,
     };
-
-    const stockApplied = await applyStockForOrder(businessId, docRef.id, mergedOrder);
 
     await docRef.update({
       ...seniaPatch,
       ...orderNumberPatch,
-      stockDescontado: stockApplied,
+    });
+
+    const orderLabel = orderNumberPatch.numeroPedidoLabel ?? docRef.id;
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'create',
+      entityType: 'pedido',
+      entityId: docRef.id,
+      entityLabel: orderLabel,
+      summary: isDraft
+        ? `Guardó borrador de pedido`
+        : `Creó el pedido #${orderLabel}`,
     });
 
     res.status(201).json({ id: docRef.id });
   } catch (error) {
-    if (error instanceof StockValidationError) {
+    if (error instanceof StockValidationError || error instanceof OrderStockError) {
       return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Error creating order' });
@@ -718,6 +795,15 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'payment',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Registró pago de $${monto} en pedido #${orderLabel}`,
+    });
+
     res.status(201).json({
       id: orderId,
       pago: nuevosPagos[0],
@@ -804,6 +890,12 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       const pagado = sumPagosHaciaTotal(normalizePagos(mergedOrder));
       mergedOrder.saldo = Math.max(0, total - pagado);
       orderData.saldo = mergedOrder.saldo;
+    } else if (!existingOrder.seniaBloqueada && (mergedOrder.pagos?.length ?? 0) === 0) {
+      const total = Number(orderData.total ?? existingOrder.total) || 0;
+      orderData.saldo = total;
+      mergedOrder.saldo = total;
+      orderData.totalPagado = 0;
+      mergedOrder.totalPagado = 0;
     } else if (isDraftStatus(mergedEstado) && !existingOrder.seniaBloqueada) {
       orderData.saldo = Number(orderData.total ?? existingOrder.total) || 0;
       mergedOrder.saldo = orderData.saldo;
@@ -811,13 +903,39 @@ router.patch('/:businessId/:orderId', async (req, res) => {
 
     let stockDescontado = mergedOrder.stockDescontado ?? false;
 
-    if (!stockDescontado && !isDraftStatus(mergedOrder.estado)) {
-      stockDescontado = await applyStockForOrder(businessId, orderId, mergedOrder);
+    if (orderData.items !== undefined) {
+      orderData.items = mergeOrderItemsPreservingStock(
+        orderData.items ?? [],
+        existingOrder.items ?? []
+      );
+      mergedOrder.items = orderData.items;
     }
 
     let deliveryPatch: Partial<OrderRecord> = {};
+    let productionStockPatch: Partial<OrderRecord> = {};
     const previousEstado = resolveOrderEstado(existingOrder.estado);
     const nextEstado = resolveOrderEstado(mergedEstado);
+    const pedidosConfig = await loadOrderPedidosConfig(businessId);
+    const stockTrigger = pedidosConfig.estadoDescuentaStock;
+
+    if (
+      estadoMatchesStockTrigger(nextEstado, stockTrigger) &&
+      !estadoMatchesStockTrigger(previousEstado, stockTrigger)
+    ) {
+      const consumption = await consumeOrderStockOnStatusChange(
+        businessId,
+        orderId,
+        mergedOrder,
+        pedidosConfig.modoStock
+      );
+      productionStockPatch = {
+        items: consumption.items,
+        stockDescontado: consumption.stockDescontado,
+        estadoStock: consumption.estadoStock,
+      };
+      Object.assign(mergedOrder, productionStockPatch);
+      stockDescontado = consumption.stockDescontado;
+    }
 
     if (nextEstado === 'entregado' && previousEstado !== 'entregado') {
       deliveryPatch = await applyEntregaCompletaPayment(businessId, orderId, {
@@ -839,6 +957,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       ...orderData,
       ...orderNumberPatch,
       ...seniaPatch,
+      ...productionStockPatch,
       stockDescontado,
       updatedAt: new Date().toISOString(),
     };
@@ -866,6 +985,16 @@ router.patch('/:businessId/:orderId', async (req, res) => {
 
     const updatedSnap = await orderRef.get();
     const updated = updatedSnap.data() as OrderRecord | undefined;
+    const orderLabel = resolveOrderLabel(updated ?? existingOrder);
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'update',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Editó el pedido #${orderLabel}${mergedEstado ? ` · estado ${mergedEstado}` : ''}`,
+    });
 
     res.json({
       id: orderId,
@@ -879,13 +1008,144 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       deliveryPaymentApplied: !!deliveryPatch.pagos,
       saleCreated: !!deliveryPatch.ventaId,
       locked: resolveOrderEstado(updated?.estado ?? mergedEstado) === 'entregado',
+      items: updated?.items ?? productionStockPatch.items,
+      estadoStock: updated?.estadoStock ?? productionStockPatch.estadoStock,
+      stockPreparado: updated?.stockPreparado,
+      stockDescontado: updated?.stockDescontado ?? stockDescontado,
     });
   } catch (error) {
-    if (error instanceof StockValidationError) {
+    if (error instanceof StockValidationError || error instanceof OrderStockError) {
       return res.status(400).json({ error: error.message });
     }
     const message = error instanceof Error ? error.message : 'Error updating order';
     res.status(500).json({ error: message });
+  }
+});
+
+router.get('/:businessId/:orderId/stock-preparation', async (req, res) => {
+  try {
+    const { businessId, orderId } = req.params;
+    const pedidosConfig = await loadOrderPedidosConfig(businessId);
+    if (!orderUsesReservedStock(pedidosConfig)) {
+      return res.status(403).json({
+        error: 'La reserva de stock está desactivada. Configurá «Stock reservado» en Ajustes → Pedidos.',
+      });
+    }
+
+    await ensureStockReservationsSynced(businessId);
+
+    const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
+
+    const order = doc.data() as OrderRecord;
+    const lines = await buildStockPreparationView(businessId, order);
+
+    res.json({
+      orderId,
+      orderLabel: resolveOrderLabel(order),
+      estado: order.estado ?? '',
+      estadoStock: order.estadoStock ?? 'sin_preparar',
+      stockPreparado: !!order.stockPreparado,
+      lines,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Error loading stock preparation' });
+  }
+});
+
+router.post('/:businessId/:orderId/stock-preparation', async (req, res) => {
+  try {
+    const { businessId, orderId } = req.params;
+    const pedidosConfig = await loadOrderPedidosConfig(businessId);
+    if (!orderUsesReservedStock(pedidosConfig)) {
+      return res.status(403).json({
+        error: 'La reserva de stock está desactivada. Configurá «Stock reservado» en Ajustes → Pedidos.',
+      });
+    }
+
+    const allocations = Array.isArray(req.body.allocations) ? req.body.allocations : [];
+
+    const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found' });
+
+    const order = orderSnap.data() as OrderRecord;
+    if (isCancelledStatus(order.estado)) {
+      return res.status(403).json({ error: 'No se puede preparar stock de un pedido cancelado.' });
+    }
+
+    const result = await applyOrderStockPreparation(businessId, orderId, order, allocations);
+
+    await orderRef.update({
+      items: result.items,
+      estadoStock: result.estadoStock,
+      stockPreparado: result.stockPreparado,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const orderLabel = resolveOrderLabel(order);
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'update',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Preparó stock del pedido #${orderLabel} · ${result.estadoStock}`,
+    });
+
+    res.json({
+      id: orderId,
+      items: result.items,
+      estadoStock: result.estadoStock,
+      stockPreparado: result.stockPreparado,
+    });
+  } catch (error) {
+    if (error instanceof OrderStockError) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Error preparing order stock' });
+  }
+});
+
+router.post('/:businessId/:orderId/stock-transfer', async (req, res) => {
+  try {
+    const { businessId, orderId } = req.params;
+    const targetOrderId = String(req.body.targetOrderId ?? '').trim();
+    const stockItemId = String(req.body.stockItemId ?? '').trim();
+    const cantidad = Number(req.body.cantidad) || 0;
+    const sourceLineIndex =
+      req.body.sourceLineIndex === undefined ? undefined : Number(req.body.sourceLineIndex);
+    const targetLineIndex =
+      req.body.targetLineIndex === undefined ? undefined : Number(req.body.targetLineIndex);
+
+    if (!targetOrderId || !stockItemId) {
+      return res.status(400).json({ error: 'Indicá pedido destino y producto.' });
+    }
+
+    const sourceSnap = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
+    const targetSnap = await db.collection(`negocios/${businessId}/pedidos`).doc(targetOrderId).get();
+    if (!sourceSnap.exists || !targetSnap.exists) {
+      return res.status(404).json({ error: 'Pedido no encontrado.' });
+    }
+
+    await transferReservedStockBetweenOrders({
+      businessId,
+      sourceOrderId: orderId,
+      sourceOrder: sourceSnap.data() as OrderRecord,
+      targetOrderId,
+      targetOrder: targetSnap.data() as OrderRecord,
+      stockItemId,
+      cantidad,
+      sourceLineIndex,
+      targetLineIndex,
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof OrderStockError) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Error transferring stock reservation' });
   }
 });
 
@@ -904,6 +1164,10 @@ router.delete('/:businessId/:orderId', async (req, res) => {
     await validateOrderCancellation(businessId, orderId, order as Record<string, unknown>);
 
     const stockRestored = await restoreStockForOrder(businessId, orderId, order);
+    const reservationsReleased =
+      order.stockPreparado && !order.stockDescontado
+        ? await releaseOrderStockReservations(businessId, orderId, order)
+        : false;
     const cajaReverted = await reverseCashMovementsForOrder(businessId, orderId, order);
 
     await doc.ref.update({
@@ -911,8 +1175,19 @@ router.delete('/:businessId/:orderId', async (req, res) => {
       cancelledAt: new Date().toISOString(),
       stockRestaurado: stockRestored || order.stockRestaurado || false,
       stockDescontado: stockRestored ? false : order.stockDescontado ?? false,
+      stockPreparado: reservationsReleased ? false : order.stockPreparado ?? false,
       cajaRevertida: cajaReverted || order.cajaRevertida || false,
       updatedAt: new Date().toISOString(),
+    });
+
+    const orderLabel = resolveOrderLabel(order);
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'cancel',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Canceló el pedido #${orderLabel}`,
     });
 
     res.json({ id: orderId, estado: 'cancelado', stockRestored, cajaReverted });

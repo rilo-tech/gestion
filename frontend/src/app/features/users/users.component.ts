@@ -254,9 +254,9 @@ export class UsersComponent implements OnInit {
   }
 
   onUserSaved(event: UserFormSaveEvent) {
+    this.editingUserId = event.id;
     this.loadUsers();
     this.auth.refreshUsers().subscribe();
-    this.closeUserModal();
   }
 
   onUserDeleted() {

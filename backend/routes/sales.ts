@@ -4,6 +4,8 @@ import { resolveOrderLabel } from '../utils/order-number.ts';
 import { allocateSaleNumber, resolveSaleLabel } from '../utils/sale-number.ts';
 import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-commitments.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -788,6 +790,15 @@ router.post('/:businessId', async (req, res) => {
         await ventaRef.update({ compromisoPagoId: compromisoId });
       }
 
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'sales',
+        action: 'create',
+        entityType: 'venta',
+        entityId: ventaRef.id,
+        entityLabel: ventaLabel,
+        summary: `Registró venta por pedido #${ventaLabel} · $${total}`,
+      });
+
       return res.status(201).json({
         id: ventaRef.id,
         ventaLabel,
@@ -889,6 +900,15 @@ router.post('/:businessId', async (req, res) => {
       await ventaRef.update({ compromisoPagoId: compromisoId });
     }
 
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'sales',
+      action: 'create',
+      entityType: 'venta',
+      entityId: ventaRef.id,
+      entityLabel: ventaLabel,
+      summary: `Registró venta mostrador #${ventaLabel} · $${total}`,
+    });
+
     return res.status(201).json({
       id: ventaRef.id,
       ventaLabel,
@@ -966,6 +986,15 @@ router.post('/:businessId/:ventaId/cobros', async (req, res) => {
       montoCobrado,
       saldoPendiente: nuevoSaldo,
       cobros: cobrosExtra,
+    });
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'sales',
+      action: 'payment',
+      entityType: 'venta',
+      entityId: ventaId,
+      entityLabel: ventaLabel,
+      summary: `Registró cobro de $${monto} en venta #${ventaLabel}`,
     });
 
     return res.status(201).json({
@@ -1134,6 +1163,15 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'sales',
+      action: 'update',
+      entityType: 'venta',
+      entityId: ventaId,
+      entityLabel: ventaLabel,
+      summary: `Editó venta mostrador #${ventaLabel}`,
+    });
+
     res.json({
       id: ventaId,
       ventaLabel,
@@ -1185,6 +1223,14 @@ router.delete('/:businessId/:ventaId', async (req, res) => {
     }
 
     await ventaRef.delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'sales',
+      action: 'delete',
+      entityType: 'venta',
+      entityId: ventaId,
+      entityLabel: ventaLabel,
+      summary: `Eliminó venta mostrador #${ventaLabel}`,
+    });
     res.json({ id: ventaId });
   } catch (error) {
     console.error('Error deleting sale:', error);

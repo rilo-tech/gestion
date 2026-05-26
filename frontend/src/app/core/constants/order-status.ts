@@ -1,3 +1,8 @@
+import {
+  getOrderStatusLabelFromConfig,
+  type OrderPedidosConfigShape,
+} from './order-config';
+
 export const ORDER_STATUS_OPTIONS = [
   { value: 'borrador', label: 'Borrador' },
   { value: 'pendiente', label: 'Pendiente' },
@@ -50,7 +55,14 @@ export function normalizeOrderStatus(estado?: string): OrderStatusValue | 'otro'
   return 'otro';
 }
 
-export function getOrderStatusLabel(estado?: string): string {
+export function getOrderStatusLabel(
+  estado?: string,
+  pedidos?: OrderPedidosConfigShape
+): string {
+  if (pedidos) {
+    return getOrderStatusLabelFromConfig(estado, pedidos);
+  }
+
   const normalized = normalizeOrderStatus(estado);
   if (normalized === 'otro') return estado?.trim() || 'Sin estado';
   return ORDER_STATUS_OPTIONS.find((option) => option.value === normalized)?.label ?? estado ?? '';
@@ -82,12 +94,18 @@ export function orderIsConfirmedForSale(order: {
   movimientoSeniaId?: string;
   pagos?: unknown[];
   stockDescontado?: boolean;
+  stockPreparado?: boolean;
+  numeroPedido?: number;
+  numeroPedidoLabel?: string;
 }): boolean {
   return !!(
+    order.stockPreparado ||
     order.stockDescontado ||
     order.seniaBloqueada ||
     order.movimientoSeniaId ||
-    (order.pagos?.length ?? 0) > 0
+    (order.pagos?.length ?? 0) > 0 ||
+    order.numeroPedido ||
+    order.numeroPedidoLabel
   );
 }
 
@@ -98,6 +116,9 @@ export function canRegisterSaleFromOrder(order: {
   movimientoSeniaId?: string;
   pagos?: unknown[];
   stockDescontado?: boolean;
+  stockPreparado?: boolean;
+  numeroPedido?: number;
+  numeroPedidoLabel?: string;
 }): boolean {
   if (order.ventaId) return false;
 

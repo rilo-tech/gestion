@@ -6,7 +6,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, Printer } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, Printer, Clock, Gift, UserCog, Copy, Save } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -18,7 +18,7 @@ import { StockComponent } from './features/stock/stock.component';
 import { NewProductComponent } from './features/stock/new-product.component';
 import { NewOrderComponent } from './features/orders/new-order.component';
 import { OrderListComponent } from './features/orders/order-list.component';
-import { ComingSoonComponent } from './shared/components/coming-soon.component';
+import { ReportsComponent } from './features/reports/reports.component';
 import { SettingsComponent } from './features/settings/settings.component';
 import { CashComponent } from './features/cash/cash.component';
 import { PurchasesComponent } from './features/purchases/purchases.component';
@@ -31,6 +31,8 @@ import { AppearancePageComponent } from './features/settings/appearance-page.com
 import { PriceCatalogComponent } from './features/price-catalog/price-catalog.component';
 import { PriceCatalogFormComponent } from './features/price-catalog/price-catalog-form.component';
 import { PayablesComponent } from './features/payables/payables.component';
+import { StockShortagesComponent } from './features/stock/stock-shortages.component';
+import { CollaboratorsComponent } from './features/collaborators/collaborators.component';
 
 const companyRoutes: Routes = [
   {
@@ -69,6 +71,10 @@ const companyRoutes: Routes = [
   {
     path: 'suppliers',
     component: SuppliersComponent,
+  },
+  {
+    path: 'stock/faltantes',
+    component: StockShortagesComponent,
   },
   {
     path: 'stock/new',
@@ -131,9 +137,15 @@ const companyRoutes: Routes = [
     canActivate: [requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
   },
   {
+    path: 'collaborators',
+    component: CollaboratorsComponent,
+    canActivate: [requirePermission(PERMISSIONS.COLLABORATORS_ACCESS)],
+  },
+  {
     path: 'reports',
     data: { title: 'Reportes' },
-    component: ComingSoonComponent,
+    component: ReportsComponent,
+    canActivate: [requirePermission(PERMISSIONS.REPORTS_VIEW)],
   },
   {
     path: 'settings',
@@ -237,6 +249,11 @@ export const appConfig: ApplicationConfig = {
         ChevronDown,
         ChevronUp,
         Printer,
+        Clock,
+        Gift,
+        UserCog,
+        Copy,
+        Save,
       })
     ),
     {

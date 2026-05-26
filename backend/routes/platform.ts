@@ -3,7 +3,8 @@ import { db } from '../firebase.ts';
 import { hashPassword } from '../auth/password.ts';
 import {
   createBusiness,
-  listBusinesses,
+  buildNewBusinessPublicInfo,
+  listPublicBusinessInfos,
   listSubscriptionPayments,
   registerSubscriptionPayment,
   toPublicBusinessInfo,
@@ -115,10 +116,7 @@ router.get('/plans/:planId', async (req, res) => {
 
 router.get('/businesses', async (_req, res) => {
   try {
-    const businesses = await listBusinesses();
-    const enriched = await Promise.all(
-      businesses.map((business) => toPublicBusinessInfo(business.id))
-    );
+    const enriched = await listPublicBusinessInfos();
     res.json(enriched);
   } catch (error) {
     console.error('Error listing businesses:', error);
@@ -163,6 +161,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       nombre,
       planId,
       estadoSuscripcion: 'activa',
+      enPrueba: req.body.enPrueba === true,
       creadoPor: req.auth?.userId,
     });
 
@@ -181,7 +180,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    const publicBusiness = await toPublicBusinessInfo(businessId);
+    const publicBusiness = buildNewBusinessPublicInfo(business, plan);
 
     res.status(201).json({
       business: publicBusiness,
@@ -226,6 +225,7 @@ router.patch('/businesses/:businessId', async (req, res) => {
         nombre: typeof req.body.nombre === 'string' ? req.body.nombre : undefined,
         planId,
         estadoSuscripcion,
+        enPrueba: req.body.enPrueba !== undefined ? req.body.enPrueba === true : undefined,
       },
       { allowSubscriptionFields: true }
     );

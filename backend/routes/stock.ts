@@ -11,8 +11,43 @@ import {
   type StockOrigenMovimiento,
 } from '../utils/stock-movimientos.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
+import {
+  listStockReservations,
+  listStockShortages,
+  ensureStockReservationsSynced,
+  reconcileOrderStockFromProductReservations,
+} from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
+
+function normalizeProductNameKey(nombre: unknown): string {
+  return String(nombre ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+async function findStockItemByName(
+  businessId: string,
+  nombre: string,
+  excludeId?: string
+): Promise<{ id: string; nombre?: string } | null> {
+  const key = normalizeProductNameKey(nombre);
+  if (!key) return null;
+
+  const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
+  for (const doc of snapshot.docs) {
+    if (excludeId && doc.id === excludeId) continue;
+    const data = doc.data();
+    if (normalizeProductNameKey(data.nombre) === key) {
+      return { id: doc.id, nombre: String(data.nombre ?? '') };
+    }
+  }
+
+  return null;
+}
 
 async function loadStockOrigenes(businessId: string): Promise<StockOrigenMovimiento[]> {
   const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
@@ -39,6 +74,18 @@ router.post('/:businessId', async (req, res) => {
     const { businessId } = req.params;
     const itemData = req.body;
     const stockActual = Number(itemData.stockActual) || 0;
+    const nombre = String(itemData.nombre ?? '').trim();
+
+    if (!nombre) {
+      return res.status(400).json({ error: 'El nombre del producto es obligatorio.' });
+    }
+
+    const duplicate = await findStockItemByName(businessId, nombre);
+    if (duplicate) {
+      return res.status(409).json({
+        error: `Ya existe un producto con el nombre «${duplicate.nombre ?? nombre}».`,
+      });
+    }
 
     const docRef = await db.collection(`negocios/${businessId}/stock`).add({
       ...itemData,
@@ -65,6 +112,15 @@ router.post('/:businessId', async (req, res) => {
         negocioId: businessId,
       });
     }
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'stock',
+      action: 'create',
+      entityType: 'producto',
+      entityId: docRef.id,
+      entityLabel: String(itemData.nombre ?? ''),
+      summary: `Creó el producto ${String(itemData.nombre ?? docRef.id)}`,
+    });
 
     res.status(201).json({ id: docRef.id });
   } catch (error) {
@@ -127,6 +183,9 @@ function resolveOrigenLabel(
   const base = getStockOrigenNombre(origenes, grupo);
   if (grupo === 'pedido') {
     const subtipo = String(movement.origenTipo ?? '');
+    if (subtipo === 'pedido_reserva') return `${base} · reserva`;
+    if (subtipo === 'pedido_liberacion_reserva') return `${base} · libera reserva`;
+    if (subtipo === 'pedido_produccion') return `${base} · producción`;
     if (subtipo === 'pedido_cancelado') return `${base} · cancelación`;
     if (subtipo === 'pedido_eliminado') return `${base} · restauración`;
   }
@@ -158,18 +217,38 @@ async function enrichStockMovements(
     })
   );
 
-  const orderMap = new Map<string, { numeroPedidoLabel?: string; numeroPedido?: number }>();
+  const orderMap = new Map<
+    string,
+    { numeroPedidoLabel?: string; numeroPedido?: number; clienteId?: string; clienteNombre?: string }
+  >();
+  const clientIds = new Set<string>();
   await Promise.all(
     [...orderIds].map(async (orderId) => {
       const snap = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
       if (!snap.exists) return;
       const data = snap.data() ?? {};
+      const clienteId = String(data.clienteId ?? '').trim();
+      if (clienteId) clientIds.add(clienteId);
       orderMap.set(orderId, {
         numeroPedido: data.numeroPedido,
         numeroPedidoLabel: data.numeroPedidoLabel,
+        clienteId: clienteId || undefined,
       });
     })
   );
+
+  const clientMap = new Map<string, string>();
+  await Promise.all(
+    [...clientIds].map(async (clienteId) => {
+      const snap = await db.collection(`negocios/${businessId}/clientes`).doc(clienteId).get();
+      clientMap.set(clienteId, String(snap.data()?.nombre ?? '').trim());
+    })
+  );
+
+  for (const [orderId, orderData] of orderMap.entries()) {
+    if (!orderData.clienteId) continue;
+    orderData.clienteNombre = clientMap.get(orderData.clienteId) || undefined;
+  }
 
   return movements.map((movement) => {
     const productoId = movement.productoId ? String(movement.productoId) : null;
@@ -179,6 +258,12 @@ async function enrichStockMovements(
     const pedidoId =
       origenTipo.startsWith('pedido') && movement.origenId ? String(movement.origenId) : null;
     const orderData = pedidoId ? orderMap.get(pedidoId) : undefined;
+    const storedClientName = String(movement.clienteNombre ?? '').trim();
+    const clienteNombre =
+      storedClientName ||
+      orderData?.clienteNombre ||
+      (movement.clienteId ? clientMap.get(String(movement.clienteId)) : undefined) ||
+      null;
 
     return {
       ...movement,
@@ -191,10 +276,44 @@ async function enrichStockMovements(
         (orderData?.numeroPedido
           ? String(orderData.numeroPedido).padStart(5, '0')
           : null),
+      clienteId: movement.clienteId ?? orderData?.clienteId ?? null,
+      clienteNombre,
       compraId: movement.compraId ?? (origenTipo === 'compra' ? movement.origenId : null),
     };
   });
 }
+
+router.get('/:businessId/faltantes', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const data = await listStockShortages(businessId);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching stock shortages' });
+  }
+});
+
+router.get('/:businessId/reservations', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    await ensureStockReservationsSynced(businessId);
+    const stockItemId = String(req.query.stockItemId ?? '').trim() || undefined;
+    const data = await listStockReservations(businessId, stockItemId);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching stock reservations' });
+  }
+});
+
+router.post('/:businessId/reconcile-reservations', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const summary = await reconcileOrderStockFromProductReservations(businessId);
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: 'Error reconciling stock reservations' });
+  }
+});
 
 router.get('/:businessId/movements', async (req, res) => {
   try {
@@ -242,6 +361,13 @@ router.delete('/:businessId/movements/:movementId', async (req, res) => {
     }
 
     await movementRef.delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'stock',
+      action: 'delete',
+      entityType: 'movimiento_stock',
+      entityId: movementId,
+      summary: `Eliminó un movimiento de stock (${tipo}, ${cantidad} u.)`,
+    });
     res.json({ id: movementId });
   } catch (error) {
     const mapped = mapDeletionError(error);
@@ -275,6 +401,18 @@ router.put('/:businessId/:itemId', async (req, res) => {
     const existing = await itemRef.get();
     if (!existing.exists) return res.status(404).json({ error: 'Item not found' });
 
+    const nombre = String(itemData.nombre ?? existing.data()?.nombre ?? '').trim();
+    if (!nombre) {
+      return res.status(400).json({ error: 'El nombre del producto es obligatorio.' });
+    }
+
+    const duplicate = await findStockItemByName(businessId, nombre, itemId);
+    if (duplicate) {
+      return res.status(409).json({
+        error: `Ya existe otro producto con el nombre «${duplicate.nombre ?? nombre}».`,
+      });
+    }
+
     const previousStock = Number(existing.data()?.stockActual) || 0;
     const nextStock = Number(itemData.stockActual) || 0;
     const stockDelta = nextStock - previousStock;
@@ -303,6 +441,15 @@ router.put('/:businessId/:itemId', async (req, res) => {
         negocioId: businessId,
       });
     }
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'stock',
+      action: 'update',
+      entityType: 'producto',
+      entityId: itemId,
+      entityLabel: String(itemData.nombre ?? existing.data()?.nombre ?? itemId),
+      summary: `Editó el producto ${String(itemData.nombre ?? existing.data()?.nombre ?? itemId)}`,
+    });
 
     res.json({ id: itemId });
   } catch (error) {
@@ -338,6 +485,15 @@ router.patch('/:businessId/:itemId', async (req, res) => {
       usuarioId,
       negocioId: businessId,
     });
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'stock',
+      action: 'update',
+      entityType: 'producto',
+      entityId: itemId,
+      entityLabel: String(item.data()?.nombre ?? itemId),
+      summary: `Ajustó stock de ${String(item.data()?.nombre ?? itemId)} (${quantity > 0 ? '+' : ''}${quantity})`,
+    });
     
     res.json({ success: true, newStock });
   } catch (error) {
@@ -353,7 +509,16 @@ router.delete('/:businessId/:itemId', async (req, res) => {
     const existing = await itemRef.get();
     if (!existing.exists) return res.status(404).json({ error: 'Item not found' });
 
+    const productName = String(existing.data()?.nombre ?? itemId);
     await itemRef.delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'stock',
+      action: 'delete',
+      entityType: 'producto',
+      entityId: itemId,
+      entityLabel: productName,
+      summary: `Eliminó el producto ${productName}`,
+    });
     res.json({ id: itemId });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting stock item' });

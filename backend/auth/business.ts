@@ -5,10 +5,12 @@ import {
   countActiveAdministrators,
   countActiveOperators,
   countActiveUsers,
+  getActiveUserCounts,
 } from './users.ts';
 import {
   DEFAULT_PLAN_ID,
   getPlanOrDefault,
+  preloadPlans,
   resolveLegacyPlanId,
   toPublicPlanInfo,
   type PlanRecord,
@@ -16,7 +18,7 @@ import {
 } from './plans.ts';
 import {
   getSubscriptionPaymentSummary,
-  listSubscriptionPayments,
+  currentPeriodo,
   type SubscriptionPaymentRecord,
   type SubscriptionPaymentStatus,
 } from './subscription-payments.ts';
@@ -28,6 +30,8 @@ export interface BusinessRecord {
   nombre: string;
   planId: string;
   estadoSuscripcion: SubscriptionStatus;
+  /** Período de prueba: acceso al sistema sin exigir pago mensual en control de cobros. */
+  enPrueba?: boolean;
   creadoPor?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -45,6 +49,7 @@ export interface PublicBusinessInfo {
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
+  enPrueba: boolean;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
@@ -60,6 +65,7 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'nombre',
   'planId',
   'estadoSuscripcion',
+  'enPrueba',
   'creadoPor',
   'updatedAt',
 ]);
@@ -86,6 +92,7 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
     nombre: String(data.nombre ?? id).trim(),
     planId: resolvePlanId(data),
     estadoSuscripcion: normalizeStatus(data.estadoSuscripcion),
+    enPrueba: data.enPrueba === true,
     creadoPor: data.creadoPor ? String(data.creadoPor) : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
@@ -115,6 +122,9 @@ export function sanitizeBusinessPayload(
     }
     if (payload.estadoSuscripcion !== undefined) {
       next.estadoSuscripcion = normalizeStatus(payload.estadoSuscripcion);
+    }
+    if (payload.enPrueba !== undefined) {
+      next.enPrueba = payload.enPrueba === true;
     }
   }
 
@@ -168,6 +178,7 @@ export async function createBusiness(
     nombre: string;
     planId?: string;
     estadoSuscripcion?: SubscriptionStatus;
+    enPrueba?: boolean;
     creadoPor?: string;
   }
 ): Promise<BusinessRecord> {
@@ -184,6 +195,7 @@ export async function createBusiness(
     nombre: payload.nombre.trim(),
     planId,
     estadoSuscripcion: normalizeStatus(payload.estadoSuscripcion ?? 'activa'),
+    enPrueba: payload.enPrueba === true,
     creadoPor: payload.creadoPor ?? 'platform',
     createdAt: new Date().toISOString(),
   };
@@ -235,17 +247,30 @@ export async function listBusinesses(): Promise<BusinessRecord[]> {
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 }
 
-export async function toPublicBusinessInfo(
-  businessId: string
-): Promise<PublicBusinessInfo> {
-  const business =
-    (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
-  const plan = await getPlanOrDefault(business.planId);
-  const administradoresActivos = await countActiveAdministrators(businessId);
-  const operadoresActivos = await countActiveOperators(businessId);
-  const usuariosActivos = await countActiveUsers(businessId);
-  const paymentSummary = await getSubscriptionPaymentSummary(businessId, plan.precioMensual);
+type PublicBusinessInfoOptions = {
+  business?: BusinessRecord;
+  plan?: PlanRecord;
+  includePayments?: boolean;
+  includeUsage?: boolean;
+};
 
+function buildPublicBusinessInfo(
+  business: BusinessRecord,
+  plan: PlanRecord,
+  counts: {
+    administradoresActivos: number;
+    operadoresActivos: number;
+    usuariosActivos: number;
+  },
+  paymentSummary: {
+    estadoPago: SubscriptionPaymentStatus;
+    periodoActual: string;
+    montoEsperado: number;
+    ultimoPagoPeriodo?: string;
+    ultimoPagoFecha?: string;
+    ultimoPagoMonto?: number;
+  }
+): PublicBusinessInfo {
   return {
     id: business.id,
     nombre: business.nombre,
@@ -258,22 +283,127 @@ export async function toPublicBusinessInfo(
     ultimoPagoPeriodo: paymentSummary.ultimoPagoPeriodo,
     ultimoPagoFecha: paymentSummary.ultimoPagoFecha,
     ultimoPagoMonto: paymentSummary.ultimoPagoMonto,
+    enPrueba: business.enPrueba === true,
     createdAt: business.createdAt,
-    administradoresActivos,
-    operadoresActivos,
-    usuariosActivos,
+    administradoresActivos: counts.administradoresActivos,
+    operadoresActivos: counts.operadoresActivos,
+    usuariosActivos: counts.usuariosActivos,
     administradoresDisponibles: Math.max(
       0,
-      plan.limiteAdministradores - administradoresActivos
+      plan.limiteAdministradores - counts.administradoresActivos
     ),
-    operadoresDisponibles: Math.max(0, plan.limiteOperadores - operadoresActivos),
-    usuariosDisponibles: Math.max(0, plan.limiteUsuariosTotal - usuariosActivos),
+    operadoresDisponibles: Math.max(0, plan.limiteOperadores - counts.operadoresActivos),
+    usuariosDisponibles: Math.max(0, plan.limiteUsuariosTotal - counts.usuariosActivos),
   };
 }
 
-export async function assertBusinessActive(businessId: string): Promise<BusinessRecord> {
+/** Respuesta inmediata al crear empresa (sin consultas extra). */
+export function buildNewBusinessPublicInfo(
+  business: BusinessRecord,
+  plan: PlanRecord
+): PublicBusinessInfo {
+  return buildPublicBusinessInfo(
+    business,
+    plan,
+    {
+      administradoresActivos: 1,
+      operadoresActivos: 0,
+      usuariosActivos: 1,
+    },
+    {
+      estadoPago: business.enPrueba ? 'al_dia' : 'pendiente',
+      periodoActual: currentPeriodo(),
+      montoEsperado: plan.precioMensual,
+    }
+  );
+}
+
+export async function toSessionBusinessInfo(
+  businessId: string,
+  existing?: BusinessRecord | null
+): Promise<PublicBusinessInfo> {
   const business =
-    (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
+    existing ?? (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
+  const plan = await getPlanOrDefault(business.planId);
+  const periodoActual = currentPeriodo();
+
+  return buildPublicBusinessInfo(
+    business,
+    plan,
+    {
+      administradoresActivos: 0,
+      operadoresActivos: 0,
+      usuariosActivos: 0,
+    },
+    {
+      estadoPago: business.enPrueba ? 'al_dia' : 'pendiente',
+      periodoActual,
+      montoEsperado: plan.precioMensual,
+    }
+  );
+}
+
+export async function toPublicBusinessInfo(
+  businessId: string,
+  options?: PublicBusinessInfoOptions
+): Promise<PublicBusinessInfo> {
+  const business =
+    options?.business ??
+    (await getBusiness(businessId)) ??
+    (await ensureDefaultBusiness(businessId));
+  const plan = options?.plan ?? (await getPlanOrDefault(business.planId));
+  const includeUsage = options?.includeUsage !== false;
+  const includePayments = options?.includePayments !== false;
+
+  const [counts, paymentSummary] = await Promise.all([
+    includeUsage
+      ? getActiveUserCounts(businessId)
+      : Promise.resolve({
+          administradoresActivos: 0,
+          operadoresActivos: 0,
+          usuariosActivos: 0,
+        }),
+    includePayments
+      ? getSubscriptionPaymentSummary(businessId, plan.precioMensual)
+      : Promise.resolve({
+          estadoPago: (business.enPrueba ? 'al_dia' : 'pendiente') as SubscriptionPaymentStatus,
+          periodoActual: currentPeriodo(),
+          montoEsperado: plan.precioMensual,
+        }),
+  ]);
+
+  return buildPublicBusinessInfo(business, plan, counts, paymentSummary);
+}
+
+export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
+  const businesses = await listBusinesses();
+  if (!businesses.length) return [];
+
+  const plansById = await preloadPlans();
+
+  return Promise.all(
+    businesses.map(async (business) => {
+      const plan =
+        plansById.get(business.planId) ??
+        plansById.get(DEFAULT_PLAN_ID) ??
+        (await getPlanOrDefault(business.planId));
+      const [counts, paymentSummary] = await Promise.all([
+        getActiveUserCounts(business.id),
+        getSubscriptionPaymentSummary(business.id, plan.precioMensual),
+      ]);
+      return buildPublicBusinessInfo(business, plan, counts, paymentSummary);
+    })
+  );
+}
+
+export async function assertBusinessActive(businessId: string): Promise<BusinessRecord> {
+  let business = await getBusiness(businessId);
+  if (!business && businessId === DEFAULT_BUSINESS_ID) {
+    business = await ensureDefaultBusiness(businessId);
+  }
+  if (!business) {
+    throw new Error('BUSINESS_NOT_FOUND');
+  }
 
   if (business.estadoSuscripcion === 'suspendida') {
     throw new Error('SUBSCRIPTION_SUSPENDED');

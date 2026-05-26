@@ -10,7 +10,9 @@ import { LucideAngularModule } from 'lucide-angular';
     <div
       *ngIf="open"
       class="fixed inset-0"
-      [class]="layout === 'fullscreen' ? 'z-50 flex flex-col bg-white' : zIndexClass + ' flex items-center justify-center p-4'"
+      [class]="layout === 'fullscreen'
+        ? 'z-50 flex flex-col bg-white'
+        : zIndexClass + ' flex items-end sm:items-center justify-center sm:p-4'"
       role="dialog"
       aria-modal="true"
       [attr.aria-labelledby]="title ? titleId : null">
@@ -24,10 +26,18 @@ import { LucideAngularModule } from 'lucide-angular';
 
       <div
         class="relative w-full mx-0 sm:mx-auto flex flex-col min-h-0"
-        [class.max-h-[92vh]]="layout === 'dialog'"
+        [class.max-h-[min(92dvh,100%)]="layout === 'dialog'"
         [class.sm:max-h-[90vh]]="layout === 'dialog'"
         [class.flex-1]="layout === 'fullscreen'"
-        [ngClass]="layout === 'dialog' ? maxWidthClass + ' overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-2xl p-4 sm:p-6' : ''">
+        [ngClass]="layout === 'dialog'
+          ? maxWidthClass + ' overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-100 bg-white shadow-2xl p-5 sm:p-6'
+          : ''">
+        <div
+          *ngIf="layout === 'dialog'"
+          class="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-gray-300 sm:hidden"
+          aria-hidden="true">
+        </div>
+
         <header
           class="shrink-0"
           [class.border-b]="layout === 'fullscreen'"
@@ -48,8 +58,8 @@ import { LucideAngularModule } from 'lucide-angular';
                 *ngIf="title"
                 [id]="titleId"
                 class="font-bold text-gray-900"
-                [class.text-lg]="layout === 'dialog'"
-                [class.text-xl]="layout === 'fullscreen'"
+                [class.text-xl]="layout === 'dialog'"
+                [class.text-2xl]="layout === 'fullscreen'"
                 [class.mb-1]="layout === 'dialog'">
                 {{ title }}
               </h2>
@@ -64,9 +74,17 @@ import { LucideAngularModule } from 'lucide-angular';
               *ngIf="layout === 'fullscreen'"
               type="button"
               (click)="closed.emit()"
-              class="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 shrink-0">
+              class="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 shrink-0 min-h-[44px]">
               <i-lucide name="x" class="w-4 h-4"></i-lucide>
               Cerrar
+            </button>
+            <button
+              *ngIf="layout === 'dialog'"
+              type="button"
+              (click)="closed.emit()"
+              class="sm:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-gray-500 hover:bg-gray-100 shrink-0 -mr-1"
+              aria-label="Cerrar">
+              <i-lucide name="x" class="w-5 h-5"></i-lucide>
             </button>
           </div>
         </header>
@@ -78,7 +96,8 @@ import { LucideAngularModule } from 'lucide-angular';
           [class.px-4]="layout === 'fullscreen'"
           [class.sm:px-6]="layout === 'fullscreen'"
           [class.lg:px-8]="layout === 'fullscreen'"
-          [class.py-6]="layout === 'fullscreen'">
+          [class.py-6]="layout === 'fullscreen'"
+          [class.pb-[max(1rem,env(safe-area-inset-bottom))]]="layout === 'dialog'">
           <div [class.max-w-7xl]="layout === 'fullscreen'" [class.mx-auto]="layout === 'fullscreen'" [class.w-full]="layout === 'fullscreen'">
             <ng-content></ng-content>
           </div>

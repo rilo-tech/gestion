@@ -33,6 +33,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { PERMISSIONS } from '../../core/constants/permissions';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 interface SaleDraftLine {
   stockItemId: string;
@@ -47,7 +48,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 @Component({
   selector: 'app-sales',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective, ClientFormPanelComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective, ClientFormPanelComponent, ActivityLogTriggerComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -58,6 +59,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </p>
         </div>
         <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="sales"></app-activity-log-trigger>
           <app-icon-action *ngIf="auth.canCreateSales" label="Venta mostrador" (clicked)="openSaleModal('mostrador')">
             <i-lucide name="plus" class="w-4 h-4"></i-lucide>
           </app-icon-action>
@@ -67,7 +69,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         </div>
       </div>
 
-      <div *ngIf="auth.canViewSalesSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
+      <div *ngIf="auth.canViewSalesSummary" class="module-summary-kpis grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ventas registradas</p>
           <p class="text-2xl font-bold text-gray-900">{{ sales.length }}</p>
@@ -445,18 +447,18 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </textarea>
         </div>
 
-        <div class="flex justify-end gap-3 pt-2">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
           <button
             type="button"
             (click)="closeSaleModal()"
-            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Cancelar
           </button>
           <button
             type="button"
             (click)="submitSale()"
             [disabled]="savingSale"
-            class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+            class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
             {{
               savingSale
                 ? 'Guardando...'
@@ -510,18 +512,18 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
       </div>
-      <div class="flex justify-end gap-3 mt-6">
+      <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
         <button
           type="button"
           (click)="closeCollectModal()"
-          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
           Cancelar
         </button>
         <button
           type="button"
           (click)="submitCollect()"
           [disabled]="collectSaving"
-          class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+          class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
           {{ collectSaving ? 'Guardando...' : 'Registrar en caja' }}
         </button>
       </div>
@@ -1103,8 +1105,10 @@ export class SalesComponent implements OnInit {
   }
 
   goToNewClientForm() {
-    this.clientModalPrefillNombre = this.pendingClientName.trim();
-    this.clientModalOpen = true;
+    const nombre = this.pendingClientName.trim();
+    this.router.navigate(['/clients/new'], {
+      queryParams: nombre ? { nombre } : {},
+    });
   }
 
   closeClientModal() {

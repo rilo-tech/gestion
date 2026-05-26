@@ -17,14 +17,58 @@ import {
   StockOrigenMovimiento,
   StockTipoMovimiento,
 } from '../constants/stock-movimientos';
+import {
+  DEFAULT_ORDER_ESTADOS,
+  normalizeOrderPedidosConfig,
+  orderEstadoMatchesStockTrigger,
+  orderUsesReservedStock,
+  getOrderStockTriggerOptions,
+  getOrderWorkflowStatusOptions,
+  getOrderStatusLabelFromConfig,
+  type OrderEstadoConfig,
+  type OrderPedidosConfigShape,
+  type OrderStockMode,
+} from '../constants/order-config';
+
+export type { OrderEstadoConfig, OrderPedidosConfigShape, OrderStockMode };
+export {
+  DEFAULT_ORDER_ESTADOS,
+  normalizeOrderPedidosConfig,
+  orderEstadoMatchesStockTrigger,
+  orderUsesReservedStock,
+  getOrderStockTriggerOptions,
+  getOrderWorkflowStatusOptions,
+  getOrderStatusLabelFromConfig,
+};
 
 export type { CajaOrigen, CashOrigenGrupo };
 export { DEFAULT_CAJA_ORIGENES, getCashOrigenes, getCashOrigenNombre, slugifyOrigenGrupo };
 export type { StockOrigenMovimiento, StockTipoMovimiento };
 export { DEFAULT_STOCK_ORIGENES, DEFAULT_STOCK_TIPOS };
 
+export type ConfigRemovalKind =
+  | 'clientes.etiquetas'
+  | 'proveedores.etiquetas'
+  | 'productos.categorias'
+  | 'productos.talles'
+  | 'productos.colores'
+  | 'caja.conceptos'
+  | 'caja.ambitos'
+  | 'caja.origenes'
+  | 'stock.origenes';
+
+export interface ConfigUsageHit {
+  module: string;
+  label: string;
+  count: number;
+}
+
+export interface ConfigUsageCheckResponse {
+  usage: ConfigUsageHit[];
+  inUse: boolean;
+}
+
 export type ConfigFieldKey =
-  | 'productos.tipos'
   | 'productos.categorias'
   | 'productos.talles'
   | 'productos.colores'
@@ -75,6 +119,10 @@ export interface AppConfig {
   };
   pedidos: {
     costosPersonalizacionDetallados: boolean;
+    impresionDosVias: boolean;
+    estados: OrderEstadoConfig[];
+    modoStock: OrderStockMode;
+    estadoDescuentaStock: string;
   };
   stock: {
     tipos: StockTipoMovimiento[];
@@ -113,6 +161,10 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   },
   pedidos: {
     costosPersonalizacionDetallados: true,
+    impresionDosVias: false,
+    estados: [...DEFAULT_ORDER_ESTADOS],
+    modoStock: 'reservado',
+    estadoDescuentaStock: 'en_produccion',
   },
   stock: {
     tipos: [...DEFAULT_STOCK_TIPOS],
@@ -137,7 +189,12 @@ export function getFieldValues(config: AppConfig, key: ConfigFieldKey): string[]
 }
 
 export function getFieldMode(config: AppConfig, key: ConfigFieldKey): FieldInputMode {
-  return getFieldValues(config, key).length > 0 ? 'lista' : 'texto';
+  const [module, field] = key.split('.') as [keyof AppConfig, string];
+  const values = getFieldValues(config, key);
+  const stored = (config[module] as { modo?: Record<string, FieldInputMode> })?.modo?.[field];
+  if (stored === 'lista' && values.length > 0) return 'lista';
+  if (stored === 'texto') return 'texto';
+  return values.length > 0 ? 'lista' : 'texto';
 }
 
 export function getFieldOptions(config: AppConfig, key: ConfigFieldKey): string[] {
@@ -150,6 +207,18 @@ export function usesConfigurableList(config: AppConfig, key: ConfigFieldKey): bo
 
 export function usesDetailedOrderExtraCosts(config: AppConfig): boolean {
   return config.pedidos?.costosPersonalizacionDetallados !== false;
+}
+
+export function usesOrderPrintDualCopy(config: AppConfig): boolean {
+  return config.pedidos?.impresionDosVias === true;
+}
+
+export function getOrderPedidosSettings(config: AppConfig) {
+  return normalizeOrderPedidosConfig(config.pedidos);
+}
+
+export function orderConfigUsesReservedStock(config: AppConfig = DEFAULT_APP_CONFIG): boolean {
+  return orderUsesReservedStock(config.pedidos);
 }
 
 export function usesCashConceptList(config: AppConfig): boolean {
@@ -257,16 +326,37 @@ export class CatalogConfigService {
 
   readonly appConfig$ = this.appConfigSubject.asObservable();
 
+  get appConfig(): AppConfig {
+    return this.appConfigSubject.value;
+  }
+
   getAppConfig(): Observable<AppConfig> {
     return this.http
       .get<AppConfig>(`/api/config/${this.businessId}`)
       .pipe(tap((config) => this.appConfigSubject.next(config)));
   }
 
-  updateAppConfig(config: AppConfig): Observable<AppConfig> {
+  updateAppConfig(
+    config: AppConfig,
+    options?: { confirmConfigRemovals?: boolean }
+  ): Observable<AppConfig> {
+    const body = {
+      ...config,
+      confirmConfigRemovals: options?.confirmConfigRemovals ?? false,
+    };
     return this.http
-      .patch<AppConfig>(`/api/config/${this.businessId}`, config)
+      .patch<AppConfig>(`/api/config/${this.businessId}`, body)
       .pipe(tap((config) => this.appConfigSubject.next(config)));
+  }
+
+  checkConfigUsage(
+    kind: ConfigRemovalKind,
+    value: string
+  ): Observable<ConfigUsageCheckResponse> {
+    return this.http.post<ConfigUsageCheckResponse>(
+      `/api/config/${this.businessId}/usage-check`,
+      { kind, value }
+    );
   }
 
   getFieldOptions(config: AppConfig, key: ConfigFieldKey): string[] {
@@ -279,6 +369,18 @@ export class CatalogConfigService {
 
   usesDetailedOrderExtraCosts(config: AppConfig = this.appConfigSubject.value): boolean {
     return usesDetailedOrderExtraCosts(config);
+  }
+
+  usesOrderPrintDualCopy(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesOrderPrintDualCopy(config);
+  }
+
+  orderUsesReservedStock(config: AppConfig = this.appConfigSubject.value): boolean {
+    return orderConfigUsesReservedStock(config);
+  }
+
+  getOrderPedidosSettings(config: AppConfig = this.appConfigSubject.value) {
+    return getOrderPedidosSettings(config);
   }
 
   ensureFieldOptions(key: ConfigFieldKey, values: string[]): Observable<AppConfig> {

@@ -19,6 +19,7 @@ import {
 } from '../../core/services/price-catalog.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
+import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 
 export interface PriceCatalogFormSaveEvent {
   id: string;
@@ -31,7 +32,7 @@ const FIELD_CLASS =
 @Component({
   selector: 'app-price-catalog-form-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, SelectOnFocusDirective],
   template: `
     <div>
       <div *ngIf="loadingEntry" class="py-8 text-center text-sm text-gray-400">
@@ -199,18 +200,18 @@ const FIELD_CLASS =
           </section>
         </aside>
 
-        <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 lg:col-span-2">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 lg:col-span-2">
           <button
             type="button"
             (click)="cancelled.emit()"
-            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Cancelar
           </button>
           <button
             *ngIf="auth.canManagePriceCatalog"
             type="submit"
             [disabled]="saving"
-            class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60">
+            class="form-btn-primary rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60">
             {{ saving ? 'Guardando...' : 'Guardar' }}
           </button>
         </div>

@@ -17,6 +17,7 @@ import {
 } from './supplier-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 @Component({
   selector: 'app-suppliers',
@@ -28,6 +29,7 @@ import { AuthService } from '../../core/services/auth.service';
     ConfigSettingsLinkComponent,
     TransactionModalComponent,
     SupplierFormPanelComponent,
+    ActivityLogTriggerComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -41,15 +43,18 @@ import { AuthService } from '../../core/services/auth.service';
             linkLabel="Configurala acá">
           </app-config-settings-link>
         </div>
-        <button
-          type="button"
-          (click)="openNewSupplier()"
-          [class]="iconActionLinkClass"
-          aria-label="Nuevo proveedor"
-          title="Nuevo proveedor">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          <span class="hidden sm:inline">Nuevo proveedor</span>
-        </button>
+        <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="suppliers"></app-activity-log-trigger>
+          <button
+            type="button"
+            (click)="openNewSupplier()"
+            [class]="iconActionLinkClass"
+            aria-label="Nuevo proveedor"
+            title="Nuevo proveedor">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+            <span class="hidden sm:inline">Nuevo proveedor</span>
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -276,8 +281,8 @@ export class SuppliersComponent implements OnInit {
     this.supplierPrefillNombre = '';
   }
 
-  onSupplierSaved(_event: SupplierFormSaveEvent) {
-    this.closeSupplierModal();
+  onSupplierSaved(event: SupplierFormSaveEvent) {
+    this.editingSupplierId = event.id;
     this.loadSuppliers();
   }
 

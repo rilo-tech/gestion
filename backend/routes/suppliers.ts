@@ -2,6 +2,8 @@ import express from 'express';
 import { db } from '../firebase.ts';
 
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -56,6 +58,14 @@ router.post('/:businessId', async (req, res) => {
       ...supplierData,
       createdAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'suppliers',
+      action: 'create',
+      entityType: 'proveedor',
+      entityId: docRef.id,
+      entityLabel: String(supplierData.nombre ?? ''),
+      summary: `Creó el proveedor ${String(supplierData.nombre ?? docRef.id)}`,
+    });
     res.status(201).json({ id: docRef.id });
   } catch (error) {
     res.status(500).json({ error: 'Error creating supplier' });
@@ -70,6 +80,14 @@ router.patch('/:businessId/:supplierId', async (req, res) => {
       ...supplierData,
       updatedAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'suppliers',
+      action: 'update',
+      entityType: 'proveedor',
+      entityId: supplierId,
+      entityLabel: String(supplierData.nombre ?? ''),
+      summary: `Editó el proveedor ${String(supplierData.nombre ?? supplierId)}`,
+    });
     res.json({ id: supplierId });
   } catch (error) {
     res.status(500).json({ error: 'Error updating supplier' });
@@ -79,7 +97,17 @@ router.patch('/:businessId/:supplierId', async (req, res) => {
 router.delete('/:businessId/:supplierId', async (req, res) => {
   try {
     const { businessId, supplierId } = req.params;
+    const snap = await db.collection(`negocios/${businessId}/proveedores`).doc(supplierId).get();
+    const supplierName = String(snap.data()?.nombre ?? supplierId);
     await db.collection(`negocios/${businessId}/proveedores`).doc(supplierId).delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'suppliers',
+      action: 'delete',
+      entityType: 'proveedor',
+      entityId: supplierId,
+      entityLabel: supplierName,
+      summary: `Eliminó el proveedor ${supplierName}`,
+    });
     res.json({ id: supplierId });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting supplier' });

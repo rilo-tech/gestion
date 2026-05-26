@@ -25,30 +25,30 @@ import { AuthService } from '../../core/services/auth.service';
 
         <form (submit)="saveProfile(); $event.preventDefault()" class="space-y-4 max-w-md">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+            <label class="form-label">Nombre</label>
             <input
               [(ngModel)]="profileNombre"
               name="profileNombre"
               autocomplete="name"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+            <label class="form-label">Rol</label>
             <p class="px-4 py-2.5 rounded-lg border border-gray-100 bg-gray-50 text-sm font-medium text-gray-700">
               {{ auth.currentRoleLabel }}
             </p>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label class="form-label">Email</label>
             <input
               type="email"
               [(ngModel)]="profileEmail"
               name="profileEmail"
               autocomplete="email"
               placeholder="tu.email@gmail.com"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
             <p class="text-xs text-gray-500 mt-1.5">
               <ng-container *ngIf="auth.isPlatformAdmin">
                 Si cargás acá el mismo email de Google, la próxima vez podés ingresar con Google en
@@ -62,13 +62,13 @@ import { AuthService } from '../../core/services/auth.service';
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Usuario de acceso</label>
+            <label class="form-label">Usuario de acceso</label>
             <input
               [(ngModel)]="profileLoginUsername"
               name="profileLoginUsername"
               autocomplete="username"
               placeholder="Ej. admin"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
             <p class="text-xs text-gray-500 mt-1.5">
               Es el nombre con el que ingresás junto con la contraseña.
             </p>
@@ -77,12 +77,14 @@ import { AuthService } from '../../core/services/auth.service';
           <p *ngIf="profileErrorMessage" class="text-sm text-red-600">{{ profileErrorMessage }}</p>
           <p *ngIf="profileSuccessMessage" class="text-sm text-teal-700">{{ profileSuccessMessage }}</p>
 
-          <button
-            type="submit"
-            [disabled]="savingProfile"
-            class="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-            {{ savingProfile ? 'Guardando...' : 'Guardar perfil' }}
-          </button>
+          <div class="form-actions pt-2">
+            <button
+              type="submit"
+              [disabled]="savingProfile"
+              class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+              {{ savingProfile ? 'Guardando...' : 'Guardar perfil' }}
+            </button>
+          </div>
         </form>
       </article>
 
@@ -98,44 +100,46 @@ import { AuthService } from '../../core/services/auth.service';
 
         <form (submit)="submitPassword(); $event.preventDefault()" class="space-y-4 max-w-md">
           <div *ngIf="requiresCurrentPassword">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Contraseña actual</label>
+            <label class="form-label">Contraseña actual</label>
             <input
               type="password"
               [(ngModel)]="currentPassword"
               name="currentPassword"
               autocomplete="current-password"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Nueva contraseña</label>
+            <label class="form-label">Nueva contraseña</label>
             <input
               type="password"
               [(ngModel)]="newPassword"
               name="newPassword"
               autocomplete="new-password"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Confirmar nueva contraseña</label>
+            <label class="form-label">Confirmar nueva contraseña</label>
             <input
               type="password"
               [(ngModel)]="confirmPassword"
               name="confirmPassword"
               autocomplete="new-password"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="form-control outline-none focus:ring-2 focus:ring-teal-500">
           </div>
 
           <p *ngIf="passwordErrorMessage" class="text-sm text-red-600">{{ passwordErrorMessage }}</p>
           <p *ngIf="passwordSuccessMessage" class="text-sm text-teal-700">{{ passwordSuccessMessage }}</p>
 
-          <button
-            type="submit"
-            [disabled]="savingPassword"
-            class="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-            {{ savingPassword ? 'Guardando...' : 'Actualizar contraseña' }}
-          </button>
+          <div class="form-actions pt-2">
+            <button
+              type="submit"
+              [disabled]="savingPassword"
+              class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+              {{ savingPassword ? 'Guardando...' : 'Actualizar contraseña' }}
+            </button>
+          </div>
         </form>
       </article>
 

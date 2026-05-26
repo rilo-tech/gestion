@@ -135,20 +135,22 @@ export async function findUserByLoginOrEmail(
   businessId: string,
   login: string
 ): Promise<StoredUser | null> {
-  await ensureDefaultSupervisor(businessId);
   const normalized = normalizeLogin(login);
   if (!normalized) return null;
 
-  const snapshot = await usersCollection(businessId).get();
-  for (const doc of snapshot.docs) {
-    const user = mapStoredUser(doc.id, doc.data());
-    if (
-      user.loginUsername === normalized ||
-      (user.email && user.email === normalized)
-    ) {
-      return user;
+  const col = usersCollection(businessId);
+  const byLogin = await col.where('loginUsername', '==', normalized).limit(1).get();
+  if (!byLogin.empty) {
+    return mapStoredUser(byLogin.docs[0].id, byLogin.docs[0].data());
+  }
+
+  if (normalized.includes('@')) {
+    const byEmail = await col.where('email', '==', normalized).limit(1).get();
+    if (!byEmail.empty) {
+      return mapStoredUser(byEmail.docs[0].id, byEmail.docs[0].data());
     }
   }
+
   return null;
 }
 
@@ -156,16 +158,15 @@ export async function findUserByEmail(
   businessId: string,
   email: string
 ): Promise<StoredUser | null> {
-  await ensureDefaultSupervisor(businessId);
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
 
-  const snapshot = await usersCollection(businessId).get();
-  for (const doc of snapshot.docs) {
-    const user = mapStoredUser(doc.id, doc.data());
-    if (user.email === normalized) return user;
-  }
-  return null;
+  const snapshot = await usersCollection(businessId)
+    .where('email', '==', normalized)
+    .limit(1)
+    .get();
+  if (snapshot.empty) return null;
+  return mapStoredUser(snapshot.docs[0].id, snapshot.docs[0].data());
 }
 
 export async function linkGoogleId(
@@ -241,24 +242,38 @@ export async function countActiveSupervisors(businessId: string): Promise<number
 }
 
 export async function countActiveAdministrators(businessId: string): Promise<number> {
-  const snapshot = await usersCollection(businessId).where('activo', '==', true).get();
-  return snapshot.docs.filter((doc) => {
-    const rol = doc.data().rol;
-    return rol === 'supervisor' || rol === 'admin';
-  }).length;
+  const { administradoresActivos } = await getActiveUserCounts(businessId);
+  return administradoresActivos;
 }
 
 export async function countActiveOperators(businessId: string): Promise<number> {
-  const snapshot = await usersCollection(businessId)
-    .where('rol', '==', 'staff')
-    .where('activo', '==', true)
-    .get();
-  return snapshot.size;
+  const { operadoresActivos } = await getActiveUserCounts(businessId);
+  return operadoresActivos;
 }
 
 export async function countActiveUsers(businessId: string): Promise<number> {
-  const snapshot = await usersCollection(businessId)
-    .where('activo', '==', true)
-    .get();
-  return snapshot.size;
+  const { usuariosActivos } = await getActiveUserCounts(businessId);
+  return usuariosActivos;
+}
+
+export async function getActiveUserCounts(businessId: string): Promise<{
+  administradoresActivos: number;
+  operadoresActivos: number;
+  usuariosActivos: number;
+}> {
+  const snapshot = await usersCollection(businessId).where('activo', '==', true).get();
+  let administradoresActivos = 0;
+  let operadoresActivos = 0;
+
+  for (const doc of snapshot.docs) {
+    const rol = doc.data().rol;
+    if (rol === 'supervisor' || rol === 'admin') administradoresActivos += 1;
+    if (rol === 'staff') operadoresActivos += 1;
+  }
+
+  return {
+    administradoresActivos,
+    operadoresActivos,
+    usuariosActivos: snapshot.size,
+  };
 }

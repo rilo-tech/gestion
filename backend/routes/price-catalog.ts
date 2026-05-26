@@ -1,6 +1,8 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -152,6 +154,14 @@ router.post('/:businessId', async (req, res) => {
       activo: entry.activo,
       createdAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'price_catalog',
+      action: 'create',
+      entityType: 'precio',
+      entityId: docRef.id,
+      entityLabel: entry.nombre,
+      summary: `Creó referencia de precio ${entry.nombre}`,
+    });
     res.status(201).json({ id: docRef.id });
   } catch (error) {
     console.error('Error creating price catalog entry:', error);
@@ -175,6 +185,14 @@ router.patch('/:businessId/:entryId', async (req, res) => {
       activo: entry.activo,
       updatedAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'price_catalog',
+      action: 'update',
+      entityType: 'precio',
+      entityId: entryId,
+      entityLabel: entry.nombre,
+      summary: `Editó referencia de precio ${entry.nombre}`,
+    });
     res.json({ id: entryId });
   } catch (error) {
     console.error('Error updating price catalog entry:', error);
@@ -185,7 +203,17 @@ router.patch('/:businessId/:entryId', async (req, res) => {
 router.delete('/:businessId/:entryId', async (req, res) => {
   try {
     const { businessId, entryId } = req.params;
+    const snap = await db.collection(`negocios/${businessId}/catalogo_precios`).doc(entryId).get();
+    const entryName = String(snap.data()?.nombre ?? entryId);
     await db.collection(`negocios/${businessId}/catalogo_precios`).doc(entryId).delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'price_catalog',
+      action: 'delete',
+      entityType: 'precio',
+      entityId: entryId,
+      entityLabel: entryName,
+      summary: `Eliminó referencia de precio ${entryName}`,
+    });
     res.json({ id: entryId });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting price catalog entry' });

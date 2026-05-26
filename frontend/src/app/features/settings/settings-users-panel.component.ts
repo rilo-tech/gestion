@@ -30,7 +30,7 @@ import { LucideAngularModule } from 'lucide-angular';
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 class="text-xl font-bold text-gray-900">Usuarios y permisos</h2>
-          <p class="text-sm text-gray-500 mt-1">
+          <p class="text-sm text-gray-500 mt-1 desc-lg-only">
             Como administrador de la empresa podés crear operadores y asignar permisos.
             El plan y la suscripción los gestiona la plataforma RILO.
           </p>
@@ -94,7 +94,7 @@ import { LucideAngularModule } from 'lucide-angular';
         class="rounded-xl border shadow-sm overflow-hidden bg-teal-50/40 border-teal-100">
         <div class="border-l-4 border-l-teal-500 p-4 sm:p-5">
           <h3 class="font-bold text-gray-900 mb-1">Nuevo usuario</h3>
-          <p class="text-sm text-gray-600 mb-4">
+          <p class="text-sm text-gray-600 mb-4 desc-lg-only">
             Los administradores delegados y operadores cuentan dentro del límite del plan.
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -218,10 +218,10 @@ import { LucideAngularModule } from 'lucide-angular';
               Cuenta activa
             </label>
 
-            <p *ngIf="user.rol === 'supervisor'" class="text-sm text-gray-600 mb-4">
+            <p *ngIf="user.rol === 'supervisor'" class="text-sm text-gray-600 mb-4 desc-lg-only">
               Administrador principal de la empresa. Acceso completo y gestión de operadores.
             </p>
-            <p *ngIf="user.rol === 'admin'" class="text-sm text-gray-600 mb-4">
+            <p *ngIf="user.rol === 'admin'" class="text-sm text-gray-600 mb-4 desc-lg-only">
               Administrador delegado con acceso completo al negocio, sin gestionar usuarios.
             </p>
 
@@ -243,7 +243,7 @@ import { LucideAngularModule } from 'lucide-angular';
                         class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600">
                       <span class="min-w-0">
                         <span class="block text-sm font-medium text-gray-800">{{ perm.label }}</span>
-                        <span *ngIf="perm.description" class="block text-xs text-gray-500">{{ perm.description }}</span>
+                        <span *ngIf="perm.description" class="block text-xs text-gray-500 desc-lg-only">{{ perm.description }}</span>
                       </span>
                     </label>
                   </div>

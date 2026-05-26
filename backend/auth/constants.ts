@@ -22,6 +22,8 @@ export const ASSIGNABLE_PERMISSIONS = [
   'prices.view',
   'prices.manage',
   'payables.access',
+  'collaborators.access',
+  'settings.manage',
 ] as const;
 
 export type AssignablePermission = (typeof ASSIGNABLE_PERMISSIONS)[number];

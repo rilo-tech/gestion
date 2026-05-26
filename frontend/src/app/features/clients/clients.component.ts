@@ -17,6 +17,7 @@ import {
 } from './client-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 @Component({
   selector: 'app-clients',
@@ -29,6 +30,7 @@ import { AuthService } from '../../core/services/auth.service';
     RouterLink,
     TransactionModalComponent,
     ClientFormPanelComponent,
+    ActivityLogTriggerComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -42,15 +44,17 @@ import { AuthService } from '../../core/services/auth.service';
             linkLabel="Configurala acá">
           </app-config-settings-link>
         </div>
-        <button
-          type="button"
-          (click)="openNewClient()"
-          [class]="iconActionLinkClass"
-          aria-label="Nuevo cliente"
-          title="Nuevo cliente">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          <span class="hidden sm:inline">Nuevo cliente</span>
-        </button>
+        <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="clients"></app-activity-log-trigger>
+          <a
+            routerLink="/clients/new"
+            [class]="iconActionLinkClass"
+            aria-label="Nuevo cliente"
+            title="Nuevo cliente">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+            <span class="hidden sm:inline">Nuevo cliente</span>
+          </a>
+        </div>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -251,8 +255,11 @@ export class ClientsComponent implements OnInit {
       }
 
       if (isNew) {
-        this.openNewClient(params.get('nombre') ?? '');
-        this.clearClientQueryParams();
+        const nombre = params.get('nombre')?.trim();
+        this.router.navigate(['/clients/new'], {
+          ...(nombre ? { queryParams: { nombre } } : {}),
+          replaceUrl: true,
+        });
       }
     });
   }
@@ -284,8 +291,8 @@ export class ClientsComponent implements OnInit {
     this.clientPrefillNombre = '';
   }
 
-  onClientSaved(_event: ClientFormSaveEvent) {
-    this.closeClientModal();
+  onClientSaved(event: ClientFormSaveEvent) {
+    this.editingClientId = event.id;
     this.loadClients();
   }
 

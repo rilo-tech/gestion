@@ -12,6 +12,8 @@ import {
   setPayableObligationActive,
 } from '../utils/payables.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 router.use('/:businessId', requirePermission('payables.access'));
@@ -59,6 +61,14 @@ router.post('/:businessId/obligations', async (req, res) => {
     input.ambito = normalizeAmbito(req.body.ambito, caja);
 
     const result = await createPayableObligation(req.params.businessId, input);
+    await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
+      module: 'payables',
+      action: 'create',
+      entityType: 'obligacion',
+      entityId: result.obligation.id,
+      entityLabel: input.beneficiario,
+      summary: `Creó obligación a pagar: ${input.beneficiario} · $${input.monto}`,
+    });
     res.status(201).json(result);
   } catch (error) {
     console.error('Error creating payable obligation:', error);
@@ -74,6 +84,13 @@ router.patch('/:businessId/installments/:cuotaId/paid', async (req, res) => {
       req.params.cuotaId,
       paid
     );
+    await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
+      module: 'payables',
+      action: paid ? 'payment' : 'update',
+      entityType: 'cuota',
+      entityId: req.params.cuotaId,
+      summary: paid ? `Marcó cuota como pagada` : `Marcó cuota como pendiente`,
+    });
     res.json(cuota);
   } catch (error) {
     if (error instanceof Error && error.message === 'CUOTA_NOT_FOUND') {
@@ -92,6 +109,14 @@ router.patch('/:businessId/obligations/:obligacionId/active', async (req, res) =
       req.params.obligacionId,
       activo
     );
+    await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
+      module: 'payables',
+      action: 'update',
+      entityType: 'obligacion',
+      entityId: req.params.obligacionId,
+      entityLabel: obligation.beneficiario,
+      summary: activo ? `Reactivó obligación ${obligation.beneficiario}` : `Desactivó obligación ${obligation.beneficiario}`,
+    });
     res.json(obligation);
   } catch (error) {
     if (error instanceof Error && error.message === 'OBLIGATION_NOT_FOUND') {
@@ -105,6 +130,13 @@ router.patch('/:businessId/obligations/:obligacionId/active', async (req, res) =
 router.delete('/:businessId/obligations/:obligacionId', async (req, res) => {
   try {
     await deletePayableObligation(req.params.businessId, req.params.obligacionId);
+    await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
+      module: 'payables',
+      action: 'delete',
+      entityType: 'obligacion',
+      entityId: req.params.obligacionId,
+      summary: `Eliminó una obligación a pagar`,
+    });
     res.json({ ok: true });
   } catch (error) {
     if (error instanceof Error && error.message === 'OBLIGATION_NOT_FOUND') {

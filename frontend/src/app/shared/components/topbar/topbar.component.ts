@@ -1,5 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
+import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
 import { ThemeService } from '../../../core/services/theme.service';
@@ -8,7 +9,7 @@ import { Router } from '@angular/router';
 @Component({
   selector: 'app-topbar',
   standalone: true,
-  imports: [LucideAngularModule],
+  imports: [CommonModule, LucideAngularModule],
   template: `
     <header
       class="h-14 shrink-0 border-b border-gray-100 bg-white/90 backdrop-blur-sm px-3 sm:px-6 flex items-center justify-between gap-3">
@@ -26,6 +27,15 @@ import { Router } from '@angular/router';
       </div>
 
       <div class="inline-flex items-center gap-1.5 sm:gap-2.5 ml-auto">
+        <button
+          *ngIf="auth.canManageSettings"
+          type="button"
+          (click)="openSettings()"
+          title="Configuración"
+          class="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <i-lucide name="settings" class="w-4 h-4"></i-lucide>
+        </button>
+
         <button
           type="button"
           (click)="openAppearance()"
@@ -47,8 +57,8 @@ import { Router } from '@angular/router';
             <span class="block text-sm font-medium text-gray-900 truncate leading-tight">
               {{ auth.currentUserName }}
             </span>
-            <span class="block text-[11px] text-gray-500 truncate leading-tight">
-              {{ auth.currentRoleLabel }}
+            <span class="app-user-role block text-xs truncate leading-tight">
+              {{ auth.currentRoleShortLabel }}
             </span>
           </span>
         </button>
@@ -77,6 +87,10 @@ export class TopbarComponent {
   openAppearance() {
     const route = this.auth.isPlatformAdmin ? '/platform/apariencia' : '/apariencia';
     this.router.navigate([route]);
+  }
+
+  openSettings() {
+    this.router.navigate(['/settings']);
   }
 
   logout() {

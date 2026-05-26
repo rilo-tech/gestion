@@ -36,6 +36,7 @@ export interface PublicBusinessInfo {
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
+  enPrueba: boolean;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;

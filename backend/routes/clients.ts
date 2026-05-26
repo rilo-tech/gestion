@@ -5,6 +5,8 @@ import { resolveSaleLabel } from '../utils/sale-number.ts';
 import { computeClientBalanceMap } from '../utils/client-balance.ts';
 import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData } from '../utils/client-collections.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -291,6 +293,16 @@ router.post('/:businessId/:clientId/cobros', async (req, res) => {
       notas: req.body.notas,
     });
 
+    const clientName = String(clientSnap.data()?.nombre ?? 'Cliente');
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'clients',
+      action: 'payment',
+      entityType: 'cliente',
+      entityId: clientId,
+      entityLabel: clientName,
+      summary: `Registró cobro de $${Number(req.body.monto) || 0} a ${clientName}`,
+    });
+
     res.status(201).json(result);
   } catch (error) {
     console.error('Error collecting client balance:', error);
@@ -327,6 +339,14 @@ router.post('/:businessId', async (req, res) => {
       ...clientData,
       createdAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'clients',
+      action: 'create',
+      entityType: 'cliente',
+      entityId: docRef.id,
+      entityLabel: String(clientData.nombre ?? ''),
+      summary: `Creó el cliente ${String(clientData.nombre ?? docRef.id)}`,
+    });
     res.status(201).json({ id: docRef.id });
   } catch (error) {
     res.status(500).json({ error: 'Error creating client' });
@@ -341,6 +361,14 @@ router.patch('/:businessId/:clientId', async (req, res) => {
       ...clientData,
       updatedAt: new Date().toISOString(),
     });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'clients',
+      action: 'update',
+      entityType: 'cliente',
+      entityId: clientId,
+      entityLabel: String(clientData.nombre ?? ''),
+      summary: `Editó el cliente ${String(clientData.nombre ?? clientId)}`,
+    });
     res.json({ id: clientId });
   } catch (error) {
     res.status(500).json({ error: 'Error updating client' });
@@ -350,7 +378,17 @@ router.patch('/:businessId/:clientId', async (req, res) => {
 router.delete('/:businessId/:clientId', async (req, res) => {
   try {
     const { businessId, clientId } = req.params;
+    const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clientId).get();
+    const clientName = String(clientSnap.data()?.nombre ?? clientId);
     await db.collection(`negocios/${businessId}/clientes`).doc(clientId).delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'clients',
+      action: 'delete',
+      entityType: 'cliente',
+      entityId: clientId,
+      entityLabel: clientName,
+      summary: `Eliminó el cliente ${clientName}`,
+    });
     res.json({ id: clientId });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting client' });

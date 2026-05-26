@@ -106,6 +106,17 @@ export class AuthService {
     return USER_ROLE_LABELS[this.currentRole as UserRole] ?? this.currentRole;
   }
 
+  /** Etiqueta corta del rol para la barra superior. */
+  get currentRoleShortLabel(): string {
+    if (this.isPlatformAdmin) return 'Superadmin';
+    const short: Record<UserRole, string> = {
+      supervisor: 'Administrador',
+      admin: 'Admin delegado',
+      staff: 'Operador',
+    };
+    return short[this.currentRole as UserRole] ?? this.currentRoleLabel;
+  }
+
   get homeRoute(): string {
     return this.isPlatformAdmin ? '/platform' : '/dashboard';
   }
@@ -203,6 +214,10 @@ export class AuthService {
     return this.hasPermission(PERMISSIONS.PAYABLES_ACCESS);
   }
 
+  get canAccessCollaborators(): boolean {
+    return this.hasPermission(PERMISSIONS.COLLABORATORS_ACCESS);
+  }
+
   get canViewPriceCatalog(): boolean {
     return this.hasPermission(PERMISSIONS.PRICES_VIEW);
   }
@@ -224,7 +239,10 @@ export class AuthService {
 
   get canManageSettings(): boolean {
     if (this.isPlatformAdmin) return false;
-    return canManageSettings(this.currentRole as UserRole);
+    return canManageSettings(
+      this.currentRole as UserRole,
+      this.currentUser?.permisos as Permission[] | undefined
+    );
   }
 
   initialize(): Observable<boolean> {

@@ -1,9 +1,10 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { OrderService, Order, formatOrderNumber } from '../../core/services/order.service';
+import { OrderService, Order, formatOrderNumber, resolveOrderBalance } from '../../core/services/order.service';
 import { ClientService, Client } from '../../core/services/client.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
+import { CatalogConfigService, AppConfig, DEFAULT_APP_CONFIG, getOrderStatusLabelFromConfig } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
 import {
   getOrderStatusBadgeClass,
@@ -14,6 +15,10 @@ import {
   canRegisterSaleFromOrder,
 } from '../../core/constants/order-status';
 import {
+  getOrderStockStatusBadgeClass,
+  getOrderStockStatusLabel,
+} from '../../core/constants/order-stock-status';
+import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
@@ -21,11 +26,12 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 @Component({
   selector: 'app-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, ActivityLogTriggerComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -34,16 +40,7 @@ import { AuthService } from '../../core/services/auth.service';
           <p class="text-sm sm:text-base text-gray-500">Gestiona tus pedidos personalizados y su producción.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            *ngIf="auth.canPrintOrders && filteredOrders.length > 0"
-            type="button"
-            (click)="printFilteredOrders()"
-            [class]="iconActionLinkClass"
-            aria-label="Imprimir pedidos visibles"
-            title="Imprimir pedidos visibles">
-            <i-lucide name="printer" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Imprimir listado</span>
-          </button>
+          <app-activity-log-trigger module="orders"></app-activity-log-trigger>
           <a
             routerLink="/orders/new"
             [class]="iconActionLinkClass"
@@ -55,26 +52,26 @@ import { AuthService } from '../../core/services/auth.service';
         </div>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
+      <div class="module-summary-kpis grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div *ngIf="auth.canViewAllOrders" class="bg-gray-50 p-4 rounded-xl border border-gray-200">
-          <p class="text-xs font-bold text-gray-500 uppercase mb-1">Borradores</p>
+          <p class="text-xs font-bold text-gray-500 uppercase mb-1">{{ getOrderEstadoCardLabel('borrador') }}</p>
           <p class="text-xl font-bold text-gray-800">{{ statusCounts.borrador }}</p>
         </div>
-        <div *ngIf="auth.canViewAllOrders" class="bg-blue-50 p-4 rounded-xl border border-blue-100">
-          <p class="text-xs font-bold text-blue-400 uppercase mb-1">Pendientes</p>
-          <p class="text-xl font-bold text-blue-700">{{ statusCounts.pendiente }}</p>
+        <div *ngIf="auth.canViewAllOrders" class="bg-gray-50 p-4 rounded-xl border border-blue-200">
+          <p class="text-xs font-bold text-blue-500 uppercase mb-1">{{ getOrderEstadoCardLabel('pendiente') }}</p>
+          <p class="text-xl font-bold text-blue-500">{{ statusCounts.pendiente }}</p>
         </div>
-        <div class="bg-purple-50 p-4 rounded-xl border border-purple-100">
-          <p class="text-xs font-bold text-purple-400 uppercase mb-1">En Producción</p>
-          <p class="text-xl font-bold text-purple-700">{{ statusCounts.en_produccion }}</p>
+        <div class="bg-gray-50 p-4 rounded-xl border border-purple-200">
+          <p class="text-xs font-bold text-purple-500 uppercase mb-1">{{ getOrderEstadoCardLabel('en_produccion') }}</p>
+          <p class="text-xl font-bold text-purple-500">{{ statusCounts.en_produccion }}</p>
         </div>
-        <div *ngIf="auth.canViewAllOrders" class="bg-green-50 p-4 rounded-xl border border-green-100">
-          <p class="text-xs font-bold text-green-400 uppercase mb-1">Listos</p>
-          <p class="text-xl font-bold text-green-700">{{ statusCounts.listo }}</p>
+        <div *ngIf="auth.canViewAllOrders" class="bg-gray-50 p-4 rounded-xl border border-green-200">
+          <p class="text-xs font-bold text-green-500 uppercase mb-1">{{ getOrderEstadoCardLabel('listo') }}</p>
+          <p class="text-xl font-bold text-green-500">{{ statusCounts.listo }}</p>
         </div>
-        <div *ngIf="auth.canViewDeliveredOrders" class="bg-teal-50 p-4 rounded-xl border border-teal-100">
-          <p class="text-xs font-bold text-teal-400 uppercase mb-1">Entregados</p>
-          <p class="text-xl font-bold text-teal-700">{{ statusCounts.entregado }}</p>
+        <div *ngIf="auth.canViewDeliveredOrders" class="bg-gray-50 p-4 rounded-xl border border-teal-200">
+          <p class="text-xs font-bold text-teal-500 uppercase mb-1">{{ getOrderEstadoCardLabel('entregado') }}</p>
+          <p class="text-xl font-bold text-teal-500">{{ statusCounts.entregado }}</p>
         </div>
       </div>
 
@@ -138,20 +135,28 @@ import { AuthService } from '../../core/services/auth.service';
                 {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <span
-                  class="inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold"
-                  [ngClass]="getOrderStatusBadgeClass(order.estado)">
-                  {{ getOrderStatusLabel(order.estado) }}
-                </span>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span
+                    class="inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold"
+                    [ngClass]="getOrderStatusBadgeClass(order.estado)">
+                    {{ getOrderStatusLabelFor(order.estado) }}
+                  </span>
+                  <span
+                    *ngIf="order.stockPreparado || order.estadoStock"
+                    class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold border"
+                    [ngClass]="getOrderStockStatusBadgeClass(order.estadoStock)">
+                    {{ getOrderStockStatusLabel(order.estadoStock) }}
+                  </span>
+                </div>
               </td>
               <td *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4">
                 <div *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold text-gray-900 tabular-nums">{{ '$' + order.total }}</div>
                 <div
                   *ngIf="auth.canViewAccountBalance"
                   class="text-xs font-semibold tabular-nums"
-                  [class.text-orange-500]="(order.saldo || 0) > 0"
-                  [class.text-gray-400]="!(order.saldo || 0)">
-                  Saldo {{ '$' + (order.saldo ?? 0) }}
+                  [class.text-orange-500]="getOrderSaldo(order) > 0"
+                  [class.text-gray-400]="!(getOrderSaldo(order) > 0)">
+                  Saldo {{ '$' + getOrderSaldo(order) }}
                 </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
@@ -162,6 +167,14 @@ import { AuthService } from '../../core/services/auth.service';
                     [title]="isCancelledOrder(order) ? 'Ver pedido' : (auth.canEditRecords ? 'Editar' : 'Ver pedido')"
                     class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
                     <i-lucide [name]="auth.canEditRecords ? 'pencil' : 'clipboard-list'" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="auth.canEditRecords"
+                    type="button"
+                    (click)="duplicateOrder(order, $event)"
+                    title="Duplicar"
+                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900">
+                    <i-lucide name="copy" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
                     *ngIf="auth.canPrintOrders"
@@ -247,14 +260,24 @@ export class OrderListComponent implements OnInit {
   private orderService = inject(OrderService);
   private clientService = inject(ClientService);
   private orderPrintService = inject(OrderPrintService);
+  private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
 
-  readonly getOrderStatusLabel = getOrderStatusLabel;
+  appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
+
   readonly getOrderStatusBadgeClass = getOrderStatusBadgeClass;
+  getOrderStatusLabelFor(estado?: string): string {
+    return getOrderStatusLabel(estado, this.appConfig.pedidos);
+  }
+  getOrderEstadoCardLabel(value: string): string {
+    return getOrderStatusLabelFromConfig(value, this.appConfig.pedidos);
+  }
   readonly normalizeOrderStatus = normalizeOrderStatus;
   readonly canRegisterSale = canRegisterSaleFromOrder;
+  readonly getOrderStockStatusLabel = getOrderStockStatusLabel;
+  readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
 
   orders: Order[] = [];
   clientsById = new Map<string, Client>();
@@ -280,7 +303,7 @@ export class OrderListComponent implements OnInit {
       const clientName = this.getClientName(order).toLowerCase();
       const orderNumber = this.getOrderNumber(order).toLowerCase();
       const descripcion = (order.descripcion || '').toLowerCase();
-      const estado = getOrderStatusLabel(order.estado).toLowerCase();
+      const estado = this.getOrderStatusLabelFor(order.estado).toLowerCase();
       const productos = (order.items ?? [])
         .map((line) => line.nombre?.toLowerCase() || '')
         .join(' ');
@@ -317,6 +340,10 @@ export class OrderListComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.catalogConfigService.getAppConfig().subscribe((config) => {
+      this.appConfig = config;
+    });
+
     this.route.queryParamMap.subscribe((params) => {
       this.listFilter = params.get('filter') === 'pendientes-entrega' ? 'pendientes-entrega' : 'all';
     });
@@ -360,19 +387,32 @@ export class OrderListComponent implements OnInit {
     this.router.navigate(['/orders', order.id, 'edit']);
   }
 
+  duplicateOrder(order: Order, event: Event) {
+    event.stopPropagation();
+    if (!order.id || !this.auth.canEditRecords) return;
+    this.router.navigate(['/orders/new'], { queryParams: { duplicate: order.id } });
+  }
+
   registerSaleFromOrder(order: Order) {
     if (!order.id || !canRegisterSaleFromOrder(order)) return;
     this.router.navigate(['/sales'], { queryParams: { pedidoId: order.id } });
   }
 
   printOrder(order: Order) {
-    if (!this.auth.canPrintOrders) return;
-    this.orderPrintService.printOrders([order], this.clientsById);
+    if (!this.auth.canPrintOrders || !order.id) return;
+
+    this.orderService.getOrder(order.id).subscribe({
+      next: (fullOrder) => {
+        this.orderPrintService.printOrders([fullOrder], this.clientsById);
+      },
+      error: () => {
+        this.orderPrintService.printOrders([order], this.clientsById);
+      },
+    });
   }
 
-  printFilteredOrders() {
-    if (!this.auth.canPrintOrders || this.filteredOrders.length === 0) return;
-    this.orderPrintService.printOrders(this.filteredOrders, this.clientsById);
+  getOrderSaldo(order: Order): number {
+    return resolveOrderBalance(order).saldo;
   }
 
   confirmCancelOrder(order: Order) {

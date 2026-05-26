@@ -2,7 +2,7 @@ import express from 'express';
 import { getAuth } from 'firebase-admin/auth';
 import { db } from '../firebase.ts';
 import { DEFAULT_BUSINESS_ID } from '../auth/constants.ts';
-import { assertBusinessActive, getBusiness } from '../auth/business.ts';
+import { assertBusinessActive, toSessionBusinessInfo } from '../auth/business.ts';
 import { signAuthToken } from '../auth/jwt.ts';
 import { hashPassword, verifyPassword } from '../auth/password.ts';
 import {
@@ -22,7 +22,7 @@ import {
   toPublicUser,
   updateUserProfile,
 } from '../auth/users.ts';
-import { toPublicBusinessInfo } from '../auth/business.ts';
+import { toPublicBusinessInfo, toSessionBusinessInfo } from '../auth/business.ts';
 import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
 
 const router = express.Router();
@@ -37,6 +37,9 @@ function mapAuthError(error: unknown): { status: number; message: string } | nul
   }
   if (code === 'PLAN_INACTIVE') {
     return { status: 403, message: 'El plan asignado a esta empresa no está activo.' };
+  }
+  if (code === 'BUSINESS_NOT_FOUND') {
+    return { status: 404, message: 'Empresa no encontrada. Verificá el código.' };
   }
   return null;
 }
@@ -117,12 +120,7 @@ router.post('/login', async (req, res) => {
       return res.json(platformSessionResponse(toPublicPlatformAdmin(admin)));
     }
 
-    await assertBusinessActive(businessId);
-
-    const businessRecord = await getBusiness(businessId);
-    if (!businessRecord) {
-      return res.status(404).json({ error: 'Empresa no encontrada. Verificá el código.' });
-    }
+    const businessRecord = await assertBusinessActive(businessId);
 
     const user = await findUserByLoginOrEmail(businessId, login);
     if (!user || !user.activo) {
@@ -134,7 +132,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales inválidas.' });
     }
 
-    const business = await toPublicBusinessInfo(businessId);
+    const business = await toSessionBusinessInfo(businessId, businessRecord);
     res.json({
       ...companySessionResponse(toPublicUser(user), businessId),
       business,
@@ -193,12 +191,7 @@ router.post('/google', async (req, res) => {
       return res.json(platformSessionResponse(toPublicPlatformAdmin(admin)));
     }
 
-    await assertBusinessActive(businessId);
-
-    const businessDoc = await getBusiness(businessId);
-    if (!businessDoc) {
-      return res.status(404).json({ error: 'Empresa no encontrada. Verificá el código.' });
-    }
+    const businessRecord = await assertBusinessActive(businessId);
 
     let user = await findUserByEmail(businessId, email);
     if (!user) {
@@ -221,7 +214,7 @@ router.post('/google', async (req, res) => {
       });
     }
 
-    const business = await toPublicBusinessInfo(businessId);
+    const business = await toSessionBusinessInfo(businessId, businessRecord);
     res.json({
       ...companySessionResponse(toPublicUser(user), businessId),
       business,
@@ -245,7 +238,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
     });
   }
 
-  const business = await toPublicBusinessInfo(req.auth!.businessId);
+  const business = await toSessionBusinessInfo(req.auth!.businessId);
   res.json({
     scope: 'company',
     businessId: req.auth!.businessId,

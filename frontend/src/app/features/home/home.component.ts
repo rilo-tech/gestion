@@ -1,12 +1,12 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { OrderService } from '../../core/services/order.service';
-import { StockService } from '../../core/services/stock.service';
+import { StockService, itemIsLowStock } from '../../core/services/stock.service';
 import { SalesService, Sale } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
-import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { PAGE_SHELL_CLASS, MODULE_SUMMARY_KPIS_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { RouterLink } from '@angular/router';
 
 @Component({
@@ -20,7 +20,7 @@ import { RouterLink } from '@angular/router';
         <p class="text-sm sm:text-base text-gray-500">Aquí tienes un resumen de tu negocio hoy.</p>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10">
+      <div [class]="summaryKpisClass + ' grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10'">
         <a
           routerLink="/orders"
           [queryParams]="{ filter: 'pendientes-entrega' }"
@@ -67,29 +67,8 @@ import { RouterLink } from '@angular/router';
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div
-          class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm"
-          [class.lg:col-span-2]="!hasQuickAccess">
-          <div class="flex justify-between items-center mb-6">
-            <h2 class="text-lg font-bold">Actividad Reciente</h2>
-            <button routerLink="/orders" class="text-teal-600 text-sm font-bold">Ver todo</button>
-          </div>
-          <div class="space-y-4">
-            <div *ngFor="let order of recentOrders" class="flex justify-between items-center p-3 hover:bg-gray-50 rounded-lg transition-colors">
-              <div class="flex items-center gap-3">
-                <div class="w-2 h-2 rounded-full bg-yellow-400"></div>
-                <div>
-                  <p class="text-sm font-medium text-gray-900">{{ order.descripcion }}</p>
-                  <p class="text-xs text-gray-400">Entrega: {{ order.fechaEntrega | date:'shortDate' }}</p>
-                </div>
-              </div>
-              <span *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold">{{ '$' + formatMoney(order.total || 0) }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div
           *ngIf="hasQuickAccess"
-          class="bg-gray-900 p-5 sm:p-6 rounded-2xl shadow-xl text-white">
+          class="order-1 lg:order-2 bg-gray-900 p-5 sm:p-6 rounded-2xl shadow-xl text-white">
           <h2 class="text-lg font-bold mb-3 text-teal-400">Accesos Rápidos</h2>
           <div class="flex gap-2 sm:gap-3">
             <button
@@ -115,6 +94,27 @@ import { RouterLink } from '@angular/router';
             </button>
           </div>
         </div>
+
+        <div
+          class="order-2 lg:order-1 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm"
+          [class.lg:col-span-2]="!hasQuickAccess">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-lg font-bold">Actividad Reciente</h2>
+            <button routerLink="/orders" class="text-teal-600 text-sm font-bold">Ver todo</button>
+          </div>
+          <div class="space-y-4">
+            <div *ngFor="let order of recentOrders" class="flex justify-between items-center p-3 hover:bg-gray-50 rounded-lg transition-colors">
+              <div class="flex items-center gap-3">
+                <div class="w-2 h-2 rounded-full bg-yellow-400"></div>
+                <div>
+                  <p class="text-sm font-medium text-gray-900">{{ order.descripcion }}</p>
+                  <p class="text-xs text-gray-400">Entrega: {{ order.fechaEntrega | date:'shortDate' }}</p>
+                </div>
+              </div>
+              <span *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold">{{ '$' + formatMoney(order.total || 0) }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `,
@@ -122,6 +122,7 @@ import { RouterLink } from '@angular/router';
 })
 export class HomeComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly summaryKpisClass = MODULE_SUMMARY_KPIS_CLASS + ' grid';
   readonly auth = inject(AuthService);
 
   get hasQuickAccess(): boolean {
@@ -146,7 +147,7 @@ export class HomeComponent implements OnInit {
     });
 
     this.stockService.getStock().subscribe((items) => {
-      this.lowStockItems = items.filter((i) => (i.stockActual || 0) <= (i.stockMinimo || 0)).length;
+      this.lowStockItems = items.filter((i) => itemIsLowStock(i)).length;
     });
 
     if (!this.auth.canViewEconomics) return;

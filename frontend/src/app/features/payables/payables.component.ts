@@ -29,6 +29,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
 
@@ -44,6 +45,7 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
     TransactionModalComponent,
     IconActionComponent,
     ConfigSettingsLinkComponent,
+    ActivityLogTriggerComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -59,9 +61,12 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
             linkLabel="Configurá las etiquetas acá">
           </app-config-settings-link>
         </div>
-        <app-icon-action label="Nueva obligación" (clicked)="openCreateModal()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="payables"></app-activity-log-trigger>
+          <app-icon-action label="Nueva obligación" (clicked)="openCreateModal()">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </div>
       </div>
 
       <div *ngIf="usesAmbitoSeparation" class="mb-6 sm:mb-8">
@@ -80,7 +85,7 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
         </div>
       </div>
 
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+      <div class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ usesAmbitoSeparation ? activeAmbitoLabel + ' · ' : '' }}Pendientes
@@ -355,17 +360,17 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
             class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
 
-        <div class="flex justify-end gap-3 pt-2">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
           <button
             type="button"
             (click)="closeCreateModal()"
-            class="px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+            class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             Cancelar
           </button>
           <button
             type="submit"
             [disabled]="creating"
-            class="px-4 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-60">
+            class="form-btn-primary rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-60">
             {{ creating ? 'Guardando...' : 'Crear' }}
           </button>
         </div>

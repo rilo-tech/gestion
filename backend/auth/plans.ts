@@ -117,15 +117,40 @@ export async function getPlan(planId: string): Promise<PlanRecord | null> {
   return mapPlan(doc.id, doc.data() as Record<string, unknown>);
 }
 
-export async function getPlanOrDefault(planId: string): Promise<PlanRecord> {
+let defaultPlansEnsured = false;
+const planCache = new Map<string, PlanRecord>();
+
+async function ensureDefaultPlansOnce(): Promise<void> {
+  if (defaultPlansEnsured) return;
   await ensureDefaultPlans();
-  const plan = await getPlan(planId);
-  if (plan) return plan;
+  defaultPlansEnsured = true;
+}
 
-  const fallback = await getPlan(DEFAULT_PLAN_ID);
-  if (fallback) return fallback;
+export async function getPlanOrDefault(planId: string): Promise<PlanRecord> {
+  const cached = planCache.get(planId);
+  if (cached) return cached;
 
-  throw new Error('PLAN_NOT_FOUND');
+  await ensureDefaultPlansOnce();
+
+  const plan = (await getPlan(planId)) ?? (await getPlan(DEFAULT_PLAN_ID));
+  if (!plan) {
+    throw new Error('PLAN_NOT_FOUND');
+  }
+
+  planCache.set(plan.id, plan);
+  return plan;
+}
+
+export async function preloadPlans(): Promise<Map<string, PlanRecord>> {
+  await ensureDefaultPlansOnce();
+  const snapshot = await plansCollection().get();
+  const map = new Map<string, PlanRecord>();
+  for (const doc of snapshot.docs) {
+    const plan = mapPlan(doc.id, doc.data() as Record<string, unknown>);
+    map.set(plan.id, plan);
+    planCache.set(plan.id, plan);
+  }
+  return map;
 }
 
 export async function listPlans(activeOnly = false): Promise<PlanRecord[]> {

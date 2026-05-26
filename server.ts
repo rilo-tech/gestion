@@ -20,6 +20,9 @@ import authRoutes from './backend/routes/auth.ts';
 import businessRoutes from './backend/routes/business.ts';
 import platformRoutes from './backend/routes/platform.ts';
 import payablesRoutes from './backend/routes/payables.ts';
+import activityRoutes from './backend/routes/activity.ts';
+import reportsRoutes from './backend/routes/reports.ts';
+import collaboratorsRoutes from './backend/routes/collaborators.ts';
 import { ensureDefaultSupervisor } from './backend/auth/users.ts';
 import { ensureDefaultBusiness } from './backend/auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './backend/auth/platform.ts';
@@ -71,6 +74,9 @@ async function startServer() {
   app.use('/api/config', catalogConfigRoutes);
   app.use('/api/price-catalog', priceCatalogRoutes);
   app.use('/api/payables', payablesRoutes);
+  app.use('/api/activity', activityRoutes);
+  app.use('/api/reports', reportsRoutes);
+  app.use('/api/collaborators', collaboratorsRoutes);
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'RILO Gestión API is running' });

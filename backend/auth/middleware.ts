@@ -131,7 +131,15 @@ export function requireSettingsAccess(
 
   const rol = req.auth.user.rol;
   if (rol !== 'supervisor' && rol !== 'admin') {
-    return res.status(403).json({ error: 'No tenés acceso a la configuración.' });
+    if (
+      !userHasPermission(
+        rol,
+        req.auth.user.permisos,
+        'settings.manage' as AssignablePermission
+      )
+    ) {
+      return res.status(403).json({ error: 'No tenés acceso a la configuración.' });
+    }
   }
   next();
 }

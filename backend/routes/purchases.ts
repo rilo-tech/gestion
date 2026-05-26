@@ -1,6 +1,8 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -120,6 +122,15 @@ router.post('/:businessId', async (req, res) => {
         negocioId: businessId,
       });
     }
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'purchases',
+      action: 'create',
+      entityType: 'compra',
+      entityId: docRef.id,
+      entityLabel: compraLabel,
+      summary: `Registró compra #${compraLabel} por $${total}${proveedor ? ` · ${proveedor}` : ''}`,
+    });
 
     res.status(201).json({ id: docRef.id, compraLabel });
   } catch (error) {

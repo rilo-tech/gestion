@@ -23,12 +23,19 @@ import {
   SearchableSelectComponent,
   SearchableSelectOption,
 } from '../../shared/components/searchable-select/searchable-select.component';
+import {
+  FORM_CANCEL_CLASS,
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+  FORM_SUBMIT_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { Subscription } from 'rxjs';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
+import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 
 export interface ClientFormSaveEvent {
   id: string;
@@ -45,10 +52,12 @@ export interface ClientFormSaveEvent {
     SearchableSelectComponent,
     ConfigSettingsLinkComponent,
     RouterLink,
+    SelectOnFocusDirective,
   ],
   template: `
     <div class="space-y-4">
       <app-config-settings-link
+        *ngIf="showConfigLink"
         settingsTab="clientes"
         message="¿Falta una etiqueta?"
         linkLabel="Configurala acá"
@@ -79,47 +88,51 @@ export interface ClientFormSaveEvent {
         *ngIf="!loadingClient"
         (submit)="saveClient(); $event.preventDefault()"
         class="space-y-4">
-        <fieldset [disabled]="formReadOnly" class="space-y-4 border-0 p-0 m-0 min-w-0">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Nombre completo</label>
+        <fieldset
+          [disabled]="formReadOnly"
+          [class]="wideLayout
+            ? 'border-0 p-0 m-0 min-w-0 space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-x-6 md:gap-y-4'
+            : 'space-y-4 border-0 p-0 m-0 min-w-0'">
+        <div [class.md:col-span-2]="wideLayout">
+          <label [class]="formLabelClass">Nombre completo</label>
           <input
             [(ngModel)]="clientForm.nombre"
             name="clientNombre"
             required
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">WhatsApp / Teléfono</label>
           <input
             [(ngModel)]="clientForm.telefono"
             name="clientTelefono"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">IG / Web</label>
+          <label [class]="formLabelClass">IG / Web</label>
           <input
             [(ngModel)]="clientForm.redes!.igWeb"
             name="clientIgWeb"
             placeholder="@usuario o https://..."
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+          <label [class]="formLabelClass">Dirección</label>
           <input
             [(ngModel)]="clientForm.direccion"
             name="clientDireccion"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <label [class]="formLabelClass">Email</label>
           <input
             [(ngModel)]="clientForm.email"
             name="clientEmail"
             type="email"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Etiquetas</label>
+          <label [class]="formLabelClass">Etiquetas</label>
 
           <div *ngIf="useEtiquetaList; else freeEtiquetas">
             <div
@@ -160,32 +173,32 @@ export interface ClientFormSaveEvent {
               [(ngModel)]="etiquetasText"
               name="etiquetasText"
               placeholder="Ej. VIP, Mayorista"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              [class]="formControlClass">
             <p class="mt-1 text-xs text-gray-400">Separá varias etiquetas con coma.</p>
           </ng-template>
         </div>
         </fieldset>
 
-        <div class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
           <button
             *ngIf="isEditing && auth.canDeleteRecords"
             type="button"
             (click)="confirmDeleteClient()"
-            class="text-sm font-medium text-red-600 hover:text-red-700">
+            class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
             Eliminar cliente
           </button>
           <div class="flex justify-end gap-3 sm:ml-auto">
             <button
               type="button"
               (click)="cancelled.emit()"
-              class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              [class]="formCancelClass">
               {{ formReadOnly ? 'Cerrar' : 'Cancelar' }}
             </button>
             <button
               *ngIf="!formReadOnly"
               type="submit"
               [disabled]="savingClient"
-              class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+              [class]="formSubmitClass">
               {{ savingClient ? 'Guardando...' : (isEditing ? 'Guardar' : 'Crear cliente') }}
             </button>
           </div>
@@ -198,6 +211,8 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   @Input() clientId: string | null = null;
   @Input() prefillNombre = '';
   @Input() showHistorialLink = true;
+  @Input() wideLayout = false;
+  @Input() showConfigLink = true;
   @Output() saved = new EventEmitter<ClientFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() deleted = new EventEmitter<void>();
@@ -206,6 +221,10 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   readonly auth = inject(AuthService);
+  readonly formControlClass = FORM_CONTROL_CLASS;
+  readonly formLabelClass = FORM_LABEL_CLASS;
+  readonly formSubmitClass = FORM_SUBMIT_CLASS;
+  readonly formCancelClass = FORM_CANCEL_CLASS;
   private configSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);

@@ -19,7 +19,7 @@ import { TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-act
 import { LucideAngularModule } from 'lucide-angular';
 
 type PlatformTab = 'empresas' | 'pagos' | 'planes';
-type PaymentFilter = 'all' | SubscriptionPaymentStatus;
+type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
 @Component({
   selector: 'app-platform',
@@ -122,6 +122,14 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                 type="password"
                 placeholder="Contraseña inicial"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <label class="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900 md:col-span-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  [(ngModel)]="businessDraft.enPrueba"
+                  name="businessDraftEnPrueba"
+                  class="rounded border-violet-300 text-violet-600">
+                Cuenta en período de prueba (no suma en control de cobros)
+              </label>
             </div>
             <div class="mt-4 flex justify-end gap-2">
               <button
@@ -177,7 +185,14 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                   (click)="openBusiness(business)"
                   class="hover:bg-gray-50 transition-colors cursor-pointer">
                   <td class="px-4 sm:px-6 py-3 sm:py-4">
-                    <div class="font-medium text-gray-900 truncate">{{ business.nombre }}</div>
+                    <div class="font-medium text-gray-900 truncate flex items-center gap-2">
+                      <span class="truncate">{{ business.nombre }}</span>
+                      <span
+                        *ngIf="isTrialBusiness(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-violet-100 text-violet-800">
+                        Prueba
+                      </span>
+                    </div>
                     <div class="sm:hidden text-xs text-gray-500 mt-0.5">{{ business.id }}</div>
                   </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm font-mono text-gray-600">{{ business.id }}</td>
@@ -188,8 +203,8 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                   <td class="px-4 sm:px-6 py-3 sm:py-4">
                     <span
                       class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
-                      [ngClass]="getPaymentStatusClass(business.estadoPago)">
-                      {{ paymentStatusLabels[business.estadoPago] }}
+                      [ngClass]="getBillingStatusClass(business)">
+                      {{ getBillingStatusLabel(business) }}
                     </span>
                     <div class="text-xs text-gray-400 mt-0.5">{{ formatPeriodo(business.periodoPagoActual) }}</div>
                   </td>
@@ -240,12 +255,12 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
       <!-- PAGOS -->
       <section *ngIf="activeTab === 'pagos'" class="space-y-4">
         <div class="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-900">
-          Control de cobros mensuales por empresa activa.
+          Control de cobros mensuales por empresa activa (excluye cuentas en prueba).
           Período en curso: <span class="font-semibold">{{ formatPeriodo(currentPeriodoLabel) }}</span>.
           Hasta el día 10 se considera pendiente; después, vencido.
         </div>
 
-        <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div class="grid grid-cols-2 lg:grid-cols-6 gap-3">
           <div class="rounded-xl border border-green-100 bg-green-50 p-4">
             <p class="text-xs font-bold uppercase text-green-600 mb-1">Al día</p>
             <p class="text-2xl font-bold text-green-800">{{ paymentStats.alDia }}</p>
@@ -258,11 +273,15 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
             <p class="text-xs font-bold uppercase text-red-600 mb-1">Vencidos</p>
             <p class="text-2xl font-bold text-red-800">{{ paymentStats.vencido }}</p>
           </div>
+          <div class="rounded-xl border border-violet-100 bg-violet-50 p-4">
+            <p class="text-xs font-bold uppercase text-violet-600 mb-1">En prueba</p>
+            <p class="text-2xl font-bold text-violet-800">{{ paymentStats.enPrueba }}</p>
+          </div>
           <div class="rounded-xl border border-gray-200 bg-white p-4">
             <p class="text-xs font-bold uppercase text-gray-500 mb-1">Cobrado mes</p>
             <p class="text-lg font-bold text-gray-900 tabular-nums">{{ formatMoney(paymentStats.montoCobradoMes) }}</p>
           </div>
-          <div class="rounded-xl border border-orange-100 bg-orange-50 p-4 col-span-2 lg:col-span-1">
+          <div class="rounded-xl border border-orange-100 bg-orange-50 p-4">
             <p class="text-xs font-bold uppercase text-orange-600 mb-1">Por cobrar</p>
             <p class="text-lg font-bold text-orange-800 tabular-nums">{{ formatMoney(paymentStats.montoPendiente) }}</p>
           </div>
@@ -322,7 +341,14 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                   *ngFor="let business of filteredPaymentBusinesses"
                   class="hover:bg-gray-50 transition-colors">
                   <td class="px-4 sm:px-6 py-3 sm:py-4">
-                    <div class="font-medium text-gray-900 truncate">{{ business.nombre }}</div>
+                    <div class="font-medium text-gray-900 truncate flex items-center gap-2">
+                      <span class="truncate">{{ business.nombre }}</span>
+                      <span
+                        *ngIf="isTrialBusiness(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-violet-100 text-violet-800">
+                        Prueba
+                      </span>
+                    </div>
                     <div class="text-xs text-gray-500 mt-0.5 font-mono">{{ business.id }}</div>
                   </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">{{ business.plan.nombre }}</td>
@@ -332,8 +358,8 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                   <td class="px-4 sm:px-6 py-3 sm:py-4">
                     <span
                       class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
-                      [ngClass]="getPaymentStatusClass(business.estadoPago)">
-                      {{ paymentStatusLabels[business.estadoPago] }}
+                      [ngClass]="getBillingStatusClass(business)">
+                      {{ getBillingStatusLabel(business) }}
                     </span>
                     <div class="text-xs text-gray-400 mt-0.5">{{ formatPeriodo(business.periodoPagoActual) }}</div>
                   </td>
@@ -358,7 +384,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
                   <td class="px-4 sm:px-6 py-3 sm:py-4">
                     <div class="flex items-center justify-end gap-1">
                       <button
-                        *ngIf="business.estadoPago !== 'al_dia' && isSubscriptionActive(business)"
+                        *ngIf="countsForBilling(business) && business.estadoPago !== 'al_dia'"
                         type="button"
                         (click)="openBusinessForPayment(business)"
                         title="Registrar pago"
@@ -623,13 +649,28 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
             <p class="text-lg font-bold text-gray-900 tabular-nums">{{ formatMoney(selectedBusiness.montoMensualEsperado) }}</p>
           </div>
           <div class="rounded-xl border border-gray-100 bg-gray-50 p-3">
-            <p class="text-xs text-gray-500">Estado pago ({{ formatPeriodo(selectedBusiness.periodoPagoActual) }})</p>
+            <p class="text-xs text-gray-500">Estado cobro ({{ formatPeriodo(selectedBusiness.periodoPagoActual) }})</p>
             <span
               class="inline-flex mt-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-              [ngClass]="getPaymentStatusClass(selectedBusiness.estadoPago)">
-              {{ paymentStatusLabels[selectedBusiness.estadoPago] }}
+              [ngClass]="getBillingStatusClass(selectedBusiness)">
+              {{ getBillingStatusLabel(selectedBusiness) }}
             </span>
           </div>
+        </div>
+
+        <div class="rounded-xl border border-violet-100 bg-violet-50 p-4 space-y-2">
+          <label class="inline-flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              [checked]="isTrialBusiness(selectedBusiness)"
+              [disabled]="togglingTrialId === selectedBusiness.id"
+              (change)="toggleBusinessTrial(selectedBusiness, $any($event.target).checked)"
+              class="h-4 w-4 rounded border-violet-300 text-violet-600">
+            <span class="text-sm font-semibold text-violet-900">Cuenta en período de prueba</span>
+          </label>
+          <p class="text-xs text-violet-800">
+            Mientras esté activa, la empresa puede usar el sistema pero no se exige pago mensual ni suma en pendientes, vencidos ni por cobrar.
+          </p>
         </div>
 
         <div class="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-2">
@@ -676,6 +717,11 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus;
           <div class="flex items-center justify-between gap-3">
             <h3 class="font-semibold text-gray-900">Registrar pago mensual</h3>
           </div>
+          <p
+            *ngIf="isTrialBusiness(selectedBusiness)"
+            class="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+            Cuenta en prueba: podés registrar un pago igualmente, pero no se exige cobro mientras dure el período de prueba.
+          </p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label class="block text-xs font-medium text-gray-500 mb-1">Período (AAAA-MM)</label>
@@ -775,6 +821,7 @@ export class PlatformComponent implements OnInit {
   savingPlanId: string | null = null;
   registeringPayment = false;
   togglingSubscriptionId: string | null = null;
+  togglingTrialId: string | null = null;
 
   showCreateBusinessForm = false;
   showCreatePlanForm = false;
@@ -791,6 +838,7 @@ export class PlatformComponent implements OnInit {
     id: '',
     nombre: '',
     planId: 'plan_basico',
+    enPrueba: false,
     supervisorNombre: '',
     supervisorEmail: '',
     supervisorLogin: '',
@@ -834,11 +882,12 @@ export class PlatformComponent implements OnInit {
   }
 
   get paymentStats() {
-    const active = this.paymentControlBusinesses.filter(
-      (business) => business.estadoSuscripcion === 'activa'
+    const billable = this.businesses.filter((business) => this.countsForBilling(business));
+    const trialActive = this.businesses.filter(
+      (business) => business.estadoSuscripcion === 'activa' && this.isTrialBusiness(business)
     );
 
-    const montoCobradoMes = active
+    const montoCobradoMes = billable
       .filter(
         (business) =>
           business.estadoPago === 'al_dia' &&
@@ -849,28 +898,28 @@ export class PlatformComponent implements OnInit {
         0
       );
 
-    const montoPendiente = active
+    const montoPendiente = billable
       .filter((business) => business.estadoPago !== 'al_dia')
       .reduce((sum, business) => sum + business.montoMensualEsperado, 0);
 
     return {
-      alDia: active.filter((business) => business.estadoPago === 'al_dia').length,
-      pendiente: active.filter((business) => business.estadoPago === 'pendiente').length,
-      vencido: active.filter((business) => business.estadoPago === 'vencido').length,
+      alDia: billable.filter((business) => business.estadoPago === 'al_dia').length,
+      pendiente: billable.filter((business) => business.estadoPago === 'pendiente').length,
+      vencido: billable.filter((business) => business.estadoPago === 'vencido').length,
+      enPrueba: trialActive.length,
       montoCobradoMes,
       montoPendiente,
     };
   }
 
   get paymentFilterOptions(): { value: PaymentFilter; label: string; count: number | null }[] {
-    const active = this.paymentControlBusinesses.filter(
-      (business) => business.estadoSuscripcion === 'activa'
-    );
+    const billable = this.businesses.filter((business) => this.countsForBilling(business));
     return [
-      { value: 'all', label: 'Todas', count: active.length },
+      { value: 'all', label: 'Facturables', count: billable.length },
       { value: 'vencido', label: 'Vencidas', count: this.paymentStats.vencido },
       { value: 'pendiente', label: 'Pendientes', count: this.paymentStats.pendiente },
       { value: 'al_dia', label: 'Al día', count: this.paymentStats.alDia },
+      { value: 'en_prueba', label: 'En prueba', count: this.paymentStats.enPrueba },
     ];
   }
 
@@ -879,8 +928,16 @@ export class PlatformComponent implements OnInit {
       (business) => business.estadoSuscripcion === 'activa' || this.includeSuspendedInPayments
     );
 
-    if (this.paymentFilter !== 'all') {
-      list = list.filter((business) => business.estadoPago === this.paymentFilter);
+    if (this.paymentFilter === 'en_prueba') {
+      list = list.filter((business) => this.isTrialBusiness(business));
+    } else if (this.paymentFilter !== 'all') {
+      list = list.filter(
+        (business) => this.countsForBilling(business) && business.estadoPago === this.paymentFilter
+      );
+    } else {
+      list = list.filter(
+        (business) => this.isTrialBusiness(business) || this.countsForBilling(business)
+      );
     }
 
     const query = this.paymentSearchQuery.trim().toLowerCase();
@@ -900,6 +957,9 @@ export class PlatformComponent implements OnInit {
     };
 
     return [...list].sort((left, right) => {
+      if (this.isTrialBusiness(left) !== this.isTrialBusiness(right)) {
+        return this.isTrialBusiness(left) ? 1 : -1;
+      }
       const byStatus = statusOrder[left.estadoPago] - statusOrder[right.estadoPago];
       if (byStatus !== 0) return byStatus;
       return left.nombre.localeCompare(right.nombre, 'es');
@@ -968,6 +1028,54 @@ export class PlatformComponent implements OnInit {
       default:
         return 'bg-gray-100 text-gray-600';
     }
+  }
+
+  isTrialBusiness(business: PublicBusinessInfo): boolean {
+    return business.enPrueba === true;
+  }
+
+  countsForBilling(business: PublicBusinessInfo): boolean {
+    return business.estadoSuscripcion === 'activa' && !this.isTrialBusiness(business);
+  }
+
+  getBillingStatusLabel(business: PublicBusinessInfo): string {
+    if (this.isTrialBusiness(business)) return 'En prueba';
+    return this.paymentStatusLabels[business.estadoPago];
+  }
+
+  getBillingStatusClass(business: PublicBusinessInfo): string {
+    if (this.isTrialBusiness(business)) return 'bg-violet-100 text-violet-800';
+    return this.getPaymentStatusClass(business.estadoPago);
+  }
+
+  toggleBusinessTrial(
+    business: PublicBusinessInfo & { planId?: string },
+    enPrueba: boolean
+  ) {
+    if (enPrueba === this.isTrialBusiness(business)) return;
+
+    this.togglingTrialId = business.id;
+    this.platformService.updateBusiness(business.id, { enPrueba }).subscribe({
+      next: (updated) => {
+        this.togglingTrialId = null;
+        business.enPrueba = updated.enPrueba;
+        this.loadBusinesses();
+        if (this.selectedBusiness?.id === business.id) {
+          this.selectedBusiness = {
+            ...updated,
+            planId: updated.planId,
+          };
+        }
+      },
+      error: (err) => {
+        this.togglingTrialId = null;
+        this.loadBusinesses();
+        this.dialogService.alert({
+          title: 'Error',
+          message: err?.error?.error || 'No se pudo actualizar el período de prueba.',
+        });
+      },
+    });
   }
 
   getSubscriptionStatusClass(status: SubscriptionStatus): string {
@@ -1106,6 +1214,7 @@ export class PlatformComponent implements OnInit {
         id,
         nombre,
         planId: this.businessDraft.planId,
+        enPrueba: this.businessDraft.enPrueba,
         supervisor: {
           nombre: this.businessDraft.supervisorNombre.trim(),
           email: this.businessDraft.supervisorEmail.trim().toLowerCase(),
@@ -1114,19 +1223,22 @@ export class PlatformComponent implements OnInit {
         },
       })
       .subscribe({
-        next: () => {
+        next: (result) => {
           this.creatingBusiness = false;
           this.showCreateBusinessForm = false;
+          this.businesses = [...this.businesses, result.business].sort((a, b) =>
+            a.nombre.localeCompare(b.nombre, 'es')
+          );
           this.businessDraft = {
             id: '',
             nombre: '',
             planId: this.plans[0]?.id ?? 'plan_basico',
+            enPrueba: false,
             supervisorNombre: '',
             supervisorEmail: '',
             supervisorLogin: '',
             supervisorPassword: '',
           };
-          this.loadBusinesses();
         },
         error: (err) => {
           this.creatingBusiness = false;
@@ -1144,6 +1256,7 @@ export class PlatformComponent implements OnInit {
       .updateBusiness(business.id, {
         planId: business.planId ?? business.plan.id,
         estadoSuscripcion: business.estadoSuscripcion as SubscriptionStatus,
+        enPrueba: business.enPrueba,
       })
       .subscribe({
         next: (updated) => {

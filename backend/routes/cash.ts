@@ -18,6 +18,8 @@ import {
   usesCashAmbitoSeparationFromCaja,
 } from '../utils/caja-ambitos.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
 
@@ -184,6 +186,14 @@ router.post('/:businessId', async (req, res) => {
       negocioId: businessId,
     });
 
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'cash',
+      action: 'create',
+      entityType: 'movimiento_caja',
+      entityId: docRef.id,
+      summary: `Registró ${tipo} manual de $${monto}: ${concepto}`,
+    });
+
     res.status(201).json({ id: docRef.id });
   } catch (error) {
     console.error('Error creating cash movement:', error);
@@ -235,6 +245,14 @@ router.put('/:businessId/:movementId', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'cash',
+      action: 'update',
+      entityType: 'movimiento_caja',
+      entityId: movementId,
+      summary: `Editó movimiento manual de caja: ${concepto}`,
+    });
+
     res.json({ id: movementId });
   } catch (error) {
     console.error('Error updating cash movement:', error);
@@ -257,6 +275,13 @@ router.delete('/:businessId/:movementId', async (req, res) => {
     await validateCashMovementDeletion(businessId, movementId, existing);
 
     await movementRef.delete();
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'cash',
+      action: 'delete',
+      entityType: 'movimiento_caja',
+      entityId: movementId,
+      summary: `Eliminó movimiento de caja: ${String(existing.concepto ?? movementId)}`,
+    });
     res.json({ id: movementId });
   } catch (error) {
     const mapped = mapDeletionError(error);

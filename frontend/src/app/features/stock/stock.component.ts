@@ -7,7 +7,10 @@ import {
   StockItem,
   StockMovement,
   StockOrigenGrupo,
+  StockReservationRow,
   StockService,
+  getStockDisponible,
+  itemIsLowStock,
 } from '../../core/services/stock.service';
 import {
   AppConfig,
@@ -32,40 +35,52 @@ import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-li
 import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
+  TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { getOrderStatusLabel } from '../../core/constants/order-status';
+import { OrderService, ReservationTargetOrder } from '../../core/services/order.service';
 
-type StockTab = 'productos' | 'movimientos';
+type StockTab = 'productos' | 'movimientos' | 'reservas';
 
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Stock & Inventario</h1>
-          <p class="text-sm sm:text-base text-gray-500">Controlá productos, stock actual y movimientos del inventario.</p>
           <app-config-settings-link
             settingsTab="productos"
             message="¿Falta tipo, talle o color?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
+          <p class="mt-2">
+            <a
+              routerLink="/stock/faltantes"
+              class="text-sm font-semibold text-orange-700 hover:text-orange-900 hover:underline">
+              Ver faltantes para comprar
+            </a>
+          </p>
         </div>
-        <a
-          routerLink="/stock/new"
-          [class]="iconActionLinkClass"
-          aria-label="Nuevo producto"
-          title="Nuevo producto">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          <span class="hidden sm:inline">Nuevo producto</span>
-        </a>
+        <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="stock"></app-activity-log-trigger>
+          <a
+            routerLink="/stock/new"
+            [class]="iconActionLinkClass"
+            aria-label="Nuevo producto"
+            title="Nuevo producto">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+            <span class="hidden sm:inline">Nuevo producto</span>
+          </a>
+        </div>
       </div>
 
       <div
-        class="grid grid-cols-2 gap-3 sm:gap-6 mb-6 sm:mb-8 w-full"
-        [class.lg:grid-cols-3]="!auth.canViewStockCosts"
-        [class.lg:grid-cols-4]="auth.canViewStockCosts">
+        *ngIf="!auth.canViewStockCosts"
+        class="module-summary-kpis module-summary-kpis--3 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
           <p class="text-2xl font-bold">{{ items.length }}</p>
@@ -74,14 +89,28 @@ type StockTab = 'productos' | 'movimientos';
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
           <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
         </div>
-        <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
+          <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
+        </div>
+      </div>
+
+      <div
+        *ngIf="auth.canViewStockCosts"
+        class="module-summary-kpis module-summary-kpis--4 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
+          <p class="text-2xl font-bold">{{ items.length }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
+          <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Valor estimado</p>
           <p class="text-2xl font-bold text-teal-600">{{ '$' + estimatedStockValue }}</p>
         </div>
-        <div
-          class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0"
-          [class.col-span-2]="!auth.canViewStockCosts"
-          [class.lg:col-span-1]="!auth.canViewStockCosts">
+        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
           <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
         </div>
@@ -108,6 +137,21 @@ type StockTab = 'productos' | 'movimientos';
           [class.text-gray-500]="activeTab !== 'movimientos'">
           Movimientos
         </button>
+        <button
+          type="button"
+          (click)="setTab('reservas')"
+          class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors"
+          [class.border-teal-600]="activeTab === 'reservas'"
+          [class.text-teal-700]="activeTab === 'reservas'"
+          [class.border-transparent]="activeTab !== 'reservas'"
+          [class.text-gray-500]="activeTab !== 'reservas'">
+          Reservas
+          <span
+            *ngIf="reservationRows.length > 0"
+            class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+            {{ reservationRows.length }}
+          </span>
+        </button>
       </div>
 
       <div
@@ -125,11 +169,12 @@ type StockTab = 'productos' | 'movimientos';
             placeholder="Buscar producto..."
             class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
         </div>
-        <table class="w-full text-left border-collapse">
+        <div [class]="tableScrollClass">
+        <table class="w-full text-left border-collapse sm:min-w-[640px]">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Stock</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Mín. stock</th>
               <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
@@ -143,19 +188,21 @@ type StockTab = 'productos' | 'movimientos';
               class="hover:bg-gray-50 transition-colors cursor-pointer">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div class="font-medium text-gray-900 truncate">{{ item.nombre }}</div>
-                <div *ngIf="getItemDetails(item)" class="text-xs text-gray-400 truncate">{{ getItemDetails(item) }}</div>
                 <span class="inline-flex sm:hidden mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-teal-50 text-teal-700">
-                  {{ item.tipo || '—' }}
+                  {{ item.categoria || '—' }}
                 </span>
               </td>
               <td class="hidden sm:table-cell px-6 py-4">
                 <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
-                  {{ item.tipo || '—' }}
+                  {{ item.categoria || '—' }}
                 </span>
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div [class]="isLowStock(item) ? 'text-orange-600 font-bold' : 'text-gray-900'">
                   {{ item.stockActual }} u.
+                </div>
+                <div class="text-xs text-gray-500 tabular-nums">
+                  Reservado {{ item.stockReservado || 0 }} · Disp. {{ getStockDisponible(item) }}
                 </div>
                 <div class="text-xs text-gray-400 sm:hidden">Mín. {{ item.stockMinimo || 0 }} u.</div>
               </td>
@@ -174,6 +221,14 @@ type StockTab = 'productos' | 'movimientos';
                     title="Editar"
                     class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                  </button>
+                  <button
+                    *ngIf="auth.canEditRecords"
+                    type="button"
+                    (click)="duplicateItem(item, $event)"
+                    title="Duplicar"
+                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900">
+                    <i-lucide name="copy" class="w-4 h-4"></i-lucide>
                   </button>
                   <button
                     *ngIf="auth.canDeleteRecords"
@@ -224,6 +279,7 @@ type StockTab = 'productos' | 'movimientos';
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -305,12 +361,17 @@ type StockTab = 'productos' | 'movimientos';
                 <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-700">
                   <ng-container *ngIf="movement.pedidoId || movement.ventaId; else motivoFallback">
                     <app-concept-ref-links
-                      [text]="movement.motivo || '—'"
+                      [text]="getMovementMotivoText(movement)"
                       [pedidoId]="movement.pedidoId"
                       [ventaId]="movement.ventaId"
                       [numeroPedidoLabel]="movement.numeroPedidoLabel"
                       [ventaLabel]="movement.ventaLabel">
                     </app-concept-ref-links>
+                    <p
+                      *ngIf="movement.clienteNombre && !isReservationStockMovement(movement)"
+                      class="text-xs text-gray-500 mt-0.5">
+                      Cliente: {{ movement.clienteNombre }}
+                    </p>
                   </ng-container>
                   <ng-template #motivoFallback>
                     <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
@@ -327,7 +388,7 @@ type StockTab = 'productos' | 'movimientos';
                         {{ link.ref }}
                       </a>{{ link.after }}
                     </ng-container>
-                    <ng-template #plainMotivo>{{ movement.motivo || '—' }}</ng-template>
+                    <ng-template #plainMotivo>{{ getMovementMotivoText(movement) }}</ng-template>
                   </ng-template>
                 </td>
                 <td class="hidden sm:table-cell px-6 py-4">
@@ -378,17 +439,140 @@ type StockTab = 'productos' | 'movimientos';
           </table>
         </div>
       </div>
+
+      <div *ngIf="activeTab === 'reservas'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50 space-y-2">
+          <p class="text-sm text-gray-600">
+            Stock apartado para pedidos pendientes. El depósito real baja al pasar a producción.
+          </p>
+          <input
+            [(ngModel)]="reservationSearchQuery"
+            name="reservationSearchQuery"
+            placeholder="Buscar producto, pedido o cliente..."
+            class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+        </div>
+        <div [class]="tableScrollClass">
+          <table class="w-full text-left border-collapse sm:min-w-[760px]">
+            <thead>
+              <tr class="bg-gray-50 border-b border-gray-100">
+                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Producto</th>
+                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Pedido</th>
+                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Cliente</th>
+                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-center">Reservado</th>
+                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Estado pedido</th>
+                <th *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              <tr *ngFor="let row of filteredReservations" class="hover:bg-gray-50">
+                <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900 max-w-[12rem] truncate" [title]="row.productoNombre">
+                  {{ row.productoNombre }}
+                </td>
+                <td class="px-4 sm:px-6 py-3 text-sm">
+                  <a
+                    [routerLink]="['/orders', row.orderId, 'edit']"
+                    class="font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+                    #{{ row.orderLabel }}
+                  </a>
+                </td>
+                <td class="px-4 sm:px-6 py-3 text-sm text-gray-700">{{ row.clienteNombre }}</td>
+                <td class="px-4 sm:px-6 py-3 text-sm text-center tabular-nums font-bold text-teal-700">
+                  {{ row.cantidadActiva }} u.
+                </td>
+                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600">
+                  {{ getOrderStatusLabel(row.orderEstado) }}
+                </td>
+                <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right">
+                  <button
+                    type="button"
+                    (click)="openReservationTransfer(row)"
+                    class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+                    Mover a pedido
+                  </button>
+                </td>
+              </tr>
+              <tr *ngIf="loadingReservations">
+                <td [attr.colspan]="auth.canEditRecords ? 6 : 5" class="px-6 py-12 text-center text-gray-400">Cargando reservas...</td>
+              </tr>
+              <tr *ngIf="!loadingReservations && reservationRows.length === 0">
+                <td [attr.colspan]="auth.canEditRecords ? 6 : 5" class="px-6 py-12 text-center text-gray-400">
+                  No hay stock reservado para pedidos en curso.
+                </td>
+              </tr>
+              <tr *ngIf="!loadingReservations && reservationRows.length > 0 && filteredReservations.length === 0">
+                <td [attr.colspan]="auth.canEditRecords ? 6 : 5" class="px-6 py-12 text-center text-gray-400">
+                  No se encontraron reservas para "{{ reservationSearchQuery }}".
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div
+        *ngIf="transferReservationRow"
+        class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <button type="button" class="absolute inset-0 bg-black/75 backdrop-blur-sm" (click)="closeReservationTransfer()" aria-label="Cerrar"></button>
+        <div class="relative z-[1] w-full max-w-md rounded-xl bg-white border border-gray-100 shadow-2xl p-5 space-y-4">
+          <div>
+            <h3 class="text-base font-bold text-gray-900">Mover reserva a otro pedido</h3>
+            <p class="text-sm text-gray-500 mt-1">
+              Desde #{{ transferReservationRow.orderLabel }} · {{ transferReservationRow.productoNombre }} ·
+              {{ transferReservationRow.cantidadActiva }} u. disponibles para mover.
+            </p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Pedido destino</label>
+            <select
+              class="form-control w-full"
+              [(ngModel)]="transferTargetKey"
+              name="transferTargetKey"
+              [disabled]="loadingTransferTargets || transferringReservation">
+              <option value="">Elegir pedido...</option>
+              <option *ngFor="let target of transferTargets" [value]="reservationTargetKey(target)">
+                #{{ target.orderLabel }} · admite {{ target.cantidadRoom }} u.
+              </option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
+            <input
+              type="text"
+              inputmode="numeric"
+              class="form-control w-full max-w-[6rem] text-center tabular-nums"
+              [(ngModel)]="transferQtyInput"
+              name="transferQtyInput"
+              [disabled]="transferringReservation" />
+          </div>
+          <div class="flex justify-end gap-2 pt-1">
+            <button type="button" (click)="closeReservationTransfer()" class="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              (click)="executeReservationTransfer()"
+              [disabled]="transferringReservation || !transferTargetKey"
+              class="px-4 py-1.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-opacity-90 disabled:opacity-60">
+              {{ transferringReservation ? 'Moviendo...' : 'Transferir' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
 })
 export class StockComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
+  readonly getStockDisponible = getStockDisponible;
+  readonly getOrderStatusLabel = getOrderStatusLabel;
   isDeletableStockMovement = isDeletableStockMovement;
 
   private stockService = inject(StockService);
+  private orderService = inject(OrderService);
   private configService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
@@ -398,14 +582,24 @@ export class StockComponent implements OnInit, OnDestroy {
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   items: StockItem[] = [];
   movements: StockMovement[] = [];
+  reservationRows: StockReservationRow[] = [];
   searchQuery = '';
   movementSearchQuery = '';
+  reservationSearchQuery = '';
+  reservationProductFilter = '';
   movementTipoFilter: 'all' | 'entrada' | 'salida' = 'all';
   movementOrigenFilter: 'all' | string = 'all';
   activeTab: StockTab = 'productos';
   lowStockOnly = false;
   loadingItems = true;
   loadingMovements = true;
+  loadingReservations = true;
+  transferReservationRow: StockReservationRow | null = null;
+  transferTargets: ReservationTargetOrder[] = [];
+  transferTargetKey = '';
+  transferQtyInput = '1';
+  loadingTransferTargets = false;
+  transferringReservation = false;
 
   ngOnInit() {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
@@ -417,15 +611,22 @@ export class StockComponent implements OnInit, OnDestroy {
       const tab = params.get('tab');
       if (tab === 'movimientos') {
         this.activeTab = 'movimientos';
+      } else if (tab === 'reservas') {
+        this.activeTab = 'reservas';
       } else {
         this.activeTab = 'productos';
       }
 
       this.lowStockOnly = params.get('filter') === 'stock-bajo';
+      this.reservationProductFilter = params.get('producto') ?? '';
+      if (this.reservationProductFilter) {
+        this.activeTab = 'reservas';
+      }
     });
 
     this.loadStock();
     this.loadMovements();
+    this.loadReservations();
   }
 
   ngOnDestroy() {
@@ -447,16 +648,40 @@ export class StockComponent implements OnInit, OnDestroy {
 
   setTab(tab: StockTab) {
     this.activeTab = tab;
+    if (tab !== 'reservas') {
+      this.reservationProductFilter = '';
+    }
     this.router.navigate([], {
       relativeTo: this.route,
-      queryParams: { tab: tab === 'productos' ? null : tab },
+      queryParams: {
+        tab: tab === 'productos' ? null : tab,
+        producto: tab === 'reservas' ? this.reservationProductFilter || null : null,
+      },
       queryParamsHandling: 'merge',
       replaceUrl: true,
+    });
+    if (tab === 'reservas') {
+      this.loadReservations(this.reservationProductFilter || undefined);
+    }
+  }
+
+  get filteredReservations(): StockReservationRow[] {
+    let list = this.reservationRows;
+    if (this.reservationProductFilter) {
+      list = list.filter((row) => row.stockItemId === this.reservationProductFilter);
+    }
+    const query = this.reservationSearchQuery.trim().toLowerCase();
+    if (!query) return list;
+    return list.filter((row) => {
+      const haystack = [row.productoNombre, row.orderLabel, row.clienteNombre, row.orderEstado]
+        .map((value) => String(value ?? '').toLowerCase())
+        .join(' ');
+      return haystack.includes(query);
     });
   }
 
   get lowStockCount(): number {
-    return this.items.filter((item) => (item.stockActual || 0) <= (item.stockMinimo || 0)).length;
+    return this.items.filter((item) => itemIsLowStock(item)).length;
   }
 
   get estimatedStockValue(): number {
@@ -486,15 +711,26 @@ export class StockComponent implements OnInit, OnDestroy {
     }
 
     const query = this.searchQuery.trim().toLowerCase();
-    if (!query) return list;
+    if (query) {
+      list = list.filter((item) => {
+        const searchable = [item.nombre, item.nombreBase, item.categoria, item.talle, item.color]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return searchable.includes(query);
+      });
+    }
 
-    return list.filter((item) => {
-      const searchable = [item.nombre, item.nombreBase, item.tipo, item.categoria, item.talle, item.color]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return searchable.includes(query);
-    });
+    return this.sortItemsByName(list);
+  }
+
+  private sortItemsByName(items: StockItem[]): StockItem[] {
+    return [...items].sort((a, b) =>
+      (a.nombre ?? a.nombreBase ?? '').localeCompare(b.nombre ?? b.nombreBase ?? '', 'es', {
+        numeric: true,
+        sensitivity: 'base',
+      })
+    );
   }
 
   get filteredMovements(): StockMovement[] {
@@ -528,12 +764,8 @@ export class StockComponent implements OnInit, OnDestroy {
     return date.toLocaleDateString('es-AR');
   }
 
-  getItemDetails(item: StockItem): string {
-    return [item.categoria, item.talle, item.color].filter(Boolean).join(' · ');
-  }
-
   isLowStock(item: StockItem): boolean {
-    return (item.stockActual || 0) <= (item.stockMinimo || 0);
+    return itemIsLowStock(item);
   }
 
   getOrigenLabel(movement: StockMovement): string {
@@ -555,7 +787,7 @@ export class StockComponent implements OnInit, OnDestroy {
   getMotivoLink(
     movement: StockMovement
   ): { before: string; ref: string; after: string; kind: 'pedido' | 'compra' } | null {
-    const motivo = movement.motivo ?? '';
+    const motivo = this.getMovementMotivoText(movement);
     const pedidoRef = movement.numeroPedidoLabel ? `#${movement.numeroPedidoLabel}` : null;
     if (movement.pedidoId && pedidoRef && motivo.includes(pedidoRef)) {
       const index = motivo.indexOf(pedidoRef);
@@ -592,6 +824,38 @@ export class StockComponent implements OnInit, OnDestroy {
     return null;
   }
 
+  isReservationStockMovement(movement: StockMovement): boolean {
+    const origen = movement.origenTipo ?? '';
+    return (
+      origen === 'pedido_reserva' ||
+      origen === 'pedido_liberacion_reserva' ||
+      origen === 'pedido_transferencia_reserva'
+    );
+  }
+
+  getMovementMotivoText(movement: StockMovement): string {
+    const label = movement.numeroPedidoLabel?.trim();
+    const origen = movement.origenTipo ?? '';
+
+    if (label && origen === 'pedido_reserva') {
+      return `Reserva pedido #${label}`;
+    }
+
+    if (label && origen === 'pedido_liberacion_reserva') {
+      const raw = movement.motivo ?? '';
+      if (raw.includes('cancelado')) {
+        return `Liberación reserva pedido #${label} (cancelado)`;
+      }
+      return `Liberación reserva pedido #${label}`;
+    }
+
+    const motivo = (movement.motivo ?? '').trim();
+    if (!motivo) return '—';
+
+    const clientIdx = motivo.indexOf(' · ');
+    return clientIdx > 0 ? motivo.slice(0, clientIdx) : motivo;
+  }
+
   openOrder(movement: StockMovement) {
     if (!movement.pedidoId) return;
     this.router.navigate(['/orders', movement.pedidoId, 'edit']);
@@ -600,6 +864,12 @@ export class StockComponent implements OnInit, OnDestroy {
   openEditItem(item: StockItem) {
     if (!item.id) return;
     this.router.navigate(['/stock', item.id, 'edit']);
+  }
+
+  duplicateItem(item: StockItem, event: Event) {
+    event.stopPropagation();
+    if (!item.id) return;
+    this.router.navigate(['/stock/new'], { queryParams: { duplicate: item.id } });
   }
 
   confirmDeleteItem(item: StockItem) {
@@ -707,5 +977,103 @@ export class StockComponent implements OnInit, OnDestroy {
         });
       },
     });
+  }
+
+  private loadReservations(stockItemId?: string) {
+    this.loadingReservations = true;
+    this.stockService.getReservations(stockItemId).subscribe({
+      next: (data) => {
+        this.reservationRows = data.rows;
+        this.loadingReservations = false;
+      },
+      error: () => {
+        this.loadingReservations = false;
+      },
+    });
+  }
+
+  reservationTargetKey(target: ReservationTargetOrder): string {
+    return `${target.orderId}:${target.lineIndex}`;
+  }
+
+  private parseReservationTargetKey(key: string): { orderId: string; lineIndex: number } | null {
+    const [orderId, lineIndexRaw] = key.split(':');
+    const lineIndex = Number(lineIndexRaw);
+    if (!orderId || Number.isNaN(lineIndex)) return null;
+    return { orderId, lineIndex };
+  }
+
+  openReservationTransfer(row: StockReservationRow) {
+    this.transferReservationRow = row;
+    this.transferTargetKey = '';
+    this.transferQtyInput = String(row.cantidadActiva);
+    this.transferTargets = [];
+    this.loadingTransferTargets = true;
+
+    this.orderService.getReservationTargets(row.stockItemId, row.orderId).subscribe({
+      next: (targets) => {
+        this.transferTargets = targets;
+        this.loadingTransferTargets = false;
+        if (targets.length === 1) {
+          this.transferTargetKey = this.reservationTargetKey(targets[0]);
+          this.transferQtyInput = String(
+            Math.min(row.cantidadActiva, targets[0].cantidadRoom)
+          );
+        }
+      },
+      error: () => {
+        this.loadingTransferTargets = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudieron buscar pedidos destino.',
+        });
+      },
+    });
+  }
+
+  closeReservationTransfer() {
+    this.transferReservationRow = null;
+    this.transferTargets = [];
+    this.transferTargetKey = '';
+    this.transferQtyInput = '1';
+    this.transferringReservation = false;
+  }
+
+  executeReservationTransfer() {
+    const row = this.transferReservationRow;
+    const parsed = this.parseReservationTargetKey(this.transferTargetKey);
+    if (!row || !parsed) return;
+
+    const cantidad = Number(this.transferQtyInput) || 0;
+    if (cantidad <= 0) return;
+
+    this.transferringReservation = true;
+    this.orderService
+      .transferStockReservation({
+        sourceOrderId: row.orderId,
+        targetOrderId: parsed.orderId,
+        stockItemId: row.stockItemId,
+        cantidad,
+        sourceLineIndex: row.lineIndex,
+        targetLineIndex: parsed.lineIndex,
+      })
+      .subscribe({
+        next: () => {
+          this.transferringReservation = false;
+          this.closeReservationTransfer();
+          this.loadReservations(this.reservationProductFilter || undefined);
+          this.loadStock();
+        },
+        error: (err) => {
+          this.transferringReservation = false;
+          this.dialogService.alert({
+            title: 'No se pudo transferir',
+            message:
+              typeof err.error?.error === 'string'
+                ? err.error.error
+                : 'Revisá la cantidad e intentá de nuevo.',
+          });
+        },
+      });
   }
 }

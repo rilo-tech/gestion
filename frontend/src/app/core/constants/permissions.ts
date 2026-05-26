@@ -19,6 +19,8 @@ export const PERMISSIONS = {
   PRICES_VIEW: 'prices.view',
   PRICES_MANAGE: 'prices.manage',
   PAYABLES_ACCESS: 'payables.access',
+  COLLABORATORS_ACCESS: 'collaborators.access',
+  SETTINGS_MANAGE: 'settings.manage',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -65,6 +67,11 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
     description: 'Acceso al módulo de vencimientos, pagos y obligaciones mensuales.',
   },
   {
+    key: PERMISSIONS.COLLABORATORS_ACCESS,
+    label: 'Ver colaboradores',
+    description: 'Horarios, sueldos, extras y pagos del personal.',
+  },
+  {
     key: PERMISSIONS.ACCOUNT_BALANCE_VIEW,
     label: 'Ver saldos de cuenta corriente',
     description:
@@ -99,6 +106,12 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
     key: PERMISSIONS.REPORTS_VIEW,
     label: 'Ver reportes',
     description: 'Acceso al módulo de reportes.',
+  },
+  {
+    key: PERMISSIONS.SETTINGS_MANAGE,
+    label: 'Gestionar configuración',
+    description:
+      'Acceso a listas del negocio (etiquetas, tipos, conceptos de caja, etc.) y quitar opciones configuradas.',
   },
   {
     key: PERMISSIONS.ORDERS_VIEW_SALE_PRICE,
@@ -159,6 +172,7 @@ export const STAFF_PERMISSION_GROUPS: readonly StaffPermissionGroup[] = [
     permissions: permissionGroup(
       PERMISSIONS.CASH_ACCESS,
       PERMISSIONS.PAYABLES_ACCESS,
+      PERMISSIONS.COLLABORATORS_ACCESS,
       PERMISSIONS.ACCOUNT_BALANCE_VIEW
     ),
   },
@@ -193,7 +207,8 @@ export const STAFF_PERMISSION_GROUPS: readonly StaffPermissionGroup[] = [
     permissions: permissionGroup(
       PERMISSIONS.RECORDS_EDIT,
       PERMISSIONS.RECORDS_DELETE,
-      PERMISSIONS.REPORTS_VIEW
+      PERMISSIONS.REPORTS_VIEW,
+      PERMISSIONS.SETTINGS_MANAGE
     ),
   },
 ];
@@ -207,6 +222,7 @@ export const ROLE_PRESETS: Record<
     permisos: [
       PERMISSIONS.CASH_ACCESS,
       PERMISSIONS.PAYABLES_ACCESS,
+      PERMISSIONS.COLLABORATORS_ACCESS,
       PERMISSIONS.ACCOUNT_BALANCE_VIEW,
       PERMISSIONS.ORDERS_VIEW_ALL,
       PERMISSIONS.ORDERS_VIEW_DELIVERED,
@@ -297,8 +313,12 @@ export function canManageUsers(role: UserRole): boolean {
   return role === 'supervisor';
 }
 
-export function canManageSettings(role: UserRole): boolean {
-  return role === 'supervisor' || role === 'admin';
+export function canManageSettings(
+  role: UserRole,
+  permisos?: readonly Permission[]
+): boolean {
+  if (role === 'supervisor' || role === 'admin') return true;
+  return userHasPermission(role, permisos, PERMISSIONS.SETTINGS_MANAGE);
 }
 
 /** @deprecated Usar PERMISSIONS.ECONOMICS_VIEW en plantillas nuevas. */

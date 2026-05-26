@@ -11,11 +11,12 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 @Component({
   selector: 'app-price-catalog',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule],
+  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, ActivityLogTriggerComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -25,13 +26,16 @@ import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-actio
             Catálogo por detalle (con/sin estampado) y cantidad. Solo precios de venta, sin costos.
           </p>
         </div>
-        <a
-          *ngIf="auth.canManagePriceCatalog"
-          routerLink="/price-catalog/new"
-          class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary text-white text-sm font-semibold px-4 py-2.5 hover:bg-opacity-90 transition-colors whitespace-nowrap self-start">
-          <i-lucide name="plus" class="w-4 h-4 shrink-0"></i-lucide>
-          <span>Nueva referencia</span>
-        </a>
+        <div class="flex gap-2 shrink-0 self-start">
+          <app-activity-log-trigger module="price_catalog"></app-activity-log-trigger>
+          <a
+            *ngIf="auth.canManagePriceCatalog"
+            routerLink="/price-catalog/new"
+            class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary text-white text-sm font-semibold px-4 py-2.5 hover:bg-opacity-90 transition-colors whitespace-nowrap">
+            <i-lucide name="plus" class="w-4 h-4 shrink-0"></i-lucide>
+            <span>Nueva referencia</span>
+          </a>
+        </div>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">

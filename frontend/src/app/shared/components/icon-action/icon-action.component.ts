@@ -16,12 +16,13 @@ type IconActionVariant = 'primary' | 'secondary' | 'danger' | 'outline' | 'ghost
       [class]="buttonClass"
       (click)="clicked.emit($event)">
       <ng-content></ng-content>
-      <span class="hidden sm:inline">{{ label }}</span>
+      <span *ngIf="!iconOnly" class="hidden sm:inline">{{ label }}</span>
     </button>
   `,
 })
 export class IconActionComponent {
   @Input() label = '';
+  @Input() iconOnly = false;
   @Input() type: 'button' | 'submit' = 'button';
   @Input() disabled = false;
   @Input() variant: IconActionVariant = 'primary';
@@ -46,8 +47,22 @@ export class IconActionComponent {
 export const ICON_ACTION_LINK_CLASS =
   'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold p-2.5 sm:px-4 sm:py-2 min-h-[42px] min-w-[42px] sm:min-w-0 transition-colors bg-primary text-white hover:bg-opacity-90';
 
-export const PAGE_SHELL_CLASS = 'p-4 sm:p-6 lg:p-8';
+export const PAGE_SHELL_CLASS = 'p-4 sm:p-6 lg:p-8 w-full min-w-0';
+
+/** Oculto en celular (<640px); usar junto con `grid` en filas de KPIs/resumen. */
+export const MODULE_SUMMARY_KPIS_CLASS = 'module-summary-kpis';
 
 export const TABLE_SCROLL_CLASS = 'overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0';
 
 export const TABLE_MIN_WIDTH_CLASS = 'w-full text-left border-collapse sm:min-w-[640px]';
+
+export const FORM_CONTROL_CLASS =
+  'form-control w-full outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400';
+
+export const FORM_LABEL_CLASS = 'form-label';
+
+export const FORM_SUBMIT_CLASS =
+  'form-btn-primary rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60';
+
+export const FORM_CANCEL_CLASS =
+  'form-btn-secondary rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50';

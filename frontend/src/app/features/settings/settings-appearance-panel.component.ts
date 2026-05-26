@@ -10,7 +10,7 @@ import { ThemePreference, ThemeService } from '../../core/services/theme.service
     <section class="space-y-4 sm:space-y-6 max-w-2xl">
       <div>
         <h2 class="text-xl font-bold text-gray-900">Apariencia</h2>
-        <p class="text-sm text-gray-500 mt-1">
+        <p class="text-sm text-gray-500 mt-1 desc-lg-only">
           Elegí cómo querés ver la aplicación. La preferencia se guarda en tu usuario.
         </p>
       </div>
@@ -26,7 +26,7 @@ import { ThemePreference, ThemeService } from '../../core/services/theme.service
             [class.ring-teal-500/30]="theme.preference() === 'light'"
             [class.border-gray-200]="theme.preference() !== 'light'">
             <span class="block text-sm font-semibold text-gray-900">Fondo claro</span>
-            <span class="block text-xs text-gray-500 mt-1">Ideal para ambientes luminosos.</span>
+            <span class="block text-xs text-gray-500 mt-1 desc-lg-only">Ideal para ambientes luminosos.</span>
             <span class="mt-3 block h-10 rounded-lg bg-gray-50 border border-gray-200"></span>
           </button>
 
@@ -39,7 +39,7 @@ import { ThemePreference, ThemeService } from '../../core/services/theme.service
             [class.ring-teal-500/30]="theme.preference() === 'dark'"
             [class.border-gray-200]="theme.preference() !== 'dark'">
             <span class="block text-sm font-semibold text-gray-900">Fondo oscuro</span>
-            <span class="block text-xs text-gray-500 mt-1">Similar al login, más cómodo de noche.</span>
+            <span class="block text-xs text-gray-500 mt-1 desc-lg-only">Similar al login, más cómodo de noche.</span>
             <span class="mt-3 block h-10 rounded-lg bg-gray-950 border border-gray-700"></span>
           </button>
         </div>

@@ -1,11 +1,14 @@
 import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import {
   AppConfig,
   ConfigFieldKey,
+  ConfigRemovalKind,
+  ConfigUsageHit,
   DEFAULT_APP_CONFIG,
   FieldInputMode,
   CatalogConfigService,
@@ -16,6 +19,9 @@ import {
   DEFAULT_STOCK_TIPOS,
   normalizeCajaAmbitos,
   slugifyCajaAmbitoId,
+  DEFAULT_ORDER_ESTADOS,
+  getOrderStockTriggerOptions,
+  getOrderStatusLabelFromConfig,
 } from '../../core/services/catalog-config.service';
 import { normalizeStockTipos } from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
@@ -48,7 +54,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
     <div class="p-4 sm:p-6 lg:p-8 w-full max-w-7xl mx-auto">
       <div class="mb-6 sm:mb-8">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Configuración</h1>
-        <p class="text-sm sm:text-base text-gray-500 mt-1">
+        <p [class]="configDescClass">
           Agregar y Quitar guardan al instante. Guardar confirma el resto de la configuración.
         </p>
       </div>
@@ -73,10 +79,152 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
       <section *ngIf="activeModuleId === 'pedidos'" class="space-y-4 sm:space-y-6">
         <div>
           <h2 class="text-xl font-bold text-gray-900">Pedidos</h2>
-          <p class="text-sm text-gray-500 mt-1">
-            Elegí cómo cargar costos de personalización en cada ítem del pedido.
+          <p [class]="configDescClass">
+            Estados del flujo, stock reservado o descuento directo, impresión y costos de personalización.
           </p>
         </div>
+
+        <article [class]="configCardClass">
+          <header class="mb-3">
+            <h3 class="text-base font-bold text-gray-900">Estados del pedido</h3>
+            <p [class]="configDescClass">
+              Personalizá cómo se muestran los estados en pedidos e impresiones. Los identificadores internos
+              no se modifican para no romper el flujo del sistema.
+            </p>
+          </header>
+
+          <div class="space-y-2">
+            <div
+              *ngFor="let estado of config.pedidos.estados; let i = index"
+              class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 py-2.5 rounded-lg border border-gray-100 bg-gray-50">
+              <span class="text-[11px] font-mono text-gray-400 shrink-0 sm:w-36">{{ estado.value }}</span>
+              <input
+                [(ngModel)]="config.pedidos.estados[i].label"
+                [name]="'pedidoEstadoLabel' + estado.value"
+                [disabled]="savingPedidos"
+                (blur)="persistPedidosSettings()"
+                class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+              <span
+                *ngIf="estado.sistema"
+                class="text-[11px] font-semibold uppercase tracking-wide text-teal-700 shrink-0">
+                Sistema
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article [class]="configToggleCardClass">
+          <h3 class="text-base font-bold text-gray-900 mb-1">Stock en pedidos</h3>
+          <p [class]="configDescClass + ' mb-4'">
+            Elegí si reservás stock con el checklist antes de descontar depósito, o si preferís descontar
+            todo de una vez al cambiar de estado.
+          </p>
+
+          <div class="space-y-3">
+            <label class="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-100 p-3 hover:bg-gray-50">
+              <input
+                type="radio"
+                name="pedidosModoStock"
+                value="reservado"
+                [(ngModel)]="config.pedidos.modoStock"
+                [disabled]="savingPedidos"
+                (change)="persistPedidosSettings()"
+                class="mt-1 h-4 w-4 border-gray-300 text-primary focus:ring-primary">
+              <span class="min-w-0">
+                <span class="block text-sm font-semibold text-gray-900">Stock reservado (checklist)</span>
+                <span [class]="configDescClass">
+                  «Revisar stock» reserva en depósito y marca faltantes para comprar. El depósito se descuenta
+                  al pasar al estado que elijas abajo (por defecto: en producción).
+                </span>
+              </span>
+            </label>
+
+            <label class="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-100 p-3 hover:bg-gray-50">
+              <input
+                type="radio"
+                name="pedidosModoStock"
+                value="directo"
+                [(ngModel)]="config.pedidos.modoStock"
+                [disabled]="savingPedidos"
+                (change)="persistPedidosSettings()"
+                class="mt-1 h-4 w-4 border-gray-300 text-primary focus:ring-primary">
+              <span class="min-w-0">
+                <span class="block text-sm font-semibold text-gray-900">Descuento directo (sin reservas)</span>
+                <span [class]="configDescClass">
+                  No hay checklist ni stock reservado. Al llegar al estado configurado se descuenta todo el
+                  pedido del depósito de una vez.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div class="mt-4 pt-4 border-t border-gray-100">
+            <label class="block text-sm font-semibold text-gray-900 mb-1">
+              Estado que descuenta stock del depósito
+            </label>
+            <p [class]="configDescClass + ' mb-2'">
+              {{
+                config.pedidos.modoStock === 'reservado'
+                  ? 'Después de revisar stock, el depósito baja al pasar a este estado.'
+                  : 'El depósito baja automáticamente al pasar a este estado, sin revisión previa.'
+              }}
+            </p>
+            <select
+              [(ngModel)]="config.pedidos.estadoDescuentaStock"
+              name="pedidosEstadoDescuentaStock"
+              [disabled]="savingPedidos"
+              (change)="persistPedidosSettings()"
+              class="w-full max-w-md px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+              <option *ngFor="let option of orderStockTriggerOptions" [ngValue]="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+
+          <p class="text-xs rounded-lg px-3 py-2 mt-4" [ngClass]="configStatusBadgeClass(true)">
+            {{
+              config.pedidos.modoStock === 'reservado'
+                ? 'Modo reservado · descuento en «' +
+                  getOrderStatusLabelFromConfig(config.pedidos.estadoDescuentaStock, config.pedidos) +
+                  '»'
+                : 'Modo directo · descuento en «' +
+                  getOrderStatusLabelFromConfig(config.pedidos.estadoDescuentaStock, config.pedidos) +
+                  '»'
+            }}
+          </p>
+        </article>
+
+        <article [class]="configToggleCardClass">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              [(ngModel)]="config.pedidos.impresionDosVias"
+              name="pedidosImpresionDosVias"
+              [disabled]="savingPedidos"
+              (change)="persistPedidosSettings()"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary">
+            <span class="min-w-0">
+              <span class="block text-sm font-semibold text-gray-900">
+                Imprimir dos vías en la misma hoja A4
+              </span>
+              <span [class]="configDescClass">
+                Al imprimir un pedido, genera la misma ficha dos veces en una sola hoja (ideal para
+                entregar una copia al cliente y quedarte con otra). Si está desactivado, imprime una
+                sola vía por hoja.
+              </span>
+            </span>
+          </label>
+
+          <p
+            class="text-xs rounded-lg px-3 py-2 mt-4"
+            [ngClass]="configStatusBadgeClass(config.pedidos.impresionDosVias)">
+            {{
+              config.pedidos.impresionDosVias
+                ? 'Impresión en dos vías activa.'
+                : 'Impresión en una sola vía por hoja.'
+            }}
+          </p>
+        </article>
 
         <article [class]="configToggleCardClass">
           <label class="flex items-start gap-3 cursor-pointer">
@@ -91,7 +239,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               <span class="block text-sm font-semibold text-gray-900">
                 Agregar costos extra detallados
               </span>
-              <span class="block text-sm text-gray-500 mt-1">
+              <span [class]="configDescClass">
                 Muestra el enlace «+ Agregar costo» bajo cada producto para cargar varios conceptos
                 (bordado, diseño, etc.).
               </span>
@@ -113,7 +261,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
       <section *ngIf="activeModuleId === 'caja'" class="space-y-4 sm:space-y-6">
         <div>
           <h2 class="text-xl font-bold text-gray-900">Caja</h2>
-          <p class="text-sm text-gray-500 mt-1">
+          <p [class]="configDescClass">
             Conceptos, orígenes y opciones de la grilla de caja.
           </p>
         </div>
@@ -121,7 +269,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         <article [class]="configCardClass">
           <header class="mb-3">
             <h3 class="text-base font-bold text-gray-900">Etiquetas de caja</h3>
-            <p class="text-sm text-gray-500 mt-1">
+            <p [class]="configDescClass">
               Cada etiqueta aparece como pestaña en Caja y en Cuentas a pagar para separar movimientos y vencimientos. Con una sola (o ninguna) queda unificado.
             </p>
           </header>
@@ -164,7 +312,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                   (change)="persistCajaAmbitos()"
                   [disabled]="savingCajaAmbito"
                   class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
-                <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ ambito.id }}</p>
+                <p [class]="configCodeClass">Código: {{ ambito.id }}</p>
               </div>
               <button
                 type="button"
@@ -174,7 +322,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                 Quitar
               </button>
             </li>
-            <li *ngIf="config.caja.ambitos.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
+            <li *ngIf="config.caja.ambitos.length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg desc-lg-only">
               Agregá etiquetas para separar Caja y Cuentas a pagar en pestañas (ej. Empresa, Casa).
             </li>
           </ul>
@@ -184,7 +332,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         <article [class]="configCardClass">
           <header class="mb-3">
             <h3 class="text-base font-bold text-gray-900">Orígenes</h3>
-            <p class="text-sm text-gray-500 mt-1">
+            <p [class]="configDescClass">
               Etiquetas del combobox de filtro. Por defecto: Ventas, Pedidos y Compra.
             </p>
           </header>
@@ -221,7 +369,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                   (change)="persistCajaOrigenes()"
                   [disabled]="isSavingCajaOrigenes"
                   class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
-                <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ origen.grupo }}</p>
+                <p [class]="configCodeClass">Código: {{ origen.grupo }}</p>
               </div>
               <button
                 type="button"
@@ -240,7 +388,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         <article [class]="configCardClass">
           <header class="mb-3">
             <h3 class="text-base font-bold text-gray-900">Conceptos</h3>
-            <p class="text-sm text-gray-500 mt-1">
+            <p [class]="configDescClass">
               Ej. Venta mostrador (ingreso), Compra insumos (egreso), Diferencia (ambos).
             </p>
           </header>
@@ -308,7 +456,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
       <section *ngIf="activeModuleId === 'stock'" class="space-y-4 sm:space-y-6">
         <div>
           <h2 class="text-xl font-bold text-gray-900">Stock</h2>
-          <p class="text-sm text-gray-500 mt-1">
+          <p [class]="configDescClass">
             Etiquetas de tipos y orígenes en la grilla de movimientos de inventario.
           </p>
         </div>
@@ -317,7 +465,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           <article [class]="configCardClass">
             <header class="mb-3">
               <h3 class="text-base font-bold text-gray-900">Tipos</h3>
-              <p class="text-sm text-gray-500 mt-1">
+              <p [class]="configDescClass">
                 Entrada y salida son fijos; podés cambiar solo el nombre visible.
               </p>
             </header>
@@ -346,7 +494,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           <article [class]="configCardClass">
             <header class="mb-3">
               <h3 class="text-base font-bold text-gray-900">Orígenes</h3>
-              <p class="text-sm text-gray-500 mt-1">
+              <p [class]="configDescClass">
                 Etiquetas del combobox de filtro. Por defecto: Compras, Pedidos/ventas, Carga inicial y Ajuste.
               </p>
             </header>
@@ -383,7 +531,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                     (change)="persistStockOrigenes()"
                     [disabled]="isSavingStockOrigenes"
                     class="w-full px-2 py-1 rounded-md border border-transparent bg-white/80 text-sm font-medium text-teal-900 outline-none focus:border-teal-300 focus:ring-2 focus:ring-teal-200">
-                  <p class="mt-1 text-[11px] text-teal-700/80">Código: {{ origen.grupo }}</p>
+                  <p [class]="configCodeClass">Código: {{ origen.grupo }}</p>
                 </div>
                 <button
                   type="button"
@@ -406,7 +554,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
       <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'stock' && activeModuleId !== 'usuarios'" class="space-y-4 sm:space-y-6">
         <div>
           <h2 class="text-xl font-bold text-gray-900">{{ activeModule!.title }}</h2>
-          <p class="text-sm text-gray-500 mt-1">{{ activeModule!.description }}</p>
+          <p [class]="configDescClass">{{ activeModule!.description }}</p>
         </div>
 
         <div [class]="configGridMultiClass">
@@ -415,7 +563,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             [class]="configCardClass">
             <header class="mb-3">
               <h3 class="text-base font-bold text-gray-900">{{ section.title }}</h3>
-              <p class="text-sm text-gray-500 mt-1">{{ section.description }}</p>
+              <p [class]="configDescClass">{{ section.description }}</p>
             </header>
 
             <p class="mb-3" [ngClass]="configStatusBadgeClass(getList(section.key).length > 0)">
@@ -440,11 +588,11 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               </button>
             </div>
 
-            <ul class="space-y-2 flex-1">
+            <ul [class]="configOptionListClass">
               <li
                 *ngFor="let value of getList(section.key)"
-                [class]="configListItemClass">
-                <span class="text-sm font-medium text-teal-800 break-words min-w-0">
+                [class]="configOptionListItemClass">
+                <span [class]="configOptionTextClass">
                   {{ value }}
                 </span>
                 <button
@@ -455,7 +603,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                   Quitar
                 </button>
               </li>
-              <li *ngIf="getList(section.key).length === 0" class="text-sm text-gray-400 px-1 py-6 text-center border border-dashed border-gray-200 rounded-lg">
+              <li *ngIf="getList(section.key).length === 0" class="text-xs text-gray-400 px-1 py-4 text-center border border-dashed border-gray-200 rounded-lg">
                 Todavía no hay opciones cargadas.
               </li>
             </ul>
@@ -508,22 +656,28 @@ export class SettingsComponent implements OnInit, OnDestroy {
   cajaConceptoTipoDraft: CajaConceptoTipo = 'ingreso';
   getCajaConceptoTipoLabel = getCajaConceptoTipoLabel;
 
+  readonly configDescClass = 'block text-sm text-gray-500 mt-1 desc-lg-only';
+  readonly configCodeClass = 'mt-1 text-[11px] text-teal-700/80 desc-lg-only';
   readonly configCardClass =
-    'bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col h-full';
+    'bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col';
   readonly configToggleCardClass =
     'bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 max-w-3xl';
   readonly configGridPairClass =
     'grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5 items-stretch';
   readonly configGridMultiClass =
-    'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5 items-stretch';
+    'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5 items-start';
   readonly configInputClass =
     'w-full min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50';
   readonly configAddButtonClass =
     'w-full sm:w-auto shrink-0 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60 whitespace-nowrap';
   readonly configListItemClass =
-    'flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg bg-teal-50 border border-teal-100';
+    'flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md bg-teal-50 border border-teal-100';
+  readonly configOptionListClass = 'space-y-1 max-h-52 overflow-y-auto';
+  readonly configOptionListItemClass =
+    'flex items-center justify-between gap-2 px-2 py-1 rounded-md bg-teal-50/80 border border-teal-100/80';
+  readonly configOptionTextClass = 'text-xs font-medium text-teal-800 break-words min-w-0 leading-tight';
   readonly configRemoveButtonClass =
-    'shrink-0 text-teal-700 text-sm font-semibold hover:text-teal-900 disabled:opacity-50';
+    'shrink-0 text-teal-700 text-xs font-semibold hover:text-teal-900 disabled:opacity-50';
 
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
   private saveCooldownTimeout?: ReturnType<typeof setTimeout>;
@@ -532,14 +686,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'productos',
       title: 'Productos',
-      description: 'Opciones para tipo, categoría, talle y color al cargar stock.',
+      description: 'Opciones para categoría, talle y color al cargar stock.',
       sections: [
-        {
-          key: 'productos.tipos',
-          title: 'Tipo',
-          description: 'Agregá los tipos que uses. Se guardan al instante en Nuevo producto.',
-          placeholder: 'Ej. Producto',
-        },
         {
           key: 'productos.categorias',
           title: 'Categoría',
@@ -601,7 +749,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'pedidos',
       title: 'Pedidos',
-      description: 'Costos de personalización en productos del pedido.',
+      description: 'Estados, stock, costos de personalización e impresión.',
       sections: [],
     },
     {
@@ -612,6 +760,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
       supervisorOnly: true,
     },
   ];
+
+  get orderStockTriggerOptions() {
+    return getOrderStockTriggerOptions(this.config.pedidos);
+  }
+
+  readonly getOrderStatusLabelFromConfig = getOrderStatusLabelFromConfig;
 
   get visibleModules(): ConfigModule[] {
     return this.modules.filter((module) => {
@@ -641,9 +795,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   configStatusBadgeClass(active: boolean): string {
-    return active
+    const tone = active
       ? 'text-xs rounded-lg px-3 py-1.5 bg-teal-50 text-teal-800'
       : 'text-xs rounded-lg px-3 py-1.5 bg-gray-50 text-gray-600';
+    return `${tone} desc-lg-only`;
   }
 
   getCajaConceptosHint(): string {
@@ -678,11 +833,17 @@ export class SettingsComponent implements OnInit, OnDestroy {
   removeCajaConcepto(concepto: CajaConcepto) {
     if (this.savingCajaConceptos) return;
 
-    this.config.caja.conceptos = this.config.caja.conceptos.filter(
-      (item) => item !== concepto
+    this.confirmConfigRemoval(
+      'caja.conceptos',
+      concepto.nombre,
+      () => {
+        this.config.caja.conceptos = this.config.caja.conceptos.filter(
+          (item) => item !== concepto
+        );
+        this.syncCajaConceptosMode();
+      },
+      (confirm) => this.persistCajaConceptos(confirm)
     );
-    this.syncCajaConceptosMode();
-    this.persistCajaConceptos();
   }
 
   private syncCajaConceptosMode() {
@@ -690,22 +851,19 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.config.caja.conceptos.length > 0 ? 'lista' : 'texto';
   }
 
-  private persistCajaConceptos() {
+  private persistCajaConceptos(confirmConfigRemovals = false) {
     this.savingCajaConceptos = true;
     this.syncCajaConceptosMode();
 
-    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
         this.syncCajaConceptosMode();
         this.savingCajaConceptos = false;
       },
-      error: () => {
+      error: (error) => {
         this.savingCajaConceptos = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo guardar. Verificá que el servidor y el emulador estén corriendo.',
-        });
+        this.handleConfigSaveError(error, () => this.persistCajaConceptos(true));
       },
     });
   }
@@ -734,11 +892,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
   removeCajaOrigen(origen: { grupo: string; nombre: string }) {
     if (this.savingCajaOrigenes) return;
 
-    this.config.caja.origenes = this.config.caja.origenes.filter((item) => item !== origen);
-    this.persistCajaOrigenes();
+    this.confirmConfigRemoval(
+      'caja.origenes',
+      origen.nombre,
+      () => {
+        this.config.caja.origenes = this.config.caja.origenes.filter((item) => item !== origen);
+      },
+      (confirm) => this.persistCajaOrigenes(confirm),
+      origen.grupo
+    );
   }
 
-  persistCajaOrigenes() {
+  persistCajaOrigenes(confirmConfigRemovals = false) {
     this.savingCajaOrigenes = true;
     this.config.caja.origenes = this.config.caja.origenes
       .map((item) => ({
@@ -748,35 +913,29 @@ export class SettingsComponent implements OnInit, OnDestroy {
       .filter((item) => item.grupo && item.nombre)
       .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 
-    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
         this.savingCajaOrigenes = false;
       },
-      error: () => {
+      error: (error) => {
         this.savingCajaOrigenes = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudieron guardar los orígenes de caja.',
-        });
+        this.handleConfigSaveError(error, () => this.persistCajaOrigenes(true));
       },
     });
   }
 
-  persistCajaAmbitos() {
+  persistCajaAmbitos(confirmConfigRemovals = false) {
     this.savingCajaAmbito = true;
     this.config.caja.ambitos = normalizeCajaAmbitos(this.config.caja);
-    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
         this.savingCajaAmbito = false;
       },
-      error: () => {
+      error: (error) => {
         this.savingCajaAmbito = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudieron guardar las etiquetas de caja.',
-        });
+        this.handleConfigSaveError(error, () => this.persistCajaAmbitos(true));
       },
     });
   }
@@ -811,8 +970,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   removeCajaAmbito(ambito: { id: string; label: string }) {
     if (this.savingCajaAmbito) return;
-    this.config.caja.ambitos = this.config.caja.ambitos.filter((item) => item.id !== ambito.id);
-    this.persistCajaAmbitos();
+
+    this.confirmConfigRemoval(
+      'caja.ambitos',
+      ambito.label,
+      () => {
+        this.config.caja.ambitos = this.config.caja.ambitos.filter((item) => item.id !== ambito.id);
+      },
+      (confirm) => this.persistCajaAmbitos(confirm),
+      ambito.id
+    );
   }
 
   persistStockTipos() {
@@ -858,11 +1025,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
   removeStockOrigen(origen: { grupo: string; nombre: string }) {
     if (this.savingStockOrigenes) return;
 
-    this.config.stock.origenes = this.config.stock.origenes.filter((item) => item !== origen);
-    this.persistStockOrigenes();
+    this.confirmConfigRemoval(
+      'stock.origenes',
+      origen.nombre,
+      () => {
+        this.config.stock.origenes = this.config.stock.origenes.filter((item) => item !== origen);
+      },
+      (confirm) => this.persistStockOrigenes(confirm),
+      origen.grupo
+    );
   }
 
-  persistStockOrigenes() {
+  persistStockOrigenes(confirmConfigRemovals = false) {
     this.savingStockOrigenes = true;
     this.config.stock.origenes = this.config.stock.origenes
       .map((item) => ({
@@ -872,18 +1046,93 @@ export class SettingsComponent implements OnInit, OnDestroy {
       .filter((item) => item.grupo && item.nombre)
       .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 
-    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
         this.savingStockOrigenes = false;
       },
-      error: () => {
+      error: (error) => {
         this.savingStockOrigenes = false;
+        this.handleConfigSaveError(error, () => this.persistStockOrigenes(true));
+      },
+    });
+  }
+
+  private confirmConfigRemoval(
+    kind: ConfigRemovalKind,
+    displayName: string,
+    applyRemoval: () => void,
+    persist: (confirmConfigRemovals: boolean) => void,
+    checkValue?: string
+  ) {
+    const value = (checkValue ?? displayName).trim();
+    this.catalogConfigService.checkConfigUsage(kind, value).subscribe({
+      next: ({ usage }) => {
+        const active = usage.filter((hit) => hit.count > 0);
+        if (active.length === 0) {
+          applyRemoval();
+          persist(false);
+          return;
+        }
+
+        this.dialogService
+          .confirm({
+            title: 'Opción en uso',
+            message: this.buildConfigUsageMessage(displayName, active),
+            confirmLabel: 'Quitar igual',
+          })
+          .subscribe((confirmed) => {
+            if (!confirmed) return;
+            applyRemoval();
+            persist(true);
+          });
+      },
+      error: () => {
         this.dialogService.alert({
           title: 'Error',
-          message: 'No se pudieron guardar los orígenes de stock.',
+          message: 'No se pudo verificar si la opción está en uso.',
         });
       },
+    });
+  }
+
+  private buildConfigUsageMessage(displayName: string, usage: ConfigUsageHit[]): string {
+    const lines = usage.map((hit) => `• ${hit.label}: ${hit.count} registro(s)`).join('\n');
+    return (
+      `"${displayName}" se usa en:\n${lines}\n\n` +
+      'Los registros existentes conservarán ese valor, pero dejará de aparecer en las listas. ' +
+      '¿Quitar de la configuración?'
+    );
+  }
+
+  private handleConfigSaveError(error: unknown, retryWithConfirm: () => void) {
+    const httpError = error as HttpErrorResponse;
+    const body = httpError?.error as {
+      usage?: ConfigUsageHit[];
+      requiresConfirmation?: boolean;
+    };
+
+    if (
+      httpError?.status === 409 &&
+      body?.requiresConfirmation &&
+      Array.isArray(body.usage) &&
+      body.usage.length > 0
+    ) {
+      this.dialogService
+        .confirm({
+          title: 'Opción en uso',
+          message: this.buildConfigUsageMessage('Esta opción', body.usage),
+          confirmLabel: 'Quitar igual',
+        })
+        .subscribe((confirmed) => {
+          if (confirmed) retryWithConfirm();
+        });
+      return;
+    }
+
+    this.dialogService.alert({
+      title: 'Error',
+      message: 'No se pudo guardar. Verificá que el servidor y el emulador estén corriendo.',
     });
   }
 
@@ -915,6 +1164,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.catalogConfigService.getAppConfig().subscribe({
       next: (config) => {
         this.config = config;
+        if (!this.config.pedidos?.estados?.length) {
+          this.config.pedidos.estados = structuredClone(DEFAULT_ORDER_ESTADOS);
+        }
         this.syncAllFieldModes();
         this.syncCajaConceptosMode();
         if (!this.config.caja.origenes?.length) {
@@ -995,12 +1247,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
   removeValue(key: ConfigFieldKey, value: string) {
     if (this.isSavingField(key)) return;
 
-    this.setList(
+    this.confirmConfigRemoval(
       key,
-      this.getList(key).filter((item) => item !== value)
+      value,
+      () => {
+        this.setList(
+          key,
+          this.getList(key).filter((item) => item !== value)
+        );
+        this.syncFieldMode(key);
+      },
+      (confirm) => this.persistField(key, confirm)
     );
-    this.syncFieldMode(key);
-    this.persistField(key);
   }
 
   private syncFieldMode(key: ConfigFieldKey) {
@@ -1031,14 +1289,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.persistConfig(false, undefined, true);
   }
 
-  private persistField(key: ConfigFieldKey) {
-    this.persistConfig(false, key);
+  private persistField(key: ConfigFieldKey, confirmConfigRemovals = false) {
+    this.persistConfig(false, key, false, confirmConfigRemovals);
   }
 
   private persistConfig(
     showSavingState = false,
     fieldKey?: ConfigFieldKey,
-    pedidosOnly = false
+    pedidosOnly = false,
+    confirmConfigRemovals = false
   ) {
     if (showSavingState) {
       this.clearSaveSuccess();
@@ -1055,7 +1314,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.syncCajaConceptosMode();
     }
 
-    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
         if (!pedidosOnly) {
@@ -1074,7 +1333,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
           this.saving = false;
         }
       },
-      error: () => {
+      error: (error) => {
         this.cancelSaveCooldown();
         this.saving = false;
         if (fieldKey) {
@@ -1083,10 +1342,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (pedidosOnly) {
           this.savingPedidos = false;
         }
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo guardar. Verificá que el servidor y el emulador estén corriendo.',
-        });
+        this.handleConfigSaveError(error, () =>
+          this.persistConfig(showSavingState, fieldKey, pedidosOnly, true)
+        );
       },
     });
   }

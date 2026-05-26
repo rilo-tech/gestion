@@ -138,6 +138,21 @@ export async function getSubscriptionPaymentSummary(
   businessId: string,
   precioMensual: number
 ): Promise<SubscriptionPaymentSummary> {
-  const payments = await listSubscriptionPayments(businessId);
+  const periodoActual = currentPeriodo();
+  const [currentSnap, latestSnap] = await Promise.all([
+    paymentsCollection(businessId).where('periodo', '==', periodoActual).limit(1).get(),
+    paymentsCollection(businessId).orderBy('periodo', 'desc').limit(1).get(),
+  ]);
+
+  const pagoActual = currentSnap.empty
+    ? undefined
+    : mapPayment(currentSnap.docs[0].id, currentSnap.docs[0].data() as Record<string, unknown>);
+  const ultimoPago = latestSnap.empty
+    ? undefined
+    : mapPayment(latestSnap.docs[0].id, latestSnap.docs[0].data() as Record<string, unknown>);
+
+  const payments = [pagoActual, ultimoPago].filter(
+    (payment): payment is SubscriptionPaymentRecord => !!payment
+  );
   return resolveSubscriptionPaymentStatus(payments, precioMensual);
 }

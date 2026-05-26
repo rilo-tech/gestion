@@ -14,6 +14,7 @@ import {
   SupplierFormSaveEvent,
 } from '../suppliers/supplier-form-panel.component';
 import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 interface PurchaseDraftLine {
@@ -25,7 +26,7 @@ interface PurchaseDraftLine {
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -37,12 +38,15 @@ interface PurchaseDraftLine {
             <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
           </p>
         </div>
-        <app-icon-action label="Nueva compra" (clicked)="openPurchaseModal()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <div class="flex gap-2 shrink-0">
+          <app-activity-log-trigger module="purchases"></app-activity-log-trigger>
+          <app-icon-action label="Nueva compra" (clicked)="openPurchaseModal()">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </div>
       </div>
 
-      <div *ngIf="auth.canViewEconomics" class="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
+      <div *ngIf="auth.canViewEconomics" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Compras registradas</p>
           <p class="text-2xl font-bold text-gray-900">{{ purchases.length }}</p>
@@ -215,18 +219,18 @@ interface PurchaseDraftLine {
           </div>
         </div>
 
-        <div class="flex justify-end gap-3 mt-6">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
           <button
             type="button"
             (click)="closePurchaseModal()"
-            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Cancelar
           </button>
           <button
             type="button"
             (click)="submitPurchase()"
             [disabled]="savingPurchase"
-            class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+            class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
             {{ savingPurchase ? 'Guardando...' : 'Registrar compra' }}
           </button>
         </div>

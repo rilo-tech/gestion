@@ -24,9 +24,6 @@ interface NavItem {
       <div class="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <div class="min-w-0">
           <h1 class="text-lg sm:text-xl font-bold tracking-tight text-teal-400 truncate">{{ auth.appBrandTitle }}</h1>
-          <p class="text-[11px] text-gray-500 mt-1">
-            {{ auth.isPlatformAdmin ? 'Administración plataforma' : 'Panel de gestión' }}
-          </p>
         </div>
         <button
           type="button"
@@ -72,7 +69,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
   private routerSub?: Subscription;
 
   readonly companyNavItems: NavItem[] = [
-    { path: '/dashboard', icon: 'layout-dashboard', label: 'Dashboard' },
+    { path: '/dashboard', icon: 'layout-dashboard', label: 'Inicio' },
     { path: '/clients', icon: 'users', label: 'Clientes' },
     { path: '/suppliers', icon: 'building-2', label: 'Proveedores' },
     { path: '/stock', icon: 'package', label: 'Stock' },
@@ -83,6 +80,12 @@ export class SidebarComponent implements OnInit, OnDestroy {
       visible: () => this.auth.canAccessPurchases,
     },
     { path: '/orders', icon: 'clipboard-list', label: 'Pedidos' },
+    {
+      path: '/cash',
+      icon: 'wallet',
+      label: 'Caja',
+      visible: () => this.auth.canAccessCash,
+    },
     {
       path: '/sales',
       icon: 'shopping-cart',
@@ -96,16 +99,16 @@ export class SidebarComponent implements OnInit, OnDestroy {
       visible: () => this.auth.canViewPriceCatalog,
     },
     {
-      path: '/cash',
-      icon: 'wallet',
-      label: 'Caja',
-      visible: () => this.auth.canAccessCash,
-    },
-    {
       path: '/payables',
       icon: 'calendar',
       label: 'Cuentas a pagar',
       visible: () => this.auth.canAccessPayables,
+    },
+    {
+      path: '/collaborators',
+      icon: 'user-cog',
+      label: 'Colaboradores',
+      visible: () => this.auth.canAccessCollaborators,
     },
     {
       path: '/reports',

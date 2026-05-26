@@ -13,6 +13,7 @@ export interface CreateBusinessPayload {
   id: string;
   nombre: string;
   planId: string;
+  enPrueba?: boolean;
   supervisor: {
     nombre: string;
     email?: string;
@@ -25,6 +26,7 @@ export interface UpdateBusinessPayload {
   nombre?: string;
   planId?: string;
   estadoSuscripcion?: SubscriptionStatus;
+  enPrueba?: boolean;
 }
 
 export interface CreatePlanPayload {

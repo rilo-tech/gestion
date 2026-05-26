@@ -8,6 +8,13 @@ import {
   normalizeStockOrigenes,
   normalizeStockTipos,
 } from '../utils/stock-movimientos.ts';
+import {
+  diffConfigRemovals,
+  getConfigItemUsage,
+  getRemovalsUsage,
+  type ConfigRemovalKind,
+} from '../utils/config-usage.ts';
+import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import { requireSettingsAccess } from '../auth/middleware.ts';
 
@@ -50,9 +57,7 @@ const DEFAULT_APP_CONFIG = {
       conceptos: 'texto' as FieldInputMode,
     },
   },
-  pedidos: {
-    costosPersonalizacionDetallados: true,
-  },
+  pedidos: normalizeOrderPedidosConfig({}),
   stock: {
     tipos: normalizeStockTipos([]),
     origenes: normalizeStockOrigenes([]),
@@ -211,10 +216,7 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
         ),
       },
     },
-    pedidos: {
-      costosPersonalizacionDetallados:
-        pedidos.costosPersonalizacionDetallados !== false,
-    },
+    pedidos: normalizeOrderPedidosConfig(pedidos),
     stock: {
       tipos: normalizeStockTipos(stock.tipos),
       origenes: normalizeStockOrigenes(stock.origenes),
@@ -245,11 +247,47 @@ router.get('/:businessId', async (req, res) => {
   }
 });
 
+router.post('/:businessId/usage-check', requireSettingsAccess, async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const kind = String(req.body?.kind ?? '').trim() as ConfigRemovalKind;
+    const value = String(req.body?.value ?? '').trim();
+    if (!kind || !value) {
+      return res.status(400).json({ error: 'Faltan kind o value.' });
+    }
+
+    const usage = await getConfigItemUsage(businessId, kind, value);
+    res.json({ usage, inUse: usage.length > 0 });
+  } catch (error) {
+    console.error('Error checking config usage:', error);
+    res.status(500).json({ error: 'No se pudo verificar el uso de la opción.' });
+  }
+});
+
 router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
   try {
     const { businessId } = req.params;
+    const body = { ...(req.body as Record<string, unknown>) };
+    const confirmConfigRemovals = body.confirmConfigRemovals === true;
+    delete body.confirmConfigRemovals;
+
+    const current = await loadAppConfig(businessId);
+    const next = normalizeAppConfig(body);
+    const removals = diffConfigRemovals(current, next);
+
+    if (removals.length > 0 && !confirmConfigRemovals) {
+      const usage = await getRemovalsUsage(businessId, removals);
+      if (usage.length > 0) {
+        return res.status(409).json({
+          error: 'Hay opciones en uso. Confirmá la eliminación para continuar.',
+          usage,
+          requiresConfirmation: true,
+        });
+      }
+    }
+
     const payload = {
-      ...normalizeAppConfig(req.body as Record<string, unknown>),
+      ...next,
       updatedAt: new Date().toISOString(),
     };
 

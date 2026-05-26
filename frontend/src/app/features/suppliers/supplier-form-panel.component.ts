@@ -24,6 +24,7 @@ import {
   SearchableSelectOption,
 } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
+import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { Subscription } from 'rxjs';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
@@ -41,6 +42,7 @@ export interface SupplierFormSaveEvent {
     FormsModule,
     SearchableSelectComponent,
     ConfigSettingsLinkComponent,
+    SelectOnFocusDirective,
   ],
   template: `
     <div class="space-y-4">
@@ -146,26 +148,26 @@ export interface SupplierFormSaveEvent {
         </div>
         </fieldset>
 
-        <div class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
+        <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
           <button
             *ngIf="isEditing && auth.canDeleteRecords"
             type="button"
             (click)="confirmDeleteSupplier()"
-            class="text-sm font-medium text-red-600 hover:text-red-700">
+            class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
             Eliminar proveedor
           </button>
           <div class="flex justify-end gap-3 sm:ml-auto">
             <button
               type="button"
               (click)="cancelled.emit()"
-              class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              class="form-btn-secondary rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
               {{ formReadOnly ? 'Cerrar' : 'Cancelar' }}
             </button>
             <button
               *ngIf="!formReadOnly"
               type="submit"
               [disabled]="savingSupplier"
-              class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+              class="form-btn-primary rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
               {{ savingSupplier ? 'Guardando...' : (isEditing ? 'Guardar' : 'Crear proveedor') }}
             </button>
           </div>

@@ -77,7 +77,7 @@ type CollectMode = 'client' | 'item';
       <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando historial...</div>
 
       <ng-container *ngIf="!loading && account">
-        <div *ngIf="auth.canViewAccountBalance" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        <div *ngIf="auth.canViewAccountBalance" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
             <p
@@ -330,18 +330,18 @@ type CollectMode = 'client' | 'item';
             class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
       </div>
-      <div class="flex justify-end gap-3 mt-6">
+      <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
         <button
           type="button"
           (click)="closeCollectModal()"
-          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
           Cancelar
         </button>
         <button
           type="button"
           (click)="submitCollect()"
           [disabled]="collectSaving"
-          class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+          class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
           {{ collectSaving ? 'Guardando...' : 'Registrar en caja' }}
         </button>
       </div>

@@ -56,8 +56,11 @@ export class PriceCatalogFormComponent implements OnInit {
     }
   }
 
-  onSaved(_event: PriceCatalogFormSaveEvent) {
-    this.router.navigate(['/price-catalog']);
+  onSaved(event: PriceCatalogFormSaveEvent) {
+    if (!this.entryId) {
+      this.entryId = event.id;
+      this.router.navigate(['/price-catalog', event.id, 'edit'], { replaceUrl: true });
+    }
   }
 
   goBack() {
