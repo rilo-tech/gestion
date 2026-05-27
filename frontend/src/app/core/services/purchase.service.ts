@@ -35,6 +35,12 @@ export interface CreatePurchasePayload {
   }>;
 }
 
+export interface PaginatedPurchases {
+  items: Purchase[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -48,6 +54,12 @@ export class PurchaseService {
 
   getPurchases(): Observable<Purchase[]> {
     return this.http.get<Purchase[]>(`/api/purchases/${this.businessId}`);
+  }
+
+  getPurchasesPage(limit = 120, cursor?: string): Observable<PaginatedPurchases> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedPurchases>(`/api/purchases/${this.businessId}`, { params });
   }
 
   createPurchase(payload: CreatePurchasePayload): Observable<{ id: string; compraLabel: string }> {

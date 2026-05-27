@@ -65,6 +65,37 @@ async function loadStockOrigenes(businessId: string): Promise<StockOrigenMovimie
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
+    const paged = String(req.query.paged ?? '') === '1';
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : 120;
+      const cursor = String(req.query.cursor ?? '').trim();
+
+      let query = db
+        .collection(`negocios/${businessId}/stock`)
+        .orderBy('nombre')
+        .limit(limit + 1);
+
+      if (cursor) {
+        const cursorSnap = await db
+          .collection(`negocios/${businessId}/stock`)
+          .doc(cursor)
+          .get();
+        if (cursorSnap.exists) {
+          query = query.startAfter(cursorSnap);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.docs.length > limit;
+      const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+      const items = docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
+      return res.json({ items, nextCursor, hasMore });
+    }
+
     const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
     const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.json(items);

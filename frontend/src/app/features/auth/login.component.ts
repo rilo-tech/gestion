@@ -6,6 +6,11 @@ import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/config/firebase';
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
+import { HttpErrorResponse } from '@angular/common/http';
+import {
+  API_HTML_RESPONSE_MESSAGE,
+  isHtmlInsteadOfJsonError,
+} from '../../core/utils/api-response-error';
 
 @Component({
   selector: 'app-login',
@@ -126,6 +131,32 @@ export class LoginComponent implements OnInit {
   errorMessage = '';
   subscriptionBlockedMessage = '';
 
+  private mapLoginError(err: unknown): string {
+    if (isHtmlInsteadOfJsonError(err)) {
+      return API_HTML_RESPONSE_MESSAGE;
+    }
+
+    if (err instanceof HttpErrorResponse) {
+      const backendMessage =
+        (typeof err.error === 'object' &&
+          err.error !== null &&
+          'error' in err.error &&
+          typeof (err.error as { error?: unknown }).error === 'string' &&
+          (err.error as { error: string }).error) ||
+        '';
+      if (backendMessage) return backendMessage;
+    }
+
+    const message =
+      typeof err === 'object' &&
+      err !== null &&
+      'message' in err &&
+      typeof (err as { message?: unknown }).message === 'string'
+        ? (err as { message: string }).message
+        : '';
+    return message || 'No se pudo iniciar sesión.';
+  }
+
   ngOnInit() {
     if (this.route.snapshot.queryParamMap.get('subscription') === 'inactive') {
       this.subscriptionBlockedMessage =
@@ -151,6 +182,10 @@ export class LoginComponent implements OnInit {
       error: (err) => {
         this.googleRedirectPending = false;
         if (err?.message === 'NO_REDIRECT') {
+          if (pendingBusinessId) {
+            this.errorMessage =
+              'No se pudo completar el ingreso con Google. Verificá que tu email esté cargado y activo en tu usuario de esta empresa.';
+          }
           sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
           return;
         }
@@ -186,7 +221,7 @@ export class LoginComponent implements OnInit {
         },
         error: (err) => {
           this.submitting = false;
-          this.errorMessage = err?.error?.error || 'No se pudo iniciar sesión.';
+          this.errorMessage = this.mapLoginError(err);
         },
       });
   }

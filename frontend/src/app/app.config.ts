@@ -4,6 +4,7 @@ import { AuthService } from './core/services/auth.service';
 import { provideRouter, Routes } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
+import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
 import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, Printer, Clock, Gift, UserCog, Copy, Save } from 'lucide-angular';
@@ -216,7 +217,7 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes),
-    provideHttpClient(withInterceptors([authInterceptor])),
+    provideHttpClient(withInterceptors([authInterceptor, apiBaseInterceptor])),
     importProvidersFrom(
       LucideAngularModule.pick({
         LayoutDashboard,

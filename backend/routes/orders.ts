@@ -749,6 +749,41 @@ async function restoreStockForOrderEstadoRollback(
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
+    const paged = String(req.query.paged ?? '') === '1';
+
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : 120;
+      const cursor = String(req.query.cursor ?? '').trim();
+
+      let query = db
+        .collection(`negocios/${businessId}/pedidos`)
+        .orderBy('createdAt', 'desc')
+        .limit(limit + 1);
+
+      if (cursor) {
+        const cursorSnap = await db
+          .collection(`negocios/${businessId}/pedidos`)
+          .doc(cursor)
+          .get();
+        if (cursorSnap.exists) {
+          query = query.startAfter(cursorSnap);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.docs.length > limit;
+      const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+      const items = pageDocs.map((doc) =>
+        toOrderListSummary(doc.id, doc.data() as Record<string, unknown>)
+      );
+      const nextCursor = hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
+
+      return res.json({ items, nextCursor, hasMore });
+    }
+
     const snapshot = await db.collection(`negocios/${businessId}/pedidos`).get();
     const orders = snapshot.docs
       .map((doc) => toOrderListSummary(doc.id, doc.data() as Record<string, unknown>))

@@ -112,6 +112,12 @@ export interface UpdateSalePayload {
   notas?: string;
 }
 
+export interface PaginatedSales {
+  items: Sale[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -125,6 +131,12 @@ export class SalesService {
 
   getSales(): Observable<Sale[]> {
     return this.http.get<Sale[]>(`/api/sales/${this.businessId}`);
+  }
+
+  getSalesPage(limit = 120, cursor?: string): Observable<PaginatedSales> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedSales>(`/api/sales/${this.businessId}`, { params });
   }
 
   getSale(ventaId: string): Observable<Sale> {

@@ -46,6 +46,15 @@ import {
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  CompactInlineStatsComponent,
+  CompactInlineStat,
+} from '../../shared/components/compact-list/compact-inline-stats.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { getOrderStatusLabel } from '../../core/constants/order-status';
 import { OrderService, ReservationTargetOrder } from '../../core/services/order.service';
 
@@ -54,7 +63,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent, CompactListRowComponent, CompactInlineStatsComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -170,33 +179,67 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
       </div>
 
       <div *ngIf="activeTab === 'productos'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
+        <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
             (ngModelChange)="onProductsSearchChange()"
             name="searchQuery"
             placeholder="Buscar producto..."
-            class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            class="w-full sm:max-w-md px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
         </div>
-        <div [class]="tableScrollClass">
-        <table class="w-full text-left border-collapse sm:min-w-[820px]">
+
+        <div class="sm:hidden native-compact-list">
+          <app-compact-list-row
+            *ngFor="let item of paginatedFilteredItems"
+            (activate)="openEditItem(item)">
+            <div compactTitle class="compact-list-title truncate">{{ item.nombre }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ item.categoria || '—' }}
+              <ng-container *ngIf="!controlsStockItem(item)"> · Servicio</ng-container>
+              <ng-container *ngIf="controlsStockItem(item)"> · Mín {{ item.stockMinimo || 0 }}</ng-container>
+            </div>
+            <app-compact-inline-stats
+              *ngIf="controlsStockItem(item)"
+              compactTrailing
+              [items]="stockMobileStats(item)">
+            </app-compact-inline-stats>
+            <span
+              *ngIf="!controlsStockItem(item)"
+              compactTrailing
+              class="text-[11px] font-medium text-violet-600">
+              Servicio
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loadingItems" [class]="compactListEmptyClass">Cargando productos...</p>
+          <p *ngIf="!loadingItems && items.length === 0" [class]="compactListEmptyClass">
+            No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
+          </p>
+          <p *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" [class]="compactListEmptyClass">
+            <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">No hay productos con stock bajo.</ng-container>
+            <ng-container *ngIf="!lowStockOnly || searchQuery.trim()">
+              No se encontraron productos para "{{ searchQuery }}".
+            </ng-container>
+          </p>
+        </div>
+
+        <div class="hidden sm:block" [class]="tableScrollClass">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
-              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
-              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Unidades en depósito">
+              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
+              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Unidades en depósito">
                 Depósito
               </th>
-              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Apartadas para pedidos">
+              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Apartadas para pedidos">
                 Reservado
               </th>
-              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Libre para usar en pedidos nuevos">
+              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Libre para usar en pedidos nuevos">
                 Disponible
               </th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider sm:hidden">Stock</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Mín. stock</th>
-              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Mín. stock</th>
+              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
+              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -220,51 +263,28 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   class="inline-flex mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-violet-50 text-violet-700">
                   Servicio
                 </span>
-                <span class="inline-flex sm:hidden mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-teal-50 text-teal-700">
-                  {{ item.categoria || '—' }}
-                </span>
               </td>
-              <td class="hidden sm:table-cell px-4 py-4">
+              <td class="px-4 py-4">
                 <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
                   {{ item.categoria || '—' }}
                 </span>
               </td>
-              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums" [class]="stockTotalClass(item)">
+              <td class="px-4 py-4 text-center text-sm tabular-nums" [class]="stockTotalClass(item)">
                 {{ controlsStockItem(item) ? item.stockActual + ' u.' : '—' }}
               </td>
-              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums" [class]="stockReservedClass(item)">
+              <td class="px-4 py-4 text-center text-sm tabular-nums" [class]="stockReservedClass(item)">
                 {{ controlsStockItem(item) ? (item.stockReservado || 0) + ' u.' : '—' }}
               </td>
-              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">
+              <td class="px-4 py-4 text-center text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">
                 {{ controlsStockItem(item) ? getStockDisponible(item) + ' u.' : '—' }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4 sm:hidden">
-                <div *ngIf="controlsStockItem(item); else serviceStockMobile" class="grid grid-cols-3 gap-2 text-center">
-                  <div class="rounded-lg border border-gray-100 bg-gray-50 px-2 py-1.5">
-                    <p class="text-[10px] font-semibold uppercase text-gray-400">Depósito</p>
-                    <p class="text-sm tabular-nums" [class]="stockTotalClass(item)">{{ item.stockActual }} u.</p>
-                  </div>
-                  <div class="rounded-lg border border-amber-100 bg-amber-50/40 px-2 py-1.5">
-                    <p class="text-[10px] font-semibold uppercase text-amber-700/80">Reservado</p>
-                    <p class="text-sm tabular-nums" [class]="stockReservedClass(item)">{{ item.stockReservado || 0 }} u.</p>
-                  </div>
-                  <div class="rounded-lg border border-teal-100 bg-teal-50/50 px-2 py-1.5">
-                    <p class="text-[10px] font-semibold uppercase text-teal-700/80">Disponible</p>
-                    <p class="text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">{{ getStockDisponible(item) }} u.</p>
-                  </div>
-                </div>
-                <ng-template #serviceStockMobile>
-                  <p class="text-xs text-gray-500">Servicio · no controla stock</p>
-                </ng-template>
-                <div *ngIf="controlsStockItem(item)" class="text-xs text-gray-400 mt-2">Mín. {{ item.stockMinimo || 0 }} u.</div>
-              </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 tabular-nums text-center">
+              <td class="px-6 py-4 text-sm text-gray-600 tabular-nums text-center">
                 {{ controlsStockItem(item) ? (item.stockMinimo || 0) + ' u.' : '—' }}
               </td>
-              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
+              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
                 {{ '$' + (item.costo || 0) }}
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center gap-1">
                   <button
                     *ngIf="auth.canEditRecords"
@@ -289,33 +309,15 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 </div>
               </td>
             </tr>
-            <tr *ngIf="loadingItems" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando productos...</td>
-            </tr>
-            <tr *ngIf="loadingItems" class="hidden sm:table-row">
+            <tr *ngIf="loadingItems">
               <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
-              </td>
-            </tr>
-            <tr *ngIf="!loadingItems && items.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loadingItems && items.length === 0">
               <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
               </td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
-                  No hay productos con stock bajo.
-                </ng-container>
-                <ng-container *ngIf="!lowStockOnly || searchQuery.trim()">
-                  No se encontraron productos para "{{ searchQuery }}".
-                </ng-container>
-              </td>
-            </tr>
-            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0">
               <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
                   No hay productos con stock bajo.
@@ -334,6 +336,15 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           [totalItems]="filteredItems.length"
           (pageChange)="productsPage = $event">
         </app-list-pagination>
+        <div class="px-4 sm:px-6 pb-4" *ngIf="itemsHasMore">
+          <button
+            type="button"
+            (click)="loadMoreItems()"
+            [disabled]="loadingMoreItems"
+            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMoreItems ? 'Cargando...' : 'Cargar más productos' }}
+          </button>
+        </div>
       </div>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -371,7 +382,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </app-config-settings-link>
         </div>
         <div class="overflow-x-auto sm:overflow-x-visible">
-          <table class="w-full sm:min-w-[860px] text-left border-collapse">
+          <table [class]="nativeCompactTableClass + ' sm:min-w-[860px]'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -520,15 +531,37 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             placeholder="Buscar producto, pedido o cliente..."
             class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
         </div>
-        <div [class]="tableScrollClass">
-          <table class="w-full text-left border-collapse sm:min-w-[760px]">
+        <div class="sm:hidden native-compact-list">
+          <app-compact-list-row
+            *ngFor="let row of paginatedFilteredReservations"
+            (activate)="openReservationRow(row)">
+            <div compactTitle class="compact-list-title truncate">{{ row.productoNombre }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              #{{ row.orderLabel }} · {{ row.clienteNombre }}
+            </div>
+            <span compactTrailing class="text-[11px] font-bold text-teal-700 tabular-nums">
+              {{ row.cantidadActiva }} u.
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loadingReservations" [class]="compactListEmptyClass">Cargando reservas...</p>
+          <p *ngIf="!loadingReservations && reservationRows.length === 0" [class]="compactListEmptyClass">
+            No hay stock reservado para pedidos en curso.
+          </p>
+          <p
+            *ngIf="!loadingReservations && reservationRows.length > 0 && filteredReservations.length === 0"
+            [class]="compactListEmptyClass">
+            No se encontraron reservas para "{{ reservationSearchQuery }}".
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
+          <table [class]="nativeCompactTableClass + ' sm:min-w-[760px]'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Producto</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Pedido</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Cliente</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-center">Reservado</th>
-                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Estado pedido</th>
+                <th class="px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Estado pedido</th>
                 <th *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Acciones</th>
               </tr>
             </thead>
@@ -552,7 +585,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 <td class="px-4 sm:px-6 py-3 text-sm text-center tabular-nums font-bold text-teal-700">
                   {{ row.cantidadActiva }} u.
                 </td>
-                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600">
+                <td class="px-6 py-3 text-sm text-gray-600">
                   {{ getOrderStatusLabel(row.orderEstado) }}
                 </td>
                 <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
@@ -643,6 +676,8 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
 export class StockComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
@@ -660,6 +695,9 @@ export class StockComponent implements OnInit, OnDestroy {
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   items: StockItem[] = [];
+  itemsHasMore = false;
+  itemsCursor: string | null = null;
+  loadingMoreItems = false;
   movements: StockMovement[] = [];
   reservationRows: StockReservationRow[] = [];
   searchQuery = '';
@@ -927,6 +965,28 @@ export class StockComponent implements OnInit, OnDestroy {
     return 'text-teal-700';
   }
 
+  stockMobileStats(item: StockItem): CompactInlineStat[] {
+    const reserved = Number(item.stockReservado) || 0;
+    const available = getStockDisponible(item);
+    return [
+      {
+        label: 'Dep',
+        value: String(item.stockActual ?? 0),
+        tone: this.isLowStock(item) ? 'warning' : 'default',
+      },
+      {
+        label: 'Res',
+        value: String(reserved),
+        tone: reserved > 0 ? 'warning' : 'muted',
+      },
+      {
+        label: 'Disp',
+        value: String(available),
+        tone: available <= 0 ? 'danger' : 'accent',
+      },
+    ];
+  }
+
   getOrigenLabel(movement: StockMovement): string {
     if (movement.origenLabel) return movement.origenLabel;
     return getStockOrigenNombre(this.appConfig.stock?.origenes, this.resolveOrigenGrupo(movement));
@@ -1126,9 +1186,12 @@ export class StockComponent implements OnInit, OnDestroy {
 
   private loadStock() {
     this.loadingItems = true;
-    this.stockService.getStock().subscribe({
-      next: (items) => {
-        this.items = items;
+    this.productsPage = 1;
+    this.stockService.getStockPage(this.listPageSize).subscribe({
+      next: (page) => {
+        this.items = this.sortItemsByName(page.items);
+        this.itemsHasMore = page.hasMore;
+        this.itemsCursor = page.nextCursor;
         this.loadingItems = false;
       },
       error: () => {
@@ -1137,6 +1200,22 @@ export class StockComponent implements OnInit, OnDestroy {
           title: 'Error',
           message: 'No se pudieron cargar los productos.',
         });
+      },
+    });
+  }
+
+  loadMoreItems() {
+    if (!this.itemsHasMore || this.loadingMoreItems) return;
+    this.loadingMoreItems = true;
+    this.stockService.getStockPage(this.listPageSize, this.itemsCursor ?? undefined).subscribe({
+      next: (page) => {
+        this.items = this.sortItemsByName([...this.items, ...page.items]);
+        this.itemsHasMore = page.hasMore;
+        this.itemsCursor = page.nextCursor;
+        this.loadingMoreItems = false;
+      },
+      error: () => {
+        this.loadingMoreItems = false;
       },
     });
   }

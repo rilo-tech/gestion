@@ -245,6 +245,15 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           [totalItems]="filteredSales.length"
           (pageChange)="salesPage = $event">
         </app-list-pagination>
+        <div class="px-4 sm:px-6 pb-4" *ngIf="salesHasMore">
+          <button
+            type="button"
+            (click)="loadMoreSales()"
+            [disabled]="loadingMoreSales"
+            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMoreSales ? 'Cargando...' : 'Cargar más ventas' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -772,6 +781,9 @@ export class SalesComponent implements OnInit {
   private router = inject(Router);
 
   sales: Sale[] = [];
+  salesHasMore = false;
+  salesCursor: string | null = null;
+  loadingMoreSales = false;
   searchQuery = '';
   salesPage = 1;
   eligibleOrders: EligibleOrderForSale[] = [];
@@ -1726,9 +1738,12 @@ export class SalesComponent implements OnInit {
     }
 
     this.loading = true;
-    this.salesService.getSales().subscribe({
-      next: (sales) => {
-        this.sales = sales;
+    this.salesPage = 1;
+    this.salesService.getSalesPage(this.listPageSize).subscribe({
+      next: (page) => {
+        this.sales = page.items;
+        this.salesHasMore = page.hasMore;
+        this.salesCursor = page.nextCursor;
         this.loading = false;
       },
       error: () => {
@@ -1737,6 +1752,22 @@ export class SalesComponent implements OnInit {
           title: 'Error',
           message: 'No se pudieron cargar las ventas.',
         });
+      },
+    });
+  }
+
+  loadMoreSales() {
+    if (!this.salesHasMore || this.loadingMoreSales) return;
+    this.loadingMoreSales = true;
+    this.salesService.getSalesPage(this.listPageSize, this.salesCursor ?? undefined).subscribe({
+      next: (page) => {
+        this.sales = [...this.sales, ...page.items];
+        this.salesHasMore = page.hasMore;
+        this.salesCursor = page.nextCursor;
+        this.loadingMoreSales = false;
+      },
+      error: () => {
+        this.loadingMoreSales = false;
       },
     });
   }

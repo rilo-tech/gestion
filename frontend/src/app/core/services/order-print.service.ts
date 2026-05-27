@@ -229,6 +229,13 @@ function renderOrderSheet(
 
       ${renderMetaStrip(order, client, clientName)}
 
+      <section class="section products-section">
+        <h2>Productos</h2>
+        ${renderItemsTable(order, options)}
+      </section>
+
+      ${renderBalanceFooter(order, options)}
+
       ${
         order.descripcion?.trim()
           ? `<section class="section description-box">
@@ -237,13 +244,6 @@ function renderOrderSheet(
             </section>`
           : ''
       }
-
-      <section class="section products-section">
-        <h2>Productos</h2>
-        ${renderItemsTable(order, options)}
-      </section>
-
-      ${renderBalanceFooter(order, options)}
 
       <footer class="sheet-footer">
         <span>Impreso ${formatDate(new Date().toISOString())}</span>

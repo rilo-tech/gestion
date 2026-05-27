@@ -25,6 +25,7 @@ import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
 import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { StockItem, StockService } from '../../core/services/stock.service';
 
 @Component({
   selector: 'app-new-product',
@@ -343,6 +344,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.controlaStock = true;
     this.permitirStockNegativo = true;
     this.item = {
+      tipo: '',
       categoria: '',
       talle: '',
       color: '',
@@ -569,6 +571,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
     this.nombreBase = nombreBase;
     this.item = {
+      tipo: product.tipo ?? '',
       categoria: product.categoria ?? '',
       talle: product.talle ?? '',
       color: product.color ?? '',

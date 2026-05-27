@@ -7,7 +7,10 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
 const projectId =
-  process.env.FIREBASE_PROJECT_ID ?? 'gen-lang-client-0481869353';
+  process.env.FIREBASE_PROJECT_ID?.trim() ||
+  process.env.GCLOUD_PROJECT?.trim() ||
+  process.env.GOOGLE_CLOUD_PROJECT?.trim() ||
+  '';
 const useEmulator = process.env.USE_FIRESTORE_EMULATOR === 'true';
 
 if (useEmulator) {
@@ -17,7 +20,12 @@ if (useEmulator) {
 }
 
 if (!getApps().length) {
-  initializeApp({ projectId });
+  // En Cloud Functions usamos automáticamente el proyecto del entorno.
+  if (projectId) {
+    initializeApp({ projectId });
+  } else {
+    initializeApp();
+  }
 }
 
 export const db = getFirestore();

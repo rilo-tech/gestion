@@ -26,11 +26,9 @@ import { LucideAngularModule } from 'lucide-angular';
 
       <div
         class="relative w-full mx-0 sm:mx-auto flex flex-col min-h-0"
-        [class.max-h-[min(92dvh,100%)]="layout === 'dialog'"
-        [class.sm:max-h-[90vh]]="layout === 'dialog'"
         [class.flex-1]="layout === 'fullscreen'"
         [ngClass]="layout === 'dialog'
-          ? maxWidthClass + ' overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-100 bg-white shadow-2xl p-5 sm:p-6'
+          ? maxWidthClass + ' max-h-[min(92dvh,100%)] sm:max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-100 bg-white shadow-2xl p-5 sm:p-6'
           : ''">
         <div
           *ngIf="layout === 'dialog'"
@@ -97,7 +95,7 @@ import { LucideAngularModule } from 'lucide-angular';
           [class.sm:px-6]="layout === 'fullscreen'"
           [class.lg:px-8]="layout === 'fullscreen'"
           [class.py-6]="layout === 'fullscreen'"
-          [class.pb-[max(1rem,env(safe-area-inset-bottom))]]="layout === 'dialog'">
+          [class.pb-safe-dialog]="layout === 'dialog'">
           <div [class.max-w-7xl]="layout === 'fullscreen'" [class.mx-auto]="layout === 'fullscreen'" [class.w-full]="layout === 'fullscreen'">
             <ng-content></ng-content>
           </div>

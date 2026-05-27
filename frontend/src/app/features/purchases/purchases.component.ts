@@ -14,7 +14,12 @@ import {
   SupplierFormSaveEvent,
 } from '../suppliers/supplier-form-panel.component';
 import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
-import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import {
+  IconActionComponent,
+  NATIVE_COMPACT_TABLE_CLASS,
+  PAGE_SHELL_CLASS,
+  TABLE_SCROLL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -64,7 +69,7 @@ interface PurchaseDraftLine {
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div [class]="tableScrollClass">
-        <table class="w-full text-left border-collapse sm:min-w-[560px]">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -115,6 +120,15 @@ interface PurchaseDraftLine {
             </tr>
           </tbody>
         </table>
+        </div>
+        <div class="px-4 sm:px-6 pb-4" *ngIf="purchasesHasMore">
+          <button
+            type="button"
+            (click)="loadMorePurchases()"
+            [disabled]="loadingMorePurchases"
+            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMorePurchases ? 'Cargando...' : 'Cargar más compras' }}
+          </button>
         </div>
       </div>
     </div>
@@ -300,6 +314,7 @@ interface PurchaseDraftLine {
 export class PurchasesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly auth = inject(AuthService);
 
   private purchaseService = inject(PurchaseService);
@@ -313,6 +328,10 @@ export class PurchasesComponent implements OnInit {
   suppliers: Supplier[] = [];
   stockItems: StockItem[] = [];
   loading = true;
+  loadingMorePurchases = false;
+  purchasesHasMore = false;
+  purchasesCursor: string | null = null;
+  readonly listPageSize = 80;
 
   purchaseModalOpen = false;
   detailModalOpen = false;
@@ -560,9 +579,11 @@ export class PurchasesComponent implements OnInit {
 
   private loadPurchases() {
     this.loading = true;
-    this.purchaseService.getPurchases().subscribe({
-      next: (purchases) => {
-        this.purchases = purchases;
+    this.purchaseService.getPurchasesPage(this.listPageSize).subscribe({
+      next: (page) => {
+        this.purchases = page.items;
+        this.purchasesHasMore = page.hasMore;
+        this.purchasesCursor = page.nextCursor;
         this.loading = false;
         this.tryOpenDetailFromQuery();
       },
@@ -574,6 +595,24 @@ export class PurchasesComponent implements OnInit {
         });
       },
     });
+  }
+
+  loadMorePurchases() {
+    if (!this.purchasesHasMore || this.loadingMorePurchases) return;
+    this.loadingMorePurchases = true;
+    this.purchaseService
+      .getPurchasesPage(this.listPageSize, this.purchasesCursor ?? undefined)
+      .subscribe({
+        next: (page) => {
+          this.purchases = [...this.purchases, ...page.items];
+          this.purchasesHasMore = page.hasMore;
+          this.purchasesCursor = page.nextCursor;
+          this.loadingMorePurchases = false;
+        },
+        error: () => {
+          this.loadingMorePurchases = false;
+        },
+      });
   }
 
   private emptyLine(): PurchaseDraftLine {

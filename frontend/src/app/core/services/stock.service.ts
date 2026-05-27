@@ -92,6 +92,12 @@ export interface StockReservationGroup {
   reservas: StockReservationRow[];
 }
 
+export interface PaginatedStockItems {
+  items: StockItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -105,6 +111,12 @@ export class StockService {
 
   getStock(): Observable<StockItem[]> {
     return this.http.get<StockItem[]>(`/api/stock/${this.businessId}`);
+  }
+
+  getStockPage(limit = 120, cursor?: string): Observable<PaginatedStockItems> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedStockItems>(`/api/stock/${this.businessId}`, { params });
   }
 
   getMovements(): Observable<StockMovement[]> {

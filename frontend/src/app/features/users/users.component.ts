@@ -14,6 +14,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -66,7 +67,7 @@ import { LucideAngularModule } from 'lucide-angular';
             [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
-          <table class="w-full text-left border-collapse sm:table-fixed sm:min-w-[640px]">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed sm:min-w-[640px]'">
             <colgroup class="hidden sm:table-column-group">
               <col />
               <col class="w-[8rem]" />
@@ -181,6 +182,7 @@ export class UsersComponent implements OnInit {
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly permissions = PERMISSIONS;
   readonly roleLabels = USER_ROLE_LABELS;

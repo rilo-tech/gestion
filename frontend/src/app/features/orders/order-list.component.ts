@@ -23,6 +23,7 @@ import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
@@ -244,9 +245,13 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
                     *ngIf="auth.canPrintOrders"
                     type="button"
                     (click)="printOrder(order)"
+                    [disabled]="printingOrderId === order.id"
                     title="Imprimir pedido"
-                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900">
-                    <i-lucide name="printer" class="w-4 h-4"></i-lucide>
+                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 disabled:cursor-wait">
+                    <i-lucide
+                      [name]="printingOrderId === order.id ? 'clock' : 'printer'"
+                      class="w-4 h-4"
+                      [class.animate-pulse]="printingOrderId === order.id"></i-lucide>
                   </button>
                   <button
                     *ngIf="canRegisterSale(order) && auth.canCreateSales"
@@ -316,6 +321,15 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
           [totalItems]="displayOrders.length"
           (pageChange)="ordersPage = $event">
         </app-list-pagination>
+        <div class="px-4 sm:px-6 pb-4 flex justify-center" *ngIf="ordersHasMore">
+          <button
+            type="button"
+            (click)="loadMoreOrders()"
+            [disabled]="loadingMore || loading"
+            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMore ? 'Cargando más...' : 'Cargar más pedidos' }}
+          </button>
+        </div>
       </div>
     </div>
   `,
@@ -324,7 +338,7 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
 export class OrderListComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
-  readonly tableMinWidthClass = 'w-full text-left border-collapse sm:min-w-[920px]';
+  readonly tableMinWidthClass = NATIVE_COMPACT_TABLE_CLASS + ' sm:min-w-[920px]';
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
 
@@ -355,6 +369,10 @@ export class OrderListComponent implements OnInit, OnDestroy {
   displayOrders: Order[] = [];
   clientsById = new Map<string, Client>();
   loading = true;
+  loadingMore = false;
+  ordersHasMore = false;
+  ordersNextCursor: string | null = null;
+  printingOrderId: string | null = null;
   searchQuery = '';
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   ordersPage = 1;
@@ -567,18 +585,22 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
     forkJoin({
       clients: this.clientService.getClients(),
-      orders: this.orderService.getOrders(),
+      ordersPage: this.orderService.getOrdersPage(120),
     }).subscribe({
-      next: ({ clients, orders }) => {
+      next: ({ clients, ordersPage }) => {
         this.clientsById = new Map(
           clients.filter((client) => client.id).map((client) => [client.id!, client])
         );
-        this.orders = orders;
+        this.orders = ordersPage.items;
+        this.ordersHasMore = ordersPage.hasMore;
+        this.ordersNextCursor = ordersPage.nextCursor;
         this.loading = false;
         this.rebuildDisplayOrders();
       },
       error: () => {
         this.orders = [];
+        this.ordersHasMore = false;
+        this.ordersNextCursor = null;
         this.loading = false;
         this.rebuildDisplayOrders();
       },
@@ -592,16 +614,38 @@ export class OrderListComponent implements OnInit, OnDestroy {
   loadOrders() {
     this.loading = true;
     this.cdr.markForCheck();
-    this.orderService.getOrders().subscribe({
-      next: (orders) => {
-        this.orders = orders;
+    this.orderService.getOrdersPage(120).subscribe({
+      next: (page) => {
+        this.orders = page.items;
+        this.ordersHasMore = page.hasMore;
+        this.ordersNextCursor = page.nextCursor;
         this.loading = false;
         this.rebuildDisplayOrders();
       },
       error: () => {
         this.orders = [];
+        this.ordersHasMore = false;
+        this.ordersNextCursor = null;
         this.loading = false;
         this.rebuildDisplayOrders();
+      },
+    });
+  }
+
+  loadMoreOrders() {
+    if (!this.ordersHasMore || !this.ordersNextCursor || this.loadingMore || this.loading) return;
+    this.loadingMore = true;
+    this.orderService.getOrdersPage(120, this.ordersNextCursor).subscribe({
+      next: (page) => {
+        this.orders = [...this.orders, ...page.items];
+        this.ordersHasMore = page.hasMore;
+        this.ordersNextCursor = page.nextCursor;
+        this.loadingMore = false;
+        this.rebuildDisplayOrders();
+      },
+      error: () => {
+        this.loadingMore = false;
+        this.cdr.markForCheck();
       },
     });
   }
@@ -637,14 +681,17 @@ export class OrderListComponent implements OnInit, OnDestroy {
   }
 
   printOrder(order: Order) {
-    if (!this.auth.canPrintOrders || !order.id) return;
+    if (!this.auth.canPrintOrders || !order.id || this.printingOrderId === order.id) return;
+    this.printingOrderId = order.id;
 
     this.orderService.getOrder(order.id).subscribe({
       next: (fullOrder) => {
         this.orderPrintService.printOrders([fullOrder], this.clientsById);
+        this.printingOrderId = null;
       },
       error: () => {
         this.orderPrintService.printOrders([order], this.clientsById);
+        this.printingOrderId = null;
       },
     });
   }

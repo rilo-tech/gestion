@@ -28,6 +28,7 @@ import {
   IconActionComponent,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
@@ -133,7 +134,7 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
         </div>
 
         <div [class]="tableScrollClass">
-          <table class="w-full text-left border-collapse sm:min-w-[720px]">
+          <table [class]="nativeCompactTableClass + ' sm:min-w-[720px]'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider w-12">Pagado</th>
@@ -206,7 +207,7 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
           <p class="text-xs text-gray-500 mt-1">Se generan cuotas mes a mes hasta que las desactives.</p>
         </div>
         <div [class]="tableScrollClass">
-          <table class="w-full text-left border-collapse sm:min-w-[560px]">
+          <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Beneficiario</th>
@@ -381,6 +382,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   activeAmbitoTab = '';

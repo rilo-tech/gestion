@@ -1,4 +1,9 @@
+import { API_HTML_RESPONSE_MESSAGE, isHtmlInsteadOfJsonError } from './api-response-error';
+
 export function mapGoogleAuthError(error: unknown): string {
+  if (isHtmlInsteadOfJsonError(error)) {
+    return API_HTML_RESPONSE_MESSAGE;
+  }
   const err = error as {
     code?: string;
     message?: string;

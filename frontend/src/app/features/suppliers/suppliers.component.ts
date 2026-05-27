@@ -12,6 +12,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -73,7 +74,7 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
             [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
-        <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
             <col class="w-[7.5rem]" />
@@ -168,6 +169,15 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           [totalItems]="filteredSuppliers.length"
           (pageChange)="suppliersPage = $event">
         </app-list-pagination>
+        <div class="px-4 sm:px-6 pb-4" *ngIf="suppliersHasMore">
+          <button
+            type="button"
+            (click)="loadMoreSuppliers()"
+            [disabled]="loadingMoreSuppliers"
+            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMoreSuppliers ? 'Cargando...' : 'Cargar más proveedores' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -193,6 +203,7 @@ export class SuppliersComponent implements OnInit {
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
@@ -203,6 +214,9 @@ export class SuppliersComponent implements OnInit {
 
   suppliers: Supplier[] = [];
   loading = true;
+  loadingMoreSuppliers = false;
+  suppliersHasMore = false;
+  suppliersCursor: string | null = null;
   searchQuery = '';
   suppliersPage = 1;
   supplierModalOpen = false;
@@ -303,9 +317,12 @@ export class SuppliersComponent implements OnInit {
 
   loadSuppliers() {
     this.loading = true;
-    this.supplierService.getSuppliers().subscribe({
-      next: (suppliers) => {
-        this.suppliers = suppliers;
+    this.suppliersPage = 1;
+    this.supplierService.getSuppliersPage(this.listPageSize).subscribe({
+      next: (page) => {
+        this.suppliers = page.items;
+        this.suppliersHasMore = page.hasMore;
+        this.suppliersCursor = page.nextCursor;
         this.loading = false;
       },
       error: () => {
@@ -316,6 +333,24 @@ export class SuppliersComponent implements OnInit {
         });
       },
     });
+  }
+
+  loadMoreSuppliers() {
+    if (!this.suppliersHasMore || this.loadingMoreSuppliers) return;
+    this.loadingMoreSuppliers = true;
+    this.supplierService
+      .getSuppliersPage(this.listPageSize, this.suppliersCursor ?? undefined)
+      .subscribe({
+        next: (page) => {
+          this.suppliers = [...this.suppliers, ...page.items];
+          this.suppliersHasMore = page.hasMore;
+          this.suppliersCursor = page.nextCursor;
+          this.loadingMoreSuppliers = false;
+        },
+        error: () => {
+          this.loadingMoreSuppliers = false;
+        },
+      });
   }
 
   getContactDisplay(supplier: Supplier): string {

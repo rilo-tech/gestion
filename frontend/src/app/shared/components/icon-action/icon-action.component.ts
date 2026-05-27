@@ -1,5 +1,6 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { NATIVE_COMPACT_TABLE_CLASS } from '../compact-list/compact-list.constants';
 
 type IconActionVariant = 'primary' | 'secondary' | 'danger' | 'outline' | 'ghost-teal' | 'ghost-red';
 
@@ -61,7 +62,10 @@ export const MODULE_SUMMARY_KPIS_CLASS = 'module-summary-kpis';
 
 export const TABLE_SCROLL_CLASS = 'overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0';
 
-export const TABLE_MIN_WIDTH_CLASS = 'w-full text-left border-collapse sm:min-w-[640px]';
+/** Añadir a tablas de listado: filas bajas y sin thead en celular. */
+export { NATIVE_COMPACT_TABLE_CLASS };
+
+export const TABLE_MIN_WIDTH_CLASS = NATIVE_COMPACT_TABLE_CLASS + ' sm:min-w-[640px]';
 
 export const FORM_CONTROL_CLASS =
   'form-control w-full outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400';

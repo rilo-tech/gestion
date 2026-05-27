@@ -138,6 +138,12 @@ export interface ProximoCobro {
   fechaVencimiento: string;
 }
 
+export interface PaginatedClients {
+  items: Client[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -151,6 +157,12 @@ export class ClientService {
 
   getClients(): Observable<Client[]> {
     return this.http.get<Client[]>(`/api/clients/${this.businessId}`);
+  }
+
+  getClientsPage(limit = 120, cursor?: string): Observable<PaginatedClients> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedClients>(`/api/clients/${this.businessId}`, { params });
   }
 
   getClient(clientId: string): Observable<Client> {

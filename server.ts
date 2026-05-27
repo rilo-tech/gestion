@@ -2,31 +2,8 @@ import express from 'express';
 import { createServer as createViteServer, loadEnv } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import cors from 'cors';
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import dotenv from 'dotenv';
-import clientRoutes from './backend/routes/clients.ts';
-import stockRoutes from './backend/routes/stock.ts';
-import purchaseRoutes from './backend/routes/purchases.ts';
-import orderRoutes from './backend/routes/orders.ts';
-import salesRoutes from './backend/routes/sales.ts';
-import cashRoutes from './backend/routes/cash.ts';
-import catalogConfigRoutes from './backend/routes/catalog-config.ts';
-import priceCatalogRoutes from './backend/routes/price-catalog.ts';
-import supplierRoutes from './backend/routes/suppliers.ts';
-import userRoutes from './backend/routes/users.ts';
-import authRoutes from './backend/routes/auth.ts';
-import businessRoutes from './backend/routes/business.ts';
-import platformRoutes from './backend/routes/platform.ts';
-import payablesRoutes from './backend/routes/payables.ts';
-import activityRoutes from './backend/routes/activity.ts';
-import reportsRoutes from './backend/routes/reports.ts';
-import collaboratorsRoutes from './backend/routes/collaborators.ts';
-import { ensureDefaultSupervisor } from './backend/auth/users.ts';
-import { ensureDefaultBusiness } from './backend/auth/business.ts';
-import { ensureDefaultPlatformAdmin } from './backend/auth/platform.ts';
-import { ensureDefaultPlans } from './backend/auth/plans.ts';
+import { createApiApp } from './backend/create-app.ts';
 
 dotenv.config();
 
@@ -34,55 +11,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
-  const app = express();
+  const app = await createApiApp();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Middleware
-  app.use(cors());
-  app.use(express.json());
-
-  // Firebase Admin Setup (Server-side)
-  // For this environment, we'll try to use the project ID from the config
-  // In a real production apps, you'd use a service account key
-  // But here we can often rely on the environment's default credentials if in Cloud Run
-  // Or we can use the config file for client-side and process.env.GEMINI_API_KEY for AI tasks
-  
-  // NOTE: firebase-admin initialization might need a service account in some environments
-  // Since we don't have one provided, we'll use a placeholder or check if we can use default
-  // Actually, for AI Studio's Firestore, it's often easier to use the Client SDK even in the backend
-  // OR if we use firebase-admin, we might need to set it up specifically.
-  // Given the constraints, I'll provide a structure that can be easily configured.
-
-  // API Routes
-  await ensureDefaultPlatformAdmin();
-  await ensureDefaultPlans();
-  if (process.env.SKIP_DEFAULT_BUSINESS !== 'true') {
-    await ensureDefaultBusiness();
-    await ensureDefaultSupervisor();
-  }
-  app.use('/api/auth', authRoutes);
-  app.use('/api/platform', platformRoutes);
-  app.use('/api/business', businessRoutes);
-  app.use('/api/clients', clientRoutes);
-  app.use('/api/suppliers', supplierRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/stock', stockRoutes);
-  app.use('/api/purchases', purchaseRoutes);
-  app.use('/api/orders', orderRoutes);
-  app.use('/api/sales', salesRoutes);
-  app.use('/api/cash', cashRoutes);
-  app.use('/api/config', catalogConfigRoutes);
-  app.use('/api/price-catalog', priceCatalogRoutes);
-  app.use('/api/payables', payablesRoutes);
-  app.use('/api/activity', activityRoutes);
-  app.use('/api/reports', reportsRoutes);
-  app.use('/api/collaborators', collaboratorsRoutes);
-
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'RILO Gestión API is running' });
-  });
-
-  // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const viteMode = 'development';
     const viteEnv = loadEnv(viteMode, path.resolve(__dirname), '');

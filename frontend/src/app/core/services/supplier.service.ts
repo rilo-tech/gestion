@@ -18,6 +18,12 @@ export interface Supplier {
   debe?: boolean;
 }
 
+export interface PaginatedSuppliers {
+  items: Supplier[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -31,6 +37,12 @@ export class SupplierService {
 
   getSuppliers(): Observable<Supplier[]> {
     return this.http.get<Supplier[]>(`/api/suppliers/${this.businessId}`);
+  }
+
+  getSuppliersPage(limit = 120, cursor?: string): Observable<PaginatedSuppliers> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedSuppliers>(`/api/suppliers/${this.businessId}`, { params });
   }
 
   getSupplier(supplierId: string): Observable<Supplier> {

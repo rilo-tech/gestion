@@ -34,7 +34,7 @@ export interface SearchableSelectOption {
     },
   ],
   template: `
-    <div [class.min-w-[9rem]]="embedded" [class.flex-1]="embedded" *ngIf="hasConfiguredOptions; else plainInput">
+    <div [ngClass]="embedded ? 'min-w-[9rem] flex-1' : ''" *ngIf="hasConfiguredOptions; else plainInput">
       <div class="relative">
         <input
           type="text"

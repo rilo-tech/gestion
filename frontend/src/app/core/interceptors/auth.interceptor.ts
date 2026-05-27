@@ -17,7 +17,11 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const auth = inject(AuthService);
   const router = inject(Router);
   const token = auth.authToken;
-  if (!token || req.url.startsWith('/api/auth/login') || req.url.startsWith('/api/auth/google')) {
+  if (
+    !token ||
+    req.url.includes('/api/auth/login') ||
+    req.url.includes('/api/auth/google')
+  ) {
     return next(req);
   }
 

@@ -586,3 +586,50 @@ html.dark .form-label {
     display: block;
   }
 }
+
+.pb-safe-dialog {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* Listas / tablas compactas en celular (estilo app nativa) */
+@media (max-width: 639px) {
+  .native-compact-table > thead {
+    display: none;
+  }
+
+  .native-compact-table tbody tr {
+    vertical-align: middle;
+  }
+
+  .native-compact-table tbody td {
+    padding: 0.375rem 0.75rem !important;
+    vertical-align: middle;
+  }
+
+  .native-compact-table tbody td:first-child {
+    width: 58%;
+    max-width: 58%;
+  }
+
+  .native-compact-list .compact-list-title {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    color: rgb(17 24 39);
+  }
+
+  html.dark .native-compact-list .compact-list-title {
+    color: rgb(243 244 246) !important;
+  }
+
+  .native-compact-list .compact-list-subtitle {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    color: rgb(107 114 128);
+    margin-top: 0.125rem;
+  }
+
+  html.dark .native-compact-list .compact-list-subtitle {
+    color: rgb(156 163 175) !important;
+  }
+}

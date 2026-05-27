@@ -22,12 +22,35 @@ import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
+const ORIGENES_CACHE_TTL_MS = 60_000;
+const cashOrigenesCache = new Map<
+  string,
+  { data: CajaOrigen[]; expiresAt: number }
+>();
 
 async function loadCashOrigenes(businessId: string): Promise<CajaOrigen[]> {
+  const cached = cashOrigenesCache.get(businessId);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+
   const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
-  if (!appDoc.exists) return normalizeCajaOrigenes([]);
+  if (!appDoc.exists) {
+    const normalized = normalizeCajaOrigenes([]);
+    cashOrigenesCache.set(businessId, {
+      data: normalized,
+      expiresAt: now + ORIGENES_CACHE_TTL_MS,
+    });
+    return normalized;
+  }
   const caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
-  return normalizeCajaOrigenes(caja.origenes);
+  const normalized = normalizeCajaOrigenes(caja.origenes);
+  cashOrigenesCache.set(businessId, {
+    data: normalized,
+    expiresAt: now + ORIGENES_CACHE_TTL_MS,
+  });
+  return normalized;
 }
 
 async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
@@ -103,17 +126,24 @@ async function enrichMovements(
   }
 
   const orderMap = new Map<string, { numeroPedido?: number; numeroPedidoLabel?: string }>();
-  await Promise.all(
-    [...orderIds].map(async (orderId) => {
-      const snap = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
-      if (!snap.exists) return;
-      const data = snap.data() ?? {};
-      orderMap.set(orderId, {
-        numeroPedido: data.numeroPedido,
-        numeroPedidoLabel: data.numeroPedidoLabel,
-      });
-    })
-  );
+  if (orderIds.size > 0) {
+    const orderRefs = [...orderIds].map((orderId) =>
+      db.collection(`negocios/${businessId}/pedidos`).doc(orderId)
+    );
+    const CHUNK_SIZE = 200;
+    for (let index = 0; index < orderRefs.length; index += CHUNK_SIZE) {
+      const refsChunk = orderRefs.slice(index, index + CHUNK_SIZE);
+      const snaps = await db.getAll(...refsChunk);
+      for (const snap of snaps) {
+        if (!snap.exists) continue;
+        const data = snap.data() ?? {};
+        orderMap.set(snap.id, {
+          numeroPedido: data.numeroPedido,
+          numeroPedidoLabel: data.numeroPedidoLabel,
+        });
+      }
+    }
+  }
 
   return movements.map((movement) => {
     const pedidoId = movement.pedidoId ? String(movement.pedidoId) : null;
@@ -138,6 +168,39 @@ async function enrichMovements(
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
+    const paged = String(req.query.paged ?? '') === '1';
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : 120;
+      const cursor = String(req.query.cursor ?? '').trim();
+
+      let query = db
+        .collection(`negocios/${businessId}/movimientos_caja`)
+        .orderBy('fecha', 'desc')
+        .limit(limit + 1);
+
+      if (cursor) {
+        const cursorSnap = await db
+          .collection(`negocios/${businessId}/movimientos_caja`)
+          .doc(cursor)
+          .get();
+        if (cursorSnap.exists) {
+          query = query.startAfter(cursorSnap);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.docs.length > limit;
+      const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+      const movements = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const enriched = await enrichMovements(businessId, movements);
+      const nextCursor =
+        hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
+      return res.json({ items: enriched, nextCursor, hasMore });
+    }
+
     const snapshot = await db
       .collection(`negocios/${businessId}/movimientos_caja`)
       .orderBy('fecha', 'desc')

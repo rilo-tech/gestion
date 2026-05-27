@@ -156,6 +156,12 @@ export interface OrderUpdateResult {
   stockOperaciones?: Array<{ fecha: string; tipo: string; total: number; detalle: string }>;
 }
 
+export interface PaginatedResponse<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface OrderStockPreparationLine {
   lineIndex: number;
   stockItemId: string;
@@ -262,6 +268,12 @@ export class OrderService {
 
   getOrders(): Observable<Order[]> {
     return this.http.get<Order[]>(`/api/orders/${this.businessId}`);
+  }
+
+  getOrdersPage(limit = 120, cursor?: string): Observable<PaginatedResponse<Order>> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedResponse<Order>>(`/api/orders/${this.businessId}`, { params });
   }
 
   getOrder(orderId: string): Observable<Order> {

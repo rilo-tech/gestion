@@ -11,6 +11,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -77,7 +78,7 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
             [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
-        <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
             <col class="w-[7.5rem]" />
@@ -180,6 +181,15 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           [totalItems]="filteredClients.length"
           (pageChange)="clientsPage = $event">
         </app-list-pagination>
+        <div class="px-4 sm:px-6 pb-4" *ngIf="clientsHasMore">
+          <button
+            type="button"
+            (click)="loadMoreClients()"
+            [disabled]="loadingMoreClients"
+            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {{ loadingMoreClients ? 'Cargando...' : 'Cargar más clientes' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -205,6 +215,7 @@ export class ClientsComponent implements OnInit {
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
@@ -215,6 +226,9 @@ export class ClientsComponent implements OnInit {
 
   clients: Client[] = [];
   loading = true;
+  loadingMoreClients = false;
+  clientsHasMore = false;
+  clientsCursor: string | null = null;
   searchQuery = '';
   clientsPage = 1;
   clientModalOpen = false;
@@ -318,9 +332,12 @@ export class ClientsComponent implements OnInit {
 
   loadClients() {
     this.loading = true;
-    this.clientService.getClients().subscribe({
+    this.clientsPage = 1;
+    this.clientService.getClientsPage(this.listPageSize).subscribe({
       next: (clients) => {
-        this.clients = clients;
+        this.clients = clients.items;
+        this.clientsHasMore = clients.hasMore;
+        this.clientsCursor = clients.nextCursor;
         this.loading = false;
       },
       error: () => {
@@ -329,6 +346,22 @@ export class ClientsComponent implements OnInit {
           title: 'Error',
           message: 'No se pudieron cargar los clientes.',
         });
+      },
+    });
+  }
+
+  loadMoreClients() {
+    if (!this.clientsHasMore || this.loadingMoreClients) return;
+    this.loadingMoreClients = true;
+    this.clientService.getClientsPage(this.listPageSize, this.clientsCursor ?? undefined).subscribe({
+      next: (page) => {
+        this.clients = [...this.clients, ...page.items];
+        this.clientsHasMore = page.hasMore;
+        this.clientsCursor = page.nextCursor;
+        this.loadingMoreClients = false;
+      },
+      error: () => {
+        this.loadingMoreClients = false;
       },
     });
   }
