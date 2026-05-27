@@ -1,7 +1,7 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { PurchaseService, CreatePurchasePayload, Purchase } from '../../core/services/purchase.service';
 import { Supplier, SupplierService } from '../../core/services/supplier.service';
@@ -13,6 +13,7 @@ import {
   SupplierFormPanelComponent,
   SupplierFormSaveEvent,
 } from '../suppliers/supplier-form-panel.component';
+import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -26,7 +27,7 @@ interface PurchaseDraftLine {
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent, ModalFormFooterComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -74,7 +75,10 @@ interface PurchaseDraftLine {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr *ngFor="let purchase of purchases" class="hover:bg-gray-50 transition-colors">
+            <tr
+              *ngFor="let purchase of purchases"
+              (click)="openPurchaseDetail(purchase)"
+              class="hover:bg-gray-50 transition-colors cursor-pointer">
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(purchase.fecha) }}
               </td>
@@ -219,21 +223,12 @@ interface PurchaseDraftLine {
           </div>
         </div>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
-          <button
-            type="button"
-            (click)="closePurchaseModal()"
-            class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            type="button"
-            (click)="submitPurchase()"
-            [disabled]="savingPurchase"
-            class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-            {{ savingPurchase ? 'Guardando...' : 'Registrar compra' }}
-          </button>
-        </div>
+        <app-modal-form-footer
+          [saving]="savingPurchase"
+          primaryLabel="Registrar compra"
+          (cancelClick)="closePurchaseModal()"
+          (primaryClick)="submitPurchase()">
+        </app-modal-form-footer>
     </app-transaction-modal>
 
     <app-transaction-modal
@@ -248,6 +243,58 @@ interface PurchaseDraftLine {
         (cancelled)="closeSupplierModal()">
       </app-supplier-form-panel>
     </app-transaction-modal>
+
+    <app-transaction-modal
+      [open]="detailModalOpen"
+      [title]="detailModalTitle"
+      subtitle="Detalle de la compra registrada. No se puede modificar después de cargar."
+      maxWidthClass="max-w-2xl"
+      (closed)="closePurchaseDetail()">
+      <div *ngIf="detailPurchase as purchase" class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <div>
+            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Fecha</p>
+            <p class="text-gray-900">{{ formatDate(purchase.fecha) }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Proveedor</p>
+            <p class="text-gray-900">{{ purchase.proveedor?.trim() || '—' }}</p>
+          </div>
+        </div>
+        <div *ngIf="purchase.notas?.trim()" class="text-sm">
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Notas</p>
+          <p class="text-gray-700">{{ purchase.notas }}</p>
+        </div>
+        <div class="rounded-xl border border-gray-100 overflow-hidden">
+          <div class="px-4 py-3 bg-gray-50 border-b border-gray-100 text-sm font-semibold text-gray-700">
+            Productos
+          </div>
+          <div class="divide-y divide-gray-50">
+            <div
+              *ngFor="let line of purchase.items"
+              class="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
+              <div class="min-w-0">
+                <p class="font-medium text-gray-900 truncate">{{ line.productoNombre || 'Producto' }}</p>
+                <p class="text-xs text-gray-500 tabular-nums">
+                  {{ line.cantidad }} × {{ '$' + line.costoUnitario }}
+                </p>
+              </div>
+              <a
+                *ngIf="line.productoId"
+                [routerLink]="['/stock', line.productoId, 'edit']"
+                (click)="$event.stopPropagation()"
+                class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
+                Ver producto
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center rounded-xl bg-gray-50 px-4 py-3">
+          <span class="text-sm text-gray-500">Total</span>
+          <span class="text-lg font-bold text-gray-900 tabular-nums">{{ '$' + (purchase.total || 0) }}</span>
+        </div>
+      </div>
+    </app-transaction-modal>
   `,
 })
 export class PurchasesComponent implements OnInit {
@@ -260,6 +307,7 @@ export class PurchasesComponent implements OnInit {
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
+  private route = inject(ActivatedRoute);
 
   purchases: Purchase[] = [];
   suppliers: Supplier[] = [];
@@ -267,6 +315,8 @@ export class PurchasesComponent implements OnInit {
   loading = true;
 
   purchaseModalOpen = false;
+  detailModalOpen = false;
+  detailPurchase: Purchase | null = null;
   supplierModalOpen = false;
   supplierPrefillNombre = '';
   pendingSupplierName = '';
@@ -285,6 +335,12 @@ export class PurchasesComponent implements OnInit {
       }));
   }
 
+  get detailModalTitle(): string {
+    if (!this.detailPurchase) return 'Detalle de compra';
+    const label = this.detailPurchase.compraLabel || this.detailPurchase.id?.slice(-6);
+    return label ? `Compra #${label}` : 'Detalle de compra';
+  }
+
   ngOnInit() {
     if (!this.auth.canViewStockCosts) {
       this.router.navigate(['/dashboard']);
@@ -295,6 +351,18 @@ export class PurchasesComponent implements OnInit {
     this.stockService.getStock().subscribe({
       next: (items) => (this.stockItems = items),
     });
+
+    this.route.queryParamMap.subscribe((params) => {
+      const detailId = params.get('detail');
+      if (!detailId) return;
+      this.openPurchaseDetailById(detailId);
+    });
+  }
+
+  private tryOpenDetailFromQuery() {
+    const detailId = this.route.snapshot.queryParamMap.get('detail');
+    if (!detailId) return;
+    this.openPurchaseDetailById(detailId);
   }
 
   private loadSuppliers() {
@@ -350,6 +418,35 @@ export class PurchasesComponent implements OnInit {
     this.pendingSupplierName = '';
     this.draftLines = [this.emptyLine()];
     this.purchaseModalOpen = true;
+  }
+
+  openPurchaseDetail(purchase: Purchase) {
+    this.detailPurchase = purchase;
+    this.detailModalOpen = true;
+  }
+
+  openPurchaseDetailById(purchaseId: string) {
+    const purchase = this.purchases.find((entry) => entry.id === purchaseId);
+    if (purchase) {
+      this.openPurchaseDetail(purchase);
+      this.clearDetailQueryParam();
+    }
+  }
+
+  closePurchaseDetail() {
+    this.detailModalOpen = false;
+    this.detailPurchase = null;
+    this.clearDetailQueryParam();
+  }
+
+  private clearDetailQueryParam() {
+    if (!this.route.snapshot.queryParamMap.get('detail')) return;
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { detail: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   closePurchaseModal() {
@@ -467,6 +564,7 @@ export class PurchasesComponent implements OnInit {
       next: (purchases) => {
         this.purchases = purchases;
         this.loading = false;
+        this.tryOpenDetailFromQuery();
       },
       error: () => {
         this.loading = false;

@@ -1,4 +1,5 @@
 import { db } from '../firebase.ts';
+import { BUSINESS_CASH_AMBITO_ID } from './caja-ambitos.ts';
 
 export interface ConfigUsageHit {
   module: string;
@@ -197,6 +198,7 @@ export function diffConfigRemovals(prev: NormalizedConfig, next: NormalizedConfi
 
   const nextAmbitos = new Set(next.caja.ambitos.map((item) => norm(item.id)));
   for (const ambito of prev.caja.ambitos) {
+    if (norm(ambito.id) === BUSINESS_CASH_AMBITO_ID) continue;
     if (!nextAmbitos.has(norm(ambito.id))) {
       removals.push({ kind: 'caja.ambitos', value: ambito.id, display: ambito.label });
     }

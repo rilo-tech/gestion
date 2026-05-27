@@ -1,4 +1,5 @@
 import { db } from '../firebase.ts';
+import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
 import { resolveOrderLabel } from './order-number.ts';
 import { allocateSaleNumber } from './sale-number.ts';
 
@@ -123,12 +124,14 @@ async function createCashIncome(
     ventaLabel?: string | null;
   }
 ) {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  const caja = appDoc.exists ? ((appDoc.data()?.caja as Record<string, unknown>) ?? {}) : {};
   const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
     tipo: 'ingreso',
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
-    ambito: 'negocio',
+    ambito: getBusinessCashAmbitoId(caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -202,7 +205,7 @@ export async function createSaleFromOrder(
   if (montoCobrado > 0) {
     movimientoCajaId = await createCashIncome(businessId, {
       monto: montoCobrado,
-      concepto: `Saldo entrega pedido #${orderLabel} · venta #${ventaLabel}`,
+      concepto: `Pedido #${orderLabel} - saldado`,
       origenId: ventaRef.id,
       origenTipo: 'venta_pedido',
       medio: medioPago,

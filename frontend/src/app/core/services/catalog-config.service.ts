@@ -25,12 +25,14 @@ import {
   getOrderStockTriggerOptions,
   getOrderWorkflowStatusOptions,
   getOrderStatusLabelFromConfig,
+  validateOrderEstadoTransition,
   type OrderEstadoConfig,
+  type OrderExtraCostPreset,
   type OrderPedidosConfigShape,
   type OrderStockMode,
 } from '../constants/order-config';
 
-export type { OrderEstadoConfig, OrderPedidosConfigShape, OrderStockMode };
+export type { OrderEstadoConfig, OrderExtraCostPreset, OrderPedidosConfigShape, OrderStockMode, CategoriaStockRegla };
 export {
   DEFAULT_ORDER_ESTADOS,
   normalizeOrderPedidosConfig,
@@ -39,6 +41,7 @@ export {
   getOrderStockTriggerOptions,
   getOrderWorkflowStatusOptions,
   getOrderStatusLabelFromConfig,
+  validateOrderEstadoTransition,
 };
 
 export type { CajaOrigen, CashOrigenGrupo };
@@ -84,10 +87,19 @@ export interface CajaConcepto {
   tipo: CajaConceptoTipo;
 }
 
+export interface CategoriaStockRegla {
+  configurado: boolean;
+  controlaStock: boolean;
+  permitirStockNegativo: boolean;
+}
+
 export interface AppConfig {
   productos: {
     tipos: string[];
     categorias: string[];
+    /** Legacy; migrado a categoriasStock. */
+    categoriasSinStock: string[];
+    categoriasStock: Record<string, CategoriaStockRegla>;
     talles: string[];
     colores: string[];
     modo: {
@@ -120,9 +132,17 @@ export interface AppConfig {
   pedidos: {
     costosPersonalizacionDetallados: boolean;
     impresionDosVias: boolean;
+    impresionDosViasHorizontal: boolean;
+    impresionCasillasProductos: boolean;
     estados: OrderEstadoConfig[];
     modoStock: OrderStockMode;
     estadoDescuentaStock: string;
+    descuentoFisicoPorEstado?: Partial<Record<string, import('../constants/order-config').OrderPhysicalStockScope>>;
+    permitirElegirAlcanceDescuento?: boolean;
+    estadosExigenStockCompleto?: string[];
+    costosExtraPredeterminados: OrderExtraCostPreset[];
+    /** Si es true (default), pedidos y descuentos pueden dejar stock negativo. */
+    permitirStockNegativo: boolean;
   };
   stock: {
     tipos: StockTipoMovimiento[];
@@ -134,6 +154,8 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   productos: {
     tipos: [],
     categorias: [],
+    categoriasSinStock: [],
+    categoriasStock: {},
     talles: [],
     colores: [],
     modo: {
@@ -154,7 +176,13 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   caja: {
     conceptos: [],
     origenes: [...DEFAULT_CAJA_ORIGENES],
-    ambitos: [],
+    ambitos: [
+      {
+        id: 'negocio',
+        label: 'Negocio',
+        sistema: true,
+      },
+    ],
     modo: {
       conceptos: 'texto',
     },
@@ -162,9 +190,13 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   pedidos: {
     costosPersonalizacionDetallados: true,
     impresionDosVias: false,
+    impresionDosViasHorizontal: false,
+    impresionCasillasProductos: false,
     estados: [...DEFAULT_ORDER_ESTADOS],
     modoStock: 'reservado',
     estadoDescuentaStock: 'en_produccion',
+    costosExtraPredeterminados: [],
+    permitirStockNegativo: true,
   },
   stock: {
     tipos: [...DEFAULT_STOCK_TIPOS],
@@ -213,6 +245,22 @@ export function usesOrderPrintDualCopy(config: AppConfig): boolean {
   return config.pedidos?.impresionDosVias === true;
 }
 
+/** Una sola vía: A4 apaisado solo si está activado en configuración. */
+export function usesOrderPrintSingleLandscape(config: AppConfig): boolean {
+  return (
+    !usesOrderPrintDualCopy(config) && config.pedidos?.impresionDosViasHorizontal === true
+  );
+}
+
+/** Hoja apaisada al imprimir (automático con dos vías). */
+export function usesOrderPrintLandscapeSheet(config: AppConfig): boolean {
+  return usesOrderPrintDualCopy(config) || usesOrderPrintSingleLandscape(config);
+}
+
+export function usesOrderPrintLineCheckboxes(config: AppConfig): boolean {
+  return config.pedidos?.impresionCasillasProductos === true;
+}
+
 export function getOrderPedidosSettings(config: AppConfig) {
   return normalizeOrderPedidosConfig(config.pedidos);
 }
@@ -227,64 +275,32 @@ export function usesCashConceptList(config: AppConfig): boolean {
 
 export type CashAmbito = string;
 
-export interface CajaAmbitoConfig {
-  id: string;
-  label: string;
-}
+export type { CajaAmbitoConfig } from '../constants/caja-ambitos';
 
-export const DEFAULT_CASH_AMBITO_ID = 'general';
+import {
+  normalizeCajaAmbitos,
+  type CajaAmbitoConfig,
+} from '../constants/caja-ambitos';
+
+export {
+  BUSINESS_CASH_AMBITO_ID,
+  DEFAULT_BUSINESS_CASH_AMBITO_LABEL,
+  DEFAULT_CASH_AMBITO_ID,
+  isSystemCashAmbito,
+  normalizeCajaAmbitos,
+  getBusinessCashAmbitoId,
+  getDefaultCashAmbitoId,
+  usesCashAmbitoSeparation,
+  resolveCashAmbito,
+  getCashAmbitoLabel,
+} from '../constants/caja-ambitos';
 
 export function slugifyCajaAmbitoId(label: string): string {
   return slugifyOrigenGrupo(label);
 }
 
-export function normalizeCajaAmbitos(caja: { ambitos?: unknown } = {}): CajaAmbitoConfig[] {
-  const raw = caja.ambitos;
-  if (!Array.isArray(raw)) return [];
-
-  const parsed: CajaAmbitoConfig[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const obj = item as Record<string, unknown>;
-    const id = String(obj.id ?? '').trim().toLowerCase();
-    const label = String(obj.label ?? '').trim();
-    if (!id || !label || parsed.some((entry) => entry.id === id)) continue;
-    parsed.push({ id, label });
-  }
-
-  return parsed.sort((a, b) => a.label.localeCompare(b.label, 'es'));
-}
-
 export function getCajaAmbitos(config: AppConfig): CajaAmbitoConfig[] {
   return normalizeCajaAmbitos(config.caja ?? {});
-}
-
-export function getDefaultCashAmbitoId(config: AppConfig = DEFAULT_APP_CONFIG): string {
-  const ambitos = getCajaAmbitos(config);
-  return ambitos[0]?.id ?? DEFAULT_CASH_AMBITO_ID;
-}
-
-export function usesCashAmbitoSeparation(config: AppConfig): boolean {
-  return getCajaAmbitos(config).length >= 2;
-}
-
-export function resolveCashAmbito(
-  movement: { ambito?: string } | undefined,
-  config: AppConfig = DEFAULT_APP_CONFIG
-): string {
-  const raw = String(movement?.ambito ?? '').trim().toLowerCase();
-  const ambitos = getCajaAmbitos(config);
-  const defaultId = getDefaultCashAmbitoId(config);
-  if (raw && ambitos.some((entry) => entry.id === raw)) return raw;
-  return defaultId;
-}
-
-export function getCashAmbitoLabel(
-  ambito: string,
-  config: AppConfig = DEFAULT_APP_CONFIG
-): string {
-  const match = getCajaAmbitos(config).find((entry) => entry.id === ambito);
-  return match?.label ?? ambito;
 }
 
 export function getCashConceptOptions(
@@ -338,11 +354,12 @@ export class CatalogConfigService {
 
   updateAppConfig(
     config: AppConfig,
-    options?: { confirmConfigRemovals?: boolean }
+    options?: { confirmConfigRemovals?: boolean; syncCategoriaStock?: string }
   ): Observable<AppConfig> {
     const body = {
       ...config,
       confirmConfigRemovals: options?.confirmConfigRemovals ?? false,
+      ...(options?.syncCategoriaStock ? { syncCategoriaStock: options.syncCategoriaStock } : {}),
     };
     return this.http
       .patch<AppConfig>(`/api/config/${this.businessId}`, body)
@@ -373,6 +390,18 @@ export class CatalogConfigService {
 
   usesOrderPrintDualCopy(config: AppConfig = this.appConfigSubject.value): boolean {
     return usesOrderPrintDualCopy(config);
+  }
+
+  usesOrderPrintSingleLandscape(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesOrderPrintSingleLandscape(config);
+  }
+
+  usesOrderPrintLandscapeSheet(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesOrderPrintLandscapeSheet(config);
+  }
+
+  usesOrderPrintLineCheckboxes(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesOrderPrintLineCheckboxes(config);
   }
 
   orderUsesReservedStock(config: AppConfig = this.appConfigSubject.value): boolean {

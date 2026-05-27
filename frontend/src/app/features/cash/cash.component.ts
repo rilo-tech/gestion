@@ -25,7 +25,20 @@ import { isDeletableCashMovement } from '../../core/utils/deletion-rules';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import { IconActionComponent, PAGE_SHELL_CLASS, TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import {
+  IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
+  PAGE_SHELL_CLASS,
+  TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
+import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -34,13 +47,26 @@ import { Subscription } from 'rxjs';
 @Component({
   selector: 'app-cash',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, ConfigSettingsLinkComponent, TransactionModalComponent, IconActionComponent, ConceptRefLinksComponent, ActivityLogTriggerComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    LucideAngularModule,
+    SearchableSelectComponent,
+    ConfigSettingsLinkComponent,
+    TransactionModalComponent,
+    IconActionComponent,
+    ConceptRefLinksComponent,
+    ActivityLogTriggerComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
+    ModalFormFooterComponent,
+  ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
-          <p class="text-sm sm:text-base text-gray-500">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
+          <p class="text-sm text-gray-500 desc-lg-only">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
           <app-config-settings-link
             settingsTab="caja"
             message="¿Falta un concepto u origen?"
@@ -58,50 +84,69 @@ import { Subscription } from 'rxjs';
         </div>
       </div>
 
-      <div *ngIf="usesAmbitoSeparation" class="mb-6 sm:mb-8 space-y-4">
-        <div class="flex gap-2 border-b border-gray-200 overflow-x-auto">
-          <button
-            *ngFor="let ambito of cajaAmbitos"
-            type="button"
-            (click)="activeAmbitoTab = ambito.id"
-            class="px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
-            [class.border-teal-600]="activeAmbitoTab === ambito.id"
-            [class.text-teal-700]="activeAmbitoTab === ambito.id"
-            [class.border-transparent]="activeAmbitoTab !== ambito.id"
-            [class.text-gray-500]="activeAmbitoTab !== ambito.id">
-            {{ ambito.label }}
-          </button>
+      <div *ngIf="usesAmbitoSeparation" class="mb-4 space-y-2">
+        <div
+          *ngIf="cajaAmbitos.length > 1"
+          class="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-sm">
+          <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 shrink-0">Total neto</span>
+          <span class="text-base font-bold tabular-nums text-gray-900">{{ '$' + totalNetoSaldo }}</span>
+          <span class="text-[11px] text-gray-500 tabular-nums w-full sm:w-auto sm:ml-auto">
+            <ng-container *ngFor="let ambito of cajaAmbitos; let last = last">
+              {{ ambito.label }} {{ '$' + getAmbitoSaldo(ambito.id) }}<span *ngIf="!last" class="text-gray-300 mx-1">·</span>
+            </ng-container>
+          </span>
         </div>
 
-        <div class="module-summary-kpis grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Ingresos</p>
-            <p class="text-xl font-bold text-teal-600 tabular-nums">{{ '$' + activeAmbitoIngresos }}</p>
-          </div>
-          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Egresos</p>
-            <p class="text-xl font-bold text-red-500 tabular-nums">{{ '$' + activeAmbitoEgresos }}</p>
-          </div>
-          <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm col-span-2 sm:col-span-1">
-            <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">{{ activeAmbitoLabel }} · Saldo</p>
-            <p class="text-xl font-bold text-gray-900 tabular-nums">{{ '$' + activeAmbitoSaldo }}</p>
+        <div class="rounded-lg border border-gray-100 bg-white shadow-sm overflow-hidden">
+          <div class="flex flex-col sm:flex-row sm:items-stretch">
+            <div class="flex gap-0 border-b sm:border-b-0 sm:border-r border-gray-100 overflow-x-auto shrink-0">
+              <button
+                *ngFor="let ambito of cajaAmbitos"
+                type="button"
+                (click)="activeAmbitoTab = ambito.id"
+                class="px-3 py-2 text-xs font-semibold border-b-2 sm:border-b-0 transition-colors whitespace-nowrap"
+                [class.border-teal-600]="activeAmbitoTab === ambito.id"
+                [class.text-teal-700]="activeAmbitoTab === ambito.id"
+                [class.bg-teal-50]="activeAmbitoTab === ambito.id"
+                [class.border-transparent]="activeAmbitoTab !== ambito.id"
+                [class.text-gray-500]="activeAmbitoTab !== ambito.id">
+                {{ ambito.label }}
+              </button>
+            </div>
+            <div
+              class="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs sm:ml-auto">
+              <span class="tabular-nums">
+                <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Ing.</span>
+                <span class="font-bold text-teal-600">{{ '$' + activeAmbitoIngresos }}</span>
+              </span>
+              <span class="tabular-nums">
+                <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Egr.</span>
+                <span class="font-bold text-red-500">{{ '$' + activeAmbitoEgresos }}</span>
+              </span>
+              <span class="tabular-nums">
+                <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Saldo</span>
+                <span class="font-bold text-gray-900">{{ '$' + activeAmbitoSaldo }}</span>
+              </span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div *ngIf="!usesAmbitoSeparation" class="module-summary-kpis grid grid-cols-2 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ingresos</p>
-          <p class="text-2xl font-bold text-teal-600">{{ '$' + totalIngresos }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Egresos</p>
-          <p class="text-2xl font-bold text-red-500">{{ '$' + totalEgresos }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Saldo</p>
-          <p class="text-2xl font-bold text-gray-900">{{ '$' + saldoCaja }}</p>
-        </div>
+      <div
+        *ngIf="!usesAmbitoSeparation"
+        class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-xs">
+        <span class="tabular-nums">
+          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Ing.</span>
+          <span class="font-bold text-teal-600">{{ '$' + totalIngresos }}</span>
+        </span>
+        <span class="tabular-nums">
+          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Egr.</span>
+          <span class="font-bold text-red-500">{{ '$' + totalEgresos }}</span>
+        </span>
+        <span class="tabular-nums sm:ml-auto">
+          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Saldo</span>
+          <span class="font-bold text-gray-900">{{ '$' + saldoCaja }}</span>
+        </span>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -109,11 +154,13 @@ import { Subscription } from 'rxjs';
           <div class="flex flex-col sm:flex-row sm:items-center gap-3">
             <input
               [(ngModel)]="searchQuery"
+              (ngModelChange)="movementsPage = 1"
               name="searchQuery"
               placeholder="Buscar por concepto, origen o pedido..."
-              class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              [class]="tableSearchInputClass">
             <select
               [(ngModel)]="origenFilter"
+              (ngModelChange)="movementsPage = 1"
               name="origenFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los orígenes</option>
@@ -144,7 +191,10 @@ import { Subscription } from 'rxjs';
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr *ngFor="let movement of filteredMovements" class="transition-colors">
+            <tr
+              *ngFor="let movement of paginatedFilteredMovements"
+              (click)="onMovementRowClick(movement)"
+              [class]="listTableRowClass">
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(movement.fecha) }}
               </td>
@@ -162,22 +212,12 @@ import { Subscription } from 'rxjs';
                   {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }}
                 </div>
                 <div class="flex items-center gap-1 mt-2 sm:hidden" (click)="$event.stopPropagation()">
-                  <button
-                    *ngIf="auth.canEditRecords"
-                    type="button"
-                    (click)="openEditMovement(movement)"
-                    title="Editar movimiento"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
-                    type="button"
-                    (click)="confirmDeleteMovement(movement)"
-                    title="Eliminar movimiento"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
+                  <app-list-row-actions
+                    [showEdit]="auth.canEditRecords"
+                    [showDelete]="auth.canDeleteRecords && isDeletableCashMovement(movement)"
+                    (editClick)="openEditMovement(movement)"
+                    (deleteClick)="confirmDeleteMovement(movement)">
+                  </app-list-row-actions>
                 </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4">
@@ -197,25 +237,13 @@ import { Subscription } from 'rxjs';
                 {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
                 <div class="text-xs font-normal text-gray-400 sm:hidden capitalize">{{ movement.medio || '—' }}</div>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap">
-                <div class="flex items-center justify-end gap-1">
-                  <button
-                    *ngIf="auth.canEditRecords"
-                    type="button"
-                    (click)="openEditMovement(movement)"
-                    title="Editar movimiento"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
-                    type="button"
-                    (click)="confirmDeleteMovement(movement)"
-                    title="Eliminar movimiento"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
+                <app-list-row-actions
+                  [showEdit]="auth.canEditRecords"
+                  [showDelete]="auth.canDeleteRecords && isDeletableCashMovement(movement)"
+                  (editClick)="openEditMovement(movement)"
+                  (deleteClick)="confirmDeleteMovement(movement)">
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="loading" class="sm:hidden">
@@ -247,6 +275,12 @@ import { Subscription } from 'rxjs';
           </tbody>
         </table>
         </div>
+        <app-list-pagination
+          [page]="movementsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredMovements.length"
+          (pageChange)="movementsPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -355,31 +389,22 @@ import { Subscription } from 'rxjs';
           </div>
         </div>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
-          <button
-            type="button"
-            (click)="closeMovementModal()"
-            class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            type="button"
-            (click)="submitMovement()"
-            [disabled]="savingMovement"
-            class="form-btn-primary rounded-xl text-sm font-semibold text-white disabled:opacity-60"
-            [class.bg-teal-600]="movementTipo === 'ingreso'"
-            [class.hover:bg-teal-700]="movementTipo === 'ingreso'"
-            [class.bg-red-500]="movementTipo === 'egreso'"
-            [class.hover:bg-red-600]="movementTipo === 'egreso'">
-            {{ savingMovement ? 'Guardando...' : (editingMovementId ? 'Guardar' : 'Registrar') }}
-          </button>
-        </div>
+        <app-modal-form-footer
+          [saving]="savingMovement"
+          [primaryLabel]="movementModalPrimaryLabel"
+          [primaryButtonClass]="movementModalPrimaryButtonClass"
+          (cancelClick)="closeMovementModal()"
+          (primaryClick)="submitMovement()">
+        </app-modal-form-footer>
     </app-transaction-modal>
   `,
 })
 export class CashComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
   private cashService = inject(CashService);
@@ -390,6 +415,7 @@ export class CashComponent implements OnInit, OnDestroy {
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   movements: CashMovement[] = [];
   searchQuery = '';
+  movementsPage = 1;
   origenFilter: 'all' | string = 'all';
   activeAmbitoTab = '';
   loading = true;
@@ -444,6 +470,14 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
   }
 
+  get totalNetoSaldo(): number {
+    return this.totalIngresos - this.totalEgresos;
+  }
+
+  getAmbitoSaldo(ambitoId: string): number {
+    return this.sumByTipo('ingreso', ambitoId) - this.sumByTipo('egreso', ambitoId);
+  }
+
   get filteredMovements(): CashMovement[] {
     let list = this.movements;
 
@@ -475,6 +509,22 @@ export class CashComponent implements OnInit, OnDestroy {
         .join(' ');
       return haystack.includes(query);
     });
+  }
+
+  get paginatedFilteredMovements(): CashMovement[] {
+    return paginateSlice(this.filteredMovements, this.movementsPage, this.listPageSize);
+  }
+
+  get movementModalPrimaryLabel(): string {
+    return this.editingMovementId ? 'Guardar' : 'Registrar';
+  }
+
+  get movementModalPrimaryButtonClass(): string {
+    const base =
+      'form-btn-primary rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60';
+    return this.movementTipo === 'egreso'
+      ? `${base} bg-red-500 hover:bg-red-600`
+      : `${base} bg-teal-600 hover:bg-teal-700`;
   }
 
   get totalIngresos(): number {
@@ -649,6 +699,11 @@ export class CashComponent implements OnInit, OnDestroy {
       ? this.activeAmbitoTab
       : getDefaultCashAmbitoId(this.appConfig);
     this.movementModalOpen = true;
+  }
+
+  onMovementRowClick(movement: CashMovement) {
+    if (!this.auth.canEditRecords) return;
+    this.openEditMovement(movement);
   }
 
   openEditMovement(movement: CashMovement) {

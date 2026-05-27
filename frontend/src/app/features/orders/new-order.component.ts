@@ -5,7 +5,17 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClientService, Client } from '../../core/services/client.service';
 import { StockService, StockItem, itemControlsStock, getStockDisponible } from '../../core/services/stock.service';
-import { OrderLineItem, OrderLineExtraCost, OrderPayment, OrderService, Order, OrderUpdateResult, resolveOrderBalance } from '../../core/services/order.service';
+import {
+  OrderLineItem,
+  OrderLineExtraCost,
+  OrderPayment,
+  OrderService,
+  Order,
+  OrderUpdateResult,
+  OrderStockDiscountPreview,
+  OrderPhysicalStockScope,
+  resolveOrderBalance,
+} from '../../core/services/order.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -14,19 +24,30 @@ import {
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
   getOrderWorkflowStatusOptions,
+  getOrderStatusLabelFromConfig,
+  validateOrderEstadoTransition,
   orderConfigUsesReservedStock,
   orderEstadoMatchesStockTrigger,
+  OrderExtraCostPreset,
   usesDetailedOrderExtraCosts,
 } from '../../core/services/catalog-config.service';
+import {
+  shouldConsumeStockOnStatusChange,
+  orderStockFullyConsumed,
+  getOrderPhysicalStockScopeLabel,
+  resolveOrderPhysicalStockScope,
+} from '../../core/constants/order-config';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
+import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
 import {
   getOrderStatusBadgeClass,
   getOrderStatusLabel,
   normalizeOrderStatus,
   canRegisterSaleFromOrder,
   orderIsLockedForEdit,
+  isOrderDeliveryEstado,
 } from '../../core/constants/order-status';
 import {
   getOrderStockStatusBadgeClass,
@@ -51,7 +72,7 @@ import {
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective, ConfigSettingsLinkComponent, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, DuplicateActionButtonComponent, RouterLink, HasPermissionDirective, ConfigSettingsLinkComponent, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
       <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -90,15 +111,12 @@ import {
             class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 bg-white">
             <i-lucide name="printer" class="w-4 h-4"></i-lucide>
           </button>
-          <button
+          <app-duplicate-action-button
             *ngIf="isEditing && auth.canEditRecords && !isReadOnlyOrder"
-            type="button"
-            (click)="duplicateOrder()"
-            title="Duplicar"
-            aria-label="Duplicar pedido"
-            class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 border border-gray-200 bg-white">
-            <i-lucide name="copy" class="w-4 h-4"></i-lucide>
-          </button>
+            variant="outline"
+            label="Duplicar pedido"
+            (duplicateClick)="duplicateOrder()">
+          </app-duplicate-action-button>
           <button
             routerLink="/orders"
             class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
@@ -106,6 +124,14 @@ import {
             Volver a pedidos
           </button>
         </div>
+      </div>
+
+      <ng-container *ngIf="orderPageReady; else orderPageLoading">
+      <div
+        *ngIf="isDeliveryPendingSave"
+        class="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        Elegiste <span class="font-semibold">{{ getOrderStatusLabelFor(order.estado) }}</span>.
+        Guardá el pedido para {{ deliveryPendingSaveHint }} y cerrarlo (después no se podrá editar).
       </div>
 
       <div
@@ -144,7 +170,6 @@ import {
                 (createRequested)="quickCreateClient($event)"
                 (searchChange)="pendingClientName = $event"
                 placeholder="Buscar cliente..."
-                listHint="Escribí un nombre existente o usá «Crear cliente» si todavía no está cargado."
                 emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
               </app-searchable-select>
             </div>
@@ -200,7 +225,23 @@ import {
                     class="text-xs font-semibold text-teal-700 hover:text-teal-900 underline">
                     {{ order.stockPreparado ? 'Actualizar revisión de stock' : 'Revisar stock' }}
                   </button>
+                  <button
+                    *ngIf="canConsumePendingReservedStockNow"
+                    type="button"
+                    (click)="openConsumePendingDialog()"
+                    [disabled]="consumingPendingStock"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100 disabled:opacity-60 disabled:cursor-not-allowed">
+                    {{ consumingPendingStock ? 'Descontando…' : ('Descontar faltantes ahora (' + pendingReservedToConsumeUnits + ' u.)') }}
+                  </button>
+                  <span *ngIf="lastStockOperationLabel" class="text-xs text-gray-500">
+                    {{ lastStockOperationLabel }}
+                  </span>
                 </div>
+                <p
+                  *ngIf="orderPhysicalDiscountHint"
+                  class="mt-2 text-xs text-gray-600 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                  {{ orderPhysicalDiscountHint }}
+                </p>
               </div>
             </div>
 
@@ -252,9 +293,9 @@ import {
                     <p class="text-xs text-gray-500">
                       <ng-container *appHasPermission="permissions.STOCK_VIEW_COSTS">
                         Costo base: {{ '$' + (item.costo || 0) }}
-                        <ng-container *ngIf="itemControlsStock(item)"> · </ng-container>
+                        <ng-container *ngIf="controlsStockForCatalogItem(item)"> · </ng-container>
                       </ng-container>
-                      <ng-container *ngIf="itemControlsStock(item)">
+                      <ng-container *ngIf="controlsStockForCatalogItem(item)">
                         Disponible: {{ getStockDisponible(item) }} u.
                       </ng-container>
                     </p>
@@ -275,10 +316,6 @@ import {
                 </p>
               </div>
             </div>
-
-            <p class="mt-2 text-xs text-gray-400">
-              Escribí al menos 2 caracteres y hacé clic en un producto para agregarlo abajo.
-            </p>
           </section>
 
           <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
@@ -288,7 +325,7 @@ import {
               Buscá productos arriba y hacé clic en uno para agregarlo acá.
             </div>
 
-            <div *ngIf="orderLines.length > 0" class="rounded-lg border border-gray-100 overflow-hidden">
+            <div *ngIf="orderLines.length > 0" class="rounded-lg border border-gray-200 overflow-hidden">
               <table class="hidden md:table w-full table-fixed">
                 <colgroup>
                   <col />
@@ -298,7 +335,7 @@ import {
                   <col *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="w-[5.75rem]" />
                   <col class="w-10" />
                 </colgroup>
-                <thead class="bg-gray-50 border-b border-gray-100">
+                <thead class="bg-gray-50 border-b border-gray-200">
                   <tr class="text-xs font-medium text-gray-400 uppercase tracking-wide">
                     <th scope="col" class="px-3 py-2 text-left font-medium">Producto</th>
                     <th scope="col" class="px-2 py-2 text-center font-medium">Cant.</th>
@@ -308,19 +345,34 @@ import {
                     <th scope="col" class="px-1 py-2 text-center font-medium w-10" aria-hidden="true"></th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100">
-                  <tr *ngFor="let line of orderLines; let i = index">
+                <tbody>
+                  <tr *ngFor="let line of orderLines; let i = index" class="border-t border-gray-200">
                     <td class="px-3 py-2.5 align-middle">
-                      <p class="font-medium text-gray-900 truncate leading-snug" [title]="line.nombre">{{ line.nombre }}</p>
+                      <button
+                        *ngIf="line.stockItemId; else orderLineNamePlain"
+                        type="button"
+                        (click)="openOrderLineProduct(line, $event)"
+                        class="font-medium text-gray-900 truncate leading-snug text-left hover:text-teal-700 hover:underline max-w-full"
+                        [title]="'Abrir producto: ' + line.nombre">
+                        {{ line.nombre }}
+                      </button>
+                      <ng-template #orderLineNamePlain>
+                        <p class="font-medium text-gray-900 truncate leading-snug" [title]="line.nombre">{{ line.nombre }}</p>
+                      </ng-template>
                       <p
                         *ngIf="line.stockItemId && lineControlsStock(line)"
                         class="text-xs tabular-nums mt-0.5"
                         [class.text-green-700]="getLinePurchaseShortage(line) === 0"
                         [class.text-orange-700]="(getLinePurchaseShortage(line) ?? 0) > 0">
                         <ng-container *ngIf="order.stockPreparado">
-                          Reservado {{ line.cantidadReservada || 0 }}
-                          <span *ngIf="(line.cantidadFaltante || 0) > 0"> · Faltan {{ line.cantidadFaltante }}</span>
-                          <span *ngIf="!(line.cantidadFaltante || 0)"> · Completo</span>
+                          <ng-container *ngIf="(line.cantidadReservada || 0) > 0">
+                            Reservado {{ line.cantidadReservada || 0 }}
+                          </ng-container>
+                          <ng-container *ngIf="!(line.cantidadReservada || 0) && order.stockDescontado && (line.cantidadFaltante || 0) > 0">
+                            Descontado del depósito
+                          </ng-container>
+                          <span *ngIf="(line.cantidadFaltante || 0) > 0"> · Faltan {{ line.cantidadFaltante }} para comprar</span>
+                          <span *ngIf="!(line.cantidadFaltante || 0)"> · Stock alcanza</span>
                           <button
                             *ngIf="canReviewStock"
                             type="button"
@@ -407,7 +459,7 @@ import {
                         [disabled]="isReadOnlyOrder"
                         (focus)="onOrderNumericFocus('venta', i, line.precioVenta, $event)"
                         (blur)="onOrderNumericBlurVenta(i, line)"
-                        class="block w-full max-w-[5.75rem] ml-auto px-1.5 py-1 rounded-md border border-gray-200 text-xs text-right tabular-nums">
+                        class="block w-full max-w-[4.25rem] ml-auto px-1.5 py-1 rounded-md border border-gray-200 text-xs text-right tabular-nums">
                     </td>
                     <td class="px-1 py-2.5 align-middle text-center w-10">
                       <button
@@ -426,18 +478,34 @@ import {
 
               <article
                 *ngFor="let line of orderLines; let i = index"
-                class="md:hidden border-b border-gray-100 last:border-b-0 p-3 space-y-3">
+                class="md:hidden border-b border-gray-200 last:border-b-0 p-3 space-y-3">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
-                      <p class="font-medium text-gray-900">{{ line.nombre }}</p>
+                      <button
+                        *ngIf="line.stockItemId; else orderLineNamePlainMobile"
+                        type="button"
+                        (click)="openOrderLineProduct(line, $event)"
+                        class="font-medium text-gray-900 text-left hover:text-teal-700 hover:underline"
+                        [title]="'Abrir producto: ' + line.nombre">
+                        {{ line.nombre }}
+                      </button>
+                      <ng-template #orderLineNamePlainMobile>
+                        <p class="font-medium text-gray-900">{{ line.nombre }}</p>
+                      </ng-template>
                       <p
                         *ngIf="line.stockItemId && lineControlsStock(line)"
                         class="text-xs tabular-nums mt-0.5"
                         [class.text-green-700]="getLinePurchaseShortage(line) === 0"
                         [class.text-orange-700]="(getLinePurchaseShortage(line) ?? 0) > 0">
                         <ng-container *ngIf="order.stockPreparado">
-                          Reservado {{ line.cantidadReservada || 0 }}
-                          <span *ngIf="(line.cantidadFaltante || 0) > 0"> · Faltan {{ line.cantidadFaltante }}</span>
+                          <ng-container *ngIf="(line.cantidadReservada || 0) > 0">
+                            Reservado {{ line.cantidadReservada || 0 }}
+                          </ng-container>
+                          <ng-container *ngIf="!(line.cantidadReservada || 0) && order.stockDescontado && (line.cantidadFaltante || 0) > 0">
+                            Descontado del depósito
+                          </ng-container>
+                          <span *ngIf="(line.cantidadFaltante || 0) > 0"> · Faltan {{ line.cantidadFaltante }} para comprar</span>
+                          <span *ngIf="!(line.cantidadFaltante || 0)"> · Stock alcanza</span>
                         </ng-container>
                         <ng-container *ngIf="!order.stockPreparado">
                           Disp. {{ line.stockDisponible ?? 0 }} u.
@@ -558,7 +626,7 @@ import {
             </div>
 
             <div *ngIf="auth.canViewAccountBalance" class="mb-4 p-3 bg-gray-800/60 rounded-xl border border-gray-700">
-              <ng-container *ngIf="!seniaBloqueada">
+              <ng-container *ngIf="!isEditing && !seniaBloqueada">
                 <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
@@ -573,7 +641,7 @@ import {
                 </p>
               </ng-container>
 
-              <ng-container *ngIf="seniaBloqueada">
+              <ng-container *ngIf="seniaBloqueada || isEditing">
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <span class="text-xs font-bold text-gray-400 uppercase">Pagos del cliente</span>
                   <button
@@ -660,7 +728,7 @@ import {
               <p class="text-2xl font-bold text-teal-600">{{ '$' + (order.total || 0) }}</p>
             </div>
             <div *ngIf="auth.canViewAccountBalance" class="mb-4 p-3 rounded-xl border border-gray-100 bg-gray-50 space-y-2">
-              <ng-container *ngIf="!seniaBloqueada">
+              <ng-container *ngIf="!isEditing && !seniaBloqueada">
                 <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
@@ -674,7 +742,7 @@ import {
                   Al guardar el pedido, la seña queda registrada y bloqueada.
                 </p>
               </ng-container>
-              <ng-container *ngIf="seniaBloqueada">
+              <ng-container *ngIf="seniaBloqueada || isEditing">
                 <div class="flex justify-between text-sm">
                   <span class="text-gray-600">Total pagado</span>
                   <span class="font-semibold tabular-nums text-gray-900">{{ '$' + getTotalPagado() }}</span>
@@ -828,6 +896,29 @@ import {
           </div>
 
           <div class="px-6 py-4 max-h-[50vh] overflow-auto">
+            <div *ngIf="orderExtraCostPresets.length > 0" class="mb-4">
+              <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+                Precargados
+              </p>
+              <div class="space-y-2">
+                <label
+                  *ngFor="let preset of orderExtraCostPresets"
+                  class="flex items-center gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    [checked]="isExtraCostPresetSelected(preset)"
+                    (change)="toggleExtraCostPreset(preset, $any($event.target).checked)"
+                    class="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary">
+                  <span class="flex-1 min-w-0 text-sm text-gray-900 truncate">{{ preset.nombre }}</span>
+                  <span class="text-sm font-semibold text-gray-700 tabular-nums shrink-0">{{ '$' + preset.costo }}</span>
+                </label>
+              </div>
+            </div>
+
+            <p *ngIf="orderExtraCostPresets.length > 0" class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+              Agregar otro concepto
+            </p>
+
             <div class="flex gap-2 items-end mb-4">
               <div class="flex-1 min-w-0">
                 <label class="block text-xs font-medium text-gray-500 mb-1">Concepto</label>
@@ -859,7 +950,11 @@ import {
             </div>
 
             <div *ngIf="extraCostsDraft.length === 0" class="text-sm text-gray-400 text-center py-4 border border-dashed border-gray-200 rounded-lg">
-              Completá concepto y precio, y confirmá con el tilde.
+              {{
+                orderExtraCostPresets.length > 0
+                  ? 'Tildá conceptos precargados o agregá uno nuevo.'
+                  : 'Completá concepto y precio, y confirmá con el tilde.'
+              }}
             </div>
 
             <div *ngIf="extraCostsDraft.length > 0" class="rounded-lg border border-gray-100 overflow-hidden">
@@ -933,6 +1028,14 @@ import {
           </div>
         </div>
       </div>
+      </ng-container>
+
+      <ng-template #orderPageLoading>
+        <div class="py-16 flex flex-col items-center justify-center text-gray-400">
+          <div class="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+          <p class="text-sm">Cargando pedido...</p>
+        </div>
+      </ng-template>
     </div>
 
     <app-transaction-modal
@@ -983,6 +1086,169 @@ import {
       </button>
     </ng-template>
 
+    <div
+      *ngIf="stockDiscountDialogOpen && stockDiscountPreview"
+      class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="stock-discount-title">
+      <div class="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200 max-h-[90vh] flex flex-col">
+        <header class="px-4 py-3 border-b border-gray-200">
+          <h2 id="stock-discount-title" class="text-base font-bold text-gray-900">Descuento de depósito</h2>
+          <p class="text-sm text-gray-600 mt-1">
+            Al pasar a «{{ stockDiscountPreview.nextEstadoLabel }}» se descontará stock físico del depósito.
+          </p>
+        </header>
+
+        <div class="px-4 py-3 overflow-y-auto flex-1 space-y-3">
+          <div *ngIf="stockDiscountPreview.canChooseScope" class="space-y-2">
+            <label class="flex items-start gap-2 cursor-pointer rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
+              <input
+                type="radio"
+                name="stockDiscountScope"
+                value="solo_reservado"
+                [(ngModel)]="stockDiscountSelectedScope"
+                class="mt-1 h-4 w-4 border-gray-300 text-primary focus:ring-primary">
+              <span class="text-sm">
+                <span class="font-semibold text-gray-900">Solo lo reservado</span>
+                <span class="block text-gray-600">{{ stockDiscountPreview.totalReservado }} u. en total</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
+              <input
+                type="radio"
+                name="stockDiscountScope"
+                value="pedido_completo"
+                [(ngModel)]="stockDiscountSelectedScope"
+                class="mt-1 h-4 w-4 border-gray-300 text-primary focus:ring-primary">
+              <span class="text-sm">
+                <span class="font-semibold text-gray-900">Todo el pedido pendiente</span>
+                <span class="block text-gray-600">{{ stockDiscountPreview.totalCompleto }} u. en total</span>
+              </span>
+            </label>
+          </div>
+
+          <p *ngIf="!stockDiscountPreview.canChooseScope" class="text-sm text-gray-700">
+            Se descontará: <span class="font-semibold">{{ getOrderPhysicalStockScopeLabel(stockDiscountSelectedScope) }}</span>
+            ({{ stockDiscountUnitsForSelectedScope }} u. en total).
+          </p>
+
+          <div *ngIf="stockDiscountPreview.lines.length" class="rounded-lg border border-gray-200 overflow-hidden">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-50 text-gray-600">
+                <tr>
+                  <th class="text-left px-2 py-1.5 font-semibold">Producto</th>
+                  <th class="text-right px-2 py-1.5 font-semibold">Res.</th>
+                  <th class="text-right px-2 py-1.5 font-semibold">Pend.</th>
+                  <th class="text-right px-2 py-1.5 font-semibold">Baja</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let line of stockDiscountPreview.lines" class="border-t border-gray-200">
+                  <td class="px-2 py-1.5 text-gray-900">{{ line.nombre }}</td>
+                  <td class="px-2 py-1.5 text-right text-gray-700">{{ line.cantidadReservada }}</td>
+                  <td class="px-2 py-1.5 text-right text-gray-700">{{ line.pendiente }}</td>
+                  <td class="px-2 py-1.5 text-right font-semibold text-teal-800">
+                    {{ stockDiscountLineAmount(line) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p
+            *ngIf="stockDiscountPreview.requiresFullStock && stockDiscountSelectedScope === 'pedido_completo'"
+            class="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            Este estado exige tener todo el stock disponible antes de descontar el pedido completo.
+          </p>
+        </div>
+
+        <footer class="px-4 py-3 border-t border-gray-200 flex justify-end gap-2">
+          <button
+            type="button"
+            (click)="cancelStockDiscountDialog()"
+            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            (click)="confirmStockDiscountDialog()"
+            [disabled]="stockDiscountUnitsForSelectedScope <= 0"
+            class="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-50">
+            Confirmar y cambiar estado
+          </button>
+        </footer>
+      </div>
+    </div>
+
+    <div
+      *ngIf="consumePendingDialogOpen"
+      class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consume-pending-title">
+      <div class="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200 max-h-[90vh] flex flex-col">
+        <header class="px-4 py-3 border-b border-gray-200">
+          <h2 id="consume-pending-title" class="text-base font-bold text-gray-900">Descontar stock del depósito</h2>
+          <p class="text-sm text-gray-600 mt-1">
+            Elegí cuánto descontar ahora (solo de lo reservado). Podés hacerlo parcial si te llegó stock parcial.
+          </p>
+        </header>
+
+        <div class="px-4 py-3 overflow-y-auto flex-1 space-y-3">
+          <div class="rounded-lg border border-gray-200 overflow-hidden">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-50 text-gray-600">
+                <tr>
+                  <th class="text-left px-2 py-1.5 font-semibold">Producto</th>
+                  <th class="text-right px-2 py-1.5 font-semibold">Máx.</th>
+                  <th class="text-right px-2 py-1.5 font-semibold">Descontar</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of consumePendingDraft" class="border-t border-gray-200">
+                  <td class="px-2 py-1.5 text-gray-900">{{ row.nombre }}</td>
+                  <td class="px-2 py-1.5 text-right text-gray-700">{{ row.max }}</td>
+                  <td class="px-2 py-1.5 text-right">
+                    <input
+                      type="number"
+                      min="0"
+                      [max]="row.max"
+                      [(ngModel)]="row.input"
+                      (ngModelChange)="clampConsumePending(row)"
+                      class="w-24 px-2 py-1 rounded-md border border-gray-200 text-right" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-sm text-gray-700">
+            Total a descontar ahora: <span class="font-semibold">{{ consumePendingSelectedTotal }} u.</span>
+          </p>
+          <p class="text-xs text-gray-500">
+            Quedará registrado en el pedido con fecha y detalle.
+          </p>
+        </div>
+
+        <footer class="px-4 py-3 border-t border-gray-200 flex justify-end gap-2">
+          <button
+            type="button"
+            (click)="closeConsumePendingDialog()"
+            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            (click)="consumePendingReservedStockNow()"
+            [disabled]="consumePendingSelectedTotal <= 0 || consumingPendingStock"
+            class="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-50">
+            {{ consumingPendingStock ? 'Descontando…' : 'Descontar ahora' }}
+          </button>
+        </footer>
+      </div>
+    </div>
+
     <app-order-stock-preparation-panel
       [open]="stockPrepOpen"
       [orderId]="editingOrderId ?? ''"
@@ -1008,7 +1274,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get orderStatusOptions() {
     return getOrderWorkflowStatusOptions(this.appConfig.pedidos);
   }
-  readonly itemControlsStock = itemControlsStock;
+  readonly controlsStockForCatalogItem = (item: StockItem) =>
+    itemControlsStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
 
   clients: Client[] = [];
   pendingClientName = '';
@@ -1017,6 +1284,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   clientModalPrefillNombre = '';
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   editingOrderId: string | null = null;
+  orderPageReady = true;
   private loadedOrderSnapshot: Order | null = null;
   isDraftOrder = false;
   productSearch = '';
@@ -1039,12 +1307,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderSaveFeedbackTimeout?: ReturnType<typeof setTimeout>;
   private editingNumericFields = new Map<string, string>();
   private savedOrderEstado = '';
+  private orderFormLocked = false;
   stockPrepOpen = false;
+  stockDiscountDialogOpen = false;
+  stockDiscountPreview: OrderStockDiscountPreview | null = null;
+  stockDiscountSelectedScope: OrderPhysicalStockScope = 'solo_reservado';
+  private pendingEstadoForStockDiscount: string | null = null;
+  readonly getOrderPhysicalStockScopeLabel = getOrderPhysicalStockScopeLabel;
   private pendingEstadoChange: string | null = null;
   private stockPrepFromEstadoChange = false;
   private awaitingStockPrepAfterSave = false;
   private stockEnrichTimer?: ReturnType<typeof setTimeout>;
   private stockEnrichRequestId = 0;
+  consumingPendingStock = false;
+  consumePendingDialogOpen = false;
+  consumePendingDraft: Array<{ lineIndex: number; nombre: string; max: number; input: string }> = [];
 
   get canReviewStock(): boolean {
     return (
@@ -1061,6 +1338,100 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   private isStockDiscountTrigger(estado: string): boolean {
     return orderEstadoMatchesStockTrigger(estado, this.appConfig.pedidos);
+  }
+
+  get orderPhysicalDiscountHint(): string | null {
+    if (!this.isEditing || this.isReadOnlyOrder || !this.canReviewStock) return null;
+    const next = normalizeOrderStatus(this.orderEstado);
+    const scope = resolveOrderPhysicalStockScope(this.appConfig.pedidos, next);
+    const trigger = this.appConfig.pedidos.estadoDescuentaStock;
+    const stockFullyConsumed = orderStockFullyConsumed(this.orderLines);
+    const crosses = shouldConsumeStockOnStatusChange({
+      previousEstado: this.savedOrderEstado || this.order.estado,
+      nextEstado: next,
+      triggerEstado: trigger,
+      stockDescontado: this.order.stockDescontado,
+      stockFullyConsumed,
+      estados: this.appConfig.pedidos.estados,
+    });
+    if (!crosses || stockFullyConsumed) return null;
+    return `Si pasás a «${this.getOrderStatusLabelFor(next)}», por defecto se descontará: ${getOrderPhysicalStockScopeLabel(scope)}.`;
+  }
+
+  get pendingReservedToConsumeUnits(): number {
+    return this.orderLines.reduce((sum, line) => {
+      if (!line.stockItemId || !this.lineControlsStock(line)) return sum;
+      const cantidad = Number(line.cantidad) || 0;
+      const usada = Math.max(0, Number(line.cantidadUsada) || 0);
+      const reservada = Math.max(0, Number(line.cantidadReservada) || 0);
+      const pendiente = Math.max(0, cantidad - usada);
+      return sum + Math.min(reservada, pendiente);
+    }, 0);
+  }
+
+  get canConsumePendingReservedStockNow(): boolean {
+    if (!this.isEditing || this.isReadOnlyOrder || !this.editingOrderId) return false;
+    if (normalizeOrderStatus(this.order.estado) !== 'en_produccion') return false;
+    if (this.consumingPendingStock || this.savingEstado) return false;
+    return this.pendingReservedToConsumeUnits > 0;
+  }
+
+  get lastStockOperationLabel(): string | null {
+    const ops = (this.order.stockOperaciones ?? []) as Array<{
+      fecha: string;
+      tipo: string;
+      total: number;
+      detalle: string;
+    }>;
+    const last = ops.length ? ops[ops.length - 1] : null;
+    if (!last || !last.total) return null;
+    const date = new Date(last.fecha);
+    const when = Number.isNaN(date.getTime()) ? last.fecha : date.toLocaleString();
+    return `Último descuento manual: ${last.total} u. · ${when}`;
+  }
+
+  openConsumePendingDialog() {
+    if (!this.canConsumePendingReservedStockNow) return;
+    this.consumePendingDraft = this.orderLines
+      .map((line, idx) => {
+        if (!line.stockItemId || !this.lineControlsStock(line)) return null;
+        const cantidad = Number(line.cantidad) || 0;
+        const usada = Math.max(0, Number(line.cantidadUsada) || 0);
+        const reservada = Math.max(0, Number(line.cantidadReservada) || 0);
+        const pendiente = Math.max(0, cantidad - usada);
+        const max = Math.min(reservada, pendiente);
+        if (max <= 0) return null;
+        return { lineIndex: idx, nombre: line.nombre, max, input: String(max) };
+      })
+      .filter(Boolean) as Array<{ lineIndex: number; nombre: string; max: number; input: string }>;
+    this.consumePendingDialogOpen = true;
+  }
+
+  closeConsumePendingDialog() {
+    this.consumePendingDialogOpen = false;
+  }
+
+  get consumePendingSelectedTotal(): number {
+    return this.consumePendingDraft.reduce((sum, row) => sum + Math.max(0, Number(row.input) || 0), 0);
+  }
+
+  clampConsumePending(row: { max: number; input: string }) {
+    const parsed = Math.floor(Number(String(row.input).replace(',', '.')) || 0);
+    row.input = String(Math.min(row.max, Math.max(0, parsed)));
+  }
+
+  get stockDiscountUnitsForSelectedScope(): number {
+    if (!this.stockDiscountPreview) return 0;
+    return this.stockDiscountSelectedScope === 'solo_reservado'
+      ? this.stockDiscountPreview.totalReservado
+      : this.stockDiscountPreview.totalCompleto;
+  }
+
+  stockDiscountLineAmount(line: OrderStockDiscountPreview['lines'][number]): number {
+    if (!this.stockDiscountPreview) return 0;
+    return this.stockDiscountSelectedScope === 'solo_reservado'
+      ? line.aDescontarReservado
+      : line.aDescontarCompleto;
   }
 
   readonly getStockDisponible = getStockDisponible;
@@ -1125,11 +1496,24 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get isCancelledOrder(): boolean {
-    return normalizeOrderStatus(this.order.estado) === 'cancelado';
+    return normalizeOrderStatus(this.savedOrderEstado || this.order.estado) === 'cancelado';
   }
 
   get isLockedOrder(): boolean {
-    return orderIsLockedForEdit(this.order.estado);
+    return this.orderFormLocked;
+  }
+
+  get isDeliveryPendingSave(): boolean {
+    if (this.orderFormLocked) return false;
+    const current = normalizeOrderStatus(this.order.estado);
+    const saved = normalizeOrderStatus(this.savedOrderEstado);
+    return isOrderDeliveryEstado(current) && current !== saved;
+  }
+
+  get deliveryPendingSaveHint(): string {
+    return normalizeOrderStatus(this.order.estado) === 'entregado'
+      ? 'registrar la venta y el cobro del saldo'
+      : 'registrar la venta';
   }
 
   get isReadOnlyOrder(): boolean {
@@ -1144,34 +1528,142 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   set orderEstado(value: string) {
-    if (this.isReadOnlyOrder) return;
+    if (this.orderFormLocked) return;
+    if (normalizeOrderStatus(this.savedOrderEstado) === 'cancelado') return;
     this.order.estado = value;
+  }
+
+  get orderExtraCostPresets(): OrderExtraCostPreset[] {
+    return this.appConfig.pedidos?.costosExtraPredeterminados ?? [];
+  }
+
+  isExtraCostPresetSelected(preset: OrderExtraCostPreset): boolean {
+    const key = preset.nombre.trim().toLowerCase();
+    return this.extraCostsDraft.some((extra) => extra.nombre.trim().toLowerCase() === key);
+  }
+
+  toggleExtraCostPreset(preset: OrderExtraCostPreset, selected: boolean) {
+    const key = preset.nombre.trim().toLowerCase();
+    if (selected) {
+      if (!this.isExtraCostPresetSelected(preset)) {
+        this.extraCostsDraft.push({ nombre: preset.nombre, costo: preset.costo });
+      }
+    } else {
+      this.extraCostsDraft = this.extraCostsDraft.filter(
+        (extra) => extra.nombre.trim().toLowerCase() !== key
+      );
+    }
+    this.editingExtraCostIndex = null;
   }
 
   readonly getOrderStockStatusLabel = getOrderStockStatusLabel;
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
 
   onOrderEstadoChange(newEstado: string) {
-    if (!this.editingOrderId || this.isReadOnlyOrder || this.savingEstado) return;
+    if (!this.editingOrderId || this.savingEstado || this.orderFormLocked) return;
+    if (normalizeOrderStatus(this.savedOrderEstado) === 'cancelado') return;
 
     const previous = normalizeOrderStatus(this.savedOrderEstado || this.order.estado);
     const next = normalizeOrderStatus(newEstado);
     if (next === previous) return;
 
-    if (
-      orderConfigUsesReservedStock(this.appConfig) &&
-      this.isStockDiscountTrigger(newEstado) &&
-      !this.order.stockPreparado &&
-      !this.loadedOrderSnapshot?.stockPreparado
-    ) {
-      this.pendingEstadoChange = newEstado;
-      this.stockPrepFromEstadoChange = true;
-      this.order.estado = this.savedOrderEstado || String(previous);
-      this.stockPrepOpen = true;
+    const transition = validateOrderEstadoTransition({
+      previousEstado: previous,
+      nextEstado: next,
+      triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
+      stockDescontado: this.order.stockDescontado,
+      estados: this.appConfig.pedidos.estados,
+    });
+
+    if (!transition.allowed) {
+      this.order.estado = this.savedOrderEstado || previous;
+      this.dialogService.alert({
+        title: 'Estado del pedido',
+        message: transition.error ?? 'No podés retroceder el estado del pedido.',
+      });
       return;
     }
 
-    this.commitOrderEstadoChange(newEstado);
+    if (transition.requiresStockRestore) {
+      const nextLabel = getOrderStatusLabelFromConfig(next, this.appConfig.pedidos);
+      this.dialogService
+        .confirm({
+          title: 'Retroceder estado',
+          message: `Al volver a «${nextLabel}», se devolverá el stock al depósito (entrada de stock). ¿Continuar?`,
+          confirmLabel: 'Sí, retroceder',
+          cancelLabel: 'Cancelar',
+          variant: 'danger',
+        })
+        .subscribe((confirmed) => {
+          if (confirmed) {
+            this.commitOrderEstadoChange(newEstado);
+          } else {
+            this.order.estado = this.savedOrderEstado || previous;
+          }
+        });
+      return;
+    }
+
+    if (isOrderDeliveryEstado(next)) {
+      return;
+    }
+
+    const stockFullyConsumed = orderStockFullyConsumed(this.orderLines);
+    const crossesStock = shouldConsumeStockOnStatusChange({
+      previousEstado: previous,
+      nextEstado: next,
+      triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
+      stockDescontado: this.order.stockDescontado,
+      stockFullyConsumed,
+      estados: this.appConfig.pedidos.estados,
+    });
+
+    if (!crossesStock) {
+      this.commitOrderEstadoChange(newEstado);
+      return;
+    }
+
+    this.orderService.getStockDiscountPreview(this.editingOrderId, newEstado).subscribe({
+      next: (preview) => {
+        if (preview.blocked) {
+          this.order.estado = this.savedOrderEstado || previous;
+          this.dialogService.alert({
+            title: 'Stock insuficiente',
+            message: preview.blockReason ?? 'No podés pasar a este estado todavía.',
+          });
+          return;
+        }
+
+        if (!preview.willConsume) {
+          this.commitOrderEstadoChange(newEstado);
+          return;
+        }
+
+        this.stockDiscountPreview = preview;
+        this.stockDiscountSelectedScope = preview.defaultScope;
+        this.pendingEstadoForStockDiscount = newEstado;
+        this.stockDiscountDialogOpen = true;
+      },
+      error: () => {
+        this.commitOrderEstadoChange(newEstado);
+      },
+    });
+  }
+
+  confirmStockDiscountDialog() {
+    const newEstado = this.pendingEstadoForStockDiscount;
+    if (!newEstado || !this.editingOrderId) return;
+    this.stockDiscountDialogOpen = false;
+    this.stockDiscountPreview = null;
+    this.pendingEstadoForStockDiscount = null;
+    this.commitOrderEstadoChange(newEstado, this.stockDiscountSelectedScope);
+  }
+
+  cancelStockDiscountDialog() {
+    this.stockDiscountDialogOpen = false;
+    this.stockDiscountPreview = null;
+    this.pendingEstadoForStockDiscount = null;
+    this.order.estado = this.savedOrderEstado || normalizeOrderStatus(this.order.estado);
   }
 
   openStockPreparation() {
@@ -1247,11 +1739,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     });
   }
 
-  private commitOrderEstadoChange(newEstado: string) {
+  private commitOrderEstadoChange(newEstado: string, descuentoFisicoAlcance?: OrderPhysicalStockScope) {
     if (!this.editingOrderId) return;
 
     this.savingEstado = true;
-    this.orderService.updateOrderStatus(this.editingOrderId, newEstado).subscribe({
+    this.orderService
+      .updateOrderStatus(this.editingOrderId, newEstado, descuentoFisicoAlcance ? { descuentoFisicoAlcance } : undefined)
+      .subscribe({
       next: (result) => {
         this.applyOrderUpdateResult(result);
         this.savedOrderEstado = newEstado;
@@ -1272,7 +1766,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private applyOrderUpdateResult(result: OrderUpdateResult) {
-    if (result.estado) this.order.estado = result.estado;
+    if (result.estado) {
+      this.order.estado = result.estado;
+      this.savedOrderEstado = result.estado;
+    }
     if (result.pagos) this.order.pagos = result.pagos;
     if (result.totalPagado !== undefined) this.order.totalPagado = result.totalPagado;
     if (result.saldo !== undefined) this.order.saldo = result.saldo;
@@ -1280,12 +1777,56 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (result.estadoStock) this.order.estadoStock = result.estadoStock;
     if (result.stockPreparado !== undefined) this.order.stockPreparado = result.stockPreparado;
     if (result.stockDescontado !== undefined) this.order.stockDescontado = result.stockDescontado;
+    if (result.locked) this.orderFormLocked = true;
     if (result.items) {
       this.orderLines = result.items.map((line) => this.normalizeOrderLine(line));
       this.order.items = result.items;
       this.enrichOrderLinesWithStock();
     }
     this.calculateTotals();
+
+    if (result.stockWarning?.trim()) {
+      this.dialogService.alert({
+        title: 'Stock del pedido',
+        message: result.stockWarning,
+      });
+    }
+  }
+
+  consumePendingReservedStockNow() {
+    if (!this.editingOrderId || !this.canConsumePendingReservedStockNow) return;
+    if (!this.consumePendingDraft.length) {
+      this.openConsumePendingDialog();
+      return;
+    }
+
+    const lines = this.consumePendingDraft
+      .map((row) => ({ lineIndex: row.lineIndex, cantidad: Math.max(0, Number(row.input) || 0) }))
+      .filter((row) => row.cantidad > 0);
+
+    if (lines.length === 0) {
+      this.dialogService.alert({ title: 'Nada para descontar', message: 'Elegí una cantidad mayor a 0.' });
+      return;
+    }
+
+    this.consumingPendingStock = true;
+    this.orderService.consumePendingReservedStock(this.editingOrderId, lines).subscribe({
+      next: (result) => {
+        this.consumingPendingStock = false;
+        this.consumePendingDialogOpen = false;
+        this.applyOrderUpdateResult(result);
+      },
+      error: (err: HttpErrorResponse) => {
+        this.consumingPendingStock = false;
+        this.dialogService.alert({
+          title: 'No se pudo descontar',
+          message:
+            typeof err.error?.error === 'string'
+              ? err.error.error
+              : 'No se pudo descontar el stock reservado del pedido.',
+        });
+      },
+    });
   }
 
   get seniaBloqueada(): boolean {
@@ -1342,6 +1883,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.enrichOrderLinesWithStock({ debounceMs: 250 });
   }
 
+  openOrderLineProduct(line: OrderLineItem, event: Event) {
+    event.stopPropagation();
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) return;
+    this.router.navigate(['/stock', stockItemId, 'edit']);
+  }
+
   ngOnInit() {
     this.catalogConfigService.getAppConfig().subscribe((config) => {
       this.appConfig = config;
@@ -1357,14 +1905,60 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     this.refreshClients();
-    const duplicateId = this.route.snapshot.queryParamMap.get('duplicate');
-    this.editingOrderId = this.route.snapshot.paramMap.get('id');
 
-    if (this.editingOrderId) {
-      this.loadOrder(this.editingOrderId);
-    } else if (duplicateId) {
-      this.loadOrderForDuplicate(duplicateId);
+    this.route.paramMap.subscribe(() => {
+      const duplicateId = this.route.snapshot.queryParamMap.get('duplicate');
+      const orderId = this.route.snapshot.paramMap.get('id');
+
+      if (orderId) {
+        this.startEditingOrder(orderId);
+        return;
+      }
+
+      this.editingOrderId = null;
+      this.loadedOrderSnapshot = null;
+      this.orderPageReady = true;
+
+      if (duplicateId) {
+        this.loadOrderForDuplicate(duplicateId);
+      } else {
+        this.resetForm();
+      }
+    });
+  }
+
+  private readOrderPreview(orderId: string): Order | null {
+    const nav = this.router.getCurrentNavigation();
+    const candidate = (nav?.extras?.state?.['orderPreview'] ??
+      history.state?.orderPreview) as Order | undefined;
+    if (!candidate?.id || candidate.id !== orderId) return null;
+    return candidate;
+  }
+
+  private startEditingOrder(orderId: string) {
+    this.editingOrderId = orderId;
+    const preview = this.readOrderPreview(orderId);
+
+    if (preview) {
+      if (!this.auth.canViewOrder(preview.estado)) {
+        this.dialogService.alert({
+          title: 'Sin acceso',
+          message: 'No tenés permiso para ver este pedido.',
+        });
+        this.router.navigate(['/orders']);
+        return;
+      }
+      this.applyLoadedOrder(preview);
+      this.orderPageReady = true;
+    } else {
+      this.orderPageReady = false;
+      this.order = this.emptyOrder();
+      this.orderLines = [];
+      this.isDraftOrder = false;
+      this.loadedOrderSnapshot = null;
     }
+
+    this.loadOrder(orderId);
   }
 
   private refreshClients() {
@@ -1400,7 +1994,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (this.isReadOnlyOrder) return;
     const nombre = this.pendingClientName.trim();
     this.router.navigate(['/clients/new'], {
-      queryParams: nombre ? { nombre } : {},
+      queryParams: {
+        ...(nombre ? { nombre } : {}),
+        returnTo: 'orders',
+        ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
+      },
     });
   }
 
@@ -1552,7 +2150,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       costosExtra: [],
       precioVenta: null,
       precioSugerido,
-      controlaStock: itemControlsStock(item),
+      controlaStock: item.controlaStock !== false,
+      permitirStockNegativo: item.permitirStockNegativo !== false,
       stockDisponible: getStockDisponible(item),
     };
     this.attachCatalogToLine(line, item);
@@ -2077,7 +2676,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     window.clearTimeout(this.orderSaveFeedbackTimeout);
     this.orderSaveFeedbackTimeout = window.setTimeout(() => {
       this.resetOrderSaveState();
-      this.router.navigate(['/orders']);
     }, 2500);
   }
 
@@ -2205,6 +2803,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         }
         this.applyOrderUpdateResult(result as OrderUpdateResult);
         this.isDraftOrder = estado === 'borrador';
+        this.savedOrderEstado = this.order.estado ?? estado;
+        if (orderIsLockedForEdit(this.order.estado) || !!(result as OrderUpdateResult).locked) {
+          this.orderFormLocked = true;
+          if (this.loadedOrderSnapshot) {
+            this.loadedOrderSnapshot = {
+              ...this.loadedOrderSnapshot,
+              ...this.order,
+              estado: this.order.estado,
+              ventaId: this.order.ventaId,
+              pagos: this.order.pagos,
+              saldo: this.order.saldo,
+              totalPagado: this.order.totalPagado,
+            };
+          }
+        }
 
         const shouldAutoReserve =
           this.orderSaveAction === 'submit' &&
@@ -2262,6 +2875,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.loadedOrderSnapshot = null;
     this.isDraftOrder = false;
     this.savedOrderEstado = 'pendiente';
+    this.orderFormLocked = false;
 
     this.order = {
       ...this.emptyOrder(),
@@ -2295,7 +2909,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         next: (stockItem) => {
           this.orderLines[0].nombre = stockItem.nombre;
           this.orderLines[0].costoUnitario = Number(stockItem.costo) || 0;
-          this.orderLines[0].controlaStock = itemControlsStock(stockItem);
+          this.orderLines[0].controlaStock = stockItem.controlaStock !== false;
+          this.orderLines[0].permitirStockNegativo = stockItem.permitirStockNegativo !== false;
           this.orderLines[0].stockDisponible = getStockDisponible(stockItem);
           this.calculateTotals();
         },
@@ -2336,66 +2951,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           return;
         }
 
-        const normalizedStatus = normalizeOrderStatus(order.estado);
-        this.isDraftOrder = normalizedStatus === 'borrador';
-        this.loadedOrderSnapshot = order;
-
-        this.order = {
-          clienteId: order.clienteId ?? '',
-          descripcion: order.descripcion ?? '',
-          estado: order.estado ?? 'pendiente',
-          fechaEntrega: order.fechaEntrega ?? new Date().toISOString(),
-          total: Number(order.total) || 0,
-          costoReal: Number(order.costoReal) || 0,
-          gananciaEstimada: Number(order.gananciaEstimada) || 0,
-          margen: Number(order.margen) || 0,
-          senia: Number(order.senia) || 0,
-          totalPagado: Number(order.totalPagado) || 0,
-          saldo: Number(order.saldo) || 0,
-          pagos: order.pagos ?? [],
-          seniaBloqueada: order.seniaBloqueada,
-          movimientoSeniaId: order.movimientoSeniaId,
-          stockDescontado: order.stockDescontado,
-          stockPreparado: order.stockPreparado,
-          estadoStock: order.estadoStock,
-          ventaId: order.ventaId,
-          items: order.items ?? [],
-        };
-        this.savedOrderEstado = this.order.estado ?? 'pendiente';
-
-        if (order.items?.length) {
-          this.orderLines = order.items.map((line) => this.normalizeOrderLine(line));
-          this.enrichOrderLinesWithStock();
-        } else if (order.stockItemId) {
-          this.orderLines = [
-            this.normalizeOrderLine({
-              stockItemId: order.stockItemId,
-              nombre: 'Producto',
-              cantidad: Number(order.cantidad) || 1,
-              costoUnitario: 0,
-              costoPersonalizacion: Number(order.costosExtra?.[0]?.costoUnitario) || 0,
-              costosExtra: (order.costosExtra ?? []).map((extra) => ({
-                nombre: extra.nombre,
-                costo: Number(extra.costoUnitario) || 0,
-              })),
-              precioVenta: Number(order.total) || 0,
-            }),
-          ];
-
-          this.stockService.getItem(order.stockItemId).subscribe({
-            next: (stockItem) => {
-              this.orderLines[0].nombre = stockItem.nombre;
-              this.orderLines[0].costoUnitario = Number(stockItem.costo) || 0;
-              this.orderLines[0].controlaStock = itemControlsStock(stockItem);
-              this.orderLines[0].stockDisponible = getStockDisponible(stockItem);
-              this.calculateTotals();
-            },
-          });
-        }
-
-        this.calculateTotals();
+        this.applyLoadedOrder(order);
+        this.orderPageReady = true;
       },
       error: () => {
+        this.orderPageReady = true;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudo cargar el pedido.',
@@ -2403,6 +2963,71 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.router.navigate(['/orders']);
       },
     });
+  }
+
+  private applyLoadedOrder(order: Order) {
+    const normalizedStatus = normalizeOrderStatus(order.estado);
+    this.isDraftOrder = normalizedStatus === 'borrador';
+    this.loadedOrderSnapshot = order;
+
+    this.order = {
+      clienteId: order.clienteId ?? '',
+      descripcion: order.descripcion ?? '',
+      estado: order.estado ?? 'pendiente',
+      fechaEntrega: order.fechaEntrega ?? new Date().toISOString(),
+      total: Number(order.total) || 0,
+      costoReal: Number(order.costoReal) || 0,
+      gananciaEstimada: Number(order.gananciaEstimada) || 0,
+      margen: Number(order.margen) || 0,
+      senia: Number(order.senia) || 0,
+      totalPagado: Number(order.totalPagado) || 0,
+      saldo: Number(order.saldo) || 0,
+      pagos: order.pagos ?? [],
+      seniaBloqueada: order.seniaBloqueada,
+      movimientoSeniaId: order.movimientoSeniaId,
+      stockDescontado: order.stockDescontado,
+      stockPreparado: order.stockPreparado,
+      estadoStock: order.estadoStock,
+      ventaId: order.ventaId,
+      items: order.items ?? [],
+    };
+    this.savedOrderEstado = this.order.estado ?? 'pendiente';
+    this.orderFormLocked = orderIsLockedForEdit(order.estado);
+
+    if (order.items?.length) {
+      this.orderLines = order.items.map((line) => this.normalizeOrderLine(line));
+      this.enrichOrderLinesWithStock();
+    } else if (order.stockItemId) {
+      this.orderLines = [
+        this.normalizeOrderLine({
+          stockItemId: order.stockItemId,
+          nombre: 'Producto',
+          cantidad: Number(order.cantidad) || 1,
+          costoUnitario: 0,
+          costoPersonalizacion: Number(order.costosExtra?.[0]?.costoUnitario) || 0,
+          costosExtra: (order.costosExtra ?? []).map((extra) => ({
+            nombre: extra.nombre,
+            costo: Number(extra.costoUnitario) || 0,
+          })),
+          precioVenta: Number(order.total) || 0,
+        }),
+      ];
+
+      this.stockService.getItem(order.stockItemId).subscribe({
+        next: (stockItem) => {
+          this.orderLines[0].nombre = stockItem.nombre;
+          this.orderLines[0].costoUnitario = Number(stockItem.costo) || 0;
+          this.orderLines[0].controlaStock = stockItem.controlaStock !== false;
+          this.orderLines[0].permitirStockNegativo = stockItem.permitirStockNegativo !== false;
+          this.orderLines[0].stockDisponible = getStockDisponible(stockItem);
+          this.calculateTotals();
+        },
+      });
+    } else {
+      this.orderLines = [];
+    }
+
+    this.calculateTotals();
   }
 
   private normalizeOrderLine(line: OrderLineItem): OrderLineItem {
@@ -2447,7 +3072,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
           for (const line of this.orderLines) {
             if (line.stockItemId !== stockItemId) continue;
-            line.controlaStock = itemControlsStock(stockItem);
+            line.controlaStock = stockItem.controlaStock !== false;
+            line.permitirStockNegativo = stockItem.permitirStockNegativo !== false;
             line.stockDisponible = getStockDisponible(stockItem);
             const costo = Number(line.costoUnitario) || Number(stockItem.costo) || 0;
             line.precioSugerido = Number(stockItem.precioSugerido) || costo * 2 || undefined;

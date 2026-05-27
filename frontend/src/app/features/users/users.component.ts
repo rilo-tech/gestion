@@ -9,9 +9,18 @@ import { PERMISSIONS, USER_ROLE_LABELS } from '../../core/constants/permissions'
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import {
   ICON_ACTION_LINK_CLASS,
+  IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import { UserFormPanelComponent, UserFormSaveEvent } from './user-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -26,6 +35,9 @@ import { LucideAngularModule } from 'lucide-angular';
     HasPermissionDirective,
     TransactionModalComponent,
     UserFormPanelComponent,
+    IconActionComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -36,25 +48,22 @@ import { LucideAngularModule } from 'lucide-angular';
             Administrá quién accede al sistema y qué puede hacer cada persona.
           </p>
         </div>
-        <button
+        <app-icon-action
           *appHasPermission="permissions.USERS_MANAGE"
-          type="button"
-          (click)="openNewUser()"
-          [class]="iconActionLinkClass"
-          aria-label="Nuevo usuario"
-          title="Nuevo usuario">
+          label="Nuevo usuario"
+          (clicked)="openNewUser()">
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          <span class="hidden sm:inline">Nuevo usuario</span>
-        </button>
+        </app-icon-action>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="usersPage = 1"
             name="usersSearchQuery"
             placeholder="Buscar por nombre o email..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
           <table class="w-full text-left border-collapse sm:table-fixed sm:min-w-[640px]">
@@ -74,9 +83,9 @@ import { LucideAngularModule } from 'lucide-angular';
             </thead>
             <tbody class="divide-y divide-gray-50">
               <tr
-                *ngFor="let user of filteredUsers"
+                *ngFor="let user of paginatedFilteredUsers"
                 (click)="openUser(user)"
-                class="hover:bg-gray-50 transition-colors cursor-pointer">
+                [class]="listTableRowClass">
                 <td class="px-4 sm:px-6 py-3 sm:py-4">
                   <div class="font-medium text-gray-900 flex items-center gap-2">
                     <span
@@ -109,25 +118,13 @@ import { LucideAngularModule } from 'lucide-angular';
                   </span>
                 </td>
                 <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
-                  <div class="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      (click)="openUser(user)"
-                      title="Editar"
-                      *appHasPermission="permissions.USERS_MANAGE"
-                      class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                      <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                    </button>
-                    <button
-                      type="button"
-                      (click)="confirmDeleteUser(user)"
-                      title="Eliminar"
-                      *appHasPermission="permissions.USERS_MANAGE"
-                      [disabled]="user.id === auth.currentUser?.id"
-                      class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                    </button>
-                  </div>
+                  <app-list-row-actions
+                    *appHasPermission="permissions.USERS_MANAGE"
+                    [showDelete]="true"
+                    [deleteDisabled]="user.id === auth.currentUser?.id"
+                    (editClick)="openUser(user)"
+                    (deleteClick)="confirmDeleteUser(user)">
+                  </app-list-row-actions>
                 </td>
               </tr>
               <tr *ngIf="loadingUsers" class="sm:hidden">
@@ -154,6 +151,12 @@ import { LucideAngularModule } from 'lucide-angular';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="usersPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredUsers.length"
+          (pageChange)="usersPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -176,6 +179,9 @@ export class UsersComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly permissions = PERMISSIONS;
   readonly roleLabels = USER_ROLE_LABELS;
 
@@ -188,6 +194,7 @@ export class UsersComponent implements OnInit {
   users: AppUser[] = [];
   loadingUsers = false;
   searchQuery = '';
+  usersPage = 1;
   userModalOpen = false;
   editingUserId: string | null = null;
 
@@ -201,6 +208,10 @@ export class UsersComponent implements OnInit {
         .toLowerCase();
       return haystack.includes(query);
     });
+  }
+
+  get paginatedFilteredUsers(): AppUser[] {
+    return paginateSlice(this.filteredUsers, this.usersPage, this.listPageSize);
   }
 
   ngOnInit() {

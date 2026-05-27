@@ -14,6 +14,7 @@ import { buildConceptSegments } from '../../utils/concept-ref-links';
         <a
           *ngSwitchCase="'pedido'"
           [routerLink]="['/orders', segment.pedidoId, 'edit']"
+          (click)="$event.stopPropagation()"
           class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
           {{ segment.ref }}
         </a>
@@ -21,6 +22,7 @@ import { buildConceptSegments } from '../../utils/concept-ref-links';
           *ngSwitchCase="'venta'"
           [routerLink]="['/sales']"
           [queryParams]="{ ventaId: segment.ventaId }"
+          (click)="$event.stopPropagation()"
           class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
           {{ segment.ref }}
         </a>

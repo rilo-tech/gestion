@@ -171,6 +171,14 @@ html.dark .border-violet-100 {
   border-color: rgb(76 29 149 / 0.45) !important;
 }
 
+html.dark .bg-teal-50\/80 {
+  background-color: transparent !important;
+}
+
+html.dark .border-teal-100\/80 {
+  border-color: rgb(55 65 81) !important;
+}
+
 html.dark .text-teal-800 {
   color: rgb(153 246 228) !important;
 }
@@ -259,12 +267,20 @@ html.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
   border-color: rgb(31 41 55) !important;
 }
 
+html.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(55 65 81) !important;
+}
+
 html.dark .bg-gray-50\/80 {
   background-color: rgb(3 7 18 / 0.8) !important;
 }
 
 html.dark .bg-amber-50\/80 {
   background-color: rgb(120 53 15 / 0.2) !important;
+}
+
+html.dark .text-teal-600 {
+  color: rgb(45 212 191) !important;
 }
 
 html.dark .text-teal-700 {

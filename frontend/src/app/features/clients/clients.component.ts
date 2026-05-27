@@ -7,9 +7,17 @@ import { DialogService } from '../../core/services/dialog.service';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import {
   ICON_ACTION_LINK_CLASS,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   ClientFormPanelComponent,
@@ -31,6 +39,8 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
     TransactionModalComponent,
     ClientFormPanelComponent,
     ActivityLogTriggerComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -61,9 +71,10 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="clientsPage = 1"
             name="clientsSearchQuery"
             placeholder="Buscar por nombre, contacto, dirección o etiqueta..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
         <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
@@ -87,9 +98,9 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let client of filteredClients"
+              *ngFor="let client of paginatedFilteredClients"
               (click)="openClient(client)"
-              class="hover:bg-gray-50 transition-colors cursor-pointer">
+              [class]="listTableRowClass">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div class="font-medium text-gray-900 truncate">{{ client.nombre }}</div>
               </td>
@@ -118,30 +129,20 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
                 <div *ngIf="client.debe" class="text-xs font-semibold text-orange-500">Debe</div>
               </td>
               <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
-                <div class="flex items-center justify-end gap-1">
+                <app-list-row-actions
+                  [showDelete]="auth.canDeleteRecords"
+                  [editLabel]="auth.canEditRecords ? 'Editar' : 'Ver cliente'"
+                  (editClick)="openClient(client)"
+                  (deleteClick)="confirmDeleteClient(client)">
                   <a
+                    rowActionStart
                     *ngIf="client.id"
                     [routerLink]="['/clients', client.id, 'historial']"
                     title="Historial"
                     class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900">
                     <i-lucide name="history" class="w-4 h-4"></i-lucide>
                   </a>
-                  <button
-                    type="button"
-                    (click)="openClient(client)"
-                    [title]="auth.canEditRecords ? 'Editar' : 'Ver cliente'"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="auth.canDeleteRecords"
-                    type="button"
-                    (click)="confirmDeleteClient(client)"
-                    title="Eliminar"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="loading" class="sm:hidden">
@@ -173,6 +174,12 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           </tbody>
         </table>
         </div>
+        <app-list-pagination
+          [page]="clientsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredClients.length"
+          (pageChange)="clientsPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -196,6 +203,9 @@ export class ClientsComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
   private clientService = inject(ClientService);
@@ -206,6 +216,7 @@ export class ClientsComponent implements OnInit {
   clients: Client[] = [];
   loading = true;
   searchQuery = '';
+  clientsPage = 1;
   clientModalOpen = false;
   editingClientId: string | null = null;
   clientPrefillNombre = '';
@@ -239,6 +250,10 @@ export class ClientsComponent implements OnInit {
         etiquetas.includes(query)
       );
     });
+  }
+
+  get paginatedFilteredClients(): Client[] {
+    return paginateSlice(this.filteredClients, this.clientsPage, this.listPageSize);
   }
 
   ngOnInit() {

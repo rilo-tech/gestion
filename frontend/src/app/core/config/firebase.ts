@@ -1,12 +1,44 @@
 import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, GoogleAuthProvider } from 'firebase/auth';
 
+const PLACEHOLDER_API_KEYS = new Set([
+  'demo-api-key',
+  'your-web-api-key',
+  'your_api_key',
+  'missing-api-key',
+]);
+
+function isPlaceholderApiKey(key: string | undefined): boolean {
+  if (!key?.trim()) return true;
+  const normalized = key.trim().toLowerCase();
+  return PLACEHOLDER_API_KEYS.has(normalized) || normalized.startsWith('your-');
+}
+
 const projectId =
-  import.meta.env.VITE_FIREBASE_PROJECT_ID ?? 'gen-lang-client-0481869353';
+  import.meta.env.VITE_FIREBASE_PROJECT_ID?.trim() || 'rilo-7eff4';
+
+/** Solo activo si está explícitamente en true (no por defecto en dev). */
+export const isAuthEmulatorEnabled =
+  import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR === 'true';
+
+const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY?.trim();
+
+const apiKey = (() => {
+  if (isAuthEmulatorEnabled) {
+    if (envApiKey && !isPlaceholderApiKey(envApiKey)) return envApiKey;
+    return 'demo-api-key';
+  }
+  if (envApiKey && !isPlaceholderApiKey(envApiKey)) return envApiKey;
+  return '';
+})();
+
+export const isFirebaseClientConfigured = !!apiKey;
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? 'demo-api-key',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ?? `${projectId}.firebaseapp.com`,
+  apiKey: apiKey || 'missing-api-key',
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN?.trim() ||
+    `${projectId}.firebaseapp.com`,
   projectId,
 };
 
@@ -21,13 +53,13 @@ function resolveAuthEmulatorHost(): string {
   return '127.0.0.1';
 }
 
-const useAuthEmulator =
-  import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR === 'true' ||
-  (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_AUTH_EMULATOR !== 'false');
-
-export const isAuthEmulatorEnabled = useAuthEmulator;
-
-if (useAuthEmulator) {
+if (isAuthEmulatorEnabled) {
   const host = resolveAuthEmulatorHost();
   connectAuthEmulator(firebaseAuth, `http://${host}:9099`, { disableWarnings: true });
+}
+
+if (import.meta.env.DEV && !isAuthEmulatorEnabled && !isFirebaseClientConfigured) {
+  console.warn(
+    '[RILO] Falta VITE_FIREBASE_API_KEY en gestion/.env. Reiniciá npm run dev después de guardar el archivo.'
+  );
 }

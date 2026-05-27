@@ -25,10 +25,19 @@ import {
 } from '../clients/client-form-panel.component';
 import {
   IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
+import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
@@ -48,7 +57,21 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 @Component({
   selector: 'app-sales',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, TransactionModalComponent, IconActionComponent, HasPermissionDirective, ClientFormPanelComponent, ActivityLogTriggerComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    LucideAngularModule,
+    RouterLink,
+    SearchableSelectComponent,
+    TransactionModalComponent,
+    IconActionComponent,
+    HasPermissionDirective,
+    ClientFormPanelComponent,
+    ActivityLogTriggerComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
+    ModalFormFooterComponent,
+  ],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -98,9 +121,10 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="salesPage = 1"
             name="salesSearchQuery"
             placeholder="Buscar por venta, cliente, pedido o producto..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
         <table [class]="tableMinWidthClass">
@@ -117,9 +141,9 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let sale of filteredSales"
+              *ngFor="let sale of paginatedFilteredSales"
               (click)="openSaleDetail(sale)"
-              class="transition-colors cursor-pointer hover:bg-gray-50">
+              [class]="listTableRowClass">
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(sale.fecha) }}
               </td>
@@ -164,11 +188,16 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                 </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
-                <div class="flex items-center justify-end gap-1">
+                <app-list-row-actions
+                  [showDelete]="canDeleteSale(sale)"
+                  editLabel="Ver / editar venta"
+                  (editClick)="openSaleDetail(sale)"
+                  (deleteClick)="confirmDeleteSale(sale)">
                   <button
-                    type="button"
-                    (click)="openCollectModal(sale)"
+                    rowActionStart
                     *ngIf="auth.canAccessCash"
+                    type="button"
+                    (click)="openCollectModal(sale); $event.stopPropagation()"
                     [disabled]="!canCollectSaleBalance(sale)"
                     title="Cobrar saldo"
                     class="p-2 rounded-lg disabled:cursor-not-allowed"
@@ -178,22 +207,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                     [class.text-gray-300]="!canCollectSaleBalance(sale)">
                     <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
                   </button>
-                  <button
-                    type="button"
-                    (click)="openSaleDetail(sale)"
-                    title="Ver venta"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="canDeleteSale(sale)"
-                    type="button"
-                    (click)="confirmDeleteSale(sale)"
-                    title="Eliminar"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="loading" class="sm:hidden">
@@ -225,6 +239,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </tbody>
         </table>
         </div>
+        <app-list-pagination
+          [page]="salesPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredSales.length"
+          (pageChange)="salesPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -312,7 +332,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               (createRequested)="quickCreateClient($event)"
               (searchChange)="pendingClientName = $event"
               placeholder="Buscar cliente..."
-              listHint="Escribí un nombre existente o usá «Crear cliente» si todavía no está cargado."
               emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
             </app-searchable-select>
           </div>
@@ -447,29 +466,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </textarea>
         </div>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
-          <button
-            type="button"
-            (click)="closeSaleModal()"
-            class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            type="button"
-            (click)="submitSale()"
-            [disabled]="savingSale"
-            class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-            {{
-              savingSale
-                ? 'Guardando...'
-                : saleModalMode === 'edit'
-                  ? 'Guardar cambios'
-                  : saleModalMode === 'pedido'
-                    ? 'Registrar entrega'
-                    : 'Registrar venta'
-            }}
-          </button>
-        </div>
+        <app-modal-form-footer
+          [saving]="savingSale"
+          [primaryLabel]="saleModalPrimaryLabel"
+          (cancelClick)="closeSaleModal()"
+          (primaryClick)="submitSale()">
+        </app-modal-form-footer>
     </app-transaction-modal>
 
     <app-transaction-modal
@@ -512,21 +514,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
       </div>
-      <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
-        <button
-          type="button"
-          (click)="closeCollectModal()"
-          class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-          Cancelar
-        </button>
-        <button
-          type="button"
-          (click)="submitCollect()"
-          [disabled]="collectSaving"
-          class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-          {{ collectSaving ? 'Guardando...' : 'Registrar en caja' }}
-        </button>
-      </div>
+      <app-modal-form-footer
+        [saving]="collectSaving"
+        primaryLabel="Registrar en caja"
+        (cancelClick)="closeCollectModal()"
+        (primaryClick)="submitCollect()">
+      </app-modal-form-footer>
     </app-transaction-modal>
 
     <app-transaction-modal
@@ -763,6 +756,9 @@ export class SalesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
   formatSaleLabel = formatSaleLabel;
@@ -777,6 +773,7 @@ export class SalesComponent implements OnInit {
 
   sales: Sale[] = [];
   searchQuery = '';
+  salesPage = 1;
   eligibleOrders: EligibleOrderForSale[] = [];
   clients: Client[] = [];
   stockItems: StockItem[] = [];
@@ -854,6 +851,16 @@ export class SalesComponent implements OnInit {
         productos.includes(query)
       );
     });
+  }
+
+  get paginatedFilteredSales(): Sale[] {
+    return paginateSlice(this.filteredSales, this.salesPage, this.listPageSize);
+  }
+
+  get saleModalPrimaryLabel(): string {
+    if (this.saleModalMode === 'edit') return 'Guardar cambios';
+    if (this.saleModalMode === 'pedido') return 'Registrar entrega';
+    return 'Registrar venta';
   }
 
   get detailModalTitle(): string {

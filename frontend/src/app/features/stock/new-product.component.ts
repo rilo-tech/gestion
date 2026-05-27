@@ -3,7 +3,11 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
-import { StockService, StockItem } from '../../core/services/stock.service';
+import {
+  applyCategoriaStockReglaToForm,
+  getCategoriaStockRegla,
+  normalizeCategoriasStock,
+} from '../../core/utils/stock-product';
 import {
   AppConfig,
   DEFAULT_APP_CONFIG,
@@ -19,11 +23,13 @@ import { PERMISSIONS } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
+import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
+import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
 
 @Component({
   selector: 'app-new-product',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent, HasPermissionDirective, SelectOnFocusDirective],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent, HasPermissionDirective, SelectOnFocusDirective, FormSaveFooterComponent, DuplicateActionButtonComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
       <div class="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -65,6 +71,7 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
                 <label class="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
                 <app-searchable-select
                   [(ngModel)]="item.categoria"
+                  (ngModelChange)="onCategoriaChange($event)"
                   name="categoria"
                   [options]="configService.getFieldOptions(appConfig, 'productos.categorias')"
                   placeholder="Buscar categoría..."
@@ -102,14 +109,14 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
               Inventario
             </h2>
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
+              <div *ngIf="showInventoryFields">
                 <label class="block text-sm font-medium text-gray-700 mb-1">
                   {{ isEditing ? 'Stock actual' : 'Stock inicial' }}
                 </label>
                 <input type="number" [(ngModel)]="item.stockActual" name="stockActual" min="0"
                        class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
               </div>
-              <div>
+              <div *ngIf="showInventoryFields">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Stock mínimo</label>
                 <input type="number" [(ngModel)]="item.stockMinimo" name="stockMinimo" min="0"
                        class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
@@ -128,17 +135,40 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
               <p class="text-xs text-gray-500 sm:col-span-3">
                 El costo de compra es el costo base del producto al cargarlo en un pedido.
               </p>
-              <div class="sm:col-span-3">
+              <p
+                *ngIf="categoriaStockHint"
+                class="text-xs text-teal-700 sm:col-span-3 p-3 rounded-lg border border-teal-100 bg-teal-50/50">
+                {{ categoriaStockHint }}
+              </p>
+              <div class="sm:col-span-3 space-y-3">
                 <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50 cursor-pointer">
                   <input
                     type="checkbox"
                     [(ngModel)]="controlaStock"
+                    (ngModelChange)="onControlaStockChange()"
                     name="controlaStock"
+                    [disabled]="formReadOnly"
                     class="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-primary">
                   <span>
                     <span class="block text-sm font-medium text-gray-700">Controla stock</span>
                     <span class="block text-xs text-gray-500 mt-0.5">
-                      Si está activo, el producto usa stock físico y reservas. Podés cargar pedidos igual; lo que falte queda en Faltantes para comprar.
+                      Movimientos, reservas y faltantes. Desmarcá para servicios (estampado, bordado): solo precio en el pedido, sin cantidades.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  *ngIf="controlaStock"
+                  class="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    [(ngModel)]="permitirStockNegativo"
+                    name="permitirStockNegativo"
+                    [disabled]="formReadOnly"
+                    class="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-primary">
+                  <span>
+                    <span class="block text-sm font-medium text-gray-700">Permitir stock negativo</span>
+                    <span class="block text-xs text-gray-500 mt-0.5">
+                      Podés cargar pedidos aunque no alcance el depósito; al descontar puede quedar en negativo. Desmarcá para bloquear reservas y descuentos sin stock.
                     </span>
                   </span>
                 </label>
@@ -182,11 +212,15 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-gray-400">{{ isEditing ? 'Stock actual' : 'Stock inicial' }}</span>
-                <span>{{ item.stockActual || 0 }} u.</span>
+                <span>{{ showInventoryFields ? (item.stockActual || 0) + ' u.' : '—' }}</span>
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-gray-400">Control de stock</span>
-                <span>{{ controlaStock ? 'Sí' : 'No' }}</span>
+                <span>{{ controlaStock ? 'Sí' : 'No (servicio)' }}</span>
+              </div>
+              <div *ngIf="controlaStock" class="flex justify-between text-sm">
+                <span class="text-gray-400">Stock negativo</span>
+                <span>{{ permitirStockNegativo ? 'Permitido' : 'Bloqueado' }}</span>
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-gray-400">Costo de compra</span>
@@ -199,31 +233,24 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
             </div>
 
             <div class="space-y-2 pt-4 border-t border-gray-800">
-              <button
+              <app-form-save-footer
                 *ngIf="!formReadOnly"
-                type="button"
-                (click)="submitProduct()"
-                class="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-teal-500 text-gray-900 text-sm font-semibold py-2.5 px-3 hover:bg-teal-400 transition-colors">
-                <i-lucide name="save" class="w-4 h-4"></i-lucide>
-                {{ isEditing ? 'Guardar' : 'Guardar producto' }}
-              </button>
-              <p
-                *ngIf="saveSuccessMessage"
-                class="text-center text-xs font-medium text-teal-300"
-                role="status">
-                {{ saveSuccessMessage }}
-              </p>
+                [label]="isEditing ? 'Guardar' : 'Guardar producto'"
+                [saving]="saving"
+                [successMessage]="saveSuccessMessage"
+                theme="dark"
+                (saveClick)="submitProduct()">
+              </app-form-save-footer>
               <div
                 *ngIf="isEditing && (!formReadOnly || auth.canDeleteRecords)"
                 class="flex gap-2">
-                <button
+                <app-duplicate-action-button
                   *ngIf="!formReadOnly"
-                  type="button"
-                  (click)="duplicateProduct()"
-                  class="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800/50 text-gray-200 text-xs font-medium py-2 px-2.5 hover:bg-gray-800 transition-colors">
-                  <i-lucide name="copy" class="w-3.5 h-3.5"></i-lucide>
-                  Duplicar
-                </button>
+                  variant="dark"
+                  [iconOnly]="false"
+                  label="Duplicar"
+                  (duplicateClick)="duplicateProduct()">
+                </app-duplicate-action-button>
                 <button
                   *ngIf="auth.canDeleteRecords"
                   type="button"
@@ -254,10 +281,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   editingItemId: string | null = null;
+  saving = false;
   saveSuccessMessage = '';
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
   nombreBase = '';
   controlaStock = true;
+  permitirStockNegativo = true;
   item = {
     tipo: '',
     categoria: '',
@@ -280,6 +309,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
+      if (!this.appConfig.productos.categoriasStock) {
+        this.appConfig.productos.categoriasStock = {};
+      }
     });
     this.catalogConfigServiceLoad();
 
@@ -309,6 +341,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private resetForm() {
     this.nombreBase = '';
     this.controlaStock = true;
+    this.permitirStockNegativo = true;
     this.item = {
       categoria: '',
       talle: '',
@@ -336,7 +369,75 @@ export class NewProductComponent implements OnInit, OnDestroy {
   }
 
   get inventoryValue(): number {
+    if (!this.showInventoryFields) return 0;
     return (this.item.stockActual || 0) * (this.item.costo || 0);
+  }
+
+  get showInventoryFields(): boolean {
+    return this.controlaStock;
+  }
+
+  get categoriaStockHint(): string {
+    const regla = getCategoriaStockRegla(
+      this.appConfig.productos?.categoriasStock,
+      this.item.categoria
+    );
+    if (!regla) {
+      return this.item.categoria?.trim()
+        ? 'Esta categoría no tiene reglas de stock: configurá este producto manualmente.'
+        : '';
+    }
+    return 'Esta categoría tiene reglas de stock. Los valores de abajo se sugieren al elegirla; podés cambiarlos solo para este producto.';
+  }
+
+  onCategoriaChange(categoria: string) {
+    const regla = getCategoriaStockRegla(
+      normalizeCategoriasStock(
+        this.appConfig.productos?.categoriasStock,
+        this.appConfig.productos?.categorias ?? [],
+        this.appConfig.productos?.categoriasSinStock ?? []
+      ),
+      categoria
+    );
+    if (!regla) return;
+
+    const apply = () => {
+      const next = applyCategoriaStockReglaToForm(regla);
+      this.controlaStock = next.controlaStock;
+      this.permitirStockNegativo = next.permitirStockNegativo;
+      if (!next.controlaStock) {
+        this.item.stockActual = 0;
+        this.item.stockMinimo = 0;
+      }
+    };
+
+    if (!this.isEditing) {
+      apply();
+      return;
+    }
+
+    this.dialogService
+      .confirm({
+        title: 'Aplicar reglas de la categoría',
+        message: `¿Usar las reglas de stock de «${categoria.trim()}» en este producto?`,
+        confirmLabel: 'Aplicar',
+        cancelLabel: 'Mantener actual',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) apply();
+      });
+  }
+
+  onControlaStockChange() {
+    if (!this.controlaStock) {
+      this.item.stockActual = 0;
+      this.item.stockMinimo = 0;
+      this.permitirStockNegativo = false;
+      return;
+    }
+    if (this.permitirStockNegativo === undefined) {
+      this.permitirStockNegativo = true;
+    }
   }
 
   submitProduct() {
@@ -348,27 +449,33 @@ export class NewProductComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const controlsStock = this.controlaStock;
+
     const payload: StockItem = {
+      tipo: this.item.tipo?.trim() || '',
       nombreBase: this.nombreBase.trim(),
       nombre: buildProductDisplayName(this.nombreBase, this.item.color, this.item.talle),
       categoria: this.item.categoria?.trim() || undefined,
       talle: this.item.talle?.trim() || undefined,
       color: this.item.color?.trim() || undefined,
-      stockActual: Number(this.item.stockActual) || 0,
-      stockMinimo: Number(this.item.stockMinimo) || 0,
-      controlaStock: this.controlaStock !== false,
+      stockActual: controlsStock ? Number(this.item.stockActual) || 0 : 0,
+      stockMinimo: controlsStock ? Number(this.item.stockMinimo) || 0 : 0,
+      controlaStock: controlsStock,
+      permitirStockNegativo: controlsStock ? this.permitirStockNegativo !== false : false,
       costo: Number(this.item.costo) || 0,
       precioSugerido: Number(this.item.precioSugerido) || 0,
     };
 
     if (this.formReadOnly) return;
 
+    this.saving = true;
     const request = this.editingItemId
       ? this.stockService.updateItem(this.editingItemId, payload)
       : this.stockService.createItem(payload);
 
     request.subscribe({
       next: (result) => {
+        this.saving = false;
         if (this.editingItemId) {
           this.showSaveSuccess('Cambios guardados.');
           return;
@@ -377,7 +484,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
         this.showSaveSuccess('Producto guardado.');
         this.router.navigate(['/stock', result.id, 'edit'], { replaceUrl: true });
       },
-      error: (err: HttpErrorResponse) =>
+      error: (err: HttpErrorResponse) => {
+        this.saving = false;
         this.dialogService.alert({
           title: err.status === 409 ? 'Producto duplicado' : 'Error',
           message:
@@ -385,11 +493,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
             (this.isEditing
               ? 'No se pudo actualizar el producto. Reiniciá el dev server si cambiaste la API.'
               : 'No se pudo guardar el producto. Reiniciá el dev server si cambiaste la API.'),
-        }),
+        });
+      },
     });
   }
 
-  duplicateProduct() {
+  duplicateProduct(_event?: Event) {
     if (!this.editingItemId) return;
     this.router.navigate(['/stock/new'], {
       queryParams: { duplicate: this.editingItemId },
@@ -459,7 +568,6 @@ export class NewProductComponent implements OnInit, OnDestroy {
     const nombreBase = product.nombreBase?.trim() || product.nombre?.trim() || '';
 
     this.nombreBase = nombreBase;
-    this.controlaStock = product.controlaStock !== false;
     this.item = {
       categoria: product.categoria ?? '',
       talle: product.talle ?? '',
@@ -469,5 +577,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
       costo: Number(product.costo) || 0,
       precioSugerido: Number(product.precioSugerido) || 0,
     };
+    this.controlaStock = product.controlaStock !== false;
+    this.permitirStockNegativo = product.permitirStockNegativo !== false;
+    if (!this.controlaStock) {
+      this.permitirStockNegativo = false;
+    }
   }
 }

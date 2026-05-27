@@ -12,6 +12,10 @@ export interface OrderPrintOptions {
   showPrices: boolean;
   showBalance: boolean;
   dualCopy: boolean;
+  /** A4 apaisado (siempre con dos vías; opcional con una sola). */
+  landscapeSheet: boolean;
+  /** Casilla vacía imprimible junto a cada producto. */
+  lineCheckboxes: boolean;
   pedidos?: OrderPedidosConfigShape;
 }
 
@@ -61,148 +65,6 @@ function lineStockPrintNote(line: OrderLineItem, order: Order): string {
     return `Libre ${disponible} u. (sin reservar acá) · Faltarían ${shortage} para comprar`;
   }
   return `Libre ${disponible} u. (sin reservar acá) · Stock alcanza`;
-}
-
-function stockPrintLines(order: Order): OrderLineItem[] {
-  return (order.items ?? []).filter(
-    (line) => line.stockItemId && line.controlaStock !== false && (Number(line.cantidad) || 0) > 0
-  );
-}
-
-function orderHasStockPrint(order: Order): boolean {
-  return !!order.stockPreparado && stockPrintLines(order).length > 0;
-}
-
-function renderStockCompactSection(order: Order): string {
-  if (!orderHasStockPrint(order)) return '';
-
-  const rows = stockPrintLines(order)
-    .map((line) => {
-      const reservada = Math.max(0, Number(line.cantidadReservada) || 0);
-      const faltante = Math.max(0, Number(line.cantidadFaltante) || 0);
-      return `<tr>
-        <td>${escapeHtml(line.nombre)}</td>
-        <td class="num">${escapeHtml(line.cantidad)}</td>
-        <td class="num stock-ok">${reservada}</td>
-        <td class="num stock-missing">${faltante > 0 ? faltante : '—'}</td>
-      </tr>`;
-    })
-    .join('');
-
-  return `
-    <section class="section stock-compact-section">
-      <h2>Stock para armado</h2>
-      <table class="stock-table">
-        <thead>
-          <tr>
-            <th>Producto</th>
-            <th class="num">Pedido</th>
-            <th class="num">Reservado</th>
-            <th class="num">Falta comprar</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </section>`;
-}
-
-function renderStockAssemblySheet(
-  order: Order,
-  client: Client | null,
-  clientName: string,
-  options: OrderPrintOptions
-): string {
-  if (!orderHasStockPrint(order)) return '';
-
-  const orderNumber = formatOrderNumber(order);
-  const orderRef = orderNumber ? `#${orderNumber}` : 'Sin número';
-  const lines = stockPrintLines(order);
-
-  const rows = lines
-    .map((line) => {
-      const reservada = Math.max(0, Number(line.cantidadReservada) || 0);
-      const faltante = Math.max(0, Number(line.cantidadFaltante) || 0);
-      return `<tr>
-        <td><strong>${escapeHtml(line.nombre)}</strong></td>
-        <td class="num">${escapeHtml(line.cantidad)}</td>
-        <td class="num stock-ok">${reservada}</td>
-        <td class="num stock-missing">${faltante}</td>
-      </tr>`;
-    })
-    .join('');
-
-  const purchaseLines = lines.filter((line) => (Number(line.cantidadFaltante) || 0) > 0);
-  const purchaseList =
-    purchaseLines.length > 0
-      ? `<section class="section purchase-box">
-          <h2>Lista para comprar</h2>
-          <ul class="purchase-list">
-            ${purchaseLines
-              .map(
-                (line) =>
-                  `<li><strong>${escapeHtml(line.nombre)}</strong> · ${Math.max(0, Number(line.cantidadFaltante) || 0)} u.</li>`
-              )
-              .join('')}
-          </ul>
-        </section>`
-      : `<p class="complete-note">Todo el stock necesario está reservado. No hay compras pendientes para este pedido.</p>`;
-
-  const reservedLines = lines.filter((line) => (Number(line.cantidadReservada) || 0) > 0);
-  const reservedList =
-    reservedLines.length > 0
-      ? `<section class="section reserve-box">
-          <h2>En reserva (depósito)</h2>
-          <ul class="reserve-list">
-            ${reservedLines
-              .map(
-                (line) =>
-                  `<li><strong>${escapeHtml(line.nombre)}</strong> · ${Math.max(0, Number(line.cantidadReservada) || 0)} u.</li>`
-              )
-              .join('')}
-          </ul>
-        </section>`
-      : '';
-
-  return `
-    <article class="sheet sheet--stock">
-      <header class="sheet-header">
-        <div class="brand">
-          <p class="brand-label">Armado y compras</p>
-          <h1>${escapeHtml(options.companyName)}</h1>
-        </div>
-        <div class="order-badge">
-          <div class="order-number">${escapeHtml(orderRef)}</div>
-          <div class="order-status">Revisión de stock</div>
-        </div>
-      </header>
-
-      ${renderClientLine(client, clientName)}
-
-      <section class="section">
-        <h2>Detalle por producto</h2>
-        <table class="stock-table stock-table--full">
-          <thead>
-            <tr>
-              <th>Producto</th>
-              <th class="num">Pedido</th>
-              <th class="num">Reservado</th>
-              <th class="num">Falta comprar</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </section>
-
-      <div class="stock-columns">
-        ${reservedList}
-        ${purchaseList}
-      </div>
-
-      <footer class="sheet-footer">
-        <span>Impreso ${formatDate(new Date().toISOString())}</span>
-        <span>${escapeHtml(orderRef)} · Armado</span>
-      </footer>
-    </article>`;
 }
 
 function renderClientLine(client: Client | null, fallbackName: string): string {
@@ -263,16 +125,23 @@ function renderItemsTable(order: Order, options: OrderPrintOptions): string {
     return '<p class="empty-note">Sin productos cargados.</p>';
   }
 
-  const colCount = options.showPrices ? 4 : 2;
+  const withChecks = options.lineCheckboxes;
+  const colCount = (options.showPrices ? 4 : 2) + (withChecks ? 1 : 0);
+  const checkHead = withChecks ? '<th class="check-col" title="Marcar">✓</th>' : '';
+  const checkCell = withChecks
+    ? '<td class="check-col"><span class="line-check" aria-hidden="true"></span></td>'
+    : '';
 
   const head = options.showPrices
     ? `<tr>
+        ${checkHead}
         <th>Producto</th>
         <th class="num">Cant.</th>
         <th class="num">P. unit.</th>
         <th class="num">Subtotal</th>
       </tr>`
     : `<tr>
+        ${checkHead}
         <th>Producto</th>
         <th class="num">Cant.</th>
       </tr>`;
@@ -292,6 +161,7 @@ function renderItemsTable(order: Order, options: OrderPrintOptions): string {
         : '';
 
       return `<tr>
+        ${checkCell}
         <td><strong>${escapeHtml(line.nombre)}</strong></td>
         <td class="num">${escapeHtml(line.cantidad)}</td>
         ${detailCell}
@@ -330,7 +200,7 @@ function renderBalanceFooter(order: Order, options: OrderPrintOptions): string {
 
   if (!totalRow && !señaRow && !saldoRow) return '';
 
-  return `<div class="balance-footer">${totalRow}${señaRow}${saldoRow}</div>`;
+  return `<div class="balance-footer">${señaRow}${saldoRow}${totalRow}</div>`;
 }
 
 function renderOrderSheet(
@@ -373,8 +243,6 @@ function renderOrderSheet(
         ${renderItemsTable(order, options)}
       </section>
 
-      ${renderStockCompactSection(order)}
-
       ${renderBalanceFooter(order, options)}
 
       <footer class="sheet-footer">
@@ -391,18 +259,23 @@ function renderOrderPage(
   clientName: string,
   options: OrderPrintOptions
 ): string {
-  const orderPage = options.dualCopy
-    ? `
+  if (options.dualCopy) {
+    return `
     <div class="print-page print-page--dual">
       ${renderOrderSheet(order, client, clientName, options, '1ª vía')}
-      <div class="via-divider" aria-hidden="true"></div>
+      <div class="via-divider via-divider--vertical" aria-hidden="true"></div>
       ${renderOrderSheet(order, client, clientName, options, '2ª vía')}
-    </div>`
-    : renderOrderSheet(order, client, clientName, options);
+    </div>`;
+  }
 
-  const stockPage = renderStockAssemblySheet(order, client, clientName, options);
+  const singleClass = options.landscapeSheet
+    ? 'print-page print-page--single print-page--single-landscape'
+    : 'print-page print-page--single';
 
-  return `${orderPage}${stockPage}`;
+  return `
+    <div class="${singleClass}">
+      ${renderOrderSheet(order, client, clientName, options)}
+    </div>`;
 }
 
 function buildPrintStyles(): string {
@@ -417,43 +290,65 @@ function buildPrintStyles(): string {
       print-color-adjust: exact;
     }
     @page { size: A4; margin: 12mm; }
-    .sheet {
+    @page sheet-landscape { size: A4 landscape; margin: 10mm; }
+    .print-page {
       page-break-after: always;
+      page-break-inside: avoid;
+    }
+    .print-page:last-child { page-break-after: auto; }
+    .print-page--single {
       min-height: calc(297mm - 24mm);
+    }
+    .print-page--single .sheet {
+      min-height: calc(297mm - 24mm);
+    }
+    .print-page--single-landscape {
+      page: sheet-landscape;
+      width: calc(297mm - 20mm);
+      min-height: calc(210mm - 20mm);
+    }
+    .print-page--single-landscape .sheet {
+      min-height: calc(210mm - 20mm);
+    }
+    .sheet {
+      page-break-after: auto;
       display: flex;
       flex-direction: column;
       gap: 10px;
       padding: 2mm 0 4mm;
     }
-    .sheet:last-child { page-break-after: auto; }
     .print-page--dual {
-      page-break-after: always;
-      height: calc(297mm - 24mm);
+      page: sheet-landscape;
+      width: calc(297mm - 20mm);
+      height: calc(210mm - 20mm);
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
+      align-items: stretch;
       gap: 0;
       padding: 0;
     }
-    .print-page--dual:last-child { page-break-after: auto; }
     .print-page--dual .sheet {
-      page-break-after: auto;
       min-height: 0;
+      min-width: 0;
       flex: 1 1 0;
       overflow: hidden;
-      padding: 1mm 0 2mm;
+      padding: 1mm 2mm;
       gap: 5px;
     }
-    .via-divider {
+    .via-divider--vertical {
       flex-shrink: 0;
-      height: 12mm;
-      margin: 1mm 0;
-      border: none;
+      position: relative;
+      width: 10mm;
+      height: auto;
+      margin: 0 1mm;
+      align-self: stretch;
+      border-top: none;
+      border-bottom: none;
+      border-left: 2px dashed #6b7280;
+      border-right: 2px dashed #6b7280;
       background:
         linear-gradient(#fff, #fff) padding-box,
-        repeating-linear-gradient(90deg, #9ca3af 0 6px, transparent 6px 12px) border-box;
-      border-top: 2px dashed #6b7280;
-      border-bottom: 2px dashed #6b7280;
-      position: relative;
+        repeating-linear-gradient(180deg, #9ca3af 0 6px, transparent 6px 12px) border-box;
     }
     .via-divider::after {
       content: 'Corte';
@@ -468,6 +363,30 @@ function buildPrintStyles(): string {
       letter-spacing: 0.12em;
       text-transform: uppercase;
       color: #6b7280;
+    }
+    .via-divider--vertical::after {
+      writing-mode: vertical-rl;
+      transform: translate(-50%, -50%) rotate(180deg);
+      padding: 5mm 0;
+    }
+    .check-col {
+      width: 6mm;
+      padding-left: 2px !important;
+      padding-right: 2px !important;
+      text-align: center;
+      vertical-align: middle;
+    }
+    th.check-col {
+      font-size: 7px;
+      color: #9ca3af;
+    }
+    .line-check {
+      display: inline-block;
+      width: 3.8mm;
+      height: 3.8mm;
+      border: 1.5px solid #374151;
+      border-radius: 1px;
+      background: #fff;
     }
     .via-label {
       font-weight: 700;
@@ -647,54 +566,12 @@ function buildPrintStyles(): string {
     }
     .stock-note { color: #9a3412; font-weight: 600; }
     .empty-note { margin: 0; color: #6b7280; font-size: 11px; }
-    .complete-note {
-      margin: 0;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: #ecfdf5;
-      border: 1px solid #99f6e4;
-      color: #047857;
-      font-size: 11px;
-      font-weight: 600;
-    }
-    .stock-compact-section {
-      flex-shrink: 0;
-    }
-    .stock-table th.num,
-    .stock-table td.num { text-align: right; }
-    .stock-ok { color: #047857; font-weight: 700; }
-    .stock-missing { color: #c2410c; font-weight: 700; }
-    .sheet--stock .order-status {
-      background: #fff7ed;
-      color: #c2410c;
-    }
-    .stock-columns {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .purchase-box,
-    .reserve-box {
-      min-height: 80px;
-    }
-    .purchase-list,
-    .reserve-list {
-      margin: 0;
-      padding-left: 18px;
-      font-size: 12px;
-      line-height: 1.5;
-    }
-    .purchase-list li { color: #9a3412; }
-    .reserve-list li { color: #047857; }
-    .print-page--dual .stock-compact-section table { font-size: 8px; }
-    .print-page--dual .stock-compact-section th,
-    .print-page--dual .stock-compact-section td { padding: 1px 3px; }
-    .print-page--dual .stock-compact-section h2 { font-size: 7px; }
     .balance-footer {
       margin-top: auto;
       flex-shrink: 0;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, auto));
+      justify-content: end;
       gap: 6px;
       padding: 8px 10px;
       border-radius: 10px;
@@ -704,9 +581,10 @@ function buildPrintStyles(): string {
     .balance-item {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: flex-end;
       gap: 2px;
       min-width: 0;
+      text-align: right;
     }
     .balance-item span {
       font-size: 9px;
@@ -785,22 +663,31 @@ function buildPrintStyles(): string {
       padding-top: 2px;
       font-size: 7px;
     }
+    .print-page--dual .line-check {
+      width: 3.2mm;
+      height: 3.2mm;
+    }
     @media screen {
       body { padding: 16px; background: #f3f4f6; }
-      .sheet,
-      .print-page--dual {
+      .print-page {
         max-width: 210mm;
         margin: 0 auto 24px;
         background: #fff;
         box-shadow: 0 10px 30px rgba(0,0,0,0.08);
         border-radius: 8px;
       }
-      .sheet {
+      .print-page--single .sheet {
         padding: 14mm 14mm;
       }
       .print-page--dual {
-        padding: 10mm 14mm;
-        min-height: calc(297mm - 20mm);
+        max-width: calc(297mm - 8mm);
+        min-height: calc(210mm - 8mm);
+        padding: 8mm 10mm;
+      }
+      .print-page--single-landscape {
+        max-width: calc(297mm - 8mm);
+        min-height: calc(210mm - 8mm);
+        padding: 10mm 12mm;
       }
     }
   `;
@@ -822,6 +709,34 @@ function enrichOrdersForPrint(orders: Order[], stockById: Map<string, { stockAct
   }));
 }
 
+function sanitizePrintFilename(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function buildOrdersPrintTitle(
+  orders: Order[],
+  clientsById: Map<string, Client>,
+  fallback: string
+): string {
+  if (orders.length === 1) {
+    const order = orders[0];
+    const clientName = clientsById.get(order.clienteId)?.nombre?.trim() || 'Cliente sin nombre';
+    const orderNumber = formatOrderNumber(order) || 'Pedido';
+    return sanitizePrintFilename(`${orderNumber} - ${clientName}`);
+  }
+
+  const parts = orders.slice(0, 5).map((order) => {
+    const clientName = clientsById.get(order.clienteId)?.nombre?.trim() || 'Cliente';
+    return `${formatOrderNumber(order) || 'Pedido'} - ${clientName}`;
+  });
+  const suffix = orders.length > 5 ? ` (+${orders.length - 5})` : '';
+  return sanitizePrintFilename(parts.join(', ') + suffix) || fallback;
+}
+
 export function buildOrdersPrintDocument(
   orders: Order[],
   clientsById: Map<string, Client>,
@@ -835,11 +750,13 @@ export function buildOrdersPrintDocument(
     })
     .join('');
 
+  const title = buildOrdersPrintTitle(orders, clientsById, `Pedidos · ${options.companyName}`);
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Pedidos · ${escapeHtml(options.companyName)}</title>
+  <title>${escapeHtml(title)}</title>
   <style>${buildPrintStyles()}</style>
 </head>
 <body>${sheets}</body>
@@ -874,6 +791,8 @@ export class OrderPrintService {
             showPrices: this.auth.canViewOrderSalePrice,
             showBalance: this.auth.canViewAccountBalance,
             dualCopy: this.catalogConfig.usesOrderPrintDualCopy(config),
+            landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(config),
+            lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(config),
             pedidos: config.pedidos,
           }
         );
@@ -887,6 +806,8 @@ export class OrderPrintService {
             showPrices: this.auth.canViewOrderSalePrice,
             showBalance: this.auth.canViewAccountBalance,
             dualCopy: this.catalogConfig.usesOrderPrintDualCopy(),
+            landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(),
+            lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(),
             pedidos: this.catalogConfig.appConfig.pedidos,
           }
         );

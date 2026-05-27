@@ -15,6 +15,11 @@ import {
   type ConfigRemovalKind,
 } from '../utils/config-usage.ts';
 import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
+import {
+  normalizeCategoriasSinStock,
+  normalizeCategoriasStock,
+  syncStockItemsWithCategoryDefaults,
+} from '../utils/stock-product.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import { requireSettingsAccess } from '../auth/middleware.ts';
 
@@ -32,6 +37,11 @@ const DEFAULT_APP_CONFIG = {
   productos: {
     tipos: [] as string[],
     categorias: [] as string[],
+    categoriasSinStock: [] as string[],
+    categoriasStock: {} as Record<
+      string,
+      { configurado: boolean; controlaStock: boolean; permitirStockNegativo: boolean }
+    >,
     talles: [] as string[],
     colores: [] as string[],
     modo: {
@@ -138,8 +148,14 @@ function normalizeProductos(raw: Record<string, unknown> = {}) {
   const modo = (raw.modo as Record<string, unknown>) ?? {};
   let tipos = normalizeList(raw.tipos);
   let categorias = normalizeList(raw.categorias);
+  let categoriasSinStock = normalizeList(raw.categoriasSinStock);
   let talles = normalizeList(raw.talles);
   let colores = normalizeList(raw.colores);
+  const categoriasStock = normalizeCategoriasStock(
+    raw.categoriasStock,
+    categorias,
+    categoriasSinStock
+  );
 
   if (Array.isArray(raw.campos)) {
     for (const item of raw.campos as Record<string, unknown>[]) {
@@ -155,6 +171,8 @@ function normalizeProductos(raw: Record<string, unknown> = {}) {
   return {
     tipos,
     categorias,
+    categoriasSinStock,
+    categoriasStock,
     talles,
     colores,
     modo: {
@@ -271,6 +289,9 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
     const confirmConfigRemovals = body.confirmConfigRemovals === true;
     delete body.confirmConfigRemovals;
 
+    const syncCategoriaStock = String(body.syncCategoriaStock ?? '').trim();
+    delete body.syncCategoriaStock;
+
     const current = await loadAppConfig(businessId);
     const next = normalizeAppConfig(body);
     const removals = diffConfigRemovals(current, next);
@@ -292,6 +313,9 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
     };
 
     await db.doc(`negocios/${businessId}/config/app`).set(payload);
+    if (syncCategoriaStock) {
+      await syncStockItemsWithCategoryDefaults(businessId, syncCategoriaStock);
+    }
     res.json(payload);
   } catch (error) {
     console.error('Error updating app config:', error);

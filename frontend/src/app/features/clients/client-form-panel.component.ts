@@ -24,10 +24,8 @@ import {
   SearchableSelectOption,
 } from '../../shared/components/searchable-select/searchable-select.component';
 import {
-  FORM_CANCEL_CLASS,
   FORM_CONTROL_CLASS,
   FORM_LABEL_CLASS,
-  FORM_SUBMIT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -36,6 +34,7 @@ import { Subscription } from 'rxjs';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
+import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
 
 export interface ClientFormSaveEvent {
   id: string;
@@ -53,6 +52,7 @@ export interface ClientFormSaveEvent {
     ConfigSettingsLinkComponent,
     RouterLink,
     SelectOnFocusDirective,
+    FormPanelFooterComponent,
   ],
   template: `
     <div class="space-y-4">
@@ -179,30 +179,15 @@ export interface ClientFormSaveEvent {
         </div>
         </fieldset>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-          <button
-            *ngIf="isEditing && auth.canDeleteRecords"
-            type="button"
-            (click)="confirmDeleteClient()"
-            class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
-            Eliminar cliente
-          </button>
-          <div class="flex justify-end gap-3 sm:ml-auto">
-            <button
-              type="button"
-              (click)="cancelled.emit()"
-              [class]="formCancelClass">
-              {{ formReadOnly ? 'Cerrar' : 'Cancelar' }}
-            </button>
-            <button
-              *ngIf="!formReadOnly"
-              type="submit"
-              [disabled]="savingClient"
-              [class]="formSubmitClass">
-              {{ savingClient ? 'Guardando...' : (isEditing ? 'Guardar' : 'Crear cliente') }}
-            </button>
-          </div>
-        </div>
+        <app-form-panel-footer
+          [deleteLabel]="isEditing && auth.canDeleteRecords ? 'Eliminar cliente' : ''"
+          [cancelLabel]="formReadOnly ? 'Cerrar' : 'Cancelar'"
+          [saveLabel]="isEditing ? 'Guardar' : 'Crear cliente'"
+          [showSave]="!formReadOnly"
+          [saving]="savingClient"
+          (cancelClick)="cancelled.emit()"
+          (deleteClick)="confirmDeleteClient()">
+        </app-form-panel-footer>
       </form>
     </div>
   `,
@@ -223,8 +208,6 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   readonly auth = inject(AuthService);
   readonly formControlClass = FORM_CONTROL_CLASS;
   readonly formLabelClass = FORM_LABEL_CLASS;
-  readonly formSubmitClass = FORM_SUBMIT_CLASS;
-  readonly formCancelClass = FORM_CANCEL_CLASS;
   private configSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);

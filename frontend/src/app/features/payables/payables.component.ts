@@ -29,6 +29,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
@@ -46,6 +47,7 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
     IconActionComponent,
     ConfigSettingsLinkComponent,
     ActivityLogTriggerComponent,
+    ModalFormFooterComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -360,20 +362,12 @@ type EstadoFilter = 'all' | PayableDisplayEstado;
             class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
-          <button
-            type="button"
-            (click)="closeCreateModal()"
-            class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            [disabled]="creating"
-            class="form-btn-primary rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-60">
-            {{ creating ? 'Guardando...' : 'Crear' }}
-          </button>
-        </div>
+        <app-modal-form-footer
+          [saving]="creating"
+          primaryLabel="Crear"
+          (cancelClick)="closeCreateModal()"
+          (primaryClick)="submitCreate()">
+        </app-modal-form-footer>
       </form>
     </app-transaction-modal>
   `,

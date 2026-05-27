@@ -31,6 +31,7 @@ export interface OrderLineItem {
   priceCatalogId?: string;
   /** Enriquecido desde stock al armar el pedido; no se persiste. */
   controlaStock?: boolean;
+  permitirStockNegativo?: boolean;
   stockDisponible?: number;
   cantidadReservada?: number;
   cantidadUsada?: number;
@@ -71,7 +72,10 @@ export interface Order {
   createdAt?: string;
   ventaId?: string;
   entregadoAt?: string;
+  stockOperaciones?: Array<{ fecha: string; tipo: string; total: number; detalle: string }>;
   items: OrderLineItem[];
+  /** Presente en listado API para búsqueda sin traer líneas completas. */
+  productoNombres?: string[];
   stockItemId?: string;
   cantidad?: number;
   costosExtra?: OrderExtraCost[];
@@ -148,6 +152,8 @@ export interface OrderUpdateResult {
   estadoStock?: string;
   stockPreparado?: boolean;
   stockDescontado?: boolean;
+  stockWarning?: string;
+  stockOperaciones?: Array<{ fecha: string; tipo: string; total: number; detalle: string }>;
 }
 
 export interface OrderStockPreparationLine {
@@ -163,6 +169,7 @@ export interface OrderStockPreparationLine {
   stockDisponible: number;
   sugeridoReservar: number;
   controlaStock: boolean;
+  permitirStockNegativo: boolean;
 }
 
 export interface OrderStockPreparationView {
@@ -172,6 +179,35 @@ export interface OrderStockPreparationView {
   estadoStock: string;
   stockPreparado: boolean;
   lines: OrderStockPreparationLine[];
+}
+
+export type OrderPhysicalStockScope = 'solo_reservado' | 'pedido_completo';
+
+export interface OrderStockDiscountPreviewLine {
+  nombre: string;
+  stockItemId: string;
+  cantidadPedida: number;
+  cantidadReservada: number;
+  pendiente: number;
+  aDescontarReservado: number;
+  aDescontarCompleto: number;
+  stockDisponible: number;
+  faltante: number;
+  controlaStock: boolean;
+}
+
+export interface OrderStockDiscountPreview {
+  willConsume: boolean;
+  nextEstado: string;
+  nextEstadoLabel: string;
+  defaultScope: OrderPhysicalStockScope;
+  canChooseScope: boolean;
+  requiresFullStock: boolean;
+  blocked: boolean;
+  blockReason?: string;
+  lines: OrderStockDiscountPreviewLine[];
+  totalReservado: number;
+  totalCompleto: number;
 }
 
 export interface ReservationSourceOrder {
@@ -240,10 +276,27 @@ export class OrderService {
     return this.http.patch<OrderUpdateResult>(`/api/orders/${this.businessId}/${orderId}`, order);
   }
 
-  updateOrderStatus(orderId: string, status: string): Observable<OrderUpdateResult> {
+  updateOrderStatus(
+    orderId: string,
+    status: string,
+    options?: { descuentoFisicoAlcance?: OrderPhysicalStockScope }
+  ): Observable<OrderUpdateResult> {
     return this.http.patch<OrderUpdateResult>(`/api/orders/${this.businessId}/${orderId}`, {
       estado: status,
+      ...(options?.descuentoFisicoAlcance
+        ? { descuentoFisicoAlcance: options.descuentoFisicoAlcance }
+        : {}),
     });
+  }
+
+  getStockDiscountPreview(
+    orderId: string,
+    nextEstado: string
+  ): Observable<OrderStockDiscountPreview> {
+    return this.http.get<OrderStockDiscountPreview>(
+      `/api/orders/${this.businessId}/${orderId}/stock-discount-preview`,
+      { params: { nextEstado } }
+    );
   }
 
   deleteOrder(orderId: string): Observable<{ id: string; estado: string }> {
@@ -307,6 +360,16 @@ export class OrderService {
     return this.http.post<{ ok: boolean }>(
       `/api/orders/${this.businessId}/${params.sourceOrderId}/stock-transfer`,
       params
+    );
+  }
+
+  consumePendingReservedStock(
+    orderId: string,
+    lines: Array<{ lineIndex: number; cantidad: number }> = []
+  ): Observable<OrderUpdateResult> {
+    return this.http.post<OrderUpdateResult>(
+      `/api/orders/${this.businessId}/${orderId}/consume-pending-stock`,
+      lines.length ? { lines } : {}
     );
   }
 

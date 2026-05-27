@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { StockShortageGroup, StockShortageRow } from './order.service';
+import { itemControlsStock as resolveItemControlsStock } from '../utils/stock-product';
 
 export interface StockItem {
   id?: string;
@@ -15,20 +16,26 @@ export interface StockItem {
   stockActual: number;
   stockMinimo?: number;
   stockReservado?: number;
-  /** Si es false, no exige stock físico al reservar. Default: true. */
+  /** Si es false, no exige stock físico (servicio / personalización). Default: true. */
   controlaStock?: boolean;
+  /** Si es true (default), pedidos pueden dejar depósito negativo para este producto. */
+  permitirStockNegativo?: boolean;
   costo?: number;
   precioSugerido?: number;
 }
 
-export function itemControlsStock(item: Pick<StockItem, 'controlaStock'> | undefined): boolean {
-  return item?.controlaStock !== false;
+export function itemControlsStock(
+  item: Pick<StockItem, 'controlaStock' | 'categoria'> | undefined,
+  _categoriasSinStock: string[] = []
+): boolean {
+  return resolveItemControlsStock(item, _categoriasSinStock);
 }
 
 export function itemIsLowStock(
-  item: Pick<StockItem, 'stockActual' | 'stockMinimo' | 'stockReservado' | 'controlaStock'> | undefined
+  item: Pick<StockItem, 'stockActual' | 'stockMinimo' | 'stockReservado' | 'controlaStock' | 'categoria'> | undefined,
+  categoriasSinStock: string[] = []
 ): boolean {
-  if (!itemControlsStock(item)) return false;
+  if (!itemControlsStock(item, categoriasSinStock)) return false;
   const disponible = getStockDisponible(item);
   return disponible <= (Number(item?.stockMinimo) || 0);
 }

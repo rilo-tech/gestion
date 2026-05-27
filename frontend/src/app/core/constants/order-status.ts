@@ -142,6 +142,11 @@ export function orderIsLockedForEdit(estado?: string): boolean {
   return normalizeOrderStatus(estado) === 'entregado';
 }
 
+export function isOrderDeliveryEstado(estado?: string): boolean {
+  const status = normalizeOrderStatus(estado);
+  return status === 'entregado' || status === 'entregado_con_saldo';
+}
+
 /** Pedidos confirmados (en curso) que aún no fueron entregados. */
 export function isOrderPendingDelivery(order: { estado?: string }): boolean {
   const status = normalizeOrderStatus(order.estado);

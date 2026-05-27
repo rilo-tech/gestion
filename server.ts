@@ -1,5 +1,5 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
+import { createServer as createViteServer, loadEnv } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
@@ -84,10 +84,19 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    const viteMode = 'development';
+    const viteEnv = loadEnv(viteMode, path.resolve(__dirname), '');
+    for (const [key, value] of Object.entries(viteEnv)) {
+      if (value !== undefined && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+
     const vite = await createViteServer({
       configFile: path.resolve(__dirname, 'vite.config.ts'),
-      mode: 'development',
+      mode: viteMode,
       root: path.resolve(__dirname, 'frontend'),
+      envDir: path.resolve(__dirname),
       server: { middlewareMode: true },
       appType: 'spa',
     });

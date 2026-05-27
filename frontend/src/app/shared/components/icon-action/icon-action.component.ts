@@ -45,9 +45,16 @@ export class IconActionComponent {
 
 /** Shared classes for routerLink / anchor primary actions on list pages. */
 export const ICON_ACTION_LINK_CLASS =
-  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold p-2.5 sm:px-4 sm:py-2 min-h-[42px] min-w-[42px] sm:min-w-0 transition-colors bg-primary text-white hover:bg-opacity-90';
+  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold p-2.5 sm:px-4 sm:py-2 min-h-[42px] min-w-[42px] sm:min-w-0 transition-colors bg-teal-600 text-white hover:bg-teal-700';
 
 export const PAGE_SHELL_CLASS = 'p-4 sm:p-6 lg:p-8 w-full min-w-0';
+
+/** Standard clickable table row (open edit/detail on click). */
+export const LIST_TABLE_ROW_CLASS = 'hover:bg-gray-50 transition-colors cursor-pointer';
+
+/** Standard search input above list tables. */
+export const TABLE_SEARCH_INPUT_CLASS =
+  'w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white';
 
 /** Oculto en celular (<640px); usar junto con `grid` en filas de KPIs/resumen. */
 export const MODULE_SUMMARY_KPIS_CLASS = 'module-summary-kpis';

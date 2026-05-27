@@ -17,12 +17,6 @@ import {
     <div [class]="pageShellClass + ' pb-20 sm:pb-24'">
       <div class="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="min-w-0">
-          <a
-            routerLink="/clients"
-            class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 mb-3">
-            <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
-            Volver a clientes
-          </a>
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">
             {{ isEditing ? 'Editar cliente' : 'Nuevo cliente' }}
           </h1>
@@ -34,6 +28,14 @@ import {
             message="¿Falta una etiqueta?"
             linkLabel="Configurala acá">
           </app-config-settings-link>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <a
+            [routerLink]="backLink"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
+            <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
+            {{ backLabel }}
+          </a>
         </div>
       </div>
 
@@ -59,14 +61,29 @@ export class ClientFormComponent implements OnInit {
 
   clientId: string | null = null;
   prefillNombre = '';
+  returnTo: 'clients' | 'orders' = 'clients';
+  returnOrderId: string | null = null;
 
   get isEditing(): boolean {
     return !!this.clientId;
   }
 
+  get backLabel(): string {
+    return this.returnTo === 'orders' ? 'Volver a pedidos' : 'Volver a clientes';
+  }
+
+  get backLink(): string[] {
+    if (this.returnTo === 'orders') {
+      return this.returnOrderId ? ['/orders', this.returnOrderId, 'edit'] : ['/orders/new'];
+    }
+    return ['/clients'];
+  }
+
   ngOnInit() {
     this.clientId = this.route.snapshot.paramMap.get('id');
     this.prefillNombre = this.route.snapshot.queryParamMap.get('nombre')?.trim() ?? '';
+    this.returnTo = this.route.snapshot.queryParamMap.get('returnTo') === 'orders' ? 'orders' : 'clients';
+    this.returnOrderId = this.route.snapshot.queryParamMap.get('orderId');
   }
 
   onSaved(event: ClientFormSaveEvent) {
@@ -77,6 +94,6 @@ export class ClientFormComponent implements OnInit {
   }
 
   goBack() {
-    this.router.navigate(['/clients']);
+    this.router.navigate(this.backLink);
   }
 }

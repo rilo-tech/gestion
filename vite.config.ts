@@ -6,6 +6,8 @@ import path from 'path';
 export default defineConfig(({ mode }) => {
   return {
     root: 'frontend',
+    // Single .env at repo root (same as server.ts dotenv) — not frontend/.env
+    envDir: path.resolve(__dirname),
     plugins: [
       angular({
         tsconfig: path.resolve(__dirname, 'tsconfig.app.json'),

@@ -7,9 +7,18 @@ import { DialogService } from '../../core/services/dialog.service';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import {
   ICON_ACTION_LINK_CLASS,
+  IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   SupplierFormPanelComponent,
@@ -30,6 +39,9 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
     TransactionModalComponent,
     SupplierFormPanelComponent,
     ActivityLogTriggerComponent,
+    IconActionComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -45,15 +57,9 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         </div>
         <div class="flex gap-2 shrink-0">
           <app-activity-log-trigger module="suppliers"></app-activity-log-trigger>
-          <button
-            type="button"
-            (click)="openNewSupplier()"
-            [class]="iconActionLinkClass"
-            aria-label="Nuevo proveedor"
-            title="Nuevo proveedor">
+          <app-icon-action label="Nuevo proveedor" (clicked)="openNewSupplier()">
             <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Nuevo proveedor</span>
-          </button>
+          </app-icon-action>
         </div>
       </div>
 
@@ -61,9 +67,10 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="suppliersPage = 1"
             name="suppliersSearchQuery"
             placeholder="Buscar por nombre, contacto, dirección o etiqueta..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
         <table class="w-full sm:min-w-[640px] text-left border-collapse sm:table-fixed">
@@ -87,9 +94,9 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let supplier of filteredSuppliers"
+              *ngFor="let supplier of paginatedFilteredSuppliers"
               (click)="openSupplier(supplier)"
-              class="hover:bg-gray-50 transition-colors cursor-pointer">
+              [class]="listTableRowClass">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div class="font-medium text-gray-900 truncate">{{ supplier.nombre }}</div>
               </td>
@@ -118,23 +125,12 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
                 <div *ngIf="supplier.debe" class="text-xs font-semibold text-orange-500">Pendiente de pago</div>
               </td>
               <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
-                <div class="flex items-center justify-end gap-1">
-                  <button
-                    type="button"
-                    (click)="openSupplier(supplier)"
-                    [title]="auth.canEditRecords ? 'Editar' : 'Ver proveedor'"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="auth.canDeleteRecords"
-                    type="button"
-                    (click)="confirmDeleteSupplier(supplier)"
-                    title="Eliminar"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+                <app-list-row-actions
+                  [showDelete]="auth.canDeleteRecords"
+                  [editLabel]="auth.canEditRecords ? 'Editar' : 'Ver proveedor'"
+                  (editClick)="openSupplier(supplier)"
+                  (deleteClick)="confirmDeleteSupplier(supplier)">
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="loading" class="sm:hidden">
@@ -166,6 +162,12 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
           </tbody>
         </table>
         </div>
+        <app-list-pagination
+          [page]="suppliersPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredSuppliers.length"
+          (pageChange)="suppliersPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -189,6 +191,9 @@ export class SuppliersComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
   private supplierService = inject(SupplierService);
@@ -199,6 +204,7 @@ export class SuppliersComponent implements OnInit {
   suppliers: Supplier[] = [];
   loading = true;
   searchQuery = '';
+  suppliersPage = 1;
   supplierModalOpen = false;
   editingSupplierId: string | null = null;
   supplierPrefillNombre = '';
@@ -232,6 +238,10 @@ export class SuppliersComponent implements OnInit {
         etiquetas.includes(query)
       );
     });
+  }
+
+  get paginatedFilteredSuppliers(): Supplier[] {
+    return paginateSlice(this.filteredSuppliers, this.suppliersPage, this.listPageSize);
   }
 
   ngOnInit() {

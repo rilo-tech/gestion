@@ -1,7 +1,7 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import {
   PriceCatalogEntry,
@@ -10,13 +10,29 @@ import {
 } from '../../core/services/price-catalog.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
-import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import {
+  IconActionComponent,
+  PAGE_SHELL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 
 @Component({
   selector: 'app-price-catalog',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, ActivityLogTriggerComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    LucideAngularModule,
+    IconActionComponent,
+    ActivityLogTriggerComponent,
+    ListPaginationComponent,
+  ],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -28,13 +44,12 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         </div>
         <div class="flex gap-2 shrink-0 self-start">
           <app-activity-log-trigger module="price_catalog"></app-activity-log-trigger>
-          <a
+          <app-icon-action
             *ngIf="auth.canManagePriceCatalog"
-            routerLink="/price-catalog/new"
-            class="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary text-white text-sm font-semibold px-4 py-2.5 hover:bg-opacity-90 transition-colors whitespace-nowrap">
-            <i-lucide name="plus" class="w-4 h-4 shrink-0"></i-lucide>
-            <span>Nueva referencia</span>
-          </a>
+            label="Nueva referencia"
+            (clicked)="router.navigate(['/price-catalog/new'])">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
         </div>
       </div>
 
@@ -42,9 +57,10 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="catalogPage = 1"
             name="priceCatalogSearch"
             placeholder="Buscar por producto, detalle o notas..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            [class]="tableSearchInputClass">
         </div>
       </div>
 
@@ -55,9 +71,10 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         <p *ngIf="entries.length > 0">No se encontraron referencias para "{{ searchQuery }}".</p>
       </div>
 
-      <div *ngIf="!loading && filteredEntries.length > 0" class="grid grid-cols-1 gap-4 sm:gap-5">
+      <div *ngIf="!loading && filteredEntries.length > 0" class="space-y-4">
+        <div class="grid grid-cols-1 gap-4 sm:gap-5">
         <article
-          *ngFor="let entry of filteredEntries"
+          *ngFor="let entry of paginatedFilteredEntries"
           (click)="openEntry(entry)"
           class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 hover:border-teal-200 hover:shadow-md transition-all cursor-pointer">
           <div class="flex items-start justify-between gap-3 mb-4">
@@ -102,22 +119,32 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
 
           <p *ngIf="entry.notas" class="text-xs text-gray-500 mt-3 line-clamp-2">{{ entry.notas }}</p>
         </article>
+        </div>
+        <app-list-pagination
+          [page]="catalogPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredEntries.length"
+          (pageChange)="catalogPage = $event">
+        </app-list-pagination>
       </div>
     </div>
   `,
 })
 export class PriceCatalogComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
   readonly getSummary = buildPriceSummary;
+  readonly router = inject(Router);
 
   private priceCatalogService = inject(PriceCatalogService);
   private dialogService = inject(DialogService);
-  private router = inject(Router);
 
   entries: PriceCatalogEntry[] = [];
   loading = true;
   searchQuery = '';
+  catalogPage = 1;
 
   get filteredEntries(): PriceCatalogEntry[] {
     const query = this.searchQuery.trim().toLowerCase();
@@ -138,6 +165,10 @@ export class PriceCatalogComponent implements OnInit {
 
       return haystack.includes(query);
     });
+  }
+
+  get paginatedFilteredEntries(): PriceCatalogEntry[] {
+    return paginateSlice(this.filteredEntries, this.catalogPage, this.listPageSize);
   }
 
   ngOnInit() {

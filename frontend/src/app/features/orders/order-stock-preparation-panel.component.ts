@@ -339,10 +339,8 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
 
   private maxReservableForLine(line: DraftLine): number {
     const pendiente = this.getPendiente(line);
-    if (!line.controlaStock) return pendiente;
-    const alreadyReserved = Number(line.cantidadReservada) || 0;
-    const libre = Number(line.stockDisponible) || 0;
-    return Math.min(pendiente, libre + alreadyReserved);
+    // En ajuste manual de reservas permitimos sobre-reservar aunque no haya libre.
+    return pendiente;
   }
 
   private syncLineTotals(line: DraftLine, source: 'reservar' | 'faltante') {
@@ -510,9 +508,6 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
 
     if (reservar + faltante !== pendiente) {
       return `«${line.nombre}»: reservado + faltante debe sumar ${pendiente} u.`;
-    }
-    if (line.controlaStock && this.needsTransfer(line)) {
-      return `«${line.nombre}»: solo hay ${line.stockDisponible} u. libres. Reservá menos, marcá faltante o transferí desde otro pedido.`;
     }
     return null;
   }

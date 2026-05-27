@@ -20,6 +20,7 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
+import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
 
 export interface PriceCatalogFormSaveEvent {
   id: string;
@@ -32,7 +33,7 @@ const FIELD_CLASS =
 @Component({
   selector: 'app-price-catalog-form-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, SelectOnFocusDirective],
+  imports: [CommonModule, FormsModule, SelectOnFocusDirective, FormPanelFooterComponent],
   template: `
     <div>
       <div *ngIf="loadingEntry" class="py-8 text-center text-sm text-gray-400">
@@ -200,20 +201,13 @@ const FIELD_CLASS =
           </section>
         </aside>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2 lg:col-span-2">
-          <button
-            type="button"
-            (click)="cancelled.emit()"
-            class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancelar
-          </button>
-          <button
-            *ngIf="auth.canManagePriceCatalog"
-            type="submit"
-            [disabled]="saving"
-            class="form-btn-primary rounded-lg bg-primary text-white text-sm font-medium hover:bg-opacity-90 disabled:opacity-60">
-            {{ saving ? 'Guardando...' : 'Guardar' }}
-          </button>
+        <div class="lg:col-span-2">
+          <app-form-panel-footer
+            [saveLabel]="isEditing ? 'Guardar' : 'Crear referencia'"
+            [showSave]="auth.canManagePriceCatalog"
+            [saving]="saving"
+            (cancelClick)="cancelled.emit()">
+          </app-form-panel-footer>
         </div>
       </form>
     </div>
@@ -233,6 +227,10 @@ export class PriceCatalogFormPanelComponent implements OnChanges {
   entryForm: PriceCatalogEntry = createEmptyPriceCatalogEntry();
   loadingEntry = false;
   saving = false;
+
+  get isEditing(): boolean {
+    return !!this.entryId;
+  }
 
   get formReadOnly(): boolean {
     return !this.auth.canManagePriceCatalog;

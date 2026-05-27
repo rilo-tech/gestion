@@ -311,7 +311,8 @@ export class AuthService {
         )
       ),
       switchMap((credential) => {
-        if (!credential?.user) {
+        const firebaseUser = credential?.user ?? firebaseAuth.currentUser;
+        if (!firebaseUser) {
           return throwError(() => new Error('NO_REDIRECT'));
         }
 
@@ -321,7 +322,7 @@ export class AuthService {
         sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
 
         if (scope === 'platform') {
-          return from(credential.user.getIdToken()).pipe(
+          return from(firebaseUser.getIdToken()).pipe(
             switchMap((idToken) =>
               this.http.post<AuthSession>('/api/auth/google', { idToken, scope: 'platform' })
             ),
@@ -333,7 +334,7 @@ export class AuthService {
           return throwError(() => new Error('Falta el código de empresa. Volvé a intentarlo.'));
         }
 
-        return from(credential.user.getIdToken()).pipe(
+        return from(firebaseUser.getIdToken()).pipe(
           switchMap((idToken) =>
             this.http.post<AuthSession>('/api/auth/google', { idToken, businessId, scope: 'company' })
           ),

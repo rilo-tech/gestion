@@ -5,6 +5,8 @@ import {
   validateOrderCancellation,
 } from '../utils/deletion-guards.ts';
 import { allocateOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
+import { formatOrderStockMotivo } from '../utils/stock-movimientos.ts';
+import { productControlsStock } from '../utils/stock-product.ts';
 import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
@@ -12,8 +14,12 @@ import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   applyOrderStockPreparation,
   buildStockPreparationView,
+  buildOrderStockDiscountPreview,
+  consumeOrderStockForProduction,
+  consumeOrderReservedStockManual,
   consumeOrderStockOnStatusChange,
   ensureStockReservationsSynced,
+  orderStockFullyConsumed,
   listReservationSourcesForProduct,
   listReservationTargetsForProduct,
   mergeOrderItemsPreservingStock,
@@ -21,12 +27,23 @@ import {
   OrderStockError,
   releaseOrderStockReservations,
   transferReservedStockBetweenOrders,
+  computeLineStockFields,
+  computeOrderStockStatus,
 } from '../utils/order-stock-reservations.ts';
 import {
   normalizeOrderPedidosConfig,
   orderEstadoMatchesTrigger,
   orderUsesReservedStock,
+  resolveOrderPhysicalStockScope,
+  shouldConsumeStockOnStatusChange,
+  validateOrderEstadoTransition,
+  getOrderEstadoLabel,
+  type OrderPhysicalStockScope,
 } from '../utils/order-config.ts';
+import {
+  getBusinessCashAmbitoId,
+  resolveCashReversalAmbito,
+} from '../utils/caja-ambitos.ts';
 
 const router = createCompanyRouter();
 
@@ -35,6 +52,12 @@ async function loadOrderPedidosConfig(businessId: string) {
   const data = appDoc.exists ? (appDoc.data() as Record<string, unknown>) : {};
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
   return normalizeOrderPedidosConfig(pedidos);
+}
+
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return {};
+  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
 }
 
 function estadoMatchesStockTrigger(estado: string | undefined, trigger: string): boolean {
@@ -86,6 +109,12 @@ type OrderRecord = {
   costoReal?: number;
   numeroPedido?: number;
   numeroPedidoLabel?: string;
+  stockOperaciones?: Array<{
+    fecha: string;
+    tipo: string;
+    total: number;
+    detalle: string;
+  }>;
 };
 
 function sumPagos(pagos: OrderPayment[] = []) {
@@ -96,6 +125,44 @@ function sumPagosHaciaTotal(pagos: OrderPayment[] = []) {
   return pagos
     .filter((pago) => pago.tipo !== 'extra')
     .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
+}
+
+/** Respuesta liviana para la grilla de pedidos (sin detalle de líneas ni costos extra). */
+function toOrderListSummary(id: string, data: Record<string, unknown>) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const pagos = Array.isArray(data.pagos) ? data.pagos : [];
+
+  return {
+    id,
+    clienteId: data.clienteId ?? '',
+    estado: data.estado ?? '',
+    fechaEntrega: data.fechaEntrega ?? null,
+    createdAt: data.createdAt ?? null,
+    numeroPedido: data.numeroPedido ?? null,
+    numeroPedidoLabel: data.numeroPedidoLabel ?? null,
+    descripcion: data.descripcion ?? '',
+    total: data.total ?? 0,
+    saldo: data.saldo ?? 0,
+    totalPagado: data.totalPagado ?? null,
+    senia: data.senia ?? 0,
+    seniaBloqueada: data.seniaBloqueada ?? false,
+    movimientoSeniaId: data.movimientoSeniaId ?? null,
+    stockPreparado: data.stockPreparado ?? false,
+    estadoStock: data.estadoStock ?? null,
+    stockDescontado: data.stockDescontado ?? false,
+    ventaId: data.ventaId ?? null,
+    pagos: pagos.map((pago) => {
+      const row = (pago ?? {}) as Record<string, unknown>;
+      return {
+        tipo: row.tipo ?? 'pago',
+        monto: row.monto ?? 0,
+      };
+    }),
+    productoNombres: items
+      .map((line) => String((line as Record<string, unknown>).nombre ?? '').trim())
+      .filter(Boolean),
+    items: [],
+  };
 }
 
 function normalizePagos(order: OrderRecord): OrderPayment[] {
@@ -205,49 +272,126 @@ async function applyEntregaCompletaPayment(
   businessId: string,
   orderId: string,
   order: OrderRecord
-): Promise<Partial<OrderRecord>> {
+): Promise<Partial<OrderRecord> & { ventaLabel?: string }> {
   const total = Number(order.total) || 0;
   const pagosBase = normalizePagos(order);
-  const pagadoActual = sumPagosHaciaTotal(pagosBase);
-  const saldoPedido = Math.max(0, total - pagadoActual);
+  const totalPagadoAnterior = sumPagosHaciaTotal(pagosBase);
+  const saldoPedido = Math.max(0, total - totalPagadoAnterior);
 
-  if (saldoPedido <= 0 || !orderAllowsPayments(order)) {
-    return { entregadoAt: new Date().toISOString() };
+  const basePatch: Partial<OrderRecord> = {
+    entregadoAt: new Date().toISOString(),
+    saldo: 0,
+    totalPagado: total,
+    seniaBloqueada: true,
+  };
+
+  if (order.ventaId) {
+    if (saldoPedido <= 0 || !orderAllowsPayments(order)) {
+      return basePatch;
+    }
+
+    const orderLabel = resolveOrderLabel(order);
+    const movimientoCajaId = await createCashIncome(businessId, {
+      monto: saldoPedido,
+      concepto: `Pago pedido #${orderLabel}`,
+      origenId: orderId,
+      origenTipo: 'pedido_pago',
+      clienteId: order.clienteId,
+      pedidoId: orderId,
+      numeroPedido: order.numeroPedido,
+      numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    });
+
+    const pagos: OrderPayment[] = [
+      ...pagosBase,
+      {
+        id: `pago_entrega_${Date.now()}`,
+        tipo: 'pago',
+        monto: saldoPedido,
+        fecha: new Date().toISOString(),
+        movimientoCajaId,
+        notas: 'Pago total',
+      },
+    ];
+
+    return {
+      ...basePatch,
+      pagos,
+      totalPagado: sumPagos(pagos),
+      saldo: 0,
+    };
   }
 
-  const orderLabel = resolveOrderLabel(order);
-  const movimientoCajaId = await createCashIncome(businessId, {
-    monto: saldoPedido,
-    concepto: `Pago pedido #${orderLabel}`,
-    origenId: orderId,
-    origenTipo: 'pedido_pago',
-    clienteId: order.clienteId,
-    pedidoId: orderId,
-    numeroPedido: order.numeroPedido,
-    numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+  if (!orderCanCreateDeliverySale(order)) {
+    if (saldoPedido <= 0) {
+      return basePatch;
+    }
+    if (!orderAllowsPayments(order)) {
+      return basePatch;
+    }
+
+    const orderLabel = resolveOrderLabel(order);
+    const movimientoCajaId = await createCashIncome(businessId, {
+      monto: saldoPedido,
+      concepto: `Pago pedido #${orderLabel}`,
+      origenId: orderId,
+      origenTipo: 'pedido_pago',
+      clienteId: order.clienteId,
+      pedidoId: orderId,
+      numeroPedido: order.numeroPedido,
+      numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    });
+
+    const pagos: OrderPayment[] = [
+      ...pagosBase,
+      {
+        id: `pago_entrega_${Date.now()}`,
+        tipo: 'pago',
+        monto: saldoPedido,
+        fecha: new Date().toISOString(),
+        movimientoCajaId,
+        notas: 'Pago total',
+      },
+    ];
+
+    return {
+      ...basePatch,
+      pagos,
+      totalPagado: sumPagos(pagos),
+      saldo: 0,
+    };
+  }
+
+  if (!(order.items?.length ?? 0)) {
+    throw new Error('El pedido no tiene productos para registrar la venta.');
+  }
+
+  const sale = await createSaleFromOrder(businessId, orderId, order, {
+    montoCobrado: saldoPedido,
+    totalPagadoAnterior,
+    medioPago: 'efectivo',
+    notas: saldoPedido > 0 ? 'Entrega total' : 'Entrega total (ya estaba pago)',
   });
 
-  const pagos: OrderPayment[] = [
-    ...pagosBase,
-    {
+  const pagos: OrderPayment[] = [...pagosBase];
+  if (saldoPedido > 0 && sale.movimientoCajaId) {
+    pagos.push({
       id: `pago_entrega_${Date.now()}`,
       tipo: 'pago',
       monto: saldoPedido,
       fecha: new Date().toISOString(),
-      movimientoCajaId,
-      notas: 'Pago total',
-    },
-  ];
-
-  const totalPagado = sumPagos(pagos);
-  const saldo = Math.max(0, total - sumPagosHaciaTotal(pagos));
+      movimientoCajaId: sale.movimientoCajaId,
+      notas: 'Pago total (entrega)',
+    });
+  }
 
   return {
+    ...basePatch,
+    ventaId: sale.ventaId,
+    ventaLabel: sale.ventaLabel,
     pagos,
-    totalPagado,
-    saldo,
-    seniaBloqueada: true,
-    entregadoAt: new Date().toISOString(),
+    totalPagado: sumPagos(pagos),
+    saldo: 0,
   };
 }
 
@@ -286,10 +430,6 @@ async function applyEntregaConSaldoVenta(
     saldo: saldoPedido,
     totalPagado: totalPagadoAnterior,
   };
-}
-
-function productControlsStock(data: Record<string, unknown> | undefined): boolean {
-  return data?.controlaStock !== false;
 }
 
 class StockValidationError extends Error {
@@ -343,7 +483,10 @@ async function applyStockForOrder(
     const itemSnap = await itemRef.get();
     if (!itemSnap.exists) continue;
 
-    const currentStock = Number(itemSnap.data()?.stockActual) || 0;
+    const data = itemSnap.data() as Record<string, unknown>;
+    if (!productControlsStock(data)) continue;
+
+    const currentStock = Number(data.stockActual) || 0;
     await itemRef.update({ stockActual: currentStock - qty });
 
     await db.collection(`negocios/${businessId}/movimientos_stock`).add({
@@ -351,7 +494,7 @@ async function applyStockForOrder(
       tipo: 'salida',
       cantidad: qty,
       fecha: new Date().toISOString(),
-      motivo: `Pedido #${resolveOrderLabel(order)} confirmado`,
+      motivo: formatOrderStockMotivo(resolveOrderLabel(order), 'Confirmado'),
       origenId: orderId,
       origenTipo: 'pedido',
       origenGrupo: 'pedido',
@@ -376,12 +519,13 @@ async function createCashIncome(
     numeroPedidoLabel?: string;
   }
 ) {
+  const caja = await loadCajaConfig(businessId);
   const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
     tipo: 'ingreso',
     monto: params.monto,
     medio: 'efectivo',
     concepto: params.concepto,
-    ambito: 'negocio',
+    ambito: getBusinessCashAmbitoId(caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -460,6 +604,7 @@ async function reverseCashMovementsForOrder(
   if (movimientoIds.size === 0) return false;
 
   const orderLabel = resolveOrderLabel(order);
+  const caja = await loadCajaConfig(businessId);
   const movimientosRef = db.collection(`negocios/${businessId}/movimientos_caja`);
   let reverted = false;
 
@@ -476,7 +621,7 @@ async function reverseCashMovementsForOrder(
       monto: Number(data.monto) || 0,
       medio: data.medio ?? 'efectivo',
       concepto: `Anulación ${conceptoBase}`,
-      ambito: data.ambito === 'personal' ? 'personal' : 'negocio',
+      ambito: resolveCashReversalAmbito(data.ambito, caja),
       fecha: new Date().toISOString(),
       origenId: orderId,
       origenTipo: 'pedido_cancelacion',
@@ -512,7 +657,10 @@ async function restoreStockForOrder(
     const itemSnap = await itemRef.get();
     if (!itemSnap.exists) continue;
 
-    const currentStock = Number(itemSnap.data()?.stockActual) || 0;
+    const data = itemSnap.data() as Record<string, unknown>;
+    if (!productControlsStock(data)) continue;
+
+    const currentStock = Number(data.stockActual) || 0;
     await itemRef.update({ stockActual: currentStock + qty });
 
     await db.collection(`negocios/${businessId}/movimientos_stock`).add({
@@ -520,7 +668,7 @@ async function restoreStockForOrder(
       tipo: 'entrada',
       cantidad: qty,
       fecha: new Date().toISOString(),
-      motivo: `Pedido #${orderLabel} cancelado`,
+      motivo: formatOrderStockMotivo(orderLabel, 'Cancelado'),
       origenId: orderId,
       origenTipo: 'pedido_cancelado',
       origenGrupo: 'pedido',
@@ -533,15 +681,83 @@ async function restoreStockForOrder(
   return restored;
 }
 
+async function restoreStockForOrderEstadoRollback(
+  businessId: string,
+  orderId: string,
+  order: OrderRecord,
+  nextEstado: string,
+  estados: ReturnType<typeof normalizeOrderPedidosConfig>['estados']
+): Promise<{ restored: boolean; items: OrderRecord['items'] }> {
+  if (!order.stockDescontado) {
+    return { restored: false, items: order.items ?? [] };
+  }
+
+  const orderLabel = resolveOrderLabel(order);
+  const estadoLabel = getOrderEstadoLabel(nextEstado, estados);
+  const items = (order.items ?? []).map((line) => ({ ...line }));
+  let restored = false;
+
+  for (let index = 0; index < items.length; index++) {
+    const line = items[index];
+    const qty = Math.max(0, Number(line.cantidadUsada) || 0);
+    if (!line.stockItemId || qty <= 0) {
+      items[index] = computeLineStockFields(line);
+      continue;
+    }
+
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
+    const itemSnap = await itemRef.get();
+    if (!itemSnap.exists) {
+      items[index] = computeLineStockFields({ ...line, cantidadUsada: 0 });
+      continue;
+    }
+
+    const data = itemSnap.data() as Record<string, unknown>;
+    if (!productControlsStock(data)) {
+      items[index] = computeLineStockFields({ ...line, cantidadUsada: 0 });
+      continue;
+    }
+
+    const currentStock = Number(data.stockActual) || 0;
+    await itemRef.update({ stockActual: currentStock + qty });
+
+    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+      productoId: line.stockItemId,
+      tipo: 'entrada',
+      cantidad: qty,
+      fecha: new Date().toISOString(),
+      motivo: formatOrderStockMotivo(orderLabel, estadoLabel),
+      origenId: orderId,
+      origenTipo: 'pedido_estado_reversion',
+      origenGrupo: 'pedido',
+      pedidoId: orderId,
+      numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+      afectaStockReal: true,
+      negocioId: businessId,
+    });
+
+    items[index] = computeLineStockFields({ ...line, cantidadUsada: 0 });
+    restored = true;
+  }
+
+  return {
+    restored,
+    items: normalizeOrderItemsStock(items),
+  };
+}
+
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
     const snapshot = await db.collection(`negocios/${businessId}/pedidos`).get();
     const orders = snapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .map((doc) => toOrderListSummary(doc.id, doc.data() as Record<string, unknown>))
       .sort((a, b) => {
-        const dateA = Date.parse(String(a.fechaEntrega ?? a.createdAt ?? '')) || 0;
-        const dateB = Date.parse(String(b.fechaEntrega ?? b.createdAt ?? '')) || 0;
+        const numA = Number(a.numeroPedido) || 0;
+        const numB = Number(b.numeroPedido) || 0;
+        if (numA !== numB) return numB - numA;
+        const dateA = Date.parse(String(a.createdAt ?? a.fechaEntrega ?? '')) || 0;
+        const dateB = Date.parse(String(b.createdAt ?? b.fechaEntrega ?? '')) || 0;
         return dateB - dateA;
       });
     res.json(orders);
@@ -918,23 +1134,72 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     const pedidosConfig = await loadOrderPedidosConfig(businessId);
     const stockTrigger = pedidosConfig.estadoDescuentaStock;
 
-    if (
-      estadoMatchesStockTrigger(nextEstado, stockTrigger) &&
-      !estadoMatchesStockTrigger(previousEstado, stockTrigger)
-    ) {
-      const consumption = await consumeOrderStockOnStatusChange(
-        businessId,
-        orderId,
-        mergedOrder,
-        pedidosConfig.modoStock
-      );
+    if (existingOrder.estado !== mergedEstado) {
+      const transition = validateOrderEstadoTransition({
+        previousEstado: existingOrder.estado,
+        nextEstado: mergedEstado,
+        triggerEstado: stockTrigger,
+        stockDescontado,
+        estados: pedidosConfig.estados,
+      });
+
+      if (!transition.allowed) {
+        return res.status(400).json({ error: transition.error });
+      }
+
+      if (transition.requiresStockRestore) {
+        const rollback = await restoreStockForOrderEstadoRollback(
+          businessId,
+          orderId,
+          mergedOrder,
+          mergedEstado,
+          pedidosConfig.estados
+        );
+        productionStockPatch = {
+          items: rollback.items,
+          stockDescontado: false,
+          estadoStock: computeOrderStockStatus(rollback.items ?? []),
+        };
+        Object.assign(mergedOrder, productionStockPatch);
+        stockDescontado = false;
+      }
+    }
+
+    const stockFullyConsumed = orderStockFullyConsumed(mergedOrder.items ?? []);
+    const crossesStockTrigger =
+      shouldConsumeStockOnStatusChange({
+        previousEstado,
+        nextEstado,
+        triggerEstado: stockTrigger,
+        stockDescontado,
+        stockFullyConsumed,
+        estados: pedidosConfig.estados,
+      });
+    let stockWarning: string | undefined;
+
+    if (crossesStockTrigger) {
+      const requestedScope = String(req.body?.descuentoFisicoAlcance ?? '')
+        .trim()
+        .toLowerCase() as OrderPhysicalStockScope;
+      const scope =
+        requestedScope === 'solo_reservado' || requestedScope === 'pedido_completo'
+          ? requestedScope
+          : resolveOrderPhysicalStockScope(pedidosConfig, nextEstado);
+
+      const consumption = await consumeOrderStockOnStatusChange(businessId, orderId, mergedOrder, {
+        pedidosConfig,
+        targetEstado: nextEstado,
+        scope,
+      });
       productionStockPatch = {
         items: consumption.items,
         stockDescontado: consumption.stockDescontado,
         estadoStock: consumption.estadoStock,
+        stockPreparado: consumption.stockPreparado ?? mergedOrder.stockPreparado,
       };
       Object.assign(mergedOrder, productionStockPatch);
       stockDescontado = consumption.stockDescontado;
+      stockWarning = consumption.stockWarning;
     }
 
     if (nextEstado === 'entregado' && previousEstado !== 'entregado') {
@@ -1010,8 +1275,9 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       locked: resolveOrderEstado(updated?.estado ?? mergedEstado) === 'entregado',
       items: updated?.items ?? productionStockPatch.items,
       estadoStock: updated?.estadoStock ?? productionStockPatch.estadoStock,
-      stockPreparado: updated?.stockPreparado,
+      stockPreparado: updated?.stockPreparado ?? productionStockPatch.stockPreparado,
       stockDescontado: updated?.stockDescontado ?? stockDescontado,
+      stockWarning,
     });
   } catch (error) {
     if (error instanceof StockValidationError || error instanceof OrderStockError) {
@@ -1019,6 +1285,39 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     }
     const message = error instanceof Error ? error.message : 'Error updating order';
     res.status(500).json({ error: message });
+  }
+});
+
+router.get('/:businessId/:orderId/stock-discount-preview', async (req, res) => {
+  try {
+    const { businessId, orderId } = req.params;
+    const nextEstado = String(req.query.nextEstado ?? '').trim();
+    if (!nextEstado) {
+      return res.status(400).json({ error: 'Falta el parámetro nextEstado.' });
+    }
+
+    const pedidosConfig = await loadOrderPedidosConfig(businessId);
+    const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
+
+    const order = doc.data() as OrderRecord;
+    const preview = await buildOrderStockDiscountPreview(
+      businessId,
+      {
+        items: order.items,
+        stockDescontado: order.stockDescontado,
+        stockPreparado: order.stockPreparado,
+        numeroPedido: order.numeroPedido,
+        numeroPedidoLabel: order.numeroPedidoLabel,
+        clienteId: order.clienteId,
+      },
+      pedidosConfig,
+      nextEstado
+    );
+
+    res.json(preview);
+  } catch (error) {
+    res.status(500).json({ error: 'Error loading stock discount preview' });
   }
 });
 
@@ -1146,6 +1445,88 @@ router.post('/:businessId/:orderId/stock-transfer', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Error transferring stock reservation' });
+  }
+});
+
+router.post('/:businessId/:orderId/consume-pending-stock', async (req, res) => {
+  try {
+    const { businessId, orderId } = req.params;
+    const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found' });
+
+    const order = orderSnap.data() as OrderRecord;
+    if (isCancelledStatus(order.estado) || isDraftStatus(order.estado)) {
+      return res.status(400).json({ error: 'El pedido no permite descontar stock.' });
+    }
+    if (resolveOrderEstado(order.estado) !== 'en_produccion') {
+      return res.status(400).json({
+        error: 'Este atajo solo está disponible para pedidos en producción.',
+      });
+    }
+
+    const rawLines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const lines = rawLines
+      .map((entry: Record<string, unknown>) => ({
+        lineIndex: Number(entry.lineIndex),
+        cantidad: Math.max(0, Number(entry.cantidad) || 0),
+      }))
+      .filter((entry: { lineIndex: number }) => !Number.isNaN(entry.lineIndex));
+
+    const consumption =
+      lines.length > 0
+        ? await consumeOrderReservedStockManual(businessId, orderId, order, lines)
+        : await consumeOrderReservedStockManual(businessId, orderId, order, []);
+
+    const detalle = consumption.consumedLines
+      .map((l) => `${l.nombre}: ${l.cantidad} u.`)
+      .join(' | ');
+    const operation = {
+      fecha: new Date().toISOString(),
+      tipo: 'descuento_produccion_manual',
+      total: consumption.totalConsumed,
+      detalle,
+    };
+
+    const previousOps = Array.isArray(order.stockOperaciones) ? order.stockOperaciones : [];
+    const stockOperaciones = [...previousOps, operation].slice(-25);
+
+    await orderRef.update({
+      items: consumption.items,
+      stockDescontado: consumption.stockDescontado,
+      estadoStock: consumption.estadoStock,
+      stockPreparado: true,
+      stockOperaciones,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const updatedSnap = await orderRef.get();
+    const updated = updatedSnap.data() as OrderRecord | undefined;
+    const orderLabel = resolveOrderLabel(updated ?? order);
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'update',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Descontó faltantes reservados del pedido #${orderLabel}`,
+    });
+
+    res.json({
+      id: orderId,
+      items: updated?.items ?? consumption.items,
+      estadoStock: updated?.estadoStock ?? consumption.estadoStock,
+      stockPreparado: updated?.stockPreparado ?? consumption.stockPreparado,
+      stockDescontado: updated?.stockDescontado ?? consumption.stockDescontado,
+      stockWarning: consumption.stockWarning,
+      stockOperaciones: updated?.stockOperaciones ?? stockOperaciones,
+    });
+  } catch (error) {
+    if (error instanceof OrderStockError) {
+      return res.status(400).json({ error: error.message });
+    }
+    const message = error instanceof Error ? error.message : 'Error consuming pending order stock';
+    res.status(500).json({ error: message });
   }
 });
 

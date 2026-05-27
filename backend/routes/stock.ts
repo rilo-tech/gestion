@@ -7,9 +7,13 @@ import {
 } from '../utils/deletion-guards.ts';
 import {
   getStockOrigenNombre,
+  normalizeOrderStockMotivo,
   normalizeStockOrigenes,
   type StockOrigenMovimiento,
 } from '../utils/stock-movimientos.ts';
+import {
+  productControlsStock,
+} from '../utils/stock-product.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
@@ -18,6 +22,7 @@ import {
   listStockShortages,
   ensureStockReservationsSynced,
   reconcileOrderStockFromProductReservations,
+  autoReserveIncomingStockForProduct,
 } from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
@@ -73,7 +78,8 @@ router.post('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
     const itemData = req.body;
-    const stockActual = Number(itemData.stockActual) || 0;
+    const controlsStock = productControlsStock(itemData);
+    const stockActual = controlsStock ? Number(itemData.stockActual) || 0 : 0;
     const nombre = String(itemData.nombre ?? '').trim();
 
     if (!nombre) {
@@ -90,16 +96,17 @@ router.post('/:businessId', async (req, res) => {
     const docRef = await db.collection(`negocios/${businessId}/stock`).add({
       ...itemData,
       stockActual,
-      stockMinimo: Number(itemData.stockMinimo) || 0,
-      stockReservado: Number(itemData.stockReservado) || 0,
-      controlaStock: itemData.controlaStock !== false,
+      stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
+      stockReservado: 0,
+      controlaStock: controlsStock,
+      permitirStockNegativo: controlsStock ? itemData.permitirStockNegativo !== false : false,
       costo: Number(itemData.costo) || 0,
       precioSugerido: Number(itemData.precioSugerido) || 0,
       negocioId: businessId,
       createdAt: new Date().toISOString(),
     });
 
-    if (stockActual > 0) {
+    if (controlsStock && stockActual > 0) {
       await db.collection(`negocios/${businessId}/movimientos_stock`).add({
         productoId: docRef.id,
         tipo: 'entrada',
@@ -111,6 +118,7 @@ router.post('/:businessId', async (req, res) => {
         usuarioId: 'admin',
         negocioId: businessId,
       });
+      await autoReserveIncomingStockForProduct(businessId, docRef.id);
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -177,19 +185,9 @@ function resolveOrigenGrupo(movement: Record<string, unknown>): StockOrigenGrupo
 
 function resolveOrigenLabel(
   grupo: StockOrigenGrupo,
-  movement: Record<string, unknown>,
   origenes: StockOrigenMovimiento[]
 ): string {
-  const base = getStockOrigenNombre(origenes, grupo);
-  if (grupo === 'pedido') {
-    const subtipo = String(movement.origenTipo ?? '');
-    if (subtipo === 'pedido_reserva') return `${base} · reserva`;
-    if (subtipo === 'pedido_liberacion_reserva') return `${base} · libera reserva`;
-    if (subtipo === 'pedido_produccion') return `${base} · producción`;
-    if (subtipo === 'pedido_cancelado') return `${base} · cancelación`;
-    if (subtipo === 'pedido_eliminado') return `${base} · restauración`;
-  }
-  return base;
+  return getStockOrigenNombre(origenes, grupo);
 }
 
 async function enrichStockMovements(
@@ -265,17 +263,23 @@ async function enrichStockMovements(
       (movement.clienteId ? clientMap.get(String(movement.clienteId)) : undefined) ||
       null;
 
+    const numeroPedidoLabel =
+      orderData?.numeroPedidoLabel ??
+      (orderData?.numeroPedido ? String(orderData.numeroPedido).padStart(5, '0') : null);
+    const motivoRaw = String(movement.motivo ?? '');
+    const motivo =
+      origenTipo.startsWith('pedido') && motivoRaw
+        ? normalizeOrderStockMotivo(motivoRaw, origenTipo, numeroPedidoLabel)
+        : movement.motivo;
+
     return {
       ...movement,
+      motivo,
       productoNombre: productData?.nombre ?? null,
       origenGrupo,
-      origenLabel: resolveOrigenLabel(origenGrupo, movement, origenes),
+      origenLabel: resolveOrigenLabel(origenGrupo, origenes),
       pedidoId,
-      numeroPedidoLabel:
-        orderData?.numeroPedidoLabel ??
-        (orderData?.numeroPedido
-          ? String(orderData.numeroPedido).padStart(5, '0')
-          : null),
+      numeroPedidoLabel,
       clienteId: movement.clienteId ?? orderData?.clienteId ?? null,
       clienteNombre,
       compraId: movement.compraId ?? (origenTipo === 'compra' ? movement.origenId : null),
@@ -414,21 +418,23 @@ router.put('/:businessId/:itemId', async (req, res) => {
     }
 
     const previousStock = Number(existing.data()?.stockActual) || 0;
-    const nextStock = Number(itemData.stockActual) || 0;
-    const stockDelta = nextStock - previousStock;
+    const controlsStock = productControlsStock(itemData);
+    const nextStock = controlsStock ? Number(itemData.stockActual) || 0 : 0;
+    const stockDelta = controlsStock ? nextStock - previousStock : 0;
 
     await itemRef.update({
       ...itemData,
       stockActual: nextStock,
-      stockMinimo: Number(itemData.stockMinimo) || 0,
-      stockReservado: Number(itemData.stockReservado) || 0,
-      controlaStock: itemData.controlaStock !== false,
+      stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
+      stockReservado: controlsStock ? Number(itemData.stockReservado) || 0 : 0,
+      controlaStock: controlsStock,
+      permitirStockNegativo: controlsStock ? itemData.permitirStockNegativo !== false : false,
       costo: Number(itemData.costo) || 0,
       precioSugerido: Number(itemData.precioSugerido) || 0,
       updatedAt: new Date().toISOString(),
     });
 
-    if (stockDelta !== 0) {
+    if (controlsStock && stockDelta !== 0) {
       await db.collection(`negocios/${businessId}/movimientos_stock`).add({
         productoId: itemId,
         tipo: stockDelta > 0 ? 'entrada' : 'salida',
@@ -440,6 +446,9 @@ router.put('/:businessId/:itemId', async (req, res) => {
         usuarioId: 'admin',
         negocioId: businessId,
       });
+      if (stockDelta > 0) {
+        await autoReserveIncomingStockForProduct(businessId, itemId);
+      }
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -485,6 +494,9 @@ router.patch('/:businessId/:itemId', async (req, res) => {
       usuarioId,
       negocioId: businessId,
     });
+    if (quantity > 0) {
+      await autoReserveIncomingStockForProduct(businessId, itemId);
+    }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'stock',

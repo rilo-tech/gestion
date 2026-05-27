@@ -21,10 +21,19 @@ import { SearchableSelectComponent } from '../../shared/components/searchable-se
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
+  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
+import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -43,6 +52,9 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
     TransactionModalComponent,
     IconActionComponent,
     ActivityLogTriggerComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
+    FormPanelFooterComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -169,7 +181,10 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let row of summaryRows" class="hover:bg-gray-50/80 cursor-pointer" (click)="selectCollaborator(row.colaboradorId)">
+              <tr
+                *ngFor="let row of paginatedSummaryRows"
+                [class]="listTableRowClass"
+                (click)="selectCollaborator(row.colaboradorId)">
                 <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900">
                   {{ row.nombre }}
                   <span *ngIf="!row.activo" class="ml-2 text-xs text-gray-400">(inactivo)</span>
@@ -190,6 +205,12 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="summaryPage"
+          [pageSize]="listPageSize"
+          [totalItems]="summaryRows.length"
+          (pageChange)="summaryPage = $event">
+        </app-list-pagination>
         <div *ngIf="summary?.extrasPorTipo?.length" class="px-4 sm:px-6 py-4 border-t border-gray-100 bg-gray-50">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Extras por tipo</p>
           <div class="flex flex-wrap gap-2">
@@ -202,8 +223,12 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input [(ngModel)]="movementSearch" name="movementSearch" placeholder="Buscar por colaborador, concepto o notas..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+          <input
+            [(ngModel)]="movementSearch"
+            (ngModelChange)="movementsPage = 1"
+            name="movementSearch"
+            placeholder="Buscar por colaborador, concepto o notas..."
+            [class]="tableSearchInputClass">
         </div>
         <div [class]="tableScrollClass">
           <table [class]="tableMinWidthClass">
@@ -218,7 +243,10 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let mov of filteredMovements" class="hover:bg-gray-50/80">
+              <tr
+                *ngFor="let mov of paginatedFilteredMovements"
+                (click)="onMovementRowClick(mov)"
+                [class]="listTableRowClass">
                 <td class="px-4 sm:px-6 py-3 text-sm text-gray-600 whitespace-nowrap">{{ formatDate(mov.fecha) }}</td>
                 <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900">{{ mov.colaboradorNombre || collaboratorName(mov.colaboradorId) }}</td>
                 <td class="px-4 sm:px-6 py-3 text-sm">
@@ -241,13 +269,12 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
                 <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums font-semibold" [class.text-teal-700]="mov.tipo === 'pago'">
                   {{ formatMoney(mov.monto) }}
                 </td>
-                <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right">
-                  <button type="button" (click)="editMovement(mov)" class="p-2 rounded-lg text-teal-600 hover:bg-teal-50" title="Editar">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button *ngIf="auth.canDeleteRecords" type="button" (click)="confirmDeleteMovement(mov)" class="p-2 rounded-lg text-red-500 hover:bg-red-50" title="Eliminar">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
+                <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
+                  <app-list-row-actions
+                    [showDelete]="auth.canDeleteRecords"
+                    (editClick)="editMovement(mov)"
+                    (deleteClick)="confirmDeleteMovement(mov)">
+                  </app-list-row-actions>
                 </td>
               </tr>
               <tr *ngIf="!filteredMovements.length">
@@ -256,6 +283,12 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="movementsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredMovements.length"
+          (pageChange)="movementsPage = $event">
+        </app-list-pagination>
       </div>
 
       <div *ngIf="activeTab === 'equipo'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -272,7 +305,10 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let c of collaborators" class="hover:bg-gray-50/80 cursor-pointer" (click)="openCollaboratorModal(c)">
+              <tr
+                *ngFor="let c of paginatedCollaborators"
+                [class]="listTableRowClass"
+                (click)="openCollaboratorModal(c)">
                 <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900">{{ c.nombre }}</td>
                 <td class="px-4 sm:px-6 py-3 text-sm text-gray-600">{{ modalidadLabel(c.modalidad) }}</td>
                 <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums">{{ c.valorHora ? formatMoney(c.valorHora) : '—' }}</td>
@@ -283,8 +319,11 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
                   </span>
                 </td>
                 <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
-                  <button type="button" (click)="openCollaboratorModal(c)" class="p-2 rounded-lg text-teal-600 hover:bg-teal-50"><i-lucide name="pencil" class="w-4 h-4"></i-lucide></button>
-                  <button *ngIf="auth.canDeleteRecords" type="button" (click)="confirmDeleteCollaborator(c)" class="p-2 rounded-lg text-red-500 hover:bg-red-50"><i-lucide name="trash-2" class="w-4 h-4"></i-lucide></button>
+                  <app-list-row-actions
+                    [showDelete]="auth.canDeleteRecords"
+                    (editClick)="openCollaboratorModal(c)"
+                    (deleteClick)="confirmDeleteCollaborator(c)">
+                  </app-list-row-actions>
                 </td>
               </tr>
               <tr *ngIf="!collaborators.length">
@@ -295,6 +334,12 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="teamPage"
+          [pageSize]="listPageSize"
+          [totalItems]="collaborators.length"
+          (pageChange)="teamPage = $event">
+        </app-list-pagination>
       </div>
     </div>
 
@@ -350,10 +395,10 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
           <span class="text-sm font-medium text-gray-700 mb-1 block">Notas</span>
           <textarea [(ngModel)]="collaboratorDraft.notas" name="collabNotas" rows="2" class="form-control"></textarea>
         </label>
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-          <button type="button" (click)="closeCollaboratorModal()" class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
-          <button type="submit" class="form-btn-primary rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Guardar</button>
-        </div>
+        <app-form-panel-footer
+          [saveLabel]="editingCollaborator?.id ? 'Guardar' : 'Crear colaborador'"
+          (cancelClick)="closeCollaboratorModal()">
+        </app-form-panel-footer>
       </form>
     </app-transaction-modal>
 
@@ -425,10 +470,10 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
           <textarea [(ngModel)]="movementDraft.notas" name="movNotas" rows="2" class="form-control"></textarea>
         </label>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-          <button type="button" (click)="closeMovementModal()" class="form-btn-secondary rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
-          <button type="submit" class="form-btn-primary rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700">Guardar</button>
-        </div>
+        <app-form-panel-footer
+          saveLabel="Guardar"
+          (cancelClick)="closeMovementModal()">
+        </app-form-panel-footer>
       </form>
     </app-transaction-modal>
   `,
@@ -441,6 +486,13 @@ export class CollaboratorsComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
+
+  summaryPage = 1;
+  movementsPage = 1;
+  teamPage = 1;
 
   readonly periodPresets = [
     { value: 'semana' as PeriodPreset, label: 'Esta semana' },
@@ -481,6 +533,18 @@ export class CollaboratorsComponent implements OnInit {
     if (!this.summary) return [];
     if (!this.filterColaboradorId) return this.summary.colaboradores;
     return this.summary.colaboradores.filter((r) => r.colaboradorId === this.filterColaboradorId);
+  }
+
+  get paginatedSummaryRows(): CollaboratorSummaryRow[] {
+    return paginateSlice(this.summaryRows, this.summaryPage, this.listPageSize);
+  }
+
+  get paginatedFilteredMovements(): CollaboratorMovement[] {
+    return paginateSlice(this.filteredMovements, this.movementsPage, this.listPageSize);
+  }
+
+  get paginatedCollaborators(): Collaborator[] {
+    return paginateSlice(this.collaborators, this.teamPage, this.listPageSize);
   }
 
   get filteredMovements(): CollaboratorMovement[] {
@@ -630,6 +694,11 @@ export class CollaboratorsComponent implements OnInit {
       this.movementDraft.periodoHasta = this.periodTo;
     }
     this.movementModalOpen = true;
+  }
+
+  onMovementRowClick(mov: CollaboratorMovement): void {
+    if (!this.auth.canEditRecords) return;
+    this.editMovement(mov);
   }
 
   editMovement(mov: CollaboratorMovement): void {

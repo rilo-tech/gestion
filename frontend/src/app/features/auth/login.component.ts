@@ -4,13 +4,24 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
-import { isAuthEmulatorEnabled } from '../../core/config/firebase';
+import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/config/firebase';
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
 
 @Component({
   selector: 'app-login',
   standalone: true,
   imports: [CommonModule, FormsModule],
+  styles: [
+    `
+      .login-field:-webkit-autofill,
+      .login-field:-webkit-autofill:hover,
+      .login-field:-webkit-autofill:focus {
+        -webkit-text-fill-color: #fff;
+        box-shadow: 0 0 0 1000px #030712 inset;
+        caret-color: #fff;
+      }
+    `,
+  ],
   template: `
     <div class="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div class="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 shadow-2xl">
@@ -26,7 +37,7 @@ import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/co
               [(ngModel)]="login"
               name="login"
               autocomplete="username"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="login-field w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
           </div>
 
           <div>
@@ -46,7 +57,7 @@ import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/co
               name="businessCode"
               placeholder="Ej: rilo, fs"
               autocomplete="organization"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              class="login-field w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
             <p class="mt-1 text-xs text-gray-500">Código que te dio RILO al contratar el servicio.</p>
           </div>
 
@@ -86,6 +97,11 @@ import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/co
           Cargá el código de empresa antes de usar Google. Tu email debe estar registrado en Mi cuenta.
         </p>
 
+        <p *ngIf="!isFirebaseClientConfigured && !isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
+          Google no está configurado: falta <span class="font-mono">VITE_FIREBASE_API_KEY</span> en el
+          <span class="font-mono">.env</span> de la raíz del repo. Reiniciá el servidor después de guardarlo.
+        </p>
+
         <p *ngIf="isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
           Modo desarrollo: Google usa el emulador local (no es la cuenta real). Tras confirmar el email
           volvés al login y entrás automáticamente.
@@ -100,6 +116,7 @@ export class LoginComponent implements OnInit {
   private route = inject(ActivatedRoute);
 
   readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
+  readonly isFirebaseClientConfigured = isFirebaseClientConfigured;
 
   businessCode = '';
   login = '';
@@ -177,6 +194,12 @@ export class LoginComponent implements OnInit {
   submitGoogleLogin() {
     if (!this.businessCode.trim()) {
       this.errorMessage = 'Ingresá el código de tu empresa para usar Google.';
+      return;
+    }
+
+    if (!this.isFirebaseClientConfigured && !this.isAuthEmulatorEnabled) {
+      this.errorMessage =
+        'Google no está configurado. Agregá VITE_FIREBASE_API_KEY al .env de la raíz del proyecto y reiniciá npm run dev.';
       return;
     }
 

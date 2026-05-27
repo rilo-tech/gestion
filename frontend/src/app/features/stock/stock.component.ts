@@ -10,6 +10,7 @@ import {
   StockReservationRow,
   StockService,
   getStockDisponible,
+  itemControlsStock,
   itemIsLowStock,
 } from '../../core/services/stock.service';
 import {
@@ -23,6 +24,7 @@ import {
   getStockTipoNombre,
   getStockTipos,
   matchesStockOrigenFilter,
+  normalizeOrderStockMotivo,
 } from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -38,6 +40,12 @@ import {
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
+import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
 import { getOrderStatusLabel } from '../../core/constants/order-status';
 import { OrderService, ReservationTargetOrder } from '../../core/services/order.service';
 
@@ -46,7 +54,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -91,7 +99,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
-          <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
+          <p class="text-2xl font-bold">{{ movementsThisMonthLabel }}</p>
         </div>
       </div>
 
@@ -112,7 +120,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
-          <p class="text-2xl font-bold">{{ movementsThisMonth }}</p>
+          <p class="text-2xl font-bold">{{ movementsThisMonthLabel }}</p>
         </div>
       </div>
 
@@ -165,49 +173,93 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <input
             [(ngModel)]="searchQuery"
+            (ngModelChange)="onProductsSearchChange()"
             name="searchQuery"
             placeholder="Buscar producto..."
             class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
         </div>
         <div [class]="tableScrollClass">
-        <table class="w-full text-left border-collapse sm:min-w-[640px]">
+        <table class="w-full text-left border-collapse sm:min-w-[820px]">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Stock</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Mín. stock</th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Unidades en depósito">
+                Depósito
+              </th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Apartadas para pedidos">
+                Reservado
+              </th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Libre para usar en pedidos nuevos">
+                Disponible
+              </th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider sm:hidden">Stock</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Mín. stock</th>
               <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let item of filteredItems"
+              *ngFor="let item of paginatedFilteredItems"
               (click)="openEditItem(item)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div class="font-medium text-gray-900 truncate">{{ item.nombre }}</div>
+                <a
+                  *ngIf="item.id; else stockItemNamePlain"
+                  [routerLink]="['/stock', item.id, 'edit']"
+                  (click)="$event.stopPropagation()"
+                  class="font-medium text-gray-900 truncate block hover:text-teal-700 hover:underline">
+                  {{ item.nombre }}
+                </a>
+                <ng-template #stockItemNamePlain>
+                  <div class="font-medium text-gray-900 truncate">{{ item.nombre }}</div>
+                </ng-template>
+                <span
+                  *ngIf="!controlsStockItem(item)"
+                  class="inline-flex mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-violet-50 text-violet-700">
+                  Servicio
+                </span>
                 <span class="inline-flex sm:hidden mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-teal-50 text-teal-700">
                   {{ item.categoria || '—' }}
                 </span>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4">
+              <td class="hidden sm:table-cell px-4 py-4">
                 <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
                   {{ item.categoria || '—' }}
                 </span>
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div [class]="isLowStock(item) ? 'text-orange-600 font-bold' : 'text-gray-900'">
-                  {{ item.stockActual }} u.
-                </div>
-                <div class="text-xs text-gray-500 tabular-nums">
-                  Reservado {{ item.stockReservado || 0 }} · Disp. {{ getStockDisponible(item) }}
-                </div>
-                <div class="text-xs text-gray-400 sm:hidden">Mín. {{ item.stockMinimo || 0 }} u.</div>
+              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums" [class]="stockTotalClass(item)">
+                {{ controlsStockItem(item) ? item.stockActual + ' u.' : '—' }}
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 tabular-nums">
-                {{ item.stockMinimo || 0 }} u.
+              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums" [class]="stockReservedClass(item)">
+                {{ controlsStockItem(item) ? (item.stockReservado || 0) + ' u.' : '—' }}
+              </td>
+              <td class="hidden sm:table-cell px-4 py-4 text-center text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">
+                {{ controlsStockItem(item) ? getStockDisponible(item) + ' u.' : '—' }}
+              </td>
+              <td class="px-4 sm:px-6 py-3 sm:py-4 sm:hidden">
+                <div *ngIf="controlsStockItem(item); else serviceStockMobile" class="grid grid-cols-3 gap-2 text-center">
+                  <div class="rounded-lg border border-gray-100 bg-gray-50 px-2 py-1.5">
+                    <p class="text-[10px] font-semibold uppercase text-gray-400">Depósito</p>
+                    <p class="text-sm tabular-nums" [class]="stockTotalClass(item)">{{ item.stockActual }} u.</p>
+                  </div>
+                  <div class="rounded-lg border border-amber-100 bg-amber-50/40 px-2 py-1.5">
+                    <p class="text-[10px] font-semibold uppercase text-amber-700/80">Reservado</p>
+                    <p class="text-sm tabular-nums" [class]="stockReservedClass(item)">{{ item.stockReservado || 0 }} u.</p>
+                  </div>
+                  <div class="rounded-lg border border-teal-100 bg-teal-50/50 px-2 py-1.5">
+                    <p class="text-[10px] font-semibold uppercase text-teal-700/80">Disponible</p>
+                    <p class="text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">{{ getStockDisponible(item) }} u.</p>
+                  </div>
+                </div>
+                <ng-template #serviceStockMobile>
+                  <p class="text-xs text-gray-500">Servicio · no controla stock</p>
+                </ng-template>
+                <div *ngIf="controlsStockItem(item)" class="text-xs text-gray-400 mt-2">Mín. {{ item.stockMinimo || 0 }} u.</div>
+              </td>
+              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 tabular-nums text-center">
+                {{ controlsStockItem(item) ? (item.stockMinimo || 0) + ' u.' : '—' }}
               </td>
               <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
                 {{ '$' + (item.costo || 0) }}
@@ -222,14 +274,10 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                     class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
                     <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
                   </button>
-                  <button
+                  <app-duplicate-action-button
                     *ngIf="auth.canEditRecords"
-                    type="button"
-                    (click)="duplicateItem(item, $event)"
-                    title="Duplicar"
-                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900">
-                    <i-lucide name="copy" class="w-4 h-4"></i-lucide>
-                  </button>
+                    (duplicateClick)="duplicateItem(item, $event)">
+                  </app-duplicate-action-button>
                   <button
                     *ngIf="auth.canDeleteRecords"
                     type="button"
@@ -245,7 +293,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando productos...</td>
             </tr>
             <tr *ngIf="loadingItems" class="hidden sm:table-row">
-              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
+              <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
             </tr>
             <tr *ngIf="!loadingItems && items.length === 0" class="sm:hidden">
               <td colspan="2" class="px-4 py-12 text-center text-gray-400">
@@ -253,7 +301,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </td>
             </tr>
             <tr *ngIf="!loadingItems && items.length === 0" class="hidden sm:table-row">
-              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+              <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
               </td>
             </tr>
@@ -268,7 +316,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </td>
             </tr>
             <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" class="hidden sm:table-row">
-              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+              <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
                   No hay productos con stock bajo.
                 </ng-container>
@@ -280,6 +328,12 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </tbody>
         </table>
         </div>
+        <app-list-pagination
+          [page]="productsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredItems.length"
+          (pageChange)="productsPage = $event">
+        </app-list-pagination>
       </div>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -287,11 +341,13 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           <div class="flex flex-col sm:flex-row sm:items-center gap-3">
             <input
               [(ngModel)]="movementSearchQuery"
+              (ngModelChange)="onMovementsSearchChange()"
               name="movementSearchQuery"
               placeholder="Buscar por producto o motivo..."
               class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
             <select
               [(ngModel)]="movementTipoFilter"
+              (ngModelChange)="movementsPage = 1"
               name="movementTipoFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los tipos</option>
@@ -300,6 +356,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             </select>
             <select
               [(ngModel)]="movementOrigenFilter"
+              (ngModelChange)="movementsPage = 1"
               name="movementOrigenFilter"
               class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
               <option value="all">Todos los orígenes</option>
@@ -327,7 +384,10 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let movement of filteredMovements" class="hover:bg-gray-50 transition-colors">
+              <tr
+                *ngFor="let movement of paginatedFilteredMovements"
+                (click)="openMovementRow(movement)"
+                class="hover:bg-gray-50 transition-colors cursor-pointer">
                 <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                   {{ formatDate(movement.fecha) }}
                 </td>
@@ -375,15 +435,17 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   </ng-container>
                   <ng-template #motivoFallback>
                     <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
-                      {{ link.before }}<button
+                      {{ link.before }}                      <button
                         *ngIf="link.kind === 'pedido'"
                         type="button"
-                        (click)="openOrder(movement)"
+                        (click)="openOrder(movement); $event.stopPropagation()"
                         class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
                         {{ link.ref }}
                       </button><a
                         *ngIf="link.kind === 'compra'"
                         routerLink="/purchases"
+                        [queryParams]="movement.compraId ? { detail: movement.compraId } : null"
+                        (click)="$event.stopPropagation()"
                         class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
                         {{ link.ref }}
                       </a>{{ link.after }}
@@ -438,6 +500,12 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="movementsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredMovements.length"
+          (pageChange)="movementsPage = $event">
+        </app-list-pagination>
       </div>
 
       <div *ngIf="activeTab === 'reservas'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -447,6 +515,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </p>
           <input
             [(ngModel)]="reservationSearchQuery"
+            (ngModelChange)="onReservationsSearchChange()"
             name="reservationSearchQuery"
             placeholder="Buscar producto, pedido o cliente..."
             class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
@@ -464,13 +533,17 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let row of filteredReservations" class="hover:bg-gray-50">
+              <tr
+                *ngFor="let row of paginatedFilteredReservations"
+                (click)="openReservationRow(row)"
+                class="hover:bg-gray-50 cursor-pointer transition-colors">
                 <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900 max-w-[12rem] truncate" [title]="row.productoNombre">
                   {{ row.productoNombre }}
                 </td>
                 <td class="px-4 sm:px-6 py-3 text-sm">
                   <a
                     [routerLink]="['/orders', row.orderId, 'edit']"
+                    (click)="$event.stopPropagation()"
                     class="font-semibold text-teal-700 hover:text-teal-900 hover:underline">
                     #{{ row.orderLabel }}
                   </a>
@@ -482,7 +555,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600">
                   {{ getOrderStatusLabel(row.orderEstado) }}
                 </td>
-                <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right">
+                <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
                   <button
                     type="button"
                     (click)="openReservationTransfer(row)"
@@ -507,6 +580,12 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             </tbody>
           </table>
         </div>
+        <app-list-pagination
+          [page]="reservationsPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredReservations.length"
+          (pageChange)="reservationsPage = $event">
+        </app-list-pagination>
       </div>
 
       <div
@@ -591,9 +670,15 @@ export class StockComponent implements OnInit, OnDestroy {
   movementOrigenFilter: 'all' | string = 'all';
   activeTab: StockTab = 'productos';
   lowStockOnly = false;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
+  productsPage = 1;
+  movementsPage = 1;
+  reservationsPage = 1;
   loadingItems = true;
-  loadingMovements = true;
-  loadingReservations = true;
+  loadingMovements = false;
+  loadingReservations = false;
+  private movementsLoaded = false;
+  private reservationsLoaded = false;
   transferReservationRow: StockReservationRow | null = null;
   transferTargets: ReservationTargetOrder[] = [];
   transferTargetKey = '';
@@ -622,11 +707,11 @@ export class StockComponent implements OnInit, OnDestroy {
       if (this.reservationProductFilter) {
         this.activeTab = 'reservas';
       }
+
+      this.ensureTabDataLoaded(this.activeTab);
     });
 
     this.loadStock();
-    this.loadMovements();
-    this.loadReservations();
   }
 
   ngOnDestroy() {
@@ -660,9 +745,40 @@ export class StockComponent implements OnInit, OnDestroy {
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
+    this.ensureTabDataLoaded(tab);
     if (tab === 'reservas') {
       this.loadReservations(this.reservationProductFilter || undefined);
     }
+  }
+
+  private ensureTabDataLoaded(tab: StockTab) {
+    if (tab === 'movimientos') {
+      this.ensureMovementsLoaded();
+    } else if (tab === 'reservas') {
+      this.ensureReservationsLoaded();
+    }
+  }
+
+  private ensureMovementsLoaded() {
+    if (this.movementsLoaded || this.loadingMovements) return;
+    this.loadMovements();
+  }
+
+  private ensureReservationsLoaded() {
+    if (this.reservationsLoaded || this.loadingReservations) return;
+    this.loadReservations(this.reservationProductFilter || undefined);
+  }
+
+  onProductsSearchChange() {
+    this.productsPage = 1;
+  }
+
+  onMovementsSearchChange() {
+    this.movementsPage = 1;
+  }
+
+  onReservationsSearchChange() {
+    this.reservationsPage = 1;
   }
 
   get filteredReservations(): StockReservationRow[] {
@@ -680,6 +796,10 @@ export class StockComponent implements OnInit, OnDestroy {
     });
   }
 
+  get paginatedFilteredReservations(): StockReservationRow[] {
+    return paginateSlice(this.filteredReservations, this.reservationsPage, this.listPageSize);
+  }
+
   get lowStockCount(): number {
     return this.items.filter((item) => itemIsLowStock(item)).length;
   }
@@ -689,6 +809,11 @@ export class StockComponent implements OnInit, OnDestroy {
       (total, item) => total + (Number(item.stockActual) || 0) * (Number(item.costo) || 0),
       0
     );
+  }
+
+  get movementsThisMonthLabel(): string | number {
+    if (!this.movementsLoaded) return '—';
+    return this.movementsThisMonth;
   }
 
   get movementsThisMonth(): number {
@@ -724,6 +849,10 @@ export class StockComponent implements OnInit, OnDestroy {
     return this.sortItemsByName(list);
   }
 
+  get paginatedFilteredItems(): StockItem[] {
+    return paginateSlice(this.filteredItems, this.productsPage, this.listPageSize);
+  }
+
   private sortItemsByName(items: StockItem[]): StockItem[] {
     return [...items].sort((a, b) =>
       (a.nombre ?? a.nombreBase ?? '').localeCompare(b.nombre ?? b.nombreBase ?? '', 'es', {
@@ -757,6 +886,10 @@ export class StockComponent implements OnInit, OnDestroy {
     });
   }
 
+  get paginatedFilteredMovements(): StockMovement[] {
+    return paginateSlice(this.filteredMovements, this.movementsPage, this.listPageSize);
+  }
+
   formatDate(value?: string): string {
     if (!value) return '—';
     const date = new Date(value);
@@ -765,7 +898,33 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   isLowStock(item: StockItem): boolean {
-    return itemIsLowStock(item);
+    return itemIsLowStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
+  }
+
+  controlsStockItem(item: StockItem): boolean {
+    return itemControlsStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
+  }
+
+  get productTableDesktopColspan(): number {
+    return this.auth.canViewStockCosts ? 8 : 7;
+  }
+
+  stockTotalClass(item: StockItem): string {
+    if (!this.controlsStockItem(item)) return 'text-gray-400';
+    return this.isLowStock(item) ? 'text-orange-600 font-bold' : 'text-gray-900 font-semibold';
+  }
+
+  stockReservedClass(item: StockItem): string {
+    if (!this.controlsStockItem(item)) return 'text-gray-400';
+    const reserved = Number(item.stockReservado) || 0;
+    return reserved > 0 ? 'text-amber-700 font-semibold' : 'text-gray-400';
+  }
+
+  stockAvailableClass(item: StockItem): string {
+    if (!this.controlsStockItem(item)) return 'text-gray-400';
+    const available = getStockDisponible(item);
+    if (available <= 0) return 'text-red-600';
+    return 'text-teal-700';
   }
 
   getOrigenLabel(movement: StockMovement): string {
@@ -834,19 +993,16 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   getMovementMotivoText(movement: StockMovement): string {
-    const label = movement.numeroPedidoLabel?.trim();
     const origen = movement.origenTipo ?? '';
 
-    if (label && origen === 'pedido_reserva') {
-      return `Reserva pedido #${label}`;
-    }
-
-    if (label && origen === 'pedido_liberacion_reserva') {
-      const raw = movement.motivo ?? '';
-      if (raw.includes('cancelado')) {
-        return `Liberación reserva pedido #${label} (cancelado)`;
-      }
-      return `Liberación reserva pedido #${label}`;
+    if (origen.startsWith('pedido')) {
+      const normalized = normalizeOrderStockMotivo(
+        movement.motivo ?? '',
+        origen,
+        movement.numeroPedidoLabel
+      );
+      const clientIdx = normalized.indexOf(' · ');
+      return clientIdx > 0 ? normalized.slice(0, clientIdx) : normalized;
     }
 
     const motivo = (movement.motivo ?? '').trim();
@@ -859,6 +1015,29 @@ export class StockComponent implements OnInit, OnDestroy {
   openOrder(movement: StockMovement) {
     if (!movement.pedidoId) return;
     this.router.navigate(['/orders', movement.pedidoId, 'edit']);
+  }
+
+  openMovementRow(movement: StockMovement) {
+    if (movement.pedidoId) {
+      this.openOrder(movement);
+      return;
+    }
+    if (movement.ventaId) {
+      this.router.navigate(['/sales'], { queryParams: { ventaId: movement.ventaId } });
+      return;
+    }
+    if (movement.compraId) {
+      this.router.navigate(['/purchases'], { queryParams: { detail: movement.compraId } });
+      return;
+    }
+    if (movement.productoId) {
+      this.router.navigate(['/stock', movement.productoId, 'edit']);
+    }
+  }
+
+  openReservationRow(row: StockReservationRow) {
+    if (!row.orderId) return;
+    this.router.navigate(['/orders', row.orderId, 'edit']);
   }
 
   openEditItem(item: StockItem) {
@@ -967,6 +1146,7 @@ export class StockComponent implements OnInit, OnDestroy {
     this.stockService.getMovements().subscribe({
       next: (movements) => {
         this.movements = movements;
+        this.movementsLoaded = true;
         this.loadingMovements = false;
       },
       error: () => {
@@ -984,6 +1164,7 @@ export class StockComponent implements OnInit, OnDestroy {
     this.stockService.getReservations(stockItemId).subscribe({
       next: (data) => {
         this.reservationRows = data.rows;
+        this.reservationsLoaded = true;
         this.loadingReservations = false;
       },
       error: () => {

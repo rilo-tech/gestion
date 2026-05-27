@@ -24,6 +24,7 @@ import {
 } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
+import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
 
 export interface UserFormSaveEvent {
   id: string;
@@ -33,7 +34,7 @@ export interface UserFormSaveEvent {
 @Component({
   selector: 'app-user-form-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SelectOnFocusDirective],
+  imports: [CommonModule, FormsModule, LucideAngularModule, SelectOnFocusDirective, FormPanelFooterComponent],
   template: `
     <div class="space-y-4">
       <div *ngIf="loadingUser" class="py-8 text-center text-sm text-gray-400">
@@ -121,29 +122,13 @@ export interface UserFormSaveEvent {
           </ng-container>
         </div>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-          <button
-            *ngIf="isEditing && auth.canManageUsers"
-            type="button"
-            (click)="confirmDeleteUser()"
-            class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
-            Eliminar usuario
-          </button>
-          <div class="flex justify-end gap-3 sm:ml-auto">
-            <button
-              type="button"
-              (click)="cancelled.emit()"
-              class="form-btn-secondary rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              [disabled]="savingUser"
-              class="form-btn-primary rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-              {{ savingUser ? 'Guardando...' : (isEditing ? 'Guardar' : 'Crear usuario') }}
-            </button>
-          </div>
-        </div>
+        <app-form-panel-footer
+          [deleteLabel]="isEditing && auth.canManageUsers ? 'Eliminar usuario' : ''"
+          [saveLabel]="isEditing ? 'Guardar' : 'Crear usuario'"
+          [saving]="savingUser"
+          (cancelClick)="cancelled.emit()"
+          (deleteClick)="confirmDeleteUser()">
+        </app-form-panel-footer>
       </form>
     </div>
   `,

@@ -1,13 +1,13 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { OrderService } from '../../core/services/order.service';
+import { OrderService, Order } from '../../core/services/order.service';
 import { StockService, itemIsLowStock } from '../../core/services/stock.service';
 import { SalesService, Sale } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS, MODULE_SUMMARY_KPIS_CLASS } from '../../shared/components/icon-action/icon-action.component';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-home',
@@ -96,23 +96,54 @@ import { RouterLink } from '@angular/router';
         </div>
 
         <div
-          class="order-2 lg:order-1 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm"
+          class="order-2 lg:order-1 bg-white p-5 sm:p-6 rounded-2xl border border-gray-100 shadow-sm"
           [class.lg:col-span-2]="!hasQuickAccess">
-          <div class="flex justify-between items-center mb-6">
-            <h2 class="text-lg font-bold">Actividad Reciente</h2>
-            <button routerLink="/orders" class="text-teal-600 text-sm font-bold">Ver todo</button>
+          <div class="flex justify-between items-center gap-3 mb-4">
+            <div class="min-w-0">
+              <h2 class="text-lg font-bold">Actividad Reciente</h2>
+              <p class="text-xs text-gray-400 mt-0.5">Últimos pedidos del negocio</p>
+            </div>
+            <a
+              *ngIf="hasMoreRecentOrders"
+              routerLink="/orders"
+              class="shrink-0 text-teal-600 text-sm font-semibold hover:text-teal-800 hover:underline">
+              Ver todo
+            </a>
           </div>
-          <div class="space-y-4">
-            <div *ngFor="let order of recentOrders" class="flex justify-between items-center p-3 hover:bg-gray-50 rounded-lg transition-colors">
-              <div class="flex items-center gap-3">
-                <div class="w-2 h-2 rounded-full bg-yellow-400"></div>
-                <div>
-                  <p class="text-sm font-medium text-gray-900">{{ order.descripcion }}</p>
-                  <p class="text-xs text-gray-400">Entrega: {{ order.fechaEntrega | date:'shortDate' }}</p>
+          <div class="space-y-2">
+            <a
+              *ngFor="let order of recentOrders"
+              [routerLink]="order.id ? ['/orders', order.id, 'edit'] : null"
+              (click)="openRecentOrder(order, $event)"
+              class="flex justify-between items-center gap-3 p-2.5 hover:bg-gray-50 rounded-lg transition-colors"
+              [class.pointer-events-none]="!order.id"
+              [class.cursor-default]="!order.id"
+              [class.cursor-pointer]="!!order.id">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-2 h-2 rounded-full bg-yellow-400 shrink-0"></div>
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-900 truncate">{{ order.descripcion || 'Pedido sin descripción' }}</p>
+                  <p class="text-xs text-gray-400 truncate">
+                    {{
+                      order.numeroPedidoLabel
+                        ? ('#' + order.numeroPedidoLabel + ' · ')
+                        : ''
+                    }}Entrega:
+                    {{
+                      order.fechaEntrega
+                        ? (order.fechaEntrega | date:'d/M/yy')
+                        : '—'
+                    }}
+                  </p>
                 </div>
               </div>
-              <span *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold">{{ '$' + formatMoney(order.total || 0) }}</span>
-            </div>
+              <span *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold shrink-0 tabular-nums">{{
+                '$' + formatMoney(order.total || 0)
+              }}</span>
+            </a>
+            <p *ngIf="recentOrders.length === 0" class="text-sm text-gray-400 py-6 text-center">
+              Todavía no hay pedidos recientes.
+            </p>
           </div>
         </div>
       </div>
@@ -132,17 +163,32 @@ export class HomeComponent implements OnInit {
   private orderService = inject(OrderService);
   private stockService = inject(StockService);
   private salesService = inject(SalesService);
+  private router = inject(Router);
+
+  readonly recentActivityLimit = 4;
 
   pendingOrders = 0;
   lowStockItems = 0;
   monthlySalesIncome = 0;
   monthlyProfit = 0;
-  recentOrders: any[] = [];
+  recentOrders: Order[] = [];
+  totalRecentOrders = 0;
+
+  get hasMoreRecentOrders(): boolean {
+    return this.totalRecentOrders > this.recentActivityLimit;
+  }
 
   ngOnInit() {
     this.orderService.getOrders().subscribe((orders) => {
-      const visible = orders.filter((order) => this.auth.canViewOrder(order.estado));
-      this.recentOrders = visible.slice(0, 5);
+      const visible = orders
+        .filter((order) => this.auth.canViewOrder(order.estado))
+        .sort((a, b) => {
+          const dateA = Date.parse(String(a.createdAt ?? a.fechaEntrega ?? '')) || 0;
+          const dateB = Date.parse(String(b.createdAt ?? b.fechaEntrega ?? '')) || 0;
+          return dateB - dateA;
+        });
+      this.totalRecentOrders = visible.length;
+      this.recentOrders = visible.slice(0, this.recentActivityLimit);
       this.pendingOrders = visible.filter((order) => isOrderPendingDelivery(order)).length;
     });
 
@@ -200,5 +246,13 @@ export class HomeComponent implements OnInit {
     }
 
     return 0;
+  }
+
+  openRecentOrder(order: Order, event: MouseEvent) {
+    if (!order.id) return;
+    event.preventDefault();
+    this.router.navigate(['/orders', order.id, 'edit'], {
+      state: { orderPreview: order },
+    });
   }
 }

@@ -6,8 +6,18 @@ import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-com
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import {
+  getBusinessCashAmbitoId,
+  resolveCashReversalAmbito,
+} from '../utils/caja-ambitos.ts';
 
 const router = createCompanyRouter();
+
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return {};
+  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+}
 
 type OrderPayment = {
   id: string;
@@ -244,12 +254,13 @@ async function createCashIncome(
     ventaLabel?: string | null;
   }
 ) {
+  const caja = await loadCajaConfig(businessId);
   const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
     tipo: 'ingreso',
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
-    ambito: 'negocio',
+    ambito: getBusinessCashAmbitoId(caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -284,12 +295,13 @@ async function reverseCashMovement(
   if (data.tipo !== 'ingreso') return false;
 
   const conceptoBase = String(data.concepto ?? 'Cobro venta').trim();
+  const caja = await loadCajaConfig(businessId);
   await movimientosRef.add({
     tipo: 'egreso',
     monto: Number(data.monto) || 0,
     medio: data.medio ?? 'efectivo',
     concepto: `Anulación ${conceptoBase}`,
-    ambito: data.ambito === 'personal' ? 'personal' : 'negocio',
+    ambito: resolveCashReversalAmbito(data.ambito, caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -733,7 +745,7 @@ router.post('/:businessId', async (req, res) => {
       if (montoCobrado > 0) {
         movimientoCajaId = await createCashIncome(businessId, {
           monto: montoCobrado,
-          concepto: `Saldo entrega pedido #${orderLabel} · venta #${ventaLabel}`,
+          concepto: `Pedido #${orderLabel} - saldado`,
           origenId: ventaRef.id,
           origenTipo: 'venta_pedido',
           medio: medioPago,
