@@ -79,22 +79,22 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div class="lg:col-span-2 space-y-8">
-          <section class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-            <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
-              <i-lucide name="package" class="w-5 h-5 text-teal-600"></i-lucide>
+        <div class="lg:col-span-2 space-y-6">
+          <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <h2 class="text-base font-bold mb-3 flex items-center gap-2">
+              <i-lucide name="package" class="w-4 h-4 text-teal-600"></i-lucide>
               Datos del item
             </h2>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-0.5">Nombre</label>
                 <input [(ngModel)]="nombreBase" name="nombreBase" required
                        placeholder="Ej. Remera básica"
-                       class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary">
+                       class="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary text-sm">
               </div>
 
-              <div class="md:col-span-1">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-0.5">Categoría</label>
                 <app-searchable-select
                   [(ngModel)]="item.categoria"
                   (ngModelChange)="onCategoriaChange($event)"
@@ -105,85 +105,88 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                 </app-searchable-select>
               </div>
 
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Talle</label>
-                <app-searchable-select
-                  [(ngModel)]="item.talle"
-                  name="talle"
-                  [options]="talleOptions"
-                  placeholder="Buscar talle..."
-                  plainPlaceholder="Ej. M">
-                </app-searchable-select>
-              </div>
-
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Color</label>
-                <app-searchable-select
-                  [(ngModel)]="item.color"
-                  name="color"
-                  [options]="colorOptions"
-                  placeholder="Buscar color..."
-                  plainPlaceholder="Ej. Negro">
-                </app-searchable-select>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Color</label>
+                  <app-searchable-select
+                    [(ngModel)]="item.color"
+                    name="color"
+                    [options]="colorOptions"
+                    placeholder="Buscar color..."
+                    plainPlaceholder="Ej. Negro">
+                  </app-searchable-select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Talle</label>
+                  <app-searchable-select
+                    [(ngModel)]="item.talle"
+                    name="talle"
+                    [options]="talleOptions"
+                    placeholder="Buscar talle..."
+                    plainPlaceholder="Ej. M">
+                  </app-searchable-select>
+                </div>
               </div>
             </div>
           </section>
 
-          <section class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-            <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
-              <i-lucide name="bar-chart-3" class="w-5 h-5 text-teal-600"></i-lucide>
+          <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <h2 class="text-base font-bold mb-3 flex items-center gap-2">
+              <i-lucide name="bar-chart-3" class="w-4 h-4 text-teal-600"></i-lucide>
               Inventario
             </h2>
-            <div class="space-y-4">
+            <div class="space-y-3">
               <div
                 *ngIf="canAdjustStock"
-                class="p-3 sm:p-4 rounded-lg border border-teal-100 bg-teal-50/40 space-y-2">
-                <p class="text-sm font-semibold text-teal-800">Movimiento de stock</p>
-                <p class="text-xs text-teal-700">
-                  Cantidad positiva suma stock; negativa resta. Presioná Guardar para registrar el movimiento.
+                class="p-3 rounded-lg border border-teal-100 bg-teal-50/40 space-y-2">
+                <p class="text-sm font-semibold text-teal-800 leading-tight">Movimiento de stock</p>
+                <p class="text-[11px] text-teal-700 leading-snug">
+                  Positivo suma, negativo resta. Guardá para registrar.
                 </p>
-                <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-2">
-                  <div class="shrink-0 w-full sm:w-auto">
-                    <label class="text-xs font-medium text-gray-600 mb-0.5 block">Cantidad</label>
-                    <div
-                      class="inline-flex w-full sm:w-auto rounded-lg border border-gray-200 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-primary disabled:opacity-60">
-                      <button
-                        type="button"
-                        (click)="stepStockAdjustmentQty(-1)"
-                        [disabled]="adjustingStock"
-                        aria-label="Restar una unidad"
-                        title="Restar una unidad"
-                        class="shrink-0 inline-flex items-center justify-center w-9 text-gray-600 border-r border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
-                        <i-lucide name="minus" class="w-4 h-4"></i-lucide>
-                      </button>
-                      <input
-                        type="number"
-                        [(ngModel)]="stockAdjustmentQty"
-                        name="stockAdjustmentQty"
-                        step="1"
-                        [disabled]="adjustingStock"
-                        placeholder="Ej. 5 o -3"
-                        class="min-w-0 w-full sm:w-14 px-2 py-1.5 text-sm text-center tabular-nums border-0 bg-transparent outline-none disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-                      <button
-                        type="button"
-                        (click)="stepStockAdjustmentQty(1)"
-                        [disabled]="adjustingStock"
-                        aria-label="Sumar una unidad"
-                        title="Sumar una unidad"
-                        class="shrink-0 inline-flex items-center justify-center w-9 text-gray-600 border-l border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
-                        <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-                      </button>
+                <div class="flex flex-wrap items-end gap-2">
+                  <div class="flex flex-1 min-w-0 items-end gap-2">
+                    <div class="shrink-0">
+                      <label class="text-xs font-medium text-gray-600 mb-0.5 block">Cantidad</label>
+                      <div
+                        class="inline-flex rounded-lg border border-gray-200 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-primary disabled:opacity-60">
+                        <button
+                          type="button"
+                          (click)="stepStockAdjustmentQty(-1)"
+                          [disabled]="adjustingStock"
+                          aria-label="Restar una unidad"
+                          title="Restar una unidad"
+                          class="shrink-0 inline-flex items-center justify-center w-8 text-gray-600 border-r border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                          <i-lucide name="minus" class="w-3.5 h-3.5"></i-lucide>
+                        </button>
+                        <input
+                          type="number"
+                          [(ngModel)]="stockAdjustmentQty"
+                          name="stockAdjustmentQty"
+                          step="1"
+                          [disabled]="adjustingStock"
+                          placeholder="5 o -3"
+                          class="w-12 px-1.5 py-1.5 text-sm text-center tabular-nums border-0 bg-transparent outline-none disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                        <button
+                          type="button"
+                          (click)="stepStockAdjustmentQty(1)"
+                          [disabled]="adjustingStock"
+                          aria-label="Sumar una unidad"
+                          title="Sumar una unidad"
+                          class="shrink-0 inline-flex items-center justify-center w-8 text-gray-600 border-l border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                          <i-lucide name="plus" class="w-3.5 h-3.5"></i-lucide>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div class="flex-1 min-w-0 w-full sm:min-w-[10rem]">
-                    <label class="text-xs font-medium text-gray-600 mb-0.5 block">Motivo (opcional)</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="stockAdjustmentReason"
-                      name="stockAdjustmentReason"
-                      [disabled]="adjustingStock"
-                      placeholder="Ej. Conteo de depósito"
-                      class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+                    <div class="flex-1 min-w-0">
+                      <label class="text-xs font-medium text-gray-600 mb-0.5 block">Motivo (opcional)</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="stockAdjustmentReason"
+                        name="stockAdjustmentReason"
+                        [disabled]="adjustingStock"
+                        placeholder="Ej. Conteo de depósito"
+                        class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -195,42 +198,40 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                 </div>
               </div>
 
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div *ngIf="showInventoryFields">
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div *ngIf="showInventoryFields" class="min-w-0">
                   <label
-                    class="block text-sm font-medium mb-1"
-                    [class.text-gray-700]="!isEditing"
-                    [class.text-gray-400]="isEditing">
+                    class="block text-sm font-medium mb-0.5"
+                    [class.text-gray-700]="!isEditing || canEditStockActualInline"
+                    [class.text-gray-400]="isEditing && !canEditStockActualInline">
                     {{ isEditing ? 'Stock actual' : 'Stock inicial' }}
                   </label>
                   <input
-                    *ngIf="!isEditing"
+                    *ngIf="!isEditing || canEditStockActualInline"
                     type="number"
                     [(ngModel)]="item.stockActual"
                     name="stockActual"
-                    min="0"
-                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+                    [min]="permitirStockNegativo ? undefined : 0"
+                    [disabled]="formReadOnly"
+                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
                   <div
-                    *ngIf="isEditing"
-                    class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-gray-100 text-gray-500 font-medium cursor-not-allowed">
+                    *ngIf="isEditing && !canEditStockActualInline"
+                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-gray-100 text-gray-500 font-medium cursor-not-allowed">
                     {{ item.stockActual || 0 }} u.
                   </div>
-                  <p *ngIf="isEditing" class="text-[11px] text-gray-400 mt-1">
-                    Se modifica con movimientos de stock.
-                  </p>
                 </div>
-                <div *ngIf="showInventoryFields">
-                  <label class="block text-sm font-medium text-gray-700 mb-1">Stock mínimo</label>
+                <div *ngIf="showInventoryFields" class="min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Stock mínimo</label>
                   <input
                     type="number"
                     [(ngModel)]="item.stockMinimo"
                     name="stockMinimo"
                     min="0"
                     [disabled]="formReadOnly"
-                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
                 </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">Costo de compra</label>
+                <div class="min-w-0 col-span-2 sm:col-span-1">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Costo de compra</label>
                   <input
                     type="number"
                     [(ngModel)]="item.costo"
@@ -238,12 +239,17 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                     min="0"
                     step="0.01"
                     [disabled]="formReadOnly"
-                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
                 </div>
               </div>
-
-              <p class="text-xs text-gray-500">
-                El costo de compra es el costo base del producto al cargarlo en un pedido.
+              <p
+                *ngIf="showInventoryFields && isEditing"
+                class="text-[11px] text-gray-400 leading-snug">
+                <ng-container *ngIf="canEditStockActualInline">Stock inicial: al guardar no genera movimiento. </ng-container>
+                <ng-container *ngIf="!canEditStockActualInline">Stock actual: solo por movimientos. </ng-container>
+              </p>
+              <p class="text-[11px] text-gray-400 leading-snug">
+                Costo base del producto al cargarlo en un pedido.
               </p>
               <p
                 *ngIf="categoriaStockHint"
@@ -384,6 +390,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
   stockAdjustmentQty: number | null = null;
   stockAdjustmentReason = '';
   adjustingStock = false;
+  /** Stock persistido en servidor; define si el campo queda bloqueado (> 0). */
+  private persistedStockActual = 0;
   item = {
     tipo: '',
     categoria: '',
@@ -426,8 +434,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
         return;
       }
 
-      this.editingItemId = null;
-      if (duplicateId) {
+    this.editingItemId = null;
+    this.persistedStockActual = 0;
+    if (duplicateId) {
         this.loadProductForDuplicate(duplicateId);
         return;
       }
@@ -440,6 +449,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.nombreBase = '';
     this.controlaStock = true;
     this.permitirStockNegativo = true;
+    this.persistedStockActual = 0;
     this.item = {
       tipo: '',
       categoria: '',
@@ -485,6 +495,11 @@ export class NewProductComponent implements OnInit, OnDestroy {
   /** Solo producto ya guardado en servidor (no en alta inicial sin id). */
   get canAdjustStock(): boolean {
     return !!this.editingItemId && this.showInventoryFields && !this.formReadOnly;
+  }
+
+  /** Editable en edición solo si el stock guardado es 0 o negativo (stock inicial). */
+  get canEditStockActualInline(): boolean {
+    return this.isEditing && this.persistedStockActual <= 0;
   }
 
   get categoriaStockHint(): string {
@@ -590,6 +605,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       next: (result: { newStock?: number }) => {
         this.adjustingStock = false;
         this.item.stockActual = Number(result?.newStock ?? (this.item.stockActual || 0) + delta) || 0;
+        this.persistedStockActual = this.item.stockActual;
         this.stockAdjustmentQty = null;
         this.stockAdjustmentReason = '';
         this.stockService.notifyCatalogChanged({
@@ -626,6 +642,21 @@ export class NewProductComponent implements OnInit, OnDestroy {
     }
 
     const controlsStock = this.controlaStock;
+    const stockActual = controlsStock ? Number(this.item.stockActual) || 0 : 0;
+
+    if (
+      controlsStock &&
+      this.isEditing &&
+      this.canEditStockActualInline &&
+      !this.permitirStockNegativo &&
+      stockActual < 0
+    ) {
+      this.dialogService.alert({
+        title: 'Stock inválido',
+        message: 'Este producto no permite stock negativo.',
+      });
+      return;
+    }
 
     const payload: StockItem = {
       tipo: this.item.tipo?.trim() || '',
@@ -634,7 +665,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       categoria: this.item.categoria?.trim() || undefined,
       talle: this.item.talle?.trim() || undefined,
       color: this.item.color?.trim() || undefined,
-      stockActual: controlsStock ? Number(this.item.stockActual) || 0 : 0,
+      stockActual: stockActual,
       stockMinimo: controlsStock ? Number(this.item.stockMinimo) || 0 : 0,
       controlaStock: controlsStock,
       permitirStockNegativo: controlsStock ? this.permitirStockNegativo !== false : false,
@@ -653,6 +684,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       next: (result) => {
         this.saving = false;
         if (this.editingItemId) {
+          this.persistedStockActual = stockActual;
           this.stockService.notifyCatalogChanged({
             item: { id: this.editingItemId, ...payload },
           });
@@ -763,6 +795,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       costo: Number(product.costo) || 0,
       precioSugerido: Number(product.precioSugerido) || 0,
     };
+    this.persistedStockActual = this.item.stockActual;
     this.controlaStock = product.controlaStock !== false;
     this.permitirStockNegativo = product.permitirStockNegativo !== false;
     if (!this.controlaStock) {

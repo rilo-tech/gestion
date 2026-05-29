@@ -11,12 +11,12 @@ import { DialogRequest, DialogService } from '../../../core/services/dialog.serv
   template: `
     <div
       *ngIf="request"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4"
+      class="fixed inset-0 z-[100] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true">
       <button
         type="button"
-        class="absolute inset-0 bg-gray-900/50 backdrop-blur-[2px]"
+        class="absolute inset-0 bg-black/55 backdrop-blur-[1px]"
         aria-label="Cerrar"
         (click)="onCancel()">
       </button>

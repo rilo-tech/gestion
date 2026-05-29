@@ -2,9 +2,10 @@ import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { OrderService, Order } from '../../core/services/order.service';
 import { StockService, itemIsLowStock } from '../../core/services/stock.service';
-import { SalesService, Sale } from '../../core/services/sales.service';
+import { SalesService } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
+import { getCalendarMonthRange, isIsoDateInRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS, MODULE_SUMMARY_KPIS_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
@@ -49,14 +50,31 @@ import { Router, RouterLink } from '@angular/router';
           </div>
         </a>
 
+        <a
+          *ngIf="auth.canViewEconomics && auth.canAccessCash"
+          routerLink="/cash"
+          [queryParams]="cashMonthQueryParams"
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
+          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
+            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
+          </div>
+          <div class="min-w-0">
+            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
+            <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
+            <p class="text-xs font-semibold text-teal-600 mt-0.5">
+              Gan. estimada {{ '$' + formatMoney(monthlyProfit) }}
+            </p>
+          </div>
+        </a>
+
         <div
-          *ngIf="auth.canViewEconomics"
+          *ngIf="auth.canViewEconomics && !auth.canAccessCash"
           class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
           <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
             <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
           </div>
           <div class="min-w-0">
-            <p class="text-xs font-bold text-gray-400 uppercase">Ventas Mes</p>
+            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
             <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
             <p class="text-xs font-semibold text-teal-600 mt-0.5">
               Gan. estimada {{ '$' + formatMoney(monthlyProfit) }}
@@ -171,6 +189,8 @@ export class HomeComponent implements OnInit {
   lowStockItems = 0;
   monthlySalesIncome = 0;
   monthlyProfit = 0;
+  currentMonthLabel = '';
+  cashMonthQueryParams: { mes: number; anio: number } = { mes: 1, anio: new Date().getFullYear() };
   recentOrders: Order[] = [];
   totalRecentOrders = 0;
 
@@ -198,54 +218,29 @@ export class HomeComponent implements OnInit {
 
     if (!this.auth.canViewEconomics) return;
 
-    this.salesService.getSales().subscribe((sales) => {
-      const now = new Date();
-      const month = now.getMonth();
-      const year = now.getFullYear();
+    const monthRange = getCalendarMonthRange();
+    this.currentMonthLabel = formatMonthYearLabel(monthRange.label);
+    this.cashMonthQueryParams = monthYearQueryParams(monthRange);
 
-      this.monthlySalesIncome = sales.reduce(
-        (acc, sale) => acc + this.getSaleCollectedInMonth(sale, month, year),
+    this.salesService.getSales().subscribe((sales) => {
+      const salesInMonth = sales.filter((sale) =>
+        isIsoDateInRange(sale.fecha, monthRange.start, monthRange.end)
+      );
+
+      this.monthlySalesIncome = salesInMonth.reduce(
+        (acc, sale) => acc + (Number(sale.total) || 0),
         0
       );
 
-      this.monthlyProfit = sales
-        .filter((sale) => this.isInMonth(sale.fecha, month, year))
-        .reduce((acc, sale) => acc + (Number(sale.gananciaEstimada) || 0), 0);
+      this.monthlyProfit = salesInMonth.reduce(
+        (acc, sale) => acc + (Number(sale.gananciaEstimada) || 0),
+        0
+      );
     });
   }
 
   formatMoney(value: number): string {
     return Math.round(value).toLocaleString('es-AR');
-  }
-
-  private isInMonth(iso: string | undefined, month: number, year: number): boolean {
-    if (!iso) return false;
-    const date = new Date(iso);
-    return !Number.isNaN(date.getTime()) && date.getMonth() === month && date.getFullYear() === year;
-  }
-
-  private getSaleCollectedInMonth(sale: Sale, month: number, year: number): number {
-    const cobros = sale.cobros ?? [];
-
-    if (cobros.length > 0) {
-      let collected = cobros
-        .filter((cobro) => this.isInMonth(cobro.fecha, month, year))
-        .reduce((acc, cobro) => acc + (Number(cobro.monto) || 0), 0);
-
-      const adicionales = cobros.reduce((acc, cobro) => acc + (Number(cobro.monto) || 0), 0);
-      const inicial = Math.max(0, (Number(sale.montoCobrado) || 0) - adicionales);
-      if (inicial > 0 && this.isInMonth(sale.fecha, month, year)) {
-        collected += inicial;
-      }
-
-      return collected;
-    }
-
-    if (this.isInMonth(sale.fecha, month, year)) {
-      return Number(sale.montoCobrado) || 0;
-    }
-
-    return 0;
   }
 
   openRecentOrder(order: Order, event: MouseEvent) {

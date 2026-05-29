@@ -5,6 +5,10 @@ import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import {
+  ClientFormReturnTo,
+  parseClientFormReturnTo,
+} from '../../core/utils/form-return-context';
+import {
   ClientFormPanelComponent,
   ClientFormSaveEvent,
 } from './client-form-panel.component';
@@ -26,16 +30,17 @@ import {
           <app-config-settings-link
             settingsTab="clientes"
             message="¿Falta una etiqueta?"
-            linkLabel="Configurala acá">
+            linkLabel="Configuralo acá">
           </app-config-settings-link>
         </div>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
-          <a
-            [routerLink]="backLink"
+          <button
+            type="button"
+            (click)="goBack()"
             class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
             <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
             {{ backLabel }}
-          </a>
+          </button>
         </div>
       </div>
 
@@ -61,7 +66,7 @@ export class ClientFormComponent implements OnInit {
 
   clientId: string | null = null;
   prefillNombre = '';
-  returnTo: 'clients' | 'orders' = 'clients';
+  returnTo: ClientFormReturnTo = 'clients';
   returnOrderId: string | null = null;
 
   get isEditing(): boolean {
@@ -69,24 +74,24 @@ export class ClientFormComponent implements OnInit {
   }
 
   get backLabel(): string {
-    return this.returnTo === 'orders' ? 'Volver a pedidos' : 'Volver a clientes';
-  }
-
-  get backLink(): string[] {
-    if (this.returnTo === 'orders') {
-      return this.returnOrderId ? ['/orders', this.returnOrderId, 'edit'] : ['/orders/new'];
-    }
-    return ['/clients'];
+    if (this.returnTo === 'orders') return 'Volver a pedido';
+    if (this.returnTo === 'sales') return 'Volver a venta';
+    return 'Volver a clientes';
   }
 
   ngOnInit() {
     this.clientId = this.route.snapshot.paramMap.get('id');
     this.prefillNombre = this.route.snapshot.queryParamMap.get('nombre')?.trim() ?? '';
-    this.returnTo = this.route.snapshot.queryParamMap.get('returnTo') === 'orders' ? 'orders' : 'clients';
+    this.returnTo = parseClientFormReturnTo(this.route.snapshot.queryParamMap.get('returnTo'));
     this.returnOrderId = this.route.snapshot.queryParamMap.get('orderId');
   }
 
   onSaved(event: ClientFormSaveEvent) {
+    if (this.returnTo !== 'clients') {
+      this.navigateBack(event.id);
+      return;
+    }
+
     if (!this.clientId) {
       this.clientId = event.id;
       this.router.navigate(['/clients', event.id, 'edit'], { replaceUrl: true });
@@ -94,6 +99,33 @@ export class ClientFormComponent implements OnInit {
   }
 
   goBack() {
-    this.router.navigate(this.backLink);
+    this.navigateBack(this.clientId ?? undefined);
+  }
+
+  private navigateBack(clienteId?: string) {
+    if (this.returnTo === 'orders') {
+      const commands = this.returnOrderId
+        ? ['/orders', this.returnOrderId, 'edit']
+        : ['/orders/new'];
+      this.router.navigate(commands, {
+        queryParams: this.buildRestoreQueryParams(clienteId),
+      });
+      return;
+    }
+
+    if (this.returnTo === 'sales') {
+      this.router.navigate(['/sales'], {
+        queryParams: this.buildRestoreQueryParams(clienteId),
+      });
+      return;
+    }
+
+    this.router.navigate(['/clients']);
+  }
+
+  private buildRestoreQueryParams(clienteId?: string): Record<string, string> {
+    const params: Record<string, string> = { restoreDraft: '1' };
+    if (clienteId) params.clienteId = clienteId;
+    return params;
   }
 }

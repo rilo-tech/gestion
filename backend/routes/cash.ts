@@ -165,6 +165,61 @@ async function enrichMovements(
   });
 }
 
+router.get('/:businessId/summary', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const caja = await loadCajaConfig(businessId);
+    const ambitos = normalizeCajaAmbitos(caja);
+    const ambitoTotals: Record<string, { ingreso: number; egreso: number }> = {};
+    for (const ambito of ambitos) {
+      ambitoTotals[ambito.id] = { ingreso: 0, egreso: 0 };
+    }
+
+    const snapshot = await db
+      .collection(`negocios/${businessId}/movimientos_caja`)
+      .get();
+
+    let ingreso = 0;
+    let egreso = 0;
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const monto = Number(data.monto) || 0;
+      if (monto <= 0) continue;
+      const tipo = data.tipo === 'egreso' ? 'egreso' : 'ingreso';
+      const ambito = normalizeAmbito(data.ambito, caja);
+      if (tipo === 'egreso') {
+        egreso += monto;
+        if (ambitoTotals[ambito]) ambitoTotals[ambito].egreso += monto;
+      } else {
+        ingreso += monto;
+        if (ambitoTotals[ambito]) ambitoTotals[ambito].ingreso += monto;
+      }
+    }
+
+    const ambitosSummary: Record<
+      string,
+      { ingreso: number; egreso: number; saldo: number }
+    > = {};
+    for (const [ambitoId, totals] of Object.entries(ambitoTotals)) {
+      ambitosSummary[ambitoId] = {
+        ingreso: totals.ingreso,
+        egreso: totals.egreso,
+        saldo: totals.ingreso - totals.egreso,
+      };
+    }
+
+    res.json({
+      ingreso,
+      egreso,
+      saldo: ingreso - egreso,
+      ambitos: ambitosSummary,
+    });
+  } catch (error) {
+    console.error('Error fetching cash summary:', error);
+    res.status(500).json({ error: 'Error fetching cash summary' });
+  }
+});
+
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;

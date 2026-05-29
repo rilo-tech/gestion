@@ -188,7 +188,18 @@ router.get('/:businessId/search', async (req, res) => {
     const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
     const items = snapshot.docs
       .map((doc) => ({ id: doc.id, ...doc.data() }))
-      .filter((item) => String(item.nombre ?? '').toLowerCase().includes(query))
+      .filter((item) => {
+        const haystack = [
+          item.nombre,
+          item.nombreBase,
+          item.categoria,
+          item.talle,
+          item.color,
+        ]
+          .map((value) => String(value ?? '').toLowerCase())
+          .join(' ');
+        return haystack.includes(query);
+      })
       .slice(0, limit);
 
     res.json(items);
@@ -474,8 +485,12 @@ router.put('/:businessId/:itemId', async (req, res) => {
 
     const previousStock = Number(existing.data()?.stockActual) || 0;
     const controlsStock = productControlsStock(itemData);
-    const nextStock = controlsStock ? Number(itemData.stockActual) || 0 : 0;
-    const stockDelta = controlsStock ? nextStock - previousStock : 0;
+    const requestedStock = controlsStock ? Number(itemData.stockActual) || 0 : 0;
+    const nextStock = controlsStock
+      ? previousStock > 0
+        ? previousStock
+        : requestedStock
+      : 0;
 
     await itemRef.update({
       ...itemData,
@@ -489,21 +504,8 @@ router.put('/:businessId/:itemId', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    if (controlsStock && stockDelta !== 0) {
-      await db.collection(`negocios/${businessId}/movimientos_stock`).add({
-        productoId: itemId,
-        tipo: stockDelta > 0 ? 'entrada' : 'salida',
-        cantidad: Math.abs(stockDelta),
-        fecha: new Date().toISOString(),
-        motivo: 'Ajuste manual desde edición de producto',
-        origenGrupo: 'ajuste',
-        origenTipo: 'ajuste_manual',
-        usuarioId: 'admin',
-        negocioId: businessId,
-      });
-      if (stockDelta > 0) {
-        await autoReserveIncomingStockForProduct(businessId, itemId);
-      }
+    if (controlsStock && previousStock <= 0 && nextStock > 0) {
+      await autoReserveIncomingStockForProduct(businessId, itemId);
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {

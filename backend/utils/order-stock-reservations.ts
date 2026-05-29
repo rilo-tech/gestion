@@ -124,31 +124,35 @@ export function computeLineStockFields(line: OrderLineStock): OrderLineStock {
     };
   }
 
-  const cantidadReservada = Math.max(0, Number(line.cantidadReservada) || 0);
-  const maxAssignable = Math.max(0, cantidadPedida - cantidadUsada);
-  const reserved = Math.min(cantidadReservada, maxAssignable);
-  const pendientePedido = maxAssignable;
-  const gapActual = Math.max(0, pendientePedido - reserved);
+  const cantidadReservadaRaw = Math.max(0, Number(line.cantidadReservada) || 0);
+  const pendientePedido = Math.max(0, cantidadPedida - cantidadUsada);
+  const reserved = Math.min(cantidadReservadaRaw, pendientePedido);
+  const pendienteSinReservar = Math.max(0, pendientePedido - reserved);
 
-  let cantidadFaltante = gapActual;
+  let cantidadFaltanteCompra: number | undefined;
   if (line.cantidadFaltanteCompra !== undefined && line.cantidadFaltanteCompra !== null) {
-    const compraRegistrada = Math.max(0, Number(line.cantidadFaltanteCompra) || 0);
-    if (pendientePedido > 0) {
-      cantidadFaltante = Math.max(gapActual, Math.min(compraRegistrada, pendientePedido));
-    } else {
-      cantidadFaltante = compraRegistrada;
+    cantidadFaltanteCompra = Math.max(0, Number(line.cantidadFaltanteCompra) || 0);
+    if (pendienteSinReservar <= 0) {
+      cantidadFaltanteCompra = 0;
     }
   }
 
+  let cantidadFaltante = pendienteSinReservar;
+  if (cantidadFaltanteCompra !== undefined) {
+    cantidadFaltante = Math.min(pendienteSinReservar, cantidadFaltanteCompra);
+  }
+
+  const cubierto = cantidadUsada + reserved;
+
   let estadoStockItem: OrderStockItemStatus = 'sin_preparar';
-  if (cantidadPedida <= 0) {
+  if (cantidadPedida <= 0 || (cubierto >= cantidadPedida && cantidadFaltante <= 0)) {
     estadoStockItem = 'completo';
-  } else if (cantidadFaltante <= 0) {
-    estadoStockItem = 'completo';
-  } else if (reserved > 0) {
+  } else if (cantidadFaltante > 0 && reserved > 0) {
     estadoStockItem = 'parcial';
-  } else {
+  } else if (cantidadFaltante > 0) {
     estadoStockItem = 'faltante';
+  } else {
+    estadoStockItem = 'parcial';
   }
 
   return {
@@ -156,6 +160,7 @@ export function computeLineStockFields(line: OrderLineStock): OrderLineStock {
     cantidadReservada: reserved,
     cantidadUsada,
     cantidadFaltante,
+    ...(cantidadFaltanteCompra !== undefined ? { cantidadFaltanteCompra } : {}),
     estadoStockItem,
   };
 }
@@ -532,11 +537,12 @@ export async function autoReserveIncomingStockForProduct(
       if (reserve <= 0) continue;
 
       line.cantidadReservada = cantidadReservada + reserve;
-      if (line.cantidadFaltanteCompra !== undefined && line.cantidadFaltanteCompra !== null) {
-        line.cantidadFaltanteCompra = Math.max(
-          0,
-          (Number(line.cantidadFaltanteCompra) || 0) - reserve
-        );
+      const gapBefore = Math.max(
+        0,
+        Number(line.cantidadFaltanteCompra ?? computeLineStockFields(line).cantidadFaltante) || 0
+      );
+      if (gapBefore > 0) {
+        line.cantidadFaltanteCompra = Math.max(0, gapBefore - reserve);
       }
       order.items[lineIndex] = computeLineStockFields(line);
 

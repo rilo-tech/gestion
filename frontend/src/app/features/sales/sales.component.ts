@@ -24,6 +24,11 @@ import {
   ClientFormSaveEvent,
 } from '../clients/client-form-panel.component';
 import {
+  saveSalesFormDraft,
+  readSalesFormDraft,
+  clearSalesFormDraft,
+} from '../../core/utils/form-return-context';
+import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
@@ -467,10 +472,21 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               type="number"
               [(ngModel)]="montoCobrado"
               min="0"
-              [max]="maxMontoCobrado"
               [disabled]="saleModalMode === 'edit' && editHasExtraCobros"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50">
-            <p class="text-xs text-gray-400 mt-1">
+              class="w-full px-4 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
+              [class.border-red-300]="montoCobradoError"
+              [class.border-gray-200]="!montoCobradoError">
+            <p *ngIf="montoCobradoError" class="text-xs text-red-600 mt-1">
+              {{ montoCobradoError }}
+              <button
+                *ngIf="montoCobradoExceedsMax"
+                type="button"
+                (click)="useMaxMontoCobrado()"
+                class="ml-1 font-semibold text-teal-700 hover:underline">
+                Usar \${{ maxMontoCobrado }}
+              </button>
+            </p>
+            <p *ngIf="!montoCobradoError" class="text-xs text-gray-400 mt-1">
               <ng-container *ngIf="saleModalMode === 'edit' && editHasExtraCobros">
                 El cobro inicial ya no se puede cambiar porque hay cobros posteriores. Usá «Cobrar saldo» para el resto.
               </ng-container>
@@ -502,9 +518,13 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </textarea>
         </div>
 
+        <p *ngIf="saleSubmitBlockedReason" class="text-sm text-red-600 mb-2 text-right">
+          {{ saleSubmitBlockedReason }}
+        </p>
         <app-modal-form-footer
           [saving]="savingSale"
           [primaryLabel]="saleModalPrimaryLabel"
+          [primaryDisabled]="!!saleSubmitBlockedReason"
           (cancelClick)="closeSaleModal()"
           (primaryClick)="submitSale()">
         </app-modal-form-footer>
@@ -938,6 +958,50 @@ export class SalesComponent implements OnInit {
     return this.draftTotal;
   }
 
+  get montoCobradoExceedsMax(): boolean {
+    if (this.saleModalMode === 'edit' && this.editHasExtraCobros) return false;
+    const monto = Number(this.montoCobrado);
+    if (!Number.isFinite(monto)) return false;
+    return monto > this.maxMontoCobrado;
+  }
+
+  get montoCobradoError(): string | null {
+    if (this.saleModalMode === 'edit' && this.editHasExtraCobros) return null;
+    const monto = Number(this.montoCobrado);
+    if (!Number.isFinite(monto) || monto < 0) {
+      return 'Ingresá un monto a cobrar válido.';
+    }
+    if (this.montoCobradoExceedsMax) {
+      const limitLabel =
+        this.saleModalMode === 'pedido' ? 'el saldo pendiente del pedido' : 'el total de la venta';
+      return `El monto no puede superar ${limitLabel} ($${this.maxMontoCobrado}).`;
+    }
+    return null;
+  }
+
+  get saleSubmitBlockedReason(): string | null {
+    if (this.savingSale) return null;
+    if (this.montoCobradoError) return this.montoCobradoError;
+    if (this.saleModalMode === 'mostrador' || this.saleModalMode === 'edit') {
+      if (!this.saleClienteId && !this.pendingClientNameMatchesClient()) {
+        if (!this.pendingClientName.trim()) {
+          return 'Seleccioná un cliente para la venta.';
+        }
+        return 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».';
+      }
+      const hasItems = this.draftLines.some(
+        (line) => line.stockItemId && (Number(line.cantidad) || 0) > 0
+      );
+      if (!hasItems) {
+        return 'Agregá al menos un producto con cantidad.';
+      }
+    }
+    if (this.saleModalMode === 'pedido' && !this.selectedOrderId) {
+      return 'Seleccioná el pedido que estás entregando.';
+    }
+    return null;
+  }
+
   get collectSaldo(): number {
     return Number(this.collectingSale?.saldoPendiente) || 0;
   }
@@ -1002,6 +1066,13 @@ export class SalesComponent implements OnInit {
     }
 
     this.route.queryParamMap.subscribe((params) => {
+      if (params.get('restoreDraft') === '1') {
+        this.tryRestoreSalesFormDraft(params.get('clienteId'));
+        this.clearSalesQueryParam('restoreDraft');
+        this.clearSalesQueryParam('clienteId');
+        return;
+      }
+
       const pedidoId = params.get('pedidoId');
       if (pedidoId) {
         if (!this.auth.canCreateSales) {
@@ -1129,6 +1200,28 @@ export class SalesComponent implements OnInit {
     });
   }
 
+  private resolveSaleClienteId(): void {
+    if (this.saleClienteId) return;
+    const query = this.pendingClientName.trim();
+    if (!query) return;
+    const match = this.clients.find(
+      (client) =>
+        client.id && client.nombre?.trim().toLowerCase() === query.toLowerCase()
+    );
+    if (match?.id) {
+      this.saleClienteId = match.id;
+    }
+  }
+
+  private pendingClientNameMatchesClient(): boolean {
+    const query = this.pendingClientName.trim();
+    if (!query) return false;
+    return this.clients.some(
+      (client) =>
+        client.id && client.nombre?.trim().toLowerCase() === query.toLowerCase()
+    );
+  }
+
   quickCreateClient(name: string) {
     const trimmed = name.trim();
     if (!trimmed || this.creatingClient) return;
@@ -1153,10 +1246,85 @@ export class SalesComponent implements OnInit {
   }
 
   goToNewClientForm() {
+    if (!this.auth.canCreateSales) return;
+
+    saveSalesFormDraft({
+      saleModalMode: this.saleModalMode,
+      saleModalOpen: this.saleModalOpen,
+      saleClienteId: this.saleClienteId,
+      pendingClientName: this.pendingClientName,
+      draftLines: structuredClone(this.draftLines),
+      selectedOrderId: this.selectedOrderId,
+      montoCobrado: this.montoCobrado,
+      medioPago: this.medioPago,
+      saleNotas: this.saleNotas,
+      editingSaleId: this.editingSaleId,
+      editingSaleLabel: this.editingSaleLabel,
+      editHasExtraCobros: this.editHasExtraCobros,
+      orderFilterClienteId: this.orderFilterClienteId,
+    });
+
     const nombre = this.pendingClientName.trim();
     this.router.navigate(['/clients/new'], {
-      queryParams: nombre ? { nombre } : {},
+      queryParams: {
+        ...(nombre ? { nombre } : {}),
+        returnTo: 'sales',
+      },
     });
+  }
+
+  private tryRestoreSalesFormDraft(clienteId: string | null) {
+    const draft = readSalesFormDraft();
+    if (!draft) return;
+
+    this.saleModalMode = draft.saleModalMode as SaleModalMode;
+    this.saleClienteId = draft.saleClienteId;
+    this.pendingClientName = draft.pendingClientName;
+    this.draftLines = draft.draftLines.length
+      ? structuredClone(draft.draftLines)
+      : [this.emptyLine()];
+    this.selectedOrderId = draft.selectedOrderId;
+    this.montoCobrado = draft.montoCobrado;
+    this.medioPago = draft.medioPago;
+    this.saleNotas = draft.saleNotas;
+    this.editingSaleId = draft.editingSaleId;
+    this.editingSaleLabel = draft.editingSaleLabel;
+    this.editHasExtraCobros = draft.editHasExtraCobros;
+    this.orderFilterClienteId = draft.orderFilterClienteId;
+
+    if (clienteId) {
+      this.saleClienteId = clienteId;
+      this.pendingClientName = '';
+    }
+
+    clearSalesFormDraft();
+    this.clientService.getClients().subscribe((clients) => (this.clients = clients));
+
+    if (draft.saleModalOpen) {
+      if (this.saleModalMode === 'pedido') {
+        this.loadEligibleOrders(undefined, () => {
+          if (this.selectedOrderId) {
+            this.onOrderSelected();
+          }
+          this.saleModalOpen = true;
+        });
+      } else {
+        this.saleModalOpen = true;
+      }
+    }
+  }
+
+  openClientModal() {
+    const fromSearch = this.pendingClientName.trim();
+    const fromSelection = this.saleClienteId
+      ? (this.clients.find((client) => client.id === this.saleClienteId)?.nombre ?? '').trim()
+      : '';
+    this.clientModalPrefillNombre = fromSearch || fromSelection;
+    this.clientModalOpen = true;
+  }
+
+  useMaxMontoCobrado() {
+    this.montoCobrado = this.maxMontoCobrado;
   }
 
   closeClientModal() {
@@ -1585,10 +1753,11 @@ export class SalesComponent implements OnInit {
         notas: this.saleNotas.trim(),
       };
     } else {
+      this.resolveSaleClienteId();
       if (!this.saleClienteId) {
         this.dialogService.alert({
           title: 'Cliente requerido',
-          message: 'Seleccioná un cliente para la venta.',
+          message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
         });
         return;
       }
@@ -1675,10 +1844,11 @@ export class SalesComponent implements OnInit {
       return;
     }
 
+    this.resolveSaleClienteId();
     if (!this.saleClienteId) {
       this.dialogService.alert({
         title: 'Cliente requerido',
-        message: 'Seleccioná un cliente para la venta.',
+        message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
       });
       return;
     }

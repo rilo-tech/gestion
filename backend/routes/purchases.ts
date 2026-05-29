@@ -4,6 +4,7 @@ import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
+import { autoReserveIncomingStockForProduct } from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
 
@@ -157,6 +158,8 @@ router.post('/:businessId', async (req, res) => {
         usuarioId: 'admin',
         negocioId: businessId,
       });
+
+      await autoReserveIncomingStockForProduct(businessId, line.productoId);
     }
 
     scheduleStockMetricsRefresh(businessId);

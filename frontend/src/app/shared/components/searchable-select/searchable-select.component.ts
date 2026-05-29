@@ -109,6 +109,8 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   @Input() emptyMessage = 'Sin coincidencias';
   @Input() emptyOptionsMessage = 'No hay opciones disponibles';
   @Input() creatable = false;
+  /** En modo lista de strings: conserva texto libre al salir del campo si no hay coincidencia exacta. */
+  @Input() allowCustomValue = false;
   @Input() createLabelPrefix = 'Crear';
   @Input() embedded = false;
 
@@ -239,6 +241,10 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     }
     if (this.creatable && this.searchText.trim()) {
       this.emitCreateFromSearch();
+      return;
+    }
+    if (this.allowCustomValue && !this.useEntityMode && this.searchText.trim()) {
+      this.commitCustomValue(this.searchText.trim());
       return;
     }
     const matches = this.filterOptions(this.searchText.trim());
@@ -381,7 +387,19 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
       return;
     }
 
+    if (this.allowCustomValue && !this.useEntityMode && trimmed) {
+      this.commitCustomValue(trimmed);
+      return;
+    }
+
     this.syncDisplayTextFromValue();
+    this.refreshDropdownItems();
+  }
+
+  private commitCustomValue(text: string) {
+    this.value = text;
+    this.searchText = text;
+    this.onChange(text);
     this.refreshDropdownItems();
   }
 

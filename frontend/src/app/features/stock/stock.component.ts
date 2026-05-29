@@ -47,7 +47,6 @@ import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
-  totalListPages,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
@@ -355,10 +354,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           [page]="productsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredItems.length"
-          [canFetchMore]="itemsHasMore"
-          [loadingMore]="loadingMoreItems"
-          (pageChange)="productsPage = $event"
-          (fetchMore)="loadMoreItems()">
+          (pageChange)="productsPage = $event">
         </app-list-pagination>
       </div>
 
@@ -734,9 +730,6 @@ export class StockComponent implements OnInit, OnDestroy {
     valorDepositoEstimado: 0,
     updatedAt: '',
   };
-  itemsHasMore = false;
-  itemsCursor: string | null = null;
-  loadingMoreItems = false;
   movements: StockMovement[] = [];
   reservationRows: StockReservationRow[] = [];
   searchQuery = '';
@@ -906,7 +899,7 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   get estimatedStockValue(): number {
-    if (!this.itemsHasMore && this.items.length > 0) {
+    if (this.items.length > 0) {
       return computeValorDepositoEstimado(
         this.items,
         this.appConfig.productos?.categoriasSinStock ?? []
@@ -1289,14 +1282,14 @@ export class StockComponent implements OnInit, OnDestroy {
       }
     }
     this.loadStockMetrics(true);
-    this.applyMetricsFromLoadedItemsIfComplete();
+    this.applyMetricsFromLoadedItems();
   }
 
   private loadStockMetrics(refresh = false) {
     this.stockService.getStockMetrics({ refresh }).subscribe({
       next: (metrics) => {
         this.stockMetrics = metrics;
-        this.applyMetricsFromLoadedItemsIfComplete();
+        this.applyMetricsFromLoadedItems();
       },
       error: () => {
         this.stockMetrics = {
@@ -1320,8 +1313,8 @@ export class StockComponent implements OnInit, OnDestroy {
     return 'otro';
   }
 
-  private applyMetricsFromLoadedItemsIfComplete() {
-    if (this.itemsHasMore || this.items.length === 0) return;
+  private applyMetricsFromLoadedItems() {
+    if (this.items.length === 0) return;
     const categoriasSinStock = this.appConfig.productos?.categoriasSinStock ?? [];
     this.stockMetrics = {
       ...this.stockMetrics,
@@ -1334,16 +1327,14 @@ export class StockComponent implements OnInit, OnDestroy {
   private loadStock(refreshMetrics = false) {
     this.loadingItems = true;
     this.productsPage = 1;
-    this.stockService.getStockPage(this.listPageSize).subscribe({
-      next: (page) => {
-        this.items = this.sortItemsByName(page.items);
-        this.itemsHasMore = page.hasMore;
-        this.itemsCursor = page.nextCursor;
+    this.stockService.getStock().subscribe({
+      next: (items) => {
+        this.items = this.sortItemsByName(items);
         this.loadingItems = false;
         if (refreshMetrics) {
           this.loadStockMetrics(true);
         } else {
-          this.applyMetricsFromLoadedItemsIfComplete();
+          this.applyMetricsFromLoadedItems();
         }
       },
       error: () => {
@@ -1352,31 +1343,6 @@ export class StockComponent implements OnInit, OnDestroy {
           title: 'Error',
           message: 'No se pudieron cargar los productos.',
         });
-      },
-    });
-  }
-
-  loadMoreItems() {
-    if (!this.itemsHasMore || this.loadingMoreItems) return;
-    const onLastPage =
-      this.productsPage >= totalListPages(this.filteredItems.length, this.listPageSize);
-    this.loadingMoreItems = true;
-    this.stockService.getStockPage(this.listPageSize, this.itemsCursor ?? undefined).subscribe({
-      next: (page) => {
-        this.items = this.sortItemsByName([...this.items, ...page.items]);
-        this.itemsHasMore = page.hasMore;
-        this.itemsCursor = page.nextCursor;
-        this.loadingMoreItems = false;
-        if (onLastPage) {
-          this.productsPage = totalListPages(this.filteredItems.length, this.listPageSize);
-        }
-        this.applyMetricsFromLoadedItemsIfComplete();
-        if (!this.itemsHasMore) {
-          this.loadStockMetrics(true);
-        }
-      },
-      error: () => {
-        this.loadingMoreItems = false;
       },
     });
   }

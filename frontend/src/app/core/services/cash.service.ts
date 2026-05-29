@@ -34,6 +34,19 @@ export interface PaginatedCashMovements {
   hasMore: boolean;
 }
 
+export interface CashAmbitoSummary {
+  ingreso: number;
+  egreso: number;
+  saldo: number;
+}
+
+export interface CashSummary {
+  ingreso: number;
+  egreso: number;
+  saldo: number;
+  ambitos: Record<string, CashAmbitoSummary>;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -53,6 +66,10 @@ export class CashService {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
     return this.http.get<PaginatedCashMovements>(`/api/cash/${this.businessId}`, { params });
+  }
+
+  getSummary(): Observable<CashSummary> {
+    return this.http.get<CashSummary>(`/api/cash/${this.businessId}/summary`);
   }
 
   createMovement(movement: Omit<CashMovement, 'id' | 'fecha'>): Observable<{ id: string }> {

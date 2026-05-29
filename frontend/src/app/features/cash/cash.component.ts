@@ -1,7 +1,8 @@
-import { Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { CashMovement, CashService } from '../../core/services/cash.service';
+import { ActivatedRoute, Router } from '@angular/router';
+import { CashMovement, CashService, CashSummary } from '../../core/services/cash.service';
 import {
   AppConfig,
   CatalogConfigService,
@@ -22,6 +23,12 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isDeletableCashMovement } from '../../core/utils/deletion-rules';
+import {
+  CalendarMonthRange,
+  formatMonthYearLabel,
+  isIsoDateInRange,
+  parseMonthYearQueryParams,
+} from '../../core/utils/calendar-range';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
@@ -35,6 +42,7 @@ import {
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
+  COMPACT_LIST_ROW_CLASS,
   NATIVE_COMPACT_LIST_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
@@ -44,7 +52,8 @@ import {
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
+import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { FORM_CANCEL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -65,7 +74,7 @@ import { Subscription } from 'rxjs';
     ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
-    ModalFormFooterComponent,
+    DuplicateActionButtonComponent,
     CompactListRowComponent,
   ],
   template: `
@@ -81,13 +90,43 @@ import { Subscription } from 'rxjs';
         </div>
         <div class="flex gap-2 shrink-0">
           <app-activity-log-trigger module="cash"></app-activity-log-trigger>
-          <app-icon-action label="Ingreso" (clicked)="openMovementModal('ingreso')">
+          <button
+            *ngIf="auth.canEditRecords"
+            type="button"
+            (click)="openOpeningBalanceEditor()"
+            title="Ajustar saldo inicial"
+            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 sm:px-3 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 min-h-[42px]">
+            <i-lucide name="wallet" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+            <span class="hidden sm:inline">Saldo inicial</span>
+          </button>
+          <app-icon-action
+            *ngIf="auth.canEditRecords"
+            label="Ingreso"
+            (clicked)="openMovementModal('ingreso')">
             <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
           </app-icon-action>
-          <app-icon-action label="Egreso" variant="danger" (clicked)="openMovementModal('egreso')">
+          <app-icon-action
+            *ngIf="auth.canEditRecords"
+            label="Egreso"
+            variant="danger"
+            (clicked)="openMovementModal('egreso')">
             <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
           </app-icon-action>
         </div>
+      </div>
+
+      <div
+        *ngIf="monthFilterLabel"
+        class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-100 bg-teal-50 px-4 py-2.5">
+        <p class="text-sm text-teal-900">
+          Movimientos de <span class="font-semibold">{{ monthFilterLabel }}</span>
+        </p>
+        <button
+          type="button"
+          (click)="clearMonthFilter()"
+          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+          Ver todos
+        </button>
       </div>
 
       <div *ngIf="usesAmbitoSeparation" class="mb-4">
@@ -170,21 +209,52 @@ import { Subscription } from 'rxjs';
           </div>
         </div>
         <div [class]="'sm:hidden ' + nativeCompactListClass">
-          <app-compact-list-row
+          <div
             *ngFor="let movement of paginatedFilteredMovements"
-            (activate)="onMovementRowClick(movement)">
-            <div compactTitle class="compact-list-title truncate">{{ movement.concepto }}</div>
-            <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+            class="flex items-stretch gap-0.5 min-h-[40px]">
+            <button
+              type="button"
+              (click)="onMovementRowClick(movement)"
+              [class]="compactListRowClass + ' flex-1 min-w-0'">
+              <div class="min-w-0 flex-1 overflow-hidden text-left">
+                <div class="compact-list-title truncate">{{ movement.concepto }}</div>
+                <div class="compact-list-subtitle truncate">
+                  {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+                </div>
+              </div>
+              <span
+                class="text-[11px] font-bold tabular-nums shrink-0 pl-1"
+                [class.text-teal-600]="movement.tipo === 'ingreso'"
+                [class.text-red-500]="movement.tipo === 'egreso'">
+                {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+              </span>
+            </button>
+            <div
+              *ngIf="auth.canEditRecords && isManualMovement(movement)"
+              class="flex items-center shrink-0 pr-1"
+              (click)="$event.stopPropagation()">
+              <app-duplicate-action-button
+                (duplicateClick)="duplicateMovement(movement, $event)">
+              </app-duplicate-action-button>
+              <button
+                type="button"
+                (click)="openEditMovement(movement)"
+                title="Editar"
+                aria-label="Editar"
+                class="p-2 rounded-lg text-teal-600 hover:bg-teal-50">
+                <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+              </button>
+              <button
+                *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
+                type="button"
+                (click)="confirmDeleteMovement(movement)"
+                title="Eliminar"
+                aria-label="Eliminar"
+                class="p-2 rounded-lg text-red-500 hover:bg-red-50">
+                <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+              </button>
             </div>
-            <span
-              compactTrailing
-              class="text-[11px] font-bold tabular-nums shrink-0"
-              [class.text-teal-600]="movement.tipo === 'ingreso'"
-              [class.text-red-500]="movement.tipo === 'egreso'">
-              {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
-            </span>
-          </app-compact-list-row>
+          </div>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
           <p *ngIf="!loading && movements.length === 0" [class]="compactListEmptyClass">
             Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
@@ -245,10 +315,15 @@ import { Subscription } from 'rxjs';
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
                 <app-list-row-actions
-                  [showEdit]="auth.canEditRecords"
+                  [showEdit]="auth.canEditRecords && isManualMovement(movement)"
                   [showDelete]="auth.canDeleteRecords && isDeletableCashMovement(movement)"
                   (editClick)="openEditMovement(movement)"
                   (deleteClick)="confirmDeleteMovement(movement)">
+                  <app-duplicate-action-button
+                    rowActionStart
+                    *ngIf="auth.canEditRecords && isManualMovement(movement)"
+                    (duplicateClick)="duplicateMovement(movement, $event)">
+                  </app-duplicate-action-button>
                 </app-list-row-actions>
               </td>
             </tr>
@@ -274,7 +349,7 @@ import { Subscription } from 'rxjs';
           [totalItems]="filteredMovements.length"
           (pageChange)="movementsPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4 flex justify-center" *ngIf="hasMoreMovements">
+        <div class="px-4 sm:px-6 pb-4 flex justify-center" *ngIf="hasMoreMovements && !monthFilterRange">
           <button
             type="button"
             (click)="loadMoreMovements()"
@@ -290,70 +365,130 @@ import { Subscription } from 'rxjs';
       [open]="movementModalOpen"
       [title]="movementModalTitle"
       [subtitle]="movementModalSubtitle"
-      maxWidthClass="max-w-md"
+      [compact]="true"
+      [hideSubtitleOnMobile]="true"
+      maxWidthClass="max-w-lg"
       (closed)="closeMovementModal()">
 
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Concepto</label>
-            <app-searchable-select
-              *ngIf="usesConceptList"
-              [(ngModel)]="movementConcepto"
-              name="movementConcepto"
-              [options]="conceptOptions"
-              placeholder="Buscar concepto..."
-              plainPlaceholder="Ej. Venta mostrador">
-            </app-searchable-select>
-            <input
-              *ngIf="!usesConceptList"
-              [(ngModel)]="movementConcepto"
-              name="movementConceptoText"
-              placeholder="Ej. Venta mostrador"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
-            <app-config-settings-link
-              *ngIf="!usesConceptList"
-              settingsTab="caja"
-              message="¿Falta un concepto?"
-              linkLabel="Configuralo acá"
-              [compact]="true">
-            </app-config-settings-link>
+        <div class="space-y-2.5 sm:space-y-3">
+          <p
+            *ngIf="movementSaveHint"
+            class="text-[11px] sm:text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-2"
+            role="status">
+            {{ movementSaveHint }}
+          </p>
+
+          <div class="grid grid-cols-[minmax(0,1fr)_5.25rem] sm:grid-cols-[minmax(0,1fr)_8.5rem] gap-2 sm:gap-3">
+            <div #movementConceptField>
+              <label class="block text-xs font-medium text-gray-700 mb-0.5">Concepto</label>
+              <app-searchable-select
+                *ngIf="usesConceptList"
+                [(ngModel)]="movementConcepto"
+                name="movementConcepto"
+                [options]="conceptOptions"
+                [allowCustomValue]="true"
+                placeholder="Buscar concepto..."
+                plainPlaceholder="Ej. Venta mostrador">
+              </app-searchable-select>
+              <input
+                *ngIf="!usesConceptList"
+                #movementConceptoText
+                [(ngModel)]="movementConcepto"
+                name="movementConceptoText"
+                placeholder="Ej. Venta mostrador"
+                class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              <div *ngIf="!usesConceptList" class="hidden sm:block">
+              <app-config-settings-link
+                settingsTab="caja"
+                message="¿Falta un concepto?"
+                linkLabel="Configuralo acá"
+                [compact]="true">
+              </app-config-settings-link>
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-700 mb-0.5">Monto</label>
+              <input
+                #movementMontoInput
+                type="number"
+                [(ngModel)]="movementMonto"
+                name="movementMonto"
+                min="1"
+                step="1"
+                placeholder="0"
+                [disabled]="savingMovement"
+                class="w-full px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-gray-200 text-sm tabular-nums text-center sm:text-left outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+            </div>
           </div>
 
-          <div *ngIf="usesAmbitoSeparation">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Ámbito</label>
-            <div class="grid gap-2" [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
-              <button
-                *ngFor="let ambito of cajaAmbitos"
-                type="button"
-                (click)="movementAmbito = ambito.id"
-                class="rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
-                [class.border-teal-500]="movementAmbito === ambito.id"
-                [class.bg-teal-50]="movementAmbito === ambito.id"
-                [class.text-teal-700]="movementAmbito === ambito.id"
-                [class.border-gray-200]="movementAmbito !== ambito.id"
-                [class.text-gray-700]="movementAmbito !== ambito.id">
-                {{ ambito.label }}
-              </button>
+          <div
+            class="grid gap-2 sm:gap-3 items-start"
+            [ngClass]="usesAmbitoSeparation ? 'grid-cols-2' : 'grid-cols-1'">
+            <div class="min-w-0">
+              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Tipo</span>
+              <div class="grid grid-cols-2 gap-1 rounded-lg sm:rounded-xl border border-gray-200 bg-gray-50 p-0.5 sm:p-1">
+                <button
+                  type="button"
+                  (click)="setMovementTipo('ingreso')"
+                  title="Ingreso"
+                  aria-label="Ingreso"
+                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0"
+                  [class.bg-teal-600]="movementTipo === 'ingreso'"
+                  [class.text-white]="movementTipo === 'ingreso'"
+                  [class.shadow-sm]="movementTipo === 'ingreso'"
+                  [class.text-gray-600]="movementTipo !== 'ingreso'"
+                  [class.hover:bg-white]="movementTipo !== 'ingreso'">
+                  <i-lucide name="arrow-up" class="w-4 h-4 shrink-0"></i-lucide>
+                  <span class="hidden sm:inline">Ingreso</span>
+                </button>
+                <button
+                  type="button"
+                  (click)="setMovementTipo('egreso')"
+                  title="Egreso"
+                  aria-label="Egreso"
+                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0"
+                  [class.bg-red-500]="movementTipo === 'egreso'"
+                  [class.text-white]="movementTipo === 'egreso'"
+                  [class.shadow-sm]="movementTipo === 'egreso'"
+                  [class.text-gray-600]="movementTipo !== 'egreso'"
+                  [class.hover:bg-white]="movementTipo !== 'egreso'">
+                  <i-lucide name="arrow-down" class="w-4 h-4 shrink-0"></i-lucide>
+                  <span class="hidden sm:inline">Egreso</span>
+                </button>
+              </div>
+            </div>
+            <div *ngIf="usesAmbitoSeparation" class="min-w-0">
+              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Ámbito</span>
+              <div
+                class="grid gap-1 sm:gap-1.5"
+                [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
+                <button
+                  *ngFor="let ambito of cajaAmbitos; trackBy: trackCajaAmbitoId"
+                  type="button"
+                  (click)="selectMovementAmbito(ambito.id, $event)"
+                  [title]="ambito.label"
+                  [attr.aria-pressed]="isMovementAmbitoSelected(ambito.id)"
+                  class="inline-flex items-center justify-center rounded-md sm:rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[36px] sm:min-h-0 truncate bg-white touch-manipulation select-none"
+                  [ngClass]="
+                    isMovementAmbitoSelected(ambito.id)
+                      ? 'border-teal-500 bg-teal-50 text-teal-800 font-semibold'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  ">
+                  {{ ambito.label }}
+                </button>
+              </div>
             </div>
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Monto</label>
-            <input
-              type="number"
-              [(ngModel)]="movementMonto"
-              name="movementMonto"
-              min="1"
-              placeholder="0"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago</label>
+            <label class="block text-xs font-medium text-gray-700 mb-0.5">
+              <span class="sm:hidden">Medio</span>
+              <span class="hidden sm:inline">Medio de pago</span>
+            </label>
             <select
               [(ngModel)]="movementMedio"
               name="movementMedio"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
               <option value="tarjeta">Tarjeta</option>
@@ -361,17 +496,64 @@ import { Subscription } from 'rxjs';
           </div>
         </div>
 
-        <app-modal-form-footer
-          [saving]="savingMovement"
-          [primaryLabel]="movementModalPrimaryLabel"
-          [primaryButtonClass]="movementModalPrimaryButtonClass"
-          (cancelClick)="closeMovementModal()"
-          (primaryClick)="submitMovement()">
-        </app-modal-form-footer>
+        <div class="form-actions mt-4 sm:mt-5 pt-2 border-t border-gray-100 sm:border-0">
+          <p *ngIf="!editingMovementId" class="hidden sm:block text-xs text-gray-500 mb-3">
+            Al guardar, la ventana queda abierta para cargar otro movimiento.
+          </p>
+          <div class="flex items-center gap-2">
+            <ng-container *ngIf="canDuplicateInModal">
+              <div class="sm:hidden">
+                <app-duplicate-action-button
+                  [disabled]="savingMovement"
+                  label="Duplicar"
+                  (duplicateClick)="duplicateMovementInModal()">
+                </app-duplicate-action-button>
+              </div>
+              <button
+                type="button"
+                (click)="duplicateMovementInModal()"
+                [disabled]="savingMovement"
+                title="Duplicar como nuevo"
+                aria-label="Duplicar como nuevo"
+                class="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                <i-lucide name="copy" class="w-4 h-4 text-gray-500"></i-lucide>
+                Duplicar
+              </button>
+            </ng-container>
+            <div class="flex-1 min-w-0"></div>
+            <button
+              type="button"
+              (click)="closeMovementModal()"
+              title="Cerrar"
+              aria-label="Cerrar"
+              class="sm:hidden inline-flex items-center justify-center rounded-lg border border-gray-200 p-2.5 min-h-[42px] min-w-[42px] text-gray-600 hover:bg-gray-50">
+              <i-lucide name="x" class="w-5 h-5"></i-lucide>
+            </button>
+            <button type="button" (click)="closeMovementModal()" [class]="formCancelClass + ' hidden sm:inline-flex'">
+              Cerrar
+            </button>
+            <button
+              type="button"
+              [disabled]="savingMovement"
+              [class]="movementModalPrimaryButtonClass + ' min-h-[42px] min-w-[42px] sm:min-w-0 px-2.5 sm:px-5'"
+              [attr.title]="movementModalPrimaryLabelLong"
+              [attr.aria-label]="movementModalPrimaryLabelLong"
+              (click)="submitMovement()">
+              <span *ngIf="savingMovement" class="hidden sm:inline">Guardando...</span>
+              <i-lucide *ngIf="savingMovement" name="clock" class="w-5 h-5 sm:hidden animate-pulse"></i-lucide>
+              <ng-container *ngIf="!savingMovement">
+                <i-lucide name="check" class="w-5 h-5 sm:hidden"></i-lucide>
+                <span class="hidden sm:inline">{{ movementModalPrimaryLabelLong }}</span>
+              </ng-container>
+            </button>
+          </div>
+        </div>
     </app-transaction-modal>
   `,
 })
 export class CashComponent implements OnInit, OnDestroy {
+  private static readonly OPENING_BALANCE_CONCEPT = 'Saldo inicial de caja';
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
@@ -379,16 +561,27 @@ export class CashComponent implements OnInit, OnDestroy {
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
+  readonly compactListRowClass = COMPACT_LIST_ROW_CLASS;
+  readonly formCancelClass = FORM_CANCEL_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
+
+  @ViewChild('movementConceptField') movementConceptField?: ElementRef<HTMLElement>;
+  @ViewChild('movementConceptoText') movementConceptoText?: ElementRef<HTMLInputElement>;
+  @ViewChild('movementMontoInput') movementMontoInput?: ElementRef<HTMLInputElement>;
 
   private cashService = inject(CashService);
   private configService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
   private configSub?: Subscription;
+  private routeSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   movements: CashMovement[] = [];
+  cashSummary: CashSummary | null = null;
+  monthFilterRange: CalendarMonthRange | null = null;
   searchQuery = '';
   movementsPage = 1;
   origenFilter: 'all' | string = 'all';
@@ -403,6 +596,8 @@ export class CashComponent implements OnInit, OnDestroy {
   movementMedio = 'efectivo';
   movementAmbito = '';
   savingMovement = false;
+  movementSaveHint: string | null = null;
+  private movementSessionSavedCount = 0;
   hasMoreMovements = false;
   nextMovementsCursor: string | null = null;
   loadingMoreMovements = false;
@@ -413,11 +608,41 @@ export class CashComponent implements OnInit, OnDestroy {
       this.syncActiveAmbitoTab();
     });
     this.configService.getAppConfig().subscribe();
-    this.loadMovements();
+
+    this.routeSub = this.route.queryParamMap.subscribe((params) => {
+      this.monthFilterRange = parseMonthYearQueryParams(
+        params.get('mes'),
+        params.get('anio')
+      );
+      this.movementsPage = 1;
+      if (this.monthFilterRange) {
+        this.cashSummary = null;
+      } else {
+        this.loadCashSummary();
+      }
+      this.reloadMovements();
+    });
   }
 
   ngOnDestroy() {
     this.configSub?.unsubscribe();
+    this.routeSub?.unsubscribe();
+  }
+
+  get monthFilterLabel(): string {
+    if (!this.monthFilterRange) return '';
+    return formatMonthYearLabel(this.monthFilterRange.label);
+  }
+
+  get periodMovements(): CashMovement[] {
+    if (!this.monthFilterRange) return this.movements;
+    return this.movements.filter((movement) =>
+      isIsoDateInRange(movement.fecha, this.monthFilterRange!.start, this.monthFilterRange!.end)
+    );
+  }
+
+  clearMonthFilter() {
+    this.router.navigate(['/cash']);
   }
 
   get cashOrigenes(): CajaOrigen[] {
@@ -437,27 +662,51 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get activeAmbitoIngresos(): number {
+    if (this.monthFilterRange) {
+      return this.sumByTipo('ingreso', this.activeAmbitoTab);
+    }
+    const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
+    if (row) return row.ingreso;
     return this.sumByTipo('ingreso', this.activeAmbitoTab);
   }
 
   get activeAmbitoEgresos(): number {
+    if (this.monthFilterRange) {
+      return this.sumByTipo('egreso', this.activeAmbitoTab);
+    }
+    const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
+    if (row) return row.egreso;
     return this.sumByTipo('egreso', this.activeAmbitoTab);
   }
 
   get activeAmbitoSaldo(): number {
+    if (this.monthFilterRange) {
+      return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
+    }
+    const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
+    if (row) return row.saldo;
     return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
   }
 
   get totalNetoSaldo(): number {
+    if (this.monthFilterRange) {
+      return this.sumByTipo('ingreso') - this.sumByTipo('egreso');
+    }
+    if (this.cashSummary) return this.cashSummary.saldo;
     return this.totalIngresos - this.totalEgresos;
   }
 
   getAmbitoSaldo(ambitoId: string): number {
+    if (this.monthFilterRange) {
+      return this.sumByTipo('ingreso', ambitoId) - this.sumByTipo('egreso', ambitoId);
+    }
+    const row = this.cashSummary?.ambitos?.[ambitoId];
+    if (row) return row.saldo;
     return this.sumByTipo('ingreso', ambitoId) - this.sumByTipo('egreso', ambitoId);
   }
 
   get filteredMovements(): CashMovement[] {
-    let list = this.movements;
+    let list = this.periodMovements;
 
     if (this.origenFilter !== 'all') {
       list = list.filter((movement) => this.resolveOrigenGrupo(movement) === this.origenFilter);
@@ -495,7 +744,18 @@ export class CashComponent implements OnInit, OnDestroy {
 
   get movementModalPrimaryLabel(): string {
     if (this.editingMovementId) return 'Guardar';
-    return this.movementTipo === 'egreso' ? 'Registrar egreso' : 'Registrar ingreso';
+    return this.movementTipo === 'egreso' ? 'Guardar egreso' : 'Guardar ingreso';
+  }
+
+  get movementModalPrimaryLabelLong(): string {
+    if (this.editingMovementId) return 'Guardar cambios';
+    return this.movementTipo === 'egreso'
+      ? 'Guardar egreso y continuar'
+      : 'Guardar ingreso y continuar';
+  }
+
+  get canDuplicateInModal(): boolean {
+    return this.auth.canEditRecords && this.movementModalOpen;
   }
 
   get movementModalPrimaryButtonClass(): string {
@@ -507,14 +767,20 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get totalIngresos(): number {
+    if (this.monthFilterRange) return this.sumByTipo('ingreso');
+    if (this.cashSummary) return this.cashSummary.ingreso;
     return this.sumByTipo('ingreso');
   }
 
   get totalEgresos(): number {
+    if (this.monthFilterRange) return this.sumByTipo('egreso');
+    if (this.cashSummary) return this.cashSummary.egreso;
     return this.sumByTipo('egreso');
   }
 
   get saldoCaja(): number {
+    if (this.monthFilterRange) return this.totalIngresos - this.totalEgresos;
+    if (this.cashSummary) return this.cashSummary.saldo;
     return this.totalIngresos - this.totalEgresos;
   }
 
@@ -527,15 +793,18 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get movementModalTitle(): string {
-    if (this.editingMovementId) return 'Editar movimiento';
-    return this.movementTipo === 'egreso' ? 'Registrar egreso' : 'Registrar ingreso';
+    if (this.editingMovementId) return 'Editar';
+    return 'Movimiento';
   }
 
   get movementModalSubtitle(): string {
     if (this.editingMovementId) {
-      return 'Modificá los datos del movimiento manual.';
+      return 'Modificá el movimiento o duplicá como nuevo para cargar varios seguidos.';
     }
-    return 'Acción rápida desde caja. Se guarda con la fecha de hoy.';
+    if (this.usesAmbitoSeparation) {
+      return `Caja: ${this.activeAmbitoLabel}. Podés alternar ingreso/egreso sin cerrar.`;
+    }
+    return 'Podés alternar ingreso y egreso y cargar varios movimientos seguidos.';
   }
 
   isManualMovement(movement: CashMovement): boolean {
@@ -624,7 +893,7 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private sumByTipo(tipo: 'ingreso' | 'egreso', ambito?: string): number {
-    return this.movements
+    return this.periodMovements
       .filter((movement) => {
         if (movement.tipo !== tipo) return false;
         if (!ambito) return true;
@@ -636,6 +905,10 @@ export class CashComponent implements OnInit, OnDestroy {
   isDeletableCashMovement = isDeletableCashMovement;
 
   openMovementModal(tipo: 'ingreso' | 'egreso') {
+    if (!this.auth.canEditRecords) {
+      this.showEditPermissionAlert();
+      return;
+    }
     this.editingMovementId = null;
     this.movementTipo = tipo;
     this.movementConcepto = '';
@@ -644,7 +917,158 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementAmbito = this.usesAmbitoSeparation
       ? this.activeAmbitoTab
       : getDefaultCashAmbitoId(this.appConfig);
+    this.movementSaveHint = null;
+    this.movementSessionSavedCount = 0;
     this.movementModalOpen = true;
+    this.focusMovementConcept();
+  }
+
+  openOpeningBalanceEditor() {
+    if (!this.auth.canEditRecords) {
+      this.showEditPermissionAlert();
+      return;
+    }
+
+    const local = this.findOpeningBalanceMovement(this.movements);
+    if (local) {
+      this.openEditMovement(local);
+      return;
+    }
+
+    this.cashService.getMovements().subscribe({
+      next: (allMovements) => {
+        const remote = this.findOpeningBalanceMovement(allMovements);
+        if (remote) {
+          this.openEditMovement(remote);
+          return;
+        }
+        this.openNewOpeningBalanceModal();
+      },
+      error: () => {
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo buscar el saldo inicial. Intentá de nuevo.',
+        });
+      },
+    });
+  }
+
+  private openNewOpeningBalanceModal() {
+    this.editingMovementId = null;
+    this.movementTipo = 'ingreso';
+    this.movementConcepto = CashComponent.OPENING_BALANCE_CONCEPT;
+    this.movementMonto = null;
+    this.movementMedio = 'efectivo';
+    this.movementAmbito = this.usesAmbitoSeparation
+      ? this.activeAmbitoTab
+      : getDefaultCashAmbitoId(this.appConfig);
+    this.movementSaveHint = `Cargá el saldo inicial de ${this.activeAmbitoLabel}. Podés editarlo después desde este mismo botón.`;
+    this.movementSessionSavedCount = 0;
+    this.movementModalOpen = true;
+    this.focusMovementMonto();
+  }
+
+  private findOpeningBalanceMovement(list: CashMovement[]): CashMovement | undefined {
+    const ambito = this.usesAmbitoSeparation
+      ? this.activeAmbitoTab
+      : getDefaultCashAmbitoId(this.appConfig);
+
+    return list.find((movement) => {
+      if (!this.isManualMovement(movement)) return false;
+      if (resolveCashAmbito(movement, this.appConfig) !== ambito) return false;
+      return /saldo inicial/i.test(String(movement.concepto ?? '').trim());
+    });
+  }
+
+  private showEditPermissionAlert() {
+    this.dialogService.alert({
+      title: 'Sin permiso para editar',
+      message:
+        'Tu usuario puede ver caja pero no registrar ni modificar movimientos. Pedile al administrador que active el permiso de edición.',
+    });
+  }
+
+  private focusMovementMonto() {
+    setTimeout(() => {
+      const input = this.movementMontoInput?.nativeElement;
+      input?.focus();
+      input?.select();
+    }, 0);
+  }
+
+  duplicateMovement(movement: CashMovement, event: Event) {
+    event.stopPropagation();
+    if (!this.auth.canEditRecords || !this.isManualMovement(movement)) return;
+    this.openMovementFromTemplate(movement);
+  }
+
+  duplicateMovementInModal() {
+    if (!this.auth.canEditRecords) return;
+    this.editingMovementId = null;
+    this.movementSaveHint = 'Listo para guardar una copia como movimiento nuevo.';
+    this.focusMovementConcept();
+  }
+
+  trackCajaAmbitoId = (_index: number, ambito: CajaAmbitoConfig) => ambito.id;
+
+  isMovementAmbitoSelected(ambitoId: string): boolean {
+    return this.movementAmbito === ambitoId;
+  }
+
+  selectMovementAmbito(ambitoId: string, event?: Event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (this.movementAmbito === ambitoId) return;
+    this.movementAmbito = ambitoId;
+  }
+
+  setMovementTipo(tipo: 'ingreso' | 'egreso') {
+    if (this.movementTipo === tipo) return;
+    this.movementTipo = tipo;
+    if (this.usesConceptList && this.movementConcepto.trim()) {
+      const stillValid = this.conceptOptions.some(
+        (option) => option.toLowerCase() === this.movementConcepto.trim().toLowerCase()
+      );
+      if (!stillValid) {
+        this.movementConcepto = '';
+      }
+    }
+  }
+
+  private openMovementFromTemplate(movement: CashMovement) {
+    this.editingMovementId = null;
+    this.movementTipo = movement.tipo;
+    this.movementConcepto = movement.concepto ?? '';
+    this.movementMonto = Number(movement.monto) || null;
+    this.movementMedio = movement.medio || 'efectivo';
+    this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
+    this.movementSaveHint = 'Copiado desde un movimiento existente. Ajustá y guardá.';
+    this.movementModalOpen = true;
+    this.focusMovementConcept();
+  }
+
+  private focusMovementConcept() {
+    setTimeout(() => {
+      const hostInput = this.movementConceptField?.nativeElement?.querySelector('input');
+      const input =
+        (hostInput as HTMLInputElement | null) ??
+        this.movementConceptoText?.nativeElement ??
+        this.movementMontoInput?.nativeElement;
+      input?.focus();
+      if (input && 'select' in input) {
+        input.select();
+      }
+    }, 0);
+  }
+
+  private prepareNextMovementEntry() {
+    this.movementConcepto = '';
+    this.movementMonto = null;
+    this.movementSaveHint =
+      this.movementSessionSavedCount === 1
+        ? 'Movimiento guardado. Cargá el siguiente.'
+        : `${this.movementSessionSavedCount} movimientos guardados en esta sesión.`;
+    this.focusMovementConcept();
   }
 
   onMovementRowClick(movement: CashMovement) {
@@ -669,12 +1093,16 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementMonto = Number(movement.monto) || null;
     this.movementMedio = movement.medio || 'efectivo';
     this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
+    this.movementSaveHint = null;
     this.movementModalOpen = true;
+    this.focusMovementConcept();
   }
 
   closeMovementModal() {
     this.movementModalOpen = false;
     this.editingMovementId = null;
+    this.movementSaveHint = null;
+    this.movementSessionSavedCount = 0;
   }
 
   confirmDeleteMovement(movement: CashMovement) {
@@ -708,7 +1136,17 @@ export class CashComponent implements OnInit, OnDestroy {
         if (!confirmed || !movement.id) return;
 
         this.cashService.deleteMovement(movement.id).subscribe({
-          next: () => this.loadMovements(),
+          next: () => {
+            this.removeLocalMovement(movement.id);
+            this.applySummaryMovement(
+              movement.tipo,
+              Number(movement.monto) || 0,
+              resolveCashAmbito(movement, this.appConfig),
+              -1
+            );
+            this.refreshMovementsSilently();
+            this.loadCashSummary();
+          },
           error: (err) =>
             this.dialogService.alert({
               title: 'No se puede eliminar',
@@ -726,6 +1164,11 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   submitMovement() {
+    if (!this.auth.canEditRecords) {
+      this.showEditPermissionAlert();
+      return;
+    }
+
     const monto = Number(this.movementMonto);
     const concepto = this.movementConcepto.trim();
 
@@ -758,11 +1201,49 @@ export class CashComponent implements OnInit, OnDestroy {
       ? this.cashService.updateMovement(this.editingMovementId, payload)
       : this.cashService.createMovement(payload);
 
+    const editingId = this.editingMovementId;
+    const previousMovement = editingId
+      ? this.movements.find((movement) => movement.id === editingId)
+      : undefined;
+    const ambitoForPayload = this.usesAmbitoSeparation
+      ? this.movementAmbito
+      : getDefaultCashAmbitoId(this.appConfig);
+
     request.subscribe({
-      next: () => {
+      next: (result) => {
         this.savingMovement = false;
-        this.closeMovementModal();
-        this.loadMovements();
+
+        if (previousMovement) {
+          this.applySummaryMovement(
+            previousMovement.tipo,
+            Number(previousMovement.monto) || 0,
+            resolveCashAmbito(previousMovement, this.appConfig),
+            -1
+          );
+        }
+
+        const movementId = editingId ?? result.id;
+        const localMovement = this.buildLocalMovement(movementId, {
+          ...payload,
+          ambito: ambitoForPayload,
+        });
+        this.upsertLocalMovement(localMovement);
+        this.applySummaryMovement(
+          payload.tipo,
+          monto,
+          resolveCashAmbito(localMovement, this.appConfig),
+          1
+        );
+
+        this.refreshMovementsSilently();
+        this.loadCashSummary();
+
+        if (editingId) {
+          this.closeMovementModal();
+          return;
+        }
+        this.movementSessionSavedCount += 1;
+        this.prepareNextMovementEntry();
       },
       error: (err) => {
         this.savingMovement = false;
@@ -779,23 +1260,137 @@ export class CashComponent implements OnInit, OnDestroy {
     });
   }
 
-  private loadMovements() {
-    this.loading = true;
+  private loadCashSummary() {
+    this.cashService.getSummary().subscribe({
+      next: (summary) => {
+        this.cashSummary = summary;
+      },
+      error: () => {
+        // Mantener totales optimistas si falla el resumen.
+      },
+    });
+  }
+
+  private reloadMovements(showLoading = true) {
+    if (this.monthFilterRange) {
+      this.loadAllMovements(showLoading);
+      return;
+    }
+    this.loadMovements(showLoading);
+  }
+
+  private loadAllMovements(showLoading = true) {
+    if (showLoading) this.loading = true;
+    this.hasMoreMovements = false;
+    this.nextMovementsCursor = null;
+    this.cashService.getMovements().subscribe({
+      next: (items) => {
+        this.movements = items;
+        if (showLoading) this.loading = false;
+      },
+      error: () => {
+        if (showLoading) this.loading = false;
+        if (showLoading) {
+          this.dialogService.alert({
+            title: 'Error',
+            message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
+          });
+        }
+      },
+    });
+  }
+
+  private loadMovements(showLoading = true) {
+    if (showLoading) this.loading = true;
     this.cashService.getMovementsPage(120).subscribe({
       next: (page) => {
         this.movements = page.items;
         this.hasMoreMovements = page.hasMore;
         this.nextMovementsCursor = page.nextCursor;
-        this.loading = false;
+        if (showLoading) this.loading = false;
       },
       error: () => {
-        this.loading = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
-        });
+        if (showLoading) this.loading = false;
+        if (showLoading) {
+          this.dialogService.alert({
+            title: 'Error',
+            message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
+          });
+        }
       },
     });
+  }
+
+  private refreshMovementsSilently() {
+    window.setTimeout(() => this.reloadMovements(false), 600);
+  }
+
+  private buildLocalMovement(
+    id: string,
+    payload: {
+      tipo: 'ingreso' | 'egreso';
+      monto: number;
+      concepto: string;
+      medio: string;
+      ambito?: string;
+    }
+  ): CashMovement {
+    const ambito = payload.ambito ?? getDefaultCashAmbitoId(this.appConfig);
+    return {
+      id,
+      tipo: payload.tipo,
+      monto: payload.monto,
+      concepto: payload.concepto,
+      medio: payload.medio,
+      fecha: new Date().toISOString(),
+      ambito,
+      origenGrupo: 'manual',
+      origenTipo: payload.tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
+    };
+  }
+
+  private upsertLocalMovement(movement: CashMovement) {
+    if (!movement.id) return;
+    const without = this.movements.filter((item) => item.id !== movement.id);
+    this.movements = [movement, ...without];
+    this.movementsPage = 1;
+  }
+
+  private removeLocalMovement(movementId?: string) {
+    if (!movementId) return;
+    this.movements = this.movements.filter((movement) => movement.id !== movementId);
+  }
+
+  private applySummaryMovement(
+    tipo: 'ingreso' | 'egreso',
+    monto: number,
+    ambito: string,
+    direction: 1 | -1
+  ) {
+    const delta = (Number(monto) || 0) * direction;
+    if (!delta) return;
+
+    if (!this.cashSummary) {
+      this.cashSummary = { ingreso: 0, egreso: 0, saldo: 0, ambitos: {} };
+    }
+
+    if (tipo === 'egreso') {
+      this.cashSummary.egreso += delta;
+    } else {
+      this.cashSummary.ingreso += delta;
+    }
+    this.cashSummary.saldo = this.cashSummary.ingreso - this.cashSummary.egreso;
+
+    if (!this.cashSummary.ambitos[ambito]) {
+      this.cashSummary.ambitos[ambito] = { ingreso: 0, egreso: 0, saldo: 0 };
+    }
+    const row = this.cashSummary.ambitos[ambito];
+    if (tipo === 'egreso') {
+      row.egreso += delta;
+    } else {
+      row.ingreso += delta;
+    }
+    row.saldo = row.ingreso - row.egreso;
   }
 
   loadMoreMovements() {

@@ -24,6 +24,7 @@ import {
   listReservationTargetsForProduct,
   mergeOrderItemsPreservingStock,
   normalizeOrderItemsStock,
+  autoReserveIncomingStockForProduct,
   OrderStockError,
   releaseOrderStockReservations,
   transferReservedStockBetweenOrders,
@@ -190,11 +191,10 @@ function getPagadoHaciaPedido(order: OrderRecord): number {
 }
 
 function orderAllowsPayments(order: OrderRecord): boolean {
-  return !!(
-    order.seniaBloqueada ||
-    order.movimientoSeniaId ||
-    (order.pagos?.length ?? 0) > 0
-  );
+  if (isDraftStatus(order.estado) || isCancelledStatus(order.estado)) {
+    return false;
+  }
+  return true;
 }
 
 function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
@@ -841,7 +841,36 @@ router.get('/:businessId/:orderId', async (req, res) => {
     await ensureStockReservationsSynced(businessId);
     const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
-    res.json({ id: doc.id, ...doc.data() });
+    let data = doc.data() as Record<string, unknown>;
+    let items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
+
+    const productsWithGap = [
+      ...new Set(
+        items
+          .filter((line) => (Number(line.cantidadFaltante) || 0) > 0 && line.stockItemId)
+          .map((line) => String(line.stockItemId))
+      ),
+    ];
+
+    if (productsWithGap.length > 0) {
+      let reservedAny = false;
+      for (const stockItemId of productsWithGap) {
+        const result = await autoReserveIncomingStockForProduct(businessId, stockItemId);
+        if (result.reservedTotal > 0) reservedAny = true;
+      }
+      if (reservedAny) {
+        const refreshed = await doc.ref.get();
+        data = (refreshed.data() ?? {}) as Record<string, unknown>;
+        items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
+      }
+    }
+
+    res.json({
+      id: doc.id,
+      ...data,
+      items,
+      estadoStock: computeOrderStockStatus(items),
+    });
   } catch (error) {
     res.status(500).json({ error: 'Error fetching order' });
   }
@@ -899,10 +928,13 @@ router.post('/:businessId', async (req, res) => {
       estado: orderData.estado,
     };
 
-    await docRef.update({
+    const postCreatePatch: Partial<OrderRecord> = {
       ...seniaPatch,
       ...orderNumberPatch,
-    });
+    };
+    if (Object.keys(postCreatePatch).length > 0) {
+      await docRef.update(postCreatePatch);
+    }
 
     const orderLabel = orderNumberPatch.numeroPedidoLabel ?? docRef.id;
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -921,6 +953,7 @@ router.post('/:businessId', async (req, res) => {
     if (error instanceof StockValidationError || error instanceof OrderStockError) {
       return res.status(400).json({ error: error.message });
     }
+    console.error('Error creating order:', error);
     res.status(500).json({ error: 'Error creating order' });
   }
 });
@@ -949,7 +982,7 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       return res.status(403).json({ error: 'No se pueden registrar pagos en un pedido entregado total.' });
     }
     if (!orderAllowsPayments(order)) {
-      return res.status(400).json({ error: 'Registrá la seña al confirmar el pedido primero.' });
+      return res.status(400).json({ error: 'Confirmá el pedido antes de registrar pagos.' });
     }
 
     const total = Number(order.total) || 0;
