@@ -31,8 +31,13 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
-  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
   DEFAULT_LIST_PAGE_SIZE,
@@ -61,13 +66,13 @@ import { Subscription } from 'rxjs';
     ListRowActionsComponent,
     ListPaginationComponent,
     ModalFormFooterComponent,
+    CompactListRowComponent,
   ],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
-          <p class="text-sm text-gray-500 desc-lg-only">Movimientos de pedidos y registros manuales de ingreso y egreso.</p>
           <app-config-settings-link
             settingsTab="caja"
             message="¿Falta un concepto u origen?"
@@ -85,33 +90,29 @@ import { Subscription } from 'rxjs';
         </div>
       </div>
 
-      <div *ngIf="usesAmbitoSeparation" class="mb-4 space-y-2">
-        <div
-          *ngIf="cajaAmbitos.length > 1"
-          class="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-sm">
-          <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 shrink-0">Total neto</span>
-          <span class="text-base font-bold tabular-nums text-gray-900">{{ '$' + totalNetoSaldo }}</span>
-          <span class="text-[11px] text-gray-500 tabular-nums w-full sm:w-auto sm:ml-auto">
-            <ng-container *ngFor="let ambito of cajaAmbitos; let last = last">
-              {{ ambito.label }} {{ '$' + getAmbitoSaldo(ambito.id) }}<span *ngIf="!last" class="text-gray-300 mx-1">·</span>
-            </ng-container>
-          </span>
-        </div>
-
+      <div *ngIf="usesAmbitoSeparation" class="mb-4">
         <div class="rounded-lg border border-gray-100 bg-white shadow-sm overflow-hidden">
-          <div class="flex gap-0 border-b border-gray-100 overflow-x-auto">
-            <button
-              *ngFor="let ambito of cajaAmbitos"
-              type="button"
-              (click)="activeAmbitoTab = ambito.id"
-              class="px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
-              [class.border-teal-600]="activeAmbitoTab === ambito.id"
-              [class.text-teal-700]="activeAmbitoTab === ambito.id"
-              [class.bg-teal-50]="activeAmbitoTab === ambito.id"
-              [class.border-transparent]="activeAmbitoTab !== ambito.id"
-              [class.text-gray-500]="activeAmbitoTab !== ambito.id">
-              {{ ambito.label }}
-            </button>
+          <div class="flex items-stretch border-b border-gray-100">
+            <div class="flex min-w-0 flex-1 gap-0">
+              <button
+                *ngFor="let ambito of cajaAmbitos"
+                type="button"
+                (click)="activeAmbitoTab = ambito.id"
+                class="px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
+                [class.border-teal-600]="activeAmbitoTab === ambito.id"
+                [class.text-teal-700]="activeAmbitoTab === ambito.id"
+                [class.bg-teal-50]="activeAmbitoTab === ambito.id"
+                [class.border-transparent]="activeAmbitoTab !== ambito.id"
+                [class.text-gray-500]="activeAmbitoTab !== ambito.id">
+                {{ ambito.label }}
+              </button>
+            </div>
+            <div
+              *ngIf="cajaAmbitos.length > 1"
+              class="flex shrink-0 items-center gap-2 border-l-2 border-teal-600/40 bg-teal-50/70 px-3 py-2 text-sm">
+              <span class="text-[10px] font-semibold uppercase tracking-wide text-teal-800/70">Total neto</span>
+              <span class="text-base font-bold tabular-nums text-teal-900">{{ '$' + totalNetoSaldo }}</span>
+            </div>
           </div>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs">
             <span class="tabular-nums">
@@ -168,7 +169,31 @@ import { Subscription } from 'rxjs';
             </select>
           </div>
         </div>
-        <div [class]="tableScrollClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let movement of paginatedFilteredMovements"
+            (activate)="onMovementRowClick(movement)">
+            <div compactTitle class="compact-list-title truncate">{{ movement.concepto }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+            </div>
+            <span
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums shrink-0"
+              [class.text-teal-600]="movement.tipo === 'ingreso'"
+              [class.text-red-500]="movement.tipo === 'egreso'">
+              {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
+          <p *ngIf="!loading && movements.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
+          </p>
+          <p *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0" [class]="compactListEmptyClass">
+            No se encontraron movimientos con los filtros actuales.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -227,28 +252,15 @@ import { Subscription } from 'rxjs';
                 </app-list-row-actions>
               </td>
             </tr>
-            <tr *ngIf="loading" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando movimientos...</td>
+            <tr *ngIf="loading">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
             </tr>
-            <tr *ngIf="loading" class="hidden sm:table-row">
-              <td [attr.colspan]="6" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
-            </tr>
-            <tr *ngIf="!loading && movements.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && movements.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && movements.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
               </td>
             </tr>
-            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                No se encontraron movimientos con los filtros actuales.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && movements.length > 0 && filteredMovements.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron movimientos con los filtros actuales.
               </td>
@@ -365,6 +377,8 @@ export class CashComponent implements OnInit, OnDestroy {
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 

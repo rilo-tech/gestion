@@ -25,12 +25,14 @@ export function buildSuggestedStockAllocations(
 }
 
 export function splitProductDisplayName(nombre: string): { base: string; variant: string } {
-  const parts = String(nombre ?? '')
-    .split(' - ')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length <= 1) {
-    return { base: nombre?.trim() || '—', variant: '' };
+  const text = String(nombre ?? '').trim();
+  if (!text) return { base: '—', variant: '' };
+
+  if (text.includes(' - ')) {
+    const parts = text.split(' - ').map((part) => part.trim()).filter(Boolean);
+    if (parts.length <= 1) return { base: text, variant: '' };
+    return { base: parts[0], variant: parts.slice(1).join(' ') };
   }
-  return { base: parts[0], variant: parts.slice(1).join(' · ') };
+
+  return { base: text, variant: '' };
 }

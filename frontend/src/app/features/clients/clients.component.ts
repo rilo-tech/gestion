@@ -11,7 +11,6 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
-  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -27,6 +26,12 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 
 @Component({
   selector: 'app-clients',
@@ -42,6 +47,7 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
     ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
+    CompactListRowComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -77,7 +83,30 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
             placeholder="Buscar por nombre, contacto, dirección o etiqueta..."
             [class]="tableSearchInputClass">
         </div>
-        <div [class]="tableScrollClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let client of paginatedFilteredClients"
+            (activate)="openClient(client)">
+            <div compactTitle class="compact-list-title truncate">{{ client.nombre }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">{{ getContactDisplay(client) }}</div>
+            <span
+              *ngIf="auth.canViewAccountBalance"
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums shrink-0"
+              [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
+              [class.text-gray-500]="!(client.saldoPendiente || 0)">
+              {{ '$' + (client.saldoPendiente || 0) }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando clientes...</p>
+          <p *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" [class]="compactListEmptyClass">
+            No se encontraron clientes para "{{ searchQuery }}".
+          </p>
+          <p *ngIf="!loading && clients.length === 0" [class]="compactListEmptyClass">
+            No se encontraron clientes.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
@@ -146,28 +175,15 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
                 </app-list-row-actions>
               </td>
             </tr>
-            <tr *ngIf="loading" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando clientes...</td>
-            </tr>
-            <tr *ngIf="loading" class="hidden sm:table-row">
+            <tr *ngIf="loading">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando clientes...</td>
             </tr>
-            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                No se encontraron clientes para "{{ searchQuery }}".
-              </td>
-            </tr>
-            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron clientes para "{{ searchQuery }}".
               </td>
             </tr>
-            <tr *ngIf="!loading && clients.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                No se encontraron clientes.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && clients.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && clients.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 No se encontraron clientes.
               </td>
@@ -216,6 +232,8 @@ export class ClientsComponent implements OnInit {
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 

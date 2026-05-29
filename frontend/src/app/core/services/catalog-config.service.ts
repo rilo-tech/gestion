@@ -204,16 +204,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   },
 };
 
-export function buildProductDisplayName(
-  nombreBase: string,
-  color?: string,
-  talle?: string
-): string {
-  const parts = [nombreBase.trim()];
-  if (color?.trim()) parts.push(color.trim());
-  if (talle?.trim()) parts.push(talle.trim());
-  return parts.join(' - ');
-}
+export { buildProductDisplayName, inferNombreBase } from '../../../../../shared/product-display-name.ts';
 
 export function getFieldValues(config: AppConfig, key: ConfigFieldKey): string[] {
   const [module, field] = key.split('.') as [keyof AppConfig, string];

@@ -24,6 +24,11 @@ import {
   reconcileOrderStockFromProductReservations,
   autoReserveIncomingStockForProduct,
 } from '../utils/order-stock-reservations.ts';
+import {
+  getStockMetrics,
+  recomputeStockMetrics,
+  scheduleStockMetricsRefresh,
+} from '../utils/stock-metrics.ts';
 
 const router = createCompanyRouter();
 
@@ -160,6 +165,8 @@ router.post('/:businessId', async (req, res) => {
       entityLabel: String(itemData.nombre ?? ''),
       summary: `Creó el producto ${String(itemData.nombre ?? docRef.id)}`,
     });
+
+    await recomputeStockMetrics(businessId);
 
     res.status(201).json({ id: docRef.id });
   } catch (error) {
@@ -344,6 +351,7 @@ router.post('/:businessId/reconcile-reservations', async (req, res) => {
   try {
     const { businessId } = req.params;
     const summary = await reconcileOrderStockFromProductReservations(businessId);
+    scheduleStockMetricsRefresh(businessId);
     res.json(summary);
   } catch (error) {
     res.status(500).json({ error: 'Error reconciling stock reservations' });
@@ -403,6 +411,7 @@ router.delete('/:businessId/movements/:movementId', async (req, res) => {
       entityId: movementId,
       summary: `Eliminó un movimiento de stock (${tipo}, ${cantidad} u.)`,
     });
+    await recomputeStockMetrics(businessId);
     res.json({ id: movementId });
   } catch (error) {
     const mapped = mapDeletionError(error);
@@ -411,6 +420,21 @@ router.delete('/:businessId/movements/:movementId', async (req, res) => {
     }
     console.error('Error deleting stock movement:', error);
     res.status(500).json({ error: 'Error deleting stock movement' });
+  }
+});
+
+router.get('/:businessId/metrics', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const forceRefresh = String(req.query.refresh ?? '') === '1';
+    let metrics = await getStockMetrics(businessId);
+    if (forceRefresh || !metrics.updatedAt) {
+      metrics = await recomputeStockMetrics(businessId);
+    }
+    res.json(metrics);
+  } catch (error) {
+    console.error('Error fetching stock metrics:', error);
+    res.status(500).json({ error: 'Error fetching stock metrics' });
   }
 });
 
@@ -491,6 +515,8 @@ router.put('/:businessId/:itemId', async (req, res) => {
       summary: `Editó el producto ${String(itemData.nombre ?? existing.data()?.nombre ?? itemId)}`,
     });
 
+    await recomputeStockMetrics(businessId);
+
     res.json({ id: itemId });
   } catch (error) {
     res.status(500).json({ error: 'Error updating stock item' });
@@ -537,7 +563,9 @@ router.patch('/:businessId/:itemId', async (req, res) => {
       entityLabel: String(item.data()?.nombre ?? itemId),
       summary: `Ajustó stock de ${String(item.data()?.nombre ?? itemId)} (${quantity > 0 ? '+' : ''}${quantity})`,
     });
-    
+
+    await recomputeStockMetrics(businessId);
+
     res.json({ success: true, newStock });
   } catch (error) {
     res.status(500).json({ error: 'Error updating stock' });
@@ -562,6 +590,7 @@ router.delete('/:businessId/:itemId', async (req, res) => {
       entityLabel: productName,
       summary: `Eliminó el producto ${productName}`,
     });
+    await recomputeStockMetrics(businessId);
     res.json({ id: itemId });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting stock item' });

@@ -7,7 +7,7 @@ import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, Printer, Clock, Gift, UserCog, Copy, Save } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, Copy, Save } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -249,6 +249,8 @@ export const appConfig: ApplicationConfig = {
         Calendar,
         ChevronDown,
         ChevronUp,
+        ChevronLeft,
+        ChevronRight,
         Printer,
         Clock,
         Gift,

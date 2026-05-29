@@ -3,6 +3,7 @@ import { db } from '../firebase.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
 
 const router = createCompanyRouter();
 
@@ -157,6 +158,8 @@ router.post('/:businessId', async (req, res) => {
         negocioId: businessId,
       });
     }
+
+    scheduleStockMetricsRefresh(businessId);
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'purchases',

@@ -10,6 +10,7 @@ import {
 import { resolveOrderLabel } from './order-number.ts';
 import { formatOrderStockMotivo } from './stock-movimientos.ts';
 import { loadCategoriasSinStock, productControlsStock, productPermitsNegativeStock } from './stock-product.ts';
+import { scheduleStockMetricsRefresh } from './stock-metrics.ts';
 
 export type OrderStockItemStatus = 'sin_preparar' | 'completo' | 'parcial' | 'faltante';
 export type OrderStockStatus = 'sin_preparar' | 'completo' | 'parcial' | 'faltante';
@@ -843,6 +844,7 @@ export async function releaseOrderStockReservations(
         estadoStock: computeOrderStockStatus(items),
         stockPreparado: false,
       });
+    scheduleStockMetricsRefresh(businessId);
   }
 
   return released;
@@ -951,6 +953,10 @@ async function consumeOrderStockInternal(
     line.cantidadReservada = Math.max(0, reserved - releaseReserve);
     items[lineIndex] = computeLineStockFields(line);
     consumedAny = true;
+  }
+
+  if (consumedAny) {
+    scheduleStockMetricsRefresh(businessId);
   }
 
   return {

@@ -10,6 +10,7 @@ import {
   getBusinessCashAmbitoId,
   resolveCashReversalAmbito,
 } from '../utils/caja-ambitos.ts';
+import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
 
 const router = createCompanyRouter();
 
@@ -351,6 +352,8 @@ async function restoreStockForVenta(
       negocioId: businessId,
     });
   }
+
+  scheduleStockMetricsRefresh(businessId);
 }
 
 async function applyStockForVenta(
@@ -396,6 +399,7 @@ async function applyStockForVenta(
     });
   }
 
+  scheduleStockMetricsRefresh(businessId);
   return null;
 }
 

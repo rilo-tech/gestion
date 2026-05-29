@@ -13,6 +13,7 @@ import {
   DEFAULT_APP_CONFIG,
   CatalogConfigService,
   buildProductDisplayName,
+  inferNombreBase,
 } from '../../core/services/catalog-config.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
@@ -25,7 +26,7 @@ import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
 import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
-import { StockItem, StockService } from '../../core/services/stock.service';
+import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
 
 @Component({
   selector: 'app-new-product',
@@ -33,24 +34,48 @@ import { StockItem, StockService } from '../../core/services/stock.service';
   imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent, HasPermissionDirective, SelectOnFocusDirective, FormSaveFooterComponent, DuplicateActionButtonComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
-      <div class="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">{{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}</h1>
-          <p class="text-gray-500">
-            {{ isEditing ? 'Modificá los datos del producto en inventario.' : 'Cargá un producto o insumo para sumarlo al inventario.' }}
+      <div class="mb-6 sm:mb-8 grid grid-cols-[1fr_auto] gap-x-3 sm:gap-x-4 gap-y-2 items-start">
+        <h1 class="min-w-0 text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
+          {{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}
+        </h1>
+        <div class="flex items-center justify-end shrink-0 gap-1.5 sm:gap-4">
+          <ng-container *ngIf="isEditing">
+            <app-duplicate-action-button
+              *ngIf="!formReadOnly"
+              variant="outline"
+              label="Duplicar producto"
+              (duplicateClick)="duplicateProduct()">
+            </app-duplicate-action-button>
+            <button
+              *ngIf="auth.canDeleteRecords"
+              type="button"
+              (click)="confirmDeleteProduct()"
+              title="Eliminar producto"
+              aria-label="Eliminar producto"
+              class="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50 min-h-[36px] min-w-[36px] transition-colors">
+              <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+            </button>
+          </ng-container>
+          <a
+            routerLink="/stock"
+            title="Volver al stock"
+            aria-label="Volver al stock"
+            class="inline-flex items-center justify-center gap-2 p-1 sm:p-0 text-sm font-medium text-gray-500 hover:text-gray-900 whitespace-nowrap">
+            <i-lucide name="arrow-left" class="w-4 h-4 shrink-0"></i-lucide>
+            <span class="hidden sm:inline">Volver al stock</span>
+          </a>
+        </div>
+        <div class="min-w-0 col-start-1">
+          <p *ngIf="!isEditing" class="text-gray-500 text-sm sm:text-base">
+            Cargá un producto o insumo para sumarlo al inventario.
           </p>
           <app-config-settings-link
             settingsTab="productos"
+            [compact]="true"
             message="¿Falta categoría, talle o color?"
             linkLabel="Configuralo acá">
           </app-config-settings-link>
         </div>
-        <button
-          routerLink="/stock"
-          class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900">
-          <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
-          Volver al stock
-        </button>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -74,7 +99,7 @@ import { StockItem, StockService } from '../../core/services/stock.service';
                   [(ngModel)]="item.categoria"
                   (ngModelChange)="onCategoriaChange($event)"
                   name="categoria"
-                  [options]="configService.getFieldOptions(appConfig, 'productos.categorias')"
+                  [options]="categoriaOptions"
                   placeholder="Buscar categoría..."
                   plainPlaceholder="Ej. Indumentaria">
                 </app-searchable-select>
@@ -85,7 +110,7 @@ import { StockItem, StockService } from '../../core/services/stock.service';
                 <app-searchable-select
                   [(ngModel)]="item.talle"
                   name="talle"
-                  [options]="configService.getFieldOptions(appConfig, 'productos.talles')"
+                  [options]="talleOptions"
                   placeholder="Buscar talle..."
                   plainPlaceholder="Ej. M">
                 </app-searchable-select>
@@ -96,7 +121,7 @@ import { StockItem, StockService } from '../../core/services/stock.service';
                 <app-searchable-select
                   [(ngModel)]="item.color"
                   name="color"
-                  [options]="configService.getFieldOptions(appConfig, 'productos.colores')"
+                  [options]="colorOptions"
                   placeholder="Buscar color..."
                   plainPlaceholder="Ej. Negro">
                 </app-searchable-select>
@@ -109,39 +134,123 @@ import { StockItem, StockService } from '../../core/services/stock.service';
               <i-lucide name="bar-chart-3" class="w-5 h-5 text-teal-600"></i-lucide>
               Inventario
             </h2>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div *ngIf="showInventoryFields">
-                <label class="block text-sm font-medium text-gray-700 mb-1">
-                  {{ isEditing ? 'Stock actual' : 'Stock inicial' }}
-                </label>
-                <input type="number" [(ngModel)]="item.stockActual" name="stockActual" min="0"
-                       class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+            <div class="space-y-4">
+              <div
+                *ngIf="canAdjustStock"
+                class="p-3 sm:p-4 rounded-lg border border-teal-100 bg-teal-50/40 space-y-2">
+                <p class="text-sm font-semibold text-teal-800">Movimiento de stock</p>
+                <p class="text-xs text-teal-700">
+                  Cantidad positiva suma stock; negativa resta. Presioná Guardar para registrar el movimiento.
+                </p>
+                <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:gap-2">
+                  <div class="shrink-0 w-full sm:w-auto">
+                    <label class="text-xs font-medium text-gray-600 mb-0.5 block">Cantidad</label>
+                    <div
+                      class="inline-flex w-full sm:w-auto rounded-lg border border-gray-200 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-primary disabled:opacity-60">
+                      <button
+                        type="button"
+                        (click)="stepStockAdjustmentQty(-1)"
+                        [disabled]="adjustingStock"
+                        aria-label="Restar una unidad"
+                        title="Restar una unidad"
+                        class="shrink-0 inline-flex items-center justify-center w-9 text-gray-600 border-r border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                        <i-lucide name="minus" class="w-4 h-4"></i-lucide>
+                      </button>
+                      <input
+                        type="number"
+                        [(ngModel)]="stockAdjustmentQty"
+                        name="stockAdjustmentQty"
+                        step="1"
+                        [disabled]="adjustingStock"
+                        placeholder="Ej. 5 o -3"
+                        class="min-w-0 w-full sm:w-14 px-2 py-1.5 text-sm text-center tabular-nums border-0 bg-transparent outline-none disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                      <button
+                        type="button"
+                        (click)="stepStockAdjustmentQty(1)"
+                        [disabled]="adjustingStock"
+                        aria-label="Sumar una unidad"
+                        title="Sumar una unidad"
+                        class="shrink-0 inline-flex items-center justify-center w-9 text-gray-600 border-l border-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                        <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="flex-1 min-w-0 w-full sm:min-w-[10rem]">
+                    <label class="text-xs font-medium text-gray-600 mb-0.5 block">Motivo (opcional)</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="stockAdjustmentReason"
+                      name="stockAdjustmentReason"
+                      [disabled]="adjustingStock"
+                      placeholder="Ej. Conteo de depósito"
+                      class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+                  </div>
+                  <button
+                    type="button"
+                    (click)="applyStockAdjustment()"
+                    [disabled]="adjustingStock || !canSubmitStockAdjustment"
+                    class="w-full sm:w-auto shrink-0 inline-flex items-center justify-center rounded-lg bg-teal-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-60 disabled:cursor-not-allowed min-h-[34px]">
+                    {{ adjustingStock ? 'Guardando…' : 'Guardar' }}
+                  </button>
+                </div>
               </div>
-              <div *ngIf="showInventoryFields">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Stock mínimo</label>
-                <input type="number" [(ngModel)]="item.stockMinimo" name="stockMinimo" min="0"
-                       class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div *ngIf="showInventoryFields">
+                  <label
+                    class="block text-sm font-medium mb-1"
+                    [class.text-gray-700]="!isEditing"
+                    [class.text-gray-400]="isEditing">
+                    {{ isEditing ? 'Stock actual' : 'Stock inicial' }}
+                  </label>
+                  <input
+                    *ngIf="!isEditing"
+                    type="number"
+                    [(ngModel)]="item.stockActual"
+                    name="stockActual"
+                    min="0"
+                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+                  <div
+                    *ngIf="isEditing"
+                    class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-gray-100 text-gray-500 font-medium cursor-not-allowed">
+                    {{ item.stockActual || 0 }} u.
+                  </div>
+                  <p *ngIf="isEditing" class="text-[11px] text-gray-400 mt-1">
+                    Se modifica con movimientos de stock.
+                  </p>
+                </div>
+                <div *ngIf="showInventoryFields">
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Stock mínimo</label>
+                  <input
+                    type="number"
+                    [(ngModel)]="item.stockMinimo"
+                    name="stockMinimo"
+                    min="0"
+                    [disabled]="formReadOnly"
+                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Costo de compra</label>
+                  <input
+                    type="number"
+                    [(ngModel)]="item.costo"
+                    name="costoCompra"
+                    min="0"
+                    step="0.01"
+                    [disabled]="formReadOnly"
+                    class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                </div>
               </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Costo de compra</label>
-                <input
-                  type="number"
-                  [(ngModel)]="item.costo"
-                  name="costoCompra"
-                  min="0"
-                  step="0.01"
-                  [disabled]="formReadOnly"
-                  class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
-              </div>
-              <p class="text-xs text-gray-500 sm:col-span-3">
+
+              <p class="text-xs text-gray-500">
                 El costo de compra es el costo base del producto al cargarlo en un pedido.
               </p>
               <p
                 *ngIf="categoriaStockHint"
-                class="text-xs text-teal-700 sm:col-span-3 p-3 rounded-lg border border-teal-100 bg-teal-50/50">
+                class="text-xs text-teal-700 p-3 rounded-lg border border-teal-100 bg-teal-50/50">
                 {{ categoriaStockHint }}
               </p>
-              <div class="sm:col-span-3 space-y-3">
+              <div class="space-y-3">
                 <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50 cursor-pointer">
                   <input
                     type="checkbox"
@@ -233,35 +342,16 @@ import { StockItem, StockService } from '../../core/services/stock.service';
               </div>
             </div>
 
-            <div class="space-y-2 pt-4 border-t border-gray-800">
+            <div class="pt-4 border-t border-gray-800">
               <app-form-save-footer
                 *ngIf="!formReadOnly"
                 [label]="isEditing ? 'Guardar' : 'Guardar producto'"
                 [saving]="saving"
                 [successMessage]="saveSuccessMessage"
+                [fullWidth]="true"
                 theme="dark"
                 (saveClick)="submitProduct()">
               </app-form-save-footer>
-              <div
-                *ngIf="isEditing && (!formReadOnly || auth.canDeleteRecords)"
-                class="flex gap-2">
-                <app-duplicate-action-button
-                  *ngIf="!formReadOnly"
-                  variant="dark"
-                  [iconOnly]="false"
-                  label="Duplicar"
-                  (duplicateClick)="duplicateProduct()">
-                </app-duplicate-action-button>
-                <button
-                  *ngIf="auth.canDeleteRecords"
-                  type="button"
-                  (click)="confirmDeleteProduct()"
-                  class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-900/70 bg-red-950/25 text-red-300 text-xs font-medium py-2 px-2.5 hover:bg-red-950/45 transition-colors"
-                  [class.flex-1]="!formReadOnly">
-                  <i-lucide name="trash-2" class="w-3.5 h-3.5"></i-lucide>
-                  Eliminar
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -281,6 +371,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private routeSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
+  categoriaOptions: string[] = [];
+  talleOptions: string[] = [];
+  colorOptions: string[] = [];
   editingItemId: string | null = null;
   saving = false;
   saveSuccessMessage = '';
@@ -288,6 +381,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
   nombreBase = '';
   controlaStock = true;
   permitirStockNegativo = true;
+  stockAdjustmentQty: number | null = null;
+  stockAdjustmentReason = '';
+  adjustingStock = false;
   item = {
     tipo: '',
     categoria: '',
@@ -313,6 +409,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       if (!this.appConfig.productos.categoriasStock) {
         this.appConfig.productos.categoriasStock = {};
       }
+      this.refreshFieldOptions();
     });
     this.catalogConfigServiceLoad();
 
@@ -359,6 +456,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.configService.getAppConfig().subscribe();
   }
 
+  private refreshFieldOptions() {
+    this.categoriaOptions = this.configService.getFieldOptions(this.appConfig, 'productos.categorias');
+    this.talleOptions = this.configService.getFieldOptions(this.appConfig, 'productos.talles');
+    this.colorOptions = this.configService.getFieldOptions(this.appConfig, 'productos.colores');
+  }
+
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.routeSub?.unsubscribe();
@@ -372,11 +475,16 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   get inventoryValue(): number {
     if (!this.showInventoryFields) return 0;
-    return (this.item.stockActual || 0) * (this.item.costo || 0);
+    return getStockEnDeposito(this.item) * (this.item.costo || 0);
   }
 
   get showInventoryFields(): boolean {
     return this.controlaStock;
+  }
+
+  /** Solo producto ya guardado en servidor (no en alta inicial sin id). */
+  get canAdjustStock(): boolean {
+    return !!this.editingItemId && this.showInventoryFields && !this.formReadOnly;
   }
 
   get categoriaStockHint(): string {
@@ -442,6 +550,72 @@ export class NewProductComponent implements OnInit, OnDestroy {
     }
   }
 
+  get canSubmitStockAdjustment(): boolean {
+    const delta = Math.floor(Number(this.stockAdjustmentQty) || 0);
+    return delta !== 0;
+  }
+
+  stepStockAdjustmentQty(step: number): void {
+    if (this.adjustingStock) return;
+    const parsed = Math.floor(Number(this.stockAdjustmentQty) || 0);
+    const hasValue =
+      this.stockAdjustmentQty !== null &&
+      this.stockAdjustmentQty !== undefined &&
+      String(this.stockAdjustmentQty).trim() !== '';
+    this.stockAdjustmentQty = hasValue ? parsed + step : step > 0 ? 1 : -1;
+  }
+
+  applyStockAdjustment() {
+    if (!this.editingItemId || this.adjustingStock) return;
+
+    const delta = Math.floor(Number(this.stockAdjustmentQty) || 0);
+    if (delta === 0) {
+      this.dialogService.alert({
+        title: 'Cantidad inválida',
+        message: 'Ingresá un número distinto de 0 (positivo suma, negativo resta).',
+      });
+      return;
+    }
+    if (delta < 0 && !this.permitirStockNegativo && (this.item.stockActual || 0) + delta < 0) {
+      this.dialogService.alert({
+        title: 'Stock insuficiente',
+        message: 'Este producto no permite stock negativo.',
+      });
+      return;
+    }
+
+    const motivo = this.stockAdjustmentReason.trim() || 'Ajuste manual desde edición de producto';
+    this.adjustingStock = true;
+    this.stockService.adjustStock(this.editingItemId, delta, motivo).subscribe({
+      next: (result: { newStock?: number }) => {
+        this.adjustingStock = false;
+        this.item.stockActual = Number(result?.newStock ?? (this.item.stockActual || 0) + delta) || 0;
+        this.stockAdjustmentQty = null;
+        this.stockAdjustmentReason = '';
+        this.stockService.notifyCatalogChanged({
+          item: {
+            id: this.editingItemId,
+            nombre: this.displayName || this.nombreBase,
+            tipo: this.item.tipo,
+            stockActual: this.item.stockActual,
+            costo: this.item.costo,
+            controlaStock: this.controlaStock,
+          } as StockItem,
+        });
+        this.showSaveSuccess(`Stock actualizado (${delta > 0 ? '+' : ''}${delta} u.).`);
+      },
+      error: (err: HttpErrorResponse) => {
+        this.adjustingStock = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message:
+            (err.error as { error?: string })?.error ??
+            'No se pudo registrar el movimiento de stock.',
+        });
+      },
+    });
+  }
+
   submitProduct() {
     if (!this.nombreBase.trim()) {
       this.dialogService.alert({
@@ -479,10 +653,14 @@ export class NewProductComponent implements OnInit, OnDestroy {
       next: (result) => {
         this.saving = false;
         if (this.editingItemId) {
+          this.stockService.notifyCatalogChanged({
+            item: { id: this.editingItemId, ...payload },
+          });
           this.showSaveSuccess('Cambios guardados.');
           return;
         }
 
+        this.stockService.notifyCatalogChanged();
         this.showSaveSuccess('Producto guardado.');
         this.router.navigate(['/stock', result.id, 'edit'], { replaceUrl: true });
       },
@@ -567,7 +745,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
   }
 
   private applyProductFields(product: StockItem) {
-    const nombreBase = product.nombreBase?.trim() || product.nombre?.trim() || '';
+    const color = product.color?.trim() ?? '';
+    const talle = product.talle?.trim() ?? '';
+    let nombreBase = product.nombreBase?.trim() || '';
+    if (!nombreBase || nombreBase === product.nombre?.trim()) {
+      nombreBase = inferNombreBase(product.nombre ?? '', color, talle);
+    }
 
     this.nombreBase = nombreBase;
     this.item = {

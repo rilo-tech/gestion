@@ -591,7 +591,22 @@ html.dark .form-label {
   padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
-/* Listas / tablas compactas en celular (estilo app nativa) */
+/* Tablas de listado: altura de fila uniforme en desktop (referencia: reservas stock) */
+@media (min-width: 640px) {
+  table.app-data-table thead th {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+    vertical-align: middle;
+  }
+
+  table.app-data-table tbody td {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+    vertical-align: middle;
+  }
+}
+
+/* Listas compactas en celular (estilo productos) */
 @media (max-width: 639px) {
   .native-compact-table > thead {
     display: none;

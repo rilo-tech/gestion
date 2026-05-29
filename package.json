@@ -9,6 +9,7 @@
     "emulators:export": "firebase emulators:export ./emulator-data",
     "emulators:reset": "tsx scripts/reset-emulator-db.ts",
     "stock:reconcile": "tsx scripts/reconcile-stock-reservations.ts",
+    "stock:migrate-names": "tsx scripts/migrate-product-display-names.ts",
     "bootstrap:production": "tsx scripts/bootstrap-production.ts",
     "build": "vite build",
     "build:functions": "npm --prefix functions run build",

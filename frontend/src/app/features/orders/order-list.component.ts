@@ -23,8 +23,13 @@ import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
@@ -39,7 +44,7 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
 @Component({
   selector: 'app-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent, CompactListRowComponent],
   template: `
     <div [class]="pageShellClass" (click)="clearStatusCardFilter()">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -141,8 +146,41 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
             placeholder="Buscar por pedido, cliente, descripción, estado o producto..."
             class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
         </div>
-        <div [class]="tableScrollClass">
-        <table [class]="tableMinWidthClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let order of paginatedDisplayOrders; trackBy: trackOrder"
+            (activate)="openEditOrder(order)">
+            <div compactTitle class="compact-list-title truncate">
+              {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : 'Pedido' }}
+            </div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ getClientName(order) }}
+              · Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
+            </div>
+            <span
+              compactTrailing
+              class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 max-w-[45%] truncate"
+              [ngClass]="getOrderStatusBadgeClass(order.estado)">
+              {{ getOrderStatusLabelFor(order.estado) }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando pedidos...</p>
+          <p
+            *ngIf="!loading && visibleOrders.length > 0 && displayOrders.length === 0"
+            [class]="compactListEmptyClass">
+            <ng-container *ngIf="listFilter === 'pendientes-entrega' && !searchQuery.trim()">
+              No hay pedidos confirmados pendientes de entrega.
+            </ng-container>
+            <ng-container *ngIf="listFilter !== 'pendientes-entrega' || searchQuery.trim()">
+              No se encontraron pedidos para "{{ searchQuery }}".
+            </ng-container>
+          </p>
+          <p *ngIf="!loading && visibleOrders.length === 0" [class]="compactListEmptyClass">
+            No hay pedidos registrados.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[920px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4">
@@ -272,17 +310,7 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
                 </div>
               </td>
             </tr>
-            <tr *ngIf="!loading && visibleOrders.length > 0 && displayOrders.length === 0" class="sm:hidden">
-              <td colspan="3" class="px-4 py-12 text-center text-gray-400">
-                <ng-container *ngIf="listFilter === 'pendientes-entrega' && !searchQuery.trim()">
-                  No hay pedidos confirmados pendientes de entrega.
-                </ng-container>
-                <ng-container *ngIf="listFilter !== 'pendientes-entrega' || searchQuery.trim()">
-                  No se encontraron pedidos para "{{ searchQuery }}".
-                </ng-container>
-              </td>
-            </tr>
-            <tr *ngIf="!loading && visibleOrders.length > 0 && displayOrders.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && visibleOrders.length > 0 && displayOrders.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 <ng-container *ngIf="listFilter === 'pendientes-entrega' && !searchQuery.trim()">
                   No hay pedidos confirmados pendientes de entrega.
@@ -292,22 +320,12 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
                 </ng-container>
               </td>
             </tr>
-            <tr *ngIf="!loading && visibleOrders.length === 0" class="sm:hidden">
-              <td colspan="3" class="px-4 py-12 text-center text-gray-400">
-                No hay pedidos registrados.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && visibleOrders.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && visibleOrders.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 No hay pedidos registrados.
               </td>
             </tr>
-            <tr *ngIf="loading" class="sm:hidden">
-              <td colspan="3" class="px-4 py-12 text-center text-gray-400">
-                Cargando pedidos...
-              </td>
-            </tr>
-            <tr *ngIf="loading" class="hidden sm:table-row">
+            <tr *ngIf="loading">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 Cargando pedidos...
               </td>
@@ -338,7 +356,9 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
 export class OrderListComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
-  readonly tableMinWidthClass = NATIVE_COMPACT_TABLE_CLASS + ' sm:min-w-[920px]';
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
 

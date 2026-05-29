@@ -27,10 +27,15 @@ import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
-  TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
   DEFAULT_LIST_PAGE_SIZE,
@@ -71,6 +76,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     ListRowActionsComponent,
     ListPaginationComponent,
     ModalFormFooterComponent,
+    CompactListRowComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -126,8 +132,42 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             placeholder="Buscar por venta, cliente, pedido o producto..."
             [class]="tableSearchInputClass">
         </div>
-        <div [class]="tableScrollClass">
-        <table [class]="tableMinWidthClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let sale of paginatedFilteredSales"
+            (activate)="openSaleDetail(sale)">
+            <div compactTitle class="compact-list-title truncate">#{{ formatSaleLabel(sale) }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ sale.clienteNombre?.trim() || '—' }}
+              ·
+              <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
+              <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
+            </div>
+            <span
+              *ngIf="auth.canViewOrderSalePrice"
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
+              {{ '$' + (sale.total || 0) }}
+            </span>
+            <span
+              *ngIf="!auth.canViewOrderSalePrice && auth.canViewAccountBalance"
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums shrink-0"
+              [class.text-orange-500]="(sale.saldoPendiente || 0) > 0"
+              [class.text-gray-500]="!(sale.saldoPendiente || 0)">
+              {{ '$' + (sale.saldoPendiente || 0) }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando ventas...</p>
+          <p *ngIf="!loading && sales.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
+          </p>
+          <p *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" [class]="compactListEmptyClass">
+            No hay ventas que coincidan con la búsqueda.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[720px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -210,28 +250,15 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                 </app-list-row-actions>
               </td>
             </tr>
-            <tr *ngIf="loading" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando ventas...</td>
-            </tr>
-            <tr *ngIf="loading" class="hidden sm:table-row">
+            <tr *ngIf="loading">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando ventas...</td>
             </tr>
-            <tr *ngIf="!loading && sales.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && sales.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && sales.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
               </td>
             </tr>
-            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                No hay ventas que coincidan con la búsqueda.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                 No hay ventas que coincidan con la búsqueda.
               </td>
@@ -764,7 +791,9 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 export class SalesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
-  readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;

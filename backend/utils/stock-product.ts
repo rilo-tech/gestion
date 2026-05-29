@@ -83,6 +83,19 @@ export function productControlsStock(data: Record<string, unknown> | undefined):
   return data?.controlaStock !== false;
 }
 
+export function getStockDisponibleFromValues(
+  stockActual: number,
+  stockReservado: number
+): number {
+  return Math.max(0, (Number(stockActual) || 0) - (Number(stockReservado) || 0));
+}
+
+/** Unidades físicas en depósito: libre + reservado (una sola vez, sin duplicar). */
+export function getStockEnDeposito(stockActual: number, stockReservado: number): number {
+  const reservado = Math.max(0, Number(stockReservado) || 0);
+  return getStockDisponibleFromValues(stockActual, stockReservado) + reservado;
+}
+
 export function productPermitsNegativeStock(data: Record<string, unknown> | undefined): boolean {
   return data?.permitirStockNegativo !== false;
 }

@@ -1,17 +1,20 @@
 import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Subscription } from 'rxjs';
+import { ActivatedRoute, NavigationEnd, Router, RouterLink } from '@angular/router';
+import { filter, Subscription } from 'rxjs';
 import {
   StockItem,
   StockMovement,
   StockOrigenGrupo,
   StockReservationRow,
   StockService,
+  computeItemValorEstimado,
+  computeValorDepositoEstimado,
   getStockDisponible,
   itemControlsStock,
   itemIsLowStock,
+  type StockCatalogChange,
 } from '../../core/services/stock.service';
 import {
   AppConfig,
@@ -44,6 +47,7 @@ import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
+  totalListPages,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
@@ -53,6 +57,7 @@ import {
 } from '../../shared/components/compact-list/compact-inline-stats.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
 import { getOrderStatusLabel } from '../../core/constants/order-status';
@@ -100,7 +105,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         class="module-summary-kpis module-summary-kpis--3 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
-          <p class="text-2xl font-bold">{{ items.length }}</p>
+          <p class="text-2xl font-bold">{{ totalItemsCount }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
@@ -117,15 +122,19 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         class="module-summary-kpis module-summary-kpis--4 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
-          <p class="text-2xl font-bold">{{ items.length }}</p>
+          <p class="text-2xl font-bold">{{ totalItemsCount }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
           <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Valor estimado</p>
-          <p class="text-2xl font-bold text-teal-600">{{ '$' + estimatedStockValue }}</p>
+          <p
+            class="text-xs font-semibold text-gray-400 uppercase mb-2"
+            title="Costo × unidades en depósito (disponible + reservado, sin duplicar)">
+            Valor estimado
+          </p>
+          <p class="text-2xl font-bold text-teal-600">{{ formatStockMoney(estimatedStockValue) }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
@@ -194,9 +203,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             (activate)="openEditItem(item)">
             <div compactTitle class="compact-list-title truncate">{{ item.nombre }}</div>
             <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ item.categoria || '—' }}
-              <ng-container *ngIf="!controlsStockItem(item)"> · Servicio</ng-container>
-              <ng-container *ngIf="controlsStockItem(item)"> · Mín {{ item.stockMinimo || 0 }}</ng-container>
+              {{ productMobileSubtitle(item) }}
             </div>
             <app-compact-inline-stats
               *ngIf="controlsStockItem(item)"
@@ -239,6 +246,12 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Mín. stock</th>
               <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
+              <th
+                *ngIf="auth.isAdmin"
+                class="hidden lg:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right"
+                title="Costo × unidades en depósito">
+                Valor estimado
+              </th>
               <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
@@ -283,6 +296,14 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </td>
               <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
                 {{ '$' + (item.costo || 0) }}
+              </td>
+              <td
+                *ngIf="auth.isAdmin"
+                class="hidden lg:table-cell px-6 py-4 text-sm text-right tabular-nums"
+                [class.text-teal-700]="itemValorEstimado(item) > 0"
+                [class.font-medium]="itemValorEstimado(item) > 0"
+                [class.text-gray-400]="itemValorEstimado(item) <= 0">
+                {{ itemValorEstimadoLabel(item) }}
               </td>
               <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
                 <div class="flex items-center gap-1">
@@ -334,45 +355,41 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           [page]="productsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredItems.length"
-          (pageChange)="productsPage = $event">
+          [canFetchMore]="itemsHasMore"
+          [loadingMore]="loadingMoreItems"
+          (pageChange)="productsPage = $event"
+          (fetchMore)="loadMoreItems()">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4" *ngIf="itemsHasMore">
-          <button
-            type="button"
-            (click)="loadMoreItems()"
-            [disabled]="loadingMoreItems"
-            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMoreItems ? 'Cargando...' : 'Cargar más productos' }}
-          </button>
-        </div>
       </div>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
-        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 space-y-3">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50 space-y-1.5 sm:space-y-2">
+          <div class="grid grid-cols-1 gap-2 sm:flex sm:flex-row sm:items-center sm:gap-3">
             <input
               [(ngModel)]="movementSearchQuery"
               (ngModelChange)="onMovementsSearchChange()"
               name="movementSearchQuery"
               placeholder="Buscar por producto o motivo..."
-              class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
-            <select
-              [(ngModel)]="movementTipoFilter"
-              (ngModelChange)="movementsPage = 1"
-              name="movementTipoFilter"
-              class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
-              <option value="all">Todos los tipos</option>
-              <option value="entrada">{{ getTipoLabel('entrada') }}</option>
-              <option value="salida">{{ getTipoLabel('salida') }}</option>
-            </select>
-            <select
-              [(ngModel)]="movementOrigenFilter"
-              (ngModelChange)="movementsPage = 1"
-              name="movementOrigenFilter"
-              class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
-              <option value="all">Todos los orígenes</option>
-              <option *ngFor="let origen of stockOrigenes" [value]="origen.grupo">{{ origen.nombre }}</option>
-            </select>
+              class="w-full sm:max-w-md px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            <div class="grid grid-cols-2 gap-2 sm:contents">
+              <select
+                [(ngModel)]="movementTipoFilter"
+                (ngModelChange)="movementsPage = 1"
+                name="movementTipoFilter"
+                class="min-w-0 w-full sm:w-auto px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+                <option value="all">Todos los tipos</option>
+                <option value="entrada">{{ getTipoLabel('entrada') }}</option>
+                <option value="salida">{{ getTipoLabel('salida') }}</option>
+              </select>
+              <select
+                [(ngModel)]="movementOrigenFilter"
+                (ngModelChange)="movementsPage = 1"
+                name="movementOrigenFilter"
+                class="min-w-0 w-full sm:w-auto px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+                <option value="all">Todos los orígenes</option>
+                <option *ngFor="let origen of stockOrigenes" [value]="origen.grupo">{{ origen.nombre }}</option>
+              </select>
+            </div>
           </div>
           <app-config-settings-link
             settingsTab="stock"
@@ -381,7 +398,33 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             [compact]="true">
           </app-config-settings-link>
         </div>
-        <div class="overflow-x-auto sm:overflow-x-visible">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let movement of paginatedFilteredMovements"
+            (activate)="openMovementRow(movement)">
+            <div compactTitle class="compact-list-title truncate">{{ movement.productoNombre || '—' }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ formatDate(movement.fecha) }} · {{ getTipoLabel(movement.tipo === 'entrada' ? 'entrada' : 'salida') }}
+            </div>
+            <span
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums shrink-0"
+              [class.text-teal-600]="movement.tipo === 'entrada'"
+              [class.text-red-500]="movement.tipo === 'salida'">
+              {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loadingMovements" [class]="compactListEmptyClass">Cargando movimientos...</p>
+          <p *ngIf="!loadingMovements && movements.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay movimientos de stock.
+          </p>
+          <p
+            *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0"
+            [class]="compactListEmptyClass">
+            No se encontraron movimientos para los filtros aplicados.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
           <table [class]="nativeCompactTableClass + ' sm:min-w-[860px]'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
@@ -482,28 +525,15 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   </button>
                 </td>
               </tr>
-              <tr *ngIf="loadingMovements" class="sm:hidden">
-                <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando movimientos...</td>
-              </tr>
-              <tr *ngIf="loadingMovements" class="hidden sm:table-row">
+              <tr *ngIf="loadingMovements">
                 <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
               </tr>
-              <tr *ngIf="!loadingMovements && movements.length === 0" class="sm:hidden">
-                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                  Todavía no hay movimientos de stock.
-                </td>
-              </tr>
-              <tr *ngIf="!loadingMovements && movements.length === 0" class="hidden sm:table-row">
+              <tr *ngIf="!loadingMovements && movements.length === 0">
                 <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                   Todavía no hay movimientos de stock.
                 </td>
               </tr>
-              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0" class="sm:hidden">
-                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                  No se encontraron movimientos para los filtros aplicados.
-                </td>
-              </tr>
-              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0" class="hidden sm:table-row">
+              <tr *ngIf="!loadingMovements && movements.length > 0 && filteredMovements.length === 0">
                 <td colspan="7" class="px-6 py-12 text-center text-gray-400">
                   No se encontraron movimientos con los filtros actuales.
                 </td>
@@ -677,6 +707,7 @@ export class StockComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
@@ -692,9 +723,17 @@ export class StockComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private configSub?: Subscription;
+  private catalogSub?: Subscription;
+  private routerSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   items: StockItem[] = [];
+  stockMetrics = {
+    totalItems: 0,
+    lowStockCount: 0,
+    valorDepositoEstimado: 0,
+    updatedAt: '',
+  };
   itemsHasMore = false;
   itemsCursor: string | null = null;
   loadingMoreItems = false;
@@ -749,11 +788,28 @@ export class StockComponent implements OnInit, OnDestroy {
       this.ensureTabDataLoaded(this.activeTab);
     });
 
-    this.loadStock();
+    this.catalogSub = this.stockService.stockCatalogChanged$.subscribe((change) => {
+      this.onStockCatalogChanged(change);
+    });
+
+    this.routerSub = this.router.events
+      .pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
+      .subscribe((event) => {
+        if (event.urlAfterRedirects.startsWith('/stock') && !event.urlAfterRedirects.includes('/edit')) {
+          this.loadStockMetrics(true);
+          if (this.activeTab === 'productos') {
+            this.loadStock();
+          }
+        }
+      });
+
+    this.refreshStockData();
   }
 
   ngOnDestroy() {
     this.configSub?.unsubscribe();
+    this.catalogSub?.unsubscribe();
+    this.routerSub?.unsubscribe();
   }
 
   get stockOrigenes() {
@@ -784,6 +840,9 @@ export class StockComponent implements OnInit, OnDestroy {
       replaceUrl: true,
     });
     this.ensureTabDataLoaded(tab);
+    if (tab === 'productos') {
+      this.loadStockMetrics(true);
+    }
     if (tab === 'reservas') {
       this.loadReservations(this.reservationProductFilter || undefined);
     }
@@ -838,15 +897,41 @@ export class StockComponent implements OnInit, OnDestroy {
     return paginateSlice(this.filteredReservations, this.reservationsPage, this.listPageSize);
   }
 
+  get totalItemsCount(): number {
+    return this.stockMetrics.totalItems;
+  }
+
   get lowStockCount(): number {
-    return this.items.filter((item) => itemIsLowStock(item)).length;
+    return this.stockMetrics.lowStockCount;
   }
 
   get estimatedStockValue(): number {
-    return this.items.reduce(
-      (total, item) => total + (Number(item.stockActual) || 0) * (Number(item.costo) || 0),
-      0
-    );
+    if (!this.itemsHasMore && this.items.length > 0) {
+      return computeValorDepositoEstimado(
+        this.items,
+        this.appConfig.productos?.categoriasSinStock ?? []
+      );
+    }
+    return this.stockMetrics.valorDepositoEstimado;
+  }
+
+  formatStockMoney(value: number): string {
+    const amount = Number(value) || 0;
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  }
+
+  itemValorEstimado(item: StockItem): number {
+    return computeItemValorEstimado(item, this.appConfig.productos?.categoriasSinStock ?? []);
+  }
+
+  itemValorEstimadoLabel(item: StockItem): string {
+    if (!this.controlsStockItem(item)) return '—';
+    return this.formatStockMoney(this.itemValorEstimado(item));
   }
 
   get movementsThisMonthLabel(): string | number {
@@ -936,6 +1021,8 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   isLowStock(item: StockItem): boolean {
+    const minStock = Number(item.stockMinimo) || 0;
+    if (!this.controlsStockItem(item) || minStock <= 0) return false;
     return itemIsLowStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
   }
 
@@ -944,7 +1031,10 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   get productTableDesktopColspan(): number {
-    return this.auth.canViewStockCosts ? 8 : 7;
+    let cols = 7;
+    if (this.auth.canViewStockCosts) cols += 1;
+    if (this.auth.isAdmin) cols += 1;
+    return cols;
   }
 
   stockTotalClass(item: StockItem): string {
@@ -963,6 +1053,18 @@ export class StockComponent implements OnInit, OnDestroy {
     const available = getStockDisponible(item);
     if (available <= 0) return 'text-red-600';
     return 'text-teal-700';
+  }
+
+  productMobileSubtitle(item: StockItem): string {
+    if (!this.controlsStockItem(item)) {
+      const categoria = String(item.categoria ?? '').trim();
+      return categoria ? `${categoria} · Servicio` : 'Servicio';
+    }
+    const color = String(item.color ?? '').trim();
+    const talle = String(item.talle ?? '').trim();
+    const variant = [color, talle].filter(Boolean).join(' · ');
+    if (variant) return variant;
+    return String(item.categoria ?? '').trim() || '—';
   }
 
   stockMobileStats(item: StockItem): CompactInlineStat[] {
@@ -1125,7 +1227,7 @@ export class StockComponent implements OnInit, OnDestroy {
         if (!confirmed) return;
 
         this.stockService.deleteItem(item.id!).subscribe({
-          next: () => this.loadStock(),
+          next: () => this.refreshStockData(),
           error: () =>
             this.dialogService.alert({
               title: 'Error',
@@ -1162,7 +1264,7 @@ export class StockComponent implements OnInit, OnDestroy {
         this.stockService.deleteMovement(movement.id).subscribe({
           next: () => {
             this.loadMovements();
-            this.loadStock();
+            this.refreshStockData();
           },
           error: (err) =>
             this.dialogService.alert({
@@ -1171,6 +1273,40 @@ export class StockComponent implements OnInit, OnDestroy {
             }),
         });
       });
+  }
+
+  private refreshStockData() {
+    this.loadStock(true);
+  }
+
+  private onStockCatalogChanged(change?: StockCatalogChange | void) {
+    const patch = change?.item;
+    if (patch?.id) {
+      const index = this.items.findIndex((item) => item.id === patch.id);
+      if (index >= 0) {
+        this.items[index] = { ...this.items[index], ...patch };
+        this.items = this.sortItemsByName([...this.items]);
+      }
+    }
+    this.loadStockMetrics(true);
+    this.applyMetricsFromLoadedItemsIfComplete();
+  }
+
+  private loadStockMetrics(refresh = false) {
+    this.stockService.getStockMetrics({ refresh }).subscribe({
+      next: (metrics) => {
+        this.stockMetrics = metrics;
+        this.applyMetricsFromLoadedItemsIfComplete();
+      },
+      error: () => {
+        this.stockMetrics = {
+          totalItems: 0,
+          lowStockCount: 0,
+          valorDepositoEstimado: 0,
+          updatedAt: '',
+        };
+      },
+    });
   }
 
   private resolveOrigenGrupo(movement: StockMovement): StockOrigenGrupo {
@@ -1184,7 +1320,18 @@ export class StockComponent implements OnInit, OnDestroy {
     return 'otro';
   }
 
-  private loadStock() {
+  private applyMetricsFromLoadedItemsIfComplete() {
+    if (this.itemsHasMore || this.items.length === 0) return;
+    const categoriasSinStock = this.appConfig.productos?.categoriasSinStock ?? [];
+    this.stockMetrics = {
+      ...this.stockMetrics,
+      totalItems: this.items.length,
+      lowStockCount: this.items.filter((item) => this.isLowStock(item)).length,
+      valorDepositoEstimado: computeValorDepositoEstimado(this.items, categoriasSinStock),
+    };
+  }
+
+  private loadStock(refreshMetrics = false) {
     this.loadingItems = true;
     this.productsPage = 1;
     this.stockService.getStockPage(this.listPageSize).subscribe({
@@ -1193,6 +1340,11 @@ export class StockComponent implements OnInit, OnDestroy {
         this.itemsHasMore = page.hasMore;
         this.itemsCursor = page.nextCursor;
         this.loadingItems = false;
+        if (refreshMetrics) {
+          this.loadStockMetrics(true);
+        } else {
+          this.applyMetricsFromLoadedItemsIfComplete();
+        }
       },
       error: () => {
         this.loadingItems = false;
@@ -1206,6 +1358,8 @@ export class StockComponent implements OnInit, OnDestroy {
 
   loadMoreItems() {
     if (!this.itemsHasMore || this.loadingMoreItems) return;
+    const onLastPage =
+      this.productsPage >= totalListPages(this.filteredItems.length, this.listPageSize);
     this.loadingMoreItems = true;
     this.stockService.getStockPage(this.listPageSize, this.itemsCursor ?? undefined).subscribe({
       next: (page) => {
@@ -1213,6 +1367,13 @@ export class StockComponent implements OnInit, OnDestroy {
         this.itemsHasMore = page.hasMore;
         this.itemsCursor = page.nextCursor;
         this.loadingMoreItems = false;
+        if (onLastPage) {
+          this.productsPage = totalListPages(this.filteredItems.length, this.listPageSize);
+        }
+        this.applyMetricsFromLoadedItemsIfComplete();
+        if (!this.itemsHasMore) {
+          this.loadStockMetrics(true);
+        }
       },
       error: () => {
         this.loadingMoreItems = false;
@@ -1322,7 +1483,7 @@ export class StockComponent implements OnInit, OnDestroy {
           this.transferringReservation = false;
           this.closeReservationTransfer();
           this.loadReservations(this.reservationProductFilter || undefined);
-          this.loadStock();
+          this.refreshStockData();
         },
         error: (err) => {
           this.transferringReservation = false;

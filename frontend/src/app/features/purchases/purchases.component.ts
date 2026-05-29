@@ -16,10 +16,15 @@ import {
 import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import {
   IconActionComponent,
-  NATIVE_COMPACT_TABLE_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -32,7 +37,7 @@ interface PurchaseDraftLine {
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent, ModalFormFooterComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent, ModalFormFooterComponent, CompactListRowComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
@@ -68,7 +73,26 @@ interface PurchaseDraftLine {
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div [class]="tableScrollClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let purchase of purchases"
+            (activate)="openPurchaseDetail(purchase)">
+            <div compactTitle class="compact-list-title truncate">
+              #{{ purchase.compraLabel || purchase.id?.slice(-6) }}
+            </div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ purchase.proveedor?.trim() || '—' }} · {{ purchase.items?.length || 0 }} producto(s)
+            </div>
+            <span compactTrailing class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
+              {{ '$' + (purchase.total || 0) }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando compras...</p>
+          <p *ngIf="!loading && purchases.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -102,18 +126,10 @@ interface PurchaseDraftLine {
                 {{ '$' + (purchase.total || 0) }}
               </td>
             </tr>
-            <tr *ngIf="loading" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando compras...</td>
-            </tr>
-            <tr *ngIf="loading" class="hidden sm:table-row">
+            <tr *ngIf="loading">
               <td colspan="5" class="px-6 py-12 text-center text-gray-400">Cargando compras...</td>
             </tr>
-            <tr *ngIf="!loading && purchases.length === 0" class="sm:hidden">
-              <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
-              </td>
-            </tr>
-            <tr *ngIf="!loading && purchases.length === 0" class="hidden sm:table-row">
+            <tr *ngIf="!loading && purchases.length === 0">
               <td colspan="5" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
               </td>
@@ -315,6 +331,8 @@ export class PurchasesComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly auth = inject(AuthService);
 
   private purchaseService = inject(PurchaseService);

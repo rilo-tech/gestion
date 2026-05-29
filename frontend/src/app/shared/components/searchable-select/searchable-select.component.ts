@@ -1,4 +1,5 @@
 import {
+  ChangeDetectorRef,
   Component,
   ElementRef,
   EventEmitter,
@@ -37,10 +38,10 @@ export interface SearchableSelectOption {
     <div [ngClass]="embedded ? 'min-w-[9rem] flex-1' : ''" *ngIf="hasConfiguredOptions; else plainInput">
       <div class="relative">
         <input
+          #searchInput
           type="text"
-          [ngModel]="searchText"
-          (ngModelChange)="onSearchModelChange($event)"
-          [ngModelOptions]="{ standalone: true }"
+          [value]="searchText"
+          (input)="onSearchInput($event)"
           (focus)="onInputFocus($event)"
           (blur)="onInputBlur()"
           (keydown)="onInputKeydown($event)"
@@ -51,11 +52,11 @@ export interface SearchableSelectOption {
             : 'form-control searchable-select-input w-full text-gray-900 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50'">
 
         <div
-          *ngIf="open && (dropdownItems.length || showCreateOption)"
+          *ngIf="open && (visibleDropdownItems.length || showCreateOption)"
           class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white text-gray-900 shadow-lg">
           <button
             type="button"
-            *ngFor="let option of dropdownItems"
+            *ngFor="let option of visibleDropdownItems; trackBy: trackByValue"
             (mousedown)="pickOption(option, $event)"
             class="searchable-select-option w-full px-4 py-2 text-left text-sm text-gray-900 hover:bg-teal-50">
             {{ option.label }}
@@ -70,7 +71,7 @@ export interface SearchableSelectOption {
         </div>
 
         <div
-          *ngIf="open && !dropdownItems.length && !showCreateOption"
+          *ngIf="open && !visibleDropdownItems.length && !showCreateOption"
           class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-500 shadow-lg">
           {{ emptyListMessage }}
         </div>
@@ -94,6 +95,10 @@ export interface SearchableSelectOption {
 })
 export class SearchableSelectComponent implements ControlValueAccessor, OnChanges {
   private elementRef = inject(ElementRef<HTMLElement>);
+  private cdr = inject(ChangeDetectorRef);
+
+  private static readonly BROWSE_LIMIT = 50;
+  private static readonly FILTER_LIMIT = 100;
 
   @Input() options: string[] = [];
   @Input() labeledOptions?: SearchableSelectOption[];
@@ -112,13 +117,19 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
 
   value = '';
   searchText = '';
+  visibleDropdownItems: SearchableSelectOption[] = [];
   open = false;
   disabled = false;
-  private filterQueryActive = false;
 
+  /** Al abrir el menú: lista completa hasta que el usuario escriba. */
+  private browseAllOnOpen = false;
+  private inputFocused = false;
   private suppressBlurCommit = false;
+  private optionsSnapshot = '';
   private onChange: (value: string) => void = () => {};
   private onTouched: () => void = () => {};
+
+  readonly trackByValue = (_index: number, option: SearchableSelectOption) => option.value;
 
   get useEntityMode(): boolean {
     return this.labeledOptions !== undefined;
@@ -140,26 +151,26 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     return !this.findExactOption(query);
   }
 
-  get dropdownItems(): SearchableSelectOption[] {
-    const query = this.filterQueryActive ? this.searchText.trim().toLowerCase() : '';
-    const source = this.useEntityMode ? (this.labeledOptions ?? []) : this.toLabeledOptions(this.options);
-
-    const filtered = query
-      ? source.filter((option) => option.label.toLowerCase().includes(query))
-      : source;
-
-    return filtered.slice(0, 20);
-  }
-
   ngOnChanges(changes: SimpleChanges) {
-    if ((changes['labeledOptions'] || changes['options']) && this.value) {
+    const optionsChanged = changes['options'] || changes['labeledOptions'];
+    if (!optionsChanged) return;
+
+    const nextKey = this.serializeOptionsKey();
+    if (nextKey === this.optionsSnapshot) return;
+
+    this.optionsSnapshot = nextKey;
+    this.refreshDropdownItems();
+    if (!this.inputFocused) {
       this.syncDisplayTextFromValue();
     }
   }
 
   writeValue(value: string | null): void {
     this.value = value ?? '';
-    this.syncDisplayTextFromValue();
+    if (!this.inputFocused) {
+      this.syncDisplayTextFromValue();
+      this.refreshDropdownItems();
+    }
   }
 
   registerOnChange(fn: (value: string) => void): void {
@@ -174,76 +185,72 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     this.disabled = isDisabled;
   }
 
-  openDropdown() {
-    this.open = true;
-    this.onTouched();
-  }
-
   onInputFocus(event: FocusEvent) {
-    this.filterQueryActive = false;
-    this.openDropdown();
-    this.selectInputText(event.target as HTMLInputElement);
+    this.inputFocused = true;
+    this.browseAllOnOpen = true;
+    this.syncDisplayTextFromValue();
+    this.open = true;
+    this.refreshDropdownItems();
+    this.onTouched();
+
+    const input = event.target as HTMLInputElement;
+    queueMicrotask(() => {
+      if (document.activeElement !== input) return;
+      input.select();
+    });
   }
 
   onPlainFocus(event: FocusEvent) {
-    this.selectInputText(event.target as HTMLInputElement);
+    const input = event.target as HTMLInputElement;
+    queueMicrotask(() => input.select());
   }
 
-  private selectInputText(input: HTMLInputElement | null) {
-    if (!input || input.disabled || input.readOnly) return;
-    setTimeout(() => input.select(), 0);
-  }
-
-  onSearchModelChange(nextValue: string) {
-    this.searchText = nextValue;
-    this.filterQueryActive = true;
+  onSearchInput(event: Event) {
+    const input = event.target as HTMLInputElement;
+    this.browseAllOnOpen = false;
+    this.searchText = input.value;
     this.searchChange.emit(this.searchText);
     this.open = true;
+    this.refreshDropdownItems();
+    this.cdr.markForCheck();
   }
 
   onInputBlur() {
     window.setTimeout(() => {
-      if (this.suppressBlurCommit || this.open) return;
-      this.commitSearchOrRevert();
-      this.onTouched();
+      if (this.suppressBlurCommit) return;
+      this.finishEditing(true);
     }, 150);
   }
 
   onInputKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.finishEditing(true);
+      return;
+    }
+
     if (event.key !== 'Enter') return;
 
     event.preventDefault();
     const exact = this.findExactOption(this.searchText);
     if (exact) {
-      this.selectOption(exact);
+      this.applySelection(exact);
       return;
     }
     if (this.creatable && this.searchText.trim()) {
       this.emitCreateFromSearch();
       return;
     }
-    if (this.dropdownItems.length === 1) {
-      this.selectOption(this.dropdownItems[0]);
+    const matches = this.filterOptions(this.searchText.trim());
+    if (matches.length === 1) {
+      this.applySelection(matches[0]);
     }
   }
 
   pickOption(option: SearchableSelectOption, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    this.selectOption(option);
-  }
-
-  selectOption(option: SearchableSelectOption) {
-    this.suppressBlurCommit = true;
-    this.value = option.value;
-    this.searchText = option.label;
-    this.filterQueryActive = false;
-    this.open = false;
-    this.onChange(option.value);
-    this.onTouched();
-    window.setTimeout(() => {
-      this.suppressBlurCommit = false;
-    }, 200);
+    this.applySelection(option);
   }
 
   createFromSearch(event: MouseEvent) {
@@ -252,44 +259,138 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     this.emitCreateFromSearch();
   }
 
+  private applySelection(option: SearchableSelectOption) {
+    this.suppressBlurCommit = true;
+    this.value = option.value;
+    this.searchText = option.label;
+    this.browseAllOnOpen = false;
+    this.open = false;
+    this.inputFocused = false;
+    this.refreshDropdownItems();
+    this.onChange(option.value);
+    this.onTouched();
+    window.setTimeout(() => {
+      this.suppressBlurCommit = false;
+    }, 200);
+  }
+
   private emitCreateFromSearch() {
     const query = this.searchText.trim();
     if (!query) return;
     this.open = false;
+    this.inputFocused = false;
+    this.browseAllOnOpen = false;
     this.createRequested.emit(query);
     this.onTouched();
   }
 
+  private finishEditing(commit: boolean) {
+    this.open = false;
+    this.inputFocused = false;
+    this.browseAllOnOpen = false;
+    if (commit) {
+      this.commitSearchOrRevert();
+    } else {
+      this.syncDisplayTextFromValue();
+      this.refreshDropdownItems();
+    }
+    this.onTouched();
+  }
+
+  private refreshDropdownItems() {
+    const typed = this.searchText.trim();
+    const query = this.browseAllOnOpen && this.open ? '' : typed;
+    const filtered = this.filterOptions(query);
+    const limit = query ? SearchableSelectComponent.FILTER_LIMIT : SearchableSelectComponent.BROWSE_LIMIT;
+    this.visibleDropdownItems = filtered.slice(0, limit);
+  }
+
+  private getSourceOptions(): SearchableSelectOption[] {
+    return this.useEntityMode ? (this.labeledOptions ?? []) : this.toLabeledOptions(this.options);
+  }
+
+  private normalizeForSearch(text: string): string {
+    return text
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  private filterOptions(query: string): SearchableSelectOption[] {
+    const normalized = this.normalizeForSearch(query);
+    const source = this.getSourceOptions();
+    if (!normalized) return source;
+
+    const matches = source.filter((option) => {
+      const label = this.normalizeForSearch(option.label);
+      const value = this.normalizeForSearch(option.value);
+      return label.includes(normalized) || value.includes(normalized);
+    });
+
+    return matches.sort((a, b) => {
+      const aLabel = this.normalizeForSearch(a.label);
+      const bLabel = this.normalizeForSearch(b.label);
+      const aStarts = aLabel.startsWith(normalized) ? 0 : 1;
+      const bStarts = bLabel.startsWith(normalized) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+    });
+  }
+
   private findExactOption(text: string): SearchableSelectOption | undefined {
-    const query = text.trim().toLowerCase();
+    const query = this.normalizeForSearch(text);
     if (!query) return undefined;
 
-    const source = this.useEntityMode ? (this.labeledOptions ?? []) : this.toLabeledOptions(this.options);
-    return source.find(
-      (option) =>
-        option.value.toLowerCase() === query || option.label.toLowerCase() === query
-    );
+    return this.getSourceOptions().find((option) => {
+      const label = this.normalizeForSearch(option.label);
+      const value = this.normalizeForSearch(option.value);
+      return value === query || label === query;
+    });
   }
 
   private commitSearchOrRevert() {
-    const exact = this.findExactOption(this.searchText);
+    const trimmed = this.searchText.trim();
+
+    if (!trimmed) {
+      if (this.value) {
+        this.syncDisplayTextFromValue();
+      } else {
+        this.searchText = '';
+        this.onChange('');
+      }
+      this.refreshDropdownItems();
+      return;
+    }
+
+    const exact = this.findExactOption(trimmed);
     if (exact) {
-      this.selectOption(exact);
+      this.value = exact.value;
+      this.searchText = exact.label;
+      this.onChange(exact.value);
+      this.refreshDropdownItems();
+      return;
+    }
+
+    const matches = this.filterOptions(trimmed);
+    if (matches.length === 1) {
+      this.value = matches[0].value;
+      this.searchText = matches[0].label;
+      this.onChange(matches[0].value);
+      this.refreshDropdownItems();
       return;
     }
 
     this.syncDisplayTextFromValue();
+    this.refreshDropdownItems();
   }
 
   private syncDisplayTextFromValue() {
     if (!this.value) {
+      this.searchText = '';
       return;
     }
-
-    const next = this.getDisplayTextForValue();
-    if (next) {
-      this.searchText = next;
-    }
+    this.searchText = this.getDisplayTextForValue() || this.value;
   }
 
   private getDisplayTextForValue(): string {
@@ -300,6 +401,13 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     }
 
     return this.value;
+  }
+
+  private serializeOptionsKey(): string {
+    const source = this.useEntityMode
+      ? (this.labeledOptions ?? []).map((option) => `${option.value}\u0001${option.label}`)
+      : this.options;
+    return JSON.stringify(source);
   }
 
   private toLabeledOptions(options: string[]): SearchableSelectOption[] {
@@ -314,11 +422,8 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
 
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent) {
-    if (!this.elementRef.nativeElement.contains(event.target as Node)) {
-      if (this.open) {
-        this.open = false;
-        this.commitSearchOrRevert();
-      }
+    if (!this.elementRef.nativeElement.contains(event.target as Node) && this.open) {
+      this.finishEditing(true);
     }
   }
 }

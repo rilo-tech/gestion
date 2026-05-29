@@ -14,8 +14,13 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   TABLE_SEARCH_INPUT_CLASS,
-  NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
   DEFAULT_LIST_PAGE_SIZE,
@@ -39,6 +44,7 @@ import { LucideAngularModule } from 'lucide-angular';
     IconActionComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
+    CompactListRowComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -66,7 +72,33 @@ import { LucideAngularModule } from 'lucide-angular';
             placeholder="Buscar por nombre o email..."
             [class]="tableSearchInputClass">
         </div>
-        <div [class]="tableScrollClass">
+        <div [class]="'sm:hidden ' + nativeCompactListClass">
+          <app-compact-list-row
+            *ngFor="let user of paginatedFilteredUsers"
+            (activate)="openUser(user)">
+            <div compactTitle class="compact-list-title truncate">{{ user.nombre }}</div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              <ng-container *ngIf="user.email">{{ user.email }} · </ng-container>{{ roleLabels[user.rol] }}
+            </div>
+            <span
+              compactTrailing
+              class="px-2 py-0.5 text-[10px] rounded-full font-semibold shrink-0"
+              [class.bg-green-50]="user.activo !== false"
+              [class.text-green-700]="user.activo !== false"
+              [class.bg-gray-100]="user.activo === false"
+              [class.text-gray-500]="user.activo === false">
+              {{ user.activo !== false ? 'Activo' : 'Inactivo' }}
+            </span>
+          </app-compact-list-row>
+          <p *ngIf="loadingUsers" [class]="compactListEmptyClass">Cargando usuarios...</p>
+          <p *ngIf="!loadingUsers && users.length === 0" [class]="compactListEmptyClass">
+            No hay usuarios cargados.
+          </p>
+          <p *ngIf="!loadingUsers && users.length > 0 && filteredUsers.length === 0" [class]="compactListEmptyClass">
+            No se encontraron usuarios para "{{ searchQuery }}".
+          </p>
+        </div>
+        <div class="hidden sm:block" [class]="tableScrollClass">
           <table [class]="nativeCompactTableClass + ' sm:table-fixed sm:min-w-[640px]'">
             <colgroup class="hidden sm:table-column-group">
               <col />
@@ -128,18 +160,10 @@ import { LucideAngularModule } from 'lucide-angular';
                   </app-list-row-actions>
                 </td>
               </tr>
-              <tr *ngIf="loadingUsers" class="sm:hidden">
-                <td colspan="2" class="px-4 py-12 text-center text-gray-400">Cargando usuarios...</td>
-              </tr>
-              <tr *ngIf="loadingUsers" class="hidden sm:table-row">
+              <tr *ngIf="loadingUsers">
                 <td colspan="4" class="px-6 py-12 text-center text-gray-400">Cargando usuarios...</td>
               </tr>
-              <tr *ngIf="!loadingUsers && users.length === 0" class="sm:hidden">
-                <td colspan="2" class="px-4 py-12 text-center text-gray-400">
-                  No hay usuarios cargados.
-                </td>
-              </tr>
-              <tr *ngIf="!loadingUsers && users.length === 0" class="hidden sm:table-row">
+              <tr *ngIf="!loadingUsers && users.length === 0">
                 <td colspan="4" class="px-6 py-12 text-center text-gray-400">
                   No hay usuarios cargados.
                 </td>
@@ -183,6 +207,8 @@ export class UsersComponent implements OnInit {
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly permissions = PERMISSIONS;
   readonly roleLabels = USER_ROLE_LABELS;

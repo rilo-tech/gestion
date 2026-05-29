@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, Subject } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { StockShortageGroup, StockShortageRow } from './order.service';
 import { itemControlsStock as resolveItemControlsStock } from '../utils/stock-product';
@@ -44,6 +44,14 @@ export function getStockDisponible(
   item: Pick<StockItem, 'stockActual' | 'stockReservado'> | undefined
 ): number {
   return Math.max(0, (Number(item?.stockActual) || 0) - (Number(item?.stockReservado) || 0));
+}
+
+/** Unidades en depósito: disponible + reservado (sin contar dos veces). */
+export function getStockEnDeposito(
+  item: Pick<StockItem, 'stockActual' | 'stockReservado'> | undefined
+): number {
+  const reservado = Math.max(0, Number(item?.stockReservado) || 0);
+  return getStockDisponible(item) + reservado;
 }
 
 export type StockOrigenGrupo = 'compra' | 'pedido' | 'venta' | 'ajuste' | 'carga_inicial' | 'otro' | (string & {});
@@ -98,19 +106,72 @@ export interface PaginatedStockItems {
   hasMore: boolean;
 }
 
+export interface StockMetrics {
+  totalItems: number;
+  lowStockCount: number;
+  /** Suma costo × depósito por producto con control de stock. */
+  valorDepositoEstimado: number;
+  updatedAt: string;
+}
+
+export type StockCatalogChange = {
+  item?: StockItem;
+};
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Valor estimado de un producto (costo × depósito; stock 0 → 0). */
+export function computeItemValorEstimado(
+  item: StockItem,
+  categoriasSinStock: string[] = []
+): number {
+  if (!itemControlsStock(item, categoriasSinStock)) return 0;
+  const deposito = getStockEnDeposito(item);
+  if (deposito <= 0) return 0;
+  return roundMoney(deposito * (Number(item.costo) || 0));
+}
+
+/** Suma costo × unidades en depósito (misma regla que métricas persistidas). */
+export function computeValorDepositoEstimado(
+  items: StockItem[],
+  categoriasSinStock: string[] = []
+): number {
+  const total = items.reduce(
+    (sum, item) => sum + computeItemValorEstimado(item, categoriasSinStock),
+    0
+  );
+  return roundMoney(total);
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class StockService {
   private http = inject(HttpClient);
   private tenant = inject(TenantService);
+  private readonly catalogChanged = new Subject<StockCatalogChange | void>();
+
+  /** Emite cuando el catálogo o el stock de un producto cambia (alta/baja, costo, etc.). */
+  readonly stockCatalogChanged$ = this.catalogChanged.asObservable();
 
   private get businessId(): string {
     return this.tenant.businessId;
   }
 
+  notifyCatalogChanged(change?: StockCatalogChange): void {
+    this.catalogChanged.next(change);
+  }
+
   getStock(): Observable<StockItem[]> {
     return this.http.get<StockItem[]>(`/api/stock/${this.businessId}`);
+  }
+
+  getStockMetrics(options?: { refresh?: boolean }): Observable<StockMetrics> {
+    const params: Record<string, string> = {};
+    if (options?.refresh) params['refresh'] = '1';
+    return this.http.get<StockMetrics>(`/api/stock/${this.businessId}/metrics`, { params });
   }
 
   getStockPage(limit = 120, cursor?: string): Observable<PaginatedStockItems> {
