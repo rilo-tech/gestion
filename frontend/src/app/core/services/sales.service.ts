@@ -21,6 +21,7 @@ export interface SaleLine {
 
 export interface Sale {
   id?: string;
+  estado?: string;
   numeroVenta?: number;
   ventaLabel?: string;
   origen: 'mostrador' | 'pedido';
@@ -50,8 +51,9 @@ export interface Sale {
   }>;
 }
 
-export function formatSaleLabel(sale: Pick<Sale, 'numeroVenta' | 'ventaLabel'>): string {
-  if (sale.ventaLabel) return sale.ventaLabel;
+export function formatSaleLabel(sale: Pick<Sale, 'numeroVenta' | 'ventaLabel' | 'estado'>): string {
+  if (sale.estado === 'borrador') return 'Borrador';
+  if (sale.ventaLabel && sale.ventaLabel !== 'Borrador') return sale.ventaLabel;
   if (sale.numeroVenta) return String(sale.numeroVenta).padStart(5, '0');
   return '—';
 }
@@ -94,6 +96,8 @@ export interface CreateSalePayload {
   medioPago?: string;
   notas?: string;
   compromisoPago?: CompromisoPagoPayload;
+  draft?: boolean;
+  ventaId?: string;
 }
 
 export interface UpdateSalePayload {
@@ -216,5 +220,21 @@ export class SalesService {
       saldoPendiente: number;
       movimientoCajaId: string;
     }>(`/api/sales/${this.businessId}/${ventaId}/cobros`, payload);
+  }
+
+  confirmSale(ventaId: string): Observable<{
+    id: string;
+    ventaLabel: string;
+    total: number;
+    montoCobrado: number;
+    saldoPendiente: number;
+  }> {
+    return this.http.post<{
+      id: string;
+      ventaLabel: string;
+      total: number;
+      montoCobrado: number;
+      saldoPendiente: number;
+    }>(`/api/sales/${this.businessId}/${ventaId}/confirm`, {});
   }
 }

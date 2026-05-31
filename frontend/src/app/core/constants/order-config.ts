@@ -18,6 +18,12 @@ export const DEFAULT_ORDER_ESTADOS: OrderEstadoConfig[] = [
   { value: 'cancelado', label: 'Cancelado', sistema: true },
 ];
 
+/** Tarjetas resumen en el listado de pedidos (máximo). */
+export const ORDER_STATUS_CARD_LIMIT = 5;
+
+/** Estados que no se pueden quitar de la configuración. */
+export const PROTECTED_ORDER_ESTADO_VALUES = new Set(['borrador', 'cancelado']);
+
 export interface OrderExtraCostPreset {
   nombre: string;
   costo: number;
@@ -46,21 +52,84 @@ const STOCK_TRIGGER_EXCLUDED = new Set([
   'entregado_con_saldo',
 ]);
 
+export function slugifyOrderEstadoValue(label: string): string {
+  const slug = String(label ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return slug || 'estado';
+}
+
 export function normalizeOrderEstados(raw: OrderEstadoConfig[] | undefined): OrderEstadoConfig[] {
-  const saved = raw ?? [];
-  const labelByValue = new Map<string, string>();
+  const saved = Array.isArray(raw) ? raw : [];
+  const result: OrderEstadoConfig[] = [];
+  const seen = new Set<string>();
 
   for (const entry of saved) {
-    const value = String(entry.value ?? '').trim();
-    const label = String(entry.label ?? '').trim();
-    if (!value || !label) continue;
-    labelByValue.set(value, label);
+    const label = String(entry?.label ?? '').trim();
+    if (!label) continue;
+
+    let value = normalizeOrderEstadoValue(String(entry?.value ?? ''));
+    if (!value) value = slugifyOrderEstadoValue(label);
+    if (seen.has(value)) continue;
+
+    seen.add(value);
+    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
+    result.push({
+      value,
+      label,
+      sistema: entry?.sistema === true || defaults?.sistema === true,
+    });
   }
 
-  return DEFAULT_ORDER_ESTADOS.map((defaults) => ({
-    ...defaults,
-    label: labelByValue.get(defaults.value) ?? defaults.label,
-  }));
+  if (result.length === 0) {
+    return DEFAULT_ORDER_ESTADOS.map((item) => ({ ...item }));
+  }
+
+  const ensure = (value: string, position: 'start' | 'end') => {
+    if (seen.has(value)) return;
+    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
+    if (!defaults) return;
+    const row = { ...defaults };
+    if (position === 'start') result.unshift(row);
+    else result.push(row);
+    seen.add(value);
+  };
+
+  ensure('borrador', 'start');
+  ensure('cancelado', 'end');
+
+  return result;
+}
+
+/** Primeros estados del flujo que alimentan las tarjetas del módulo Pedidos. */
+export function getOrderStatusCardEstados(
+  pedidos: OrderPedidosConfigShape | undefined
+): OrderEstadoConfig[] {
+  const estados = getOrderEstadosFromConfig(pedidos);
+  return estados.slice(0, ORDER_STATUS_CARD_LIMIT);
+}
+
+export function canRemoveOrderEstado(
+  estado: OrderEstadoConfig,
+  estados: OrderEstadoConfig[] = DEFAULT_ORDER_ESTADOS
+): boolean {
+  if (PROTECTED_ORDER_ESTADO_VALUES.has(estado.value)) return false;
+  const removable = estados.filter((item) => !PROTECTED_ORDER_ESTADO_VALUES.has(item.value));
+  return removable.length > 1;
+}
+
+export function orderEstadoValueInConfig(
+  estado: string | undefined,
+  pedidos: OrderPedidosConfigShape | undefined
+): string | null {
+  const normalized = normalizeOrderEstadoValue(estado);
+  if (!normalized) return null;
+  const match = getOrderEstadosFromConfig(pedidos).find((item) => item.value === normalized);
+  return match?.value ?? null;
 }
 
 const STOCK_CONSUME_EXCLUDED = new Set(['borrador', 'cancelado']);

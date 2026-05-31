@@ -40,7 +40,7 @@ type DraftLine = OrderStockPreparationLine & {
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
               <h2 class="text-base font-bold text-gray-900">
-                {{ isReedit ? 'Actualizar stock' : 'Revisar stock' }}
+                {{ isReedit ? 'Editar stock' : 'Revisar stock' }}
                 <span *ngIf="view" class="font-semibold text-teal-700">#{{ view.orderLabel }}</span>
               </h2>
               <p class="text-xs text-gray-500 mt-0.5">

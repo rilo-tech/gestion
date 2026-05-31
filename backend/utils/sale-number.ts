@@ -8,7 +8,9 @@ export function formatSaleNumber(numero?: number): string {
 export function resolveSaleLabel(venta: {
   numeroVenta?: number;
   ventaLabel?: string;
+  estado?: string;
 }): string {
+  if (String(venta.estado ?? '').trim().toLowerCase() === 'borrador') return 'Borrador';
   if (venta.ventaLabel) return venta.ventaLabel;
   if (venta.numeroVenta) return formatSaleNumber(venta.numeroVenta);
   return '—';

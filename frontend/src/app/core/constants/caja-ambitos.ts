@@ -68,7 +68,7 @@ export function getDefaultCashAmbitoId(config?: { caja?: { ambitos?: unknown } }
 }
 
 export function usesCashAmbitoSeparation(config: { caja?: { ambitos?: unknown } }): boolean {
-  return normalizeCajaAmbitos(config.caja ?? {}).length >= 1;
+  return normalizeCajaAmbitos(config.caja ?? {}).length > 1;
 }
 
 export function resolveCashAmbito(

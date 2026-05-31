@@ -16,7 +16,6 @@ import {
   inferNombreBase,
 } from '../../core/services/catalog-config.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
@@ -24,14 +23,19 @@ import { PERMISSIONS } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
-import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
-import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { FormFooterComponent } from '../../shared/components/form-shell';
+import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { FormBackButtonComponent } from '../../shared/components/form-shell';
 import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
+import {
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 
 @Component({
   selector: 'app-new-product',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, ConfigSettingsLinkComponent, HasPermissionDirective, SelectOnFocusDirective, FormSaveFooterComponent, DuplicateActionButtonComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, HasPermissionDirective, SelectOnFocusDirective, FormFooterComponent, RecordActionToolbarComponent, FormBackButtonComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
       <div class="mb-6 sm:mb-8 grid grid-cols-[1fr_auto] gap-x-3 sm:gap-x-4 gap-y-2 items-start">
@@ -39,42 +43,26 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
           {{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}
         </h1>
         <div class="flex items-center justify-end shrink-0 gap-1.5 sm:gap-4">
-          <ng-container *ngIf="isEditing">
-            <app-duplicate-action-button
-              *ngIf="!formReadOnly"
-              variant="outline"
-              label="Duplicar producto"
-              (duplicateClick)="duplicateProduct()">
-            </app-duplicate-action-button>
-            <button
-              *ngIf="auth.canDeleteRecords"
-              type="button"
-              (click)="confirmDeleteProduct()"
-              title="Eliminar producto"
-              aria-label="Eliminar producto"
-              class="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50 min-h-[36px] min-w-[36px] transition-colors">
-              <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-            </button>
-          </ng-container>
-          <a
+          <app-record-action-toolbar
+            *ngIf="isEditing"
+            [showDuplicate]="!formReadOnly"
+            duplicateLabel="Duplicar producto"
+            (duplicateClick)="duplicateProduct()"
+            [showDelete]="auth.canDeleteRecords"
+            deleteLabel="Eliminar producto"
+            (deleteClick)="confirmDeleteProduct()">
+          </app-record-action-toolbar>
+          <app-form-back-button
             routerLink="/stock"
-            title="Volver al stock"
-            aria-label="Volver al stock"
-            class="inline-flex items-center justify-center gap-2 p-1 sm:p-0 text-sm font-medium text-gray-500 hover:text-gray-900 whitespace-nowrap">
-            <i-lucide name="arrow-left" class="w-4 h-4 shrink-0"></i-lucide>
-            <span class="hidden sm:inline">Volver al stock</span>
-          </a>
+            label="Volver al stock"
+            shortLabel="Volver"
+            ariaLabel="Volver al stock">
+          </app-form-back-button>
         </div>
         <div class="min-w-0 col-start-1">
           <p *ngIf="!isEditing" class="text-gray-500 text-sm sm:text-base">
             Cargá un producto o insumo para sumarlo al inventario.
           </p>
-          <app-config-settings-link
-            settingsTab="productos"
-            [compact]="true"
-            message="¿Falta categoría, talle o color?"
-            linkLabel="Configuralo acá">
-          </app-config-settings-link>
         </div>
       </div>
 
@@ -90,7 +78,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                 <label class="block text-sm font-medium text-gray-700 mb-0.5">Nombre</label>
                 <input [(ngModel)]="nombreBase" name="nombreBase" required
                        placeholder="Ej. Remera básica"
-                       class="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-primary text-sm">
+                       [class]="formControlClass">
               </div>
 
               <div>
@@ -185,7 +173,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                         name="stockAdjustmentReason"
                         [disabled]="adjustingStock"
                         placeholder="Ej. Conteo de depósito"
-                        class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 bg-white outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+                        [class]="formControlClass">
                     </div>
                   </div>
                   <button
@@ -213,7 +201,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                     name="stockActual"
                     [min]="permitirStockNegativo ? undefined : 0"
                     [disabled]="formReadOnly"
-                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                    [class]="formControlClass">
                   <div
                     *ngIf="isEditing && !canEditStockActualInline"
                     class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 bg-gray-100 text-gray-500 font-medium cursor-not-allowed">
@@ -228,7 +216,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                     name="stockMinimo"
                     min="0"
                     [disabled]="formReadOnly"
-                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                    [class]="formControlClass">
                 </div>
                 <div class="min-w-0 col-span-2 sm:col-span-1">
                   <label class="block text-sm font-medium text-gray-700 mb-0.5">Costo de compra</label>
@@ -239,7 +227,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                     min="0"
                     step="0.01"
                     [disabled]="formReadOnly"
-                    class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 outline-none disabled:bg-gray-50">
+                    [class]="formControlClass">
                 </div>
               </div>
               <p
@@ -299,7 +287,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
                 <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
                 <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugerido" min="0"
                        [disabled]="formReadOnly"
-                       class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+                       [class]="formControlClass">
               </div>
             </div>
           </section>
@@ -309,7 +297,7 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
               <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
               <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugeridoPublic" min="0"
                      [disabled]="formReadOnly"
-                     class="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none">
+                     [class]="formControlClass">
             </div>
           </section>
         </div>
@@ -349,15 +337,15 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
             </div>
 
             <div class="pt-4 border-t border-gray-800">
-              <app-form-save-footer
+              <app-form-footer
                 *ngIf="!formReadOnly"
-                [label]="isEditing ? 'Guardar' : 'Guardar producto'"
+                mode="sidebar"
+                [saveLabel]="isEditing ? 'Guardar' : 'Guardar producto'"
                 [saving]="saving"
                 [successMessage]="saveSuccessMessage"
-                [fullWidth]="true"
                 theme="dark"
                 (saveClick)="submitProduct()">
-              </app-form-save-footer>
+              </app-form-footer>
             </div>
           </div>
         </div>
@@ -366,6 +354,8 @@ import { StockItem, StockService, getStockEnDeposito } from '../../core/services
   `,
 })
 export class NewProductComponent implements OnInit, OnDestroy {
+  readonly formControlClass = FORM_CONTROL_CLASS;
+  readonly formLabelClass = FORM_LABEL_CLASS;
   private stockService = inject(StockService);
   configService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);

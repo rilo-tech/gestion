@@ -30,14 +30,14 @@ import {
   parseMonthYearQueryParams,
 } from '../../core/utils/calendar-range';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
+  LIST_TOOLBAR_CONTROL_HEIGHT,
+  LIST_TOOLBAR_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -52,11 +52,14 @@ import {
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { FORM_CANCEL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -67,57 +70,27 @@ import { Subscription } from 'rxjs';
     FormsModule,
     LucideAngularModule,
     SearchableSelectComponent,
-    ConfigSettingsLinkComponent,
     TransactionModalComponent,
     IconActionComponent,
     ConceptRefLinksComponent,
     ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
-    DuplicateActionButtonComponent,
     CompactListRowComponent,
+    RecordActionToolbarComponent,
+    CompactDataListComponent,
+    ListLoadMoreComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
-          <app-config-settings-link
-            settingsTab="caja"
-            message="¿Falta un concepto u origen?"
-            linkLabel="Configuralo acá">
-          </app-config-settings-link>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="cash"></app-activity-log-trigger>
-          <button
-            *ngIf="auth.canEditRecords"
-            type="button"
-            (click)="openOpeningBalanceEditor()"
-            title="Ajustar saldo inicial"
-            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 sm:px-3 text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-50 min-h-[42px]">
-            <i-lucide name="wallet" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
-            <span class="hidden sm:inline">Saldo inicial</span>
-          </button>
-          <app-icon-action
-            *ngIf="auth.canEditRecords"
-            label="Ingreso"
-            (clicked)="openMovementModal('ingreso')">
-            <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <app-icon-action
-            *ngIf="auth.canEditRecords"
-            label="Egreso"
-            variant="danger"
-            (clicked)="openMovementModal('egreso')">
-            <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
+      <div class="mb-3">
+        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
       </div>
 
       <div
         *ngIf="monthFilterLabel"
-        class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-100 bg-teal-50 px-4 py-2.5">
+        class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-100 bg-teal-50 px-4 py-2.5">
         <p class="text-sm text-teal-900">
           Movimientos de <span class="font-semibold">{{ monthFilterLabel }}</span>
         </p>
@@ -129,7 +102,7 @@ import { Subscription } from 'rxjs';
         </button>
       </div>
 
-      <div *ngIf="usesAmbitoSeparation" class="mb-4">
+      <div *ngIf="usesAmbitoSeparation" class="mb-3">
         <div class="rounded-lg border border-gray-100 bg-white shadow-sm overflow-hidden">
           <div class="flex items-stretch border-b border-gray-100">
             <div class="flex min-w-0 flex-1 gap-0">
@@ -172,7 +145,7 @@ import { Subscription } from 'rxjs';
 
       <div
         *ngIf="!usesAmbitoSeparation"
-        class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-xs">
+        class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-xs">
         <span class="tabular-nums">
           <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Ing.</span>
           <span class="font-bold text-teal-600">{{ '$' + totalIngresos }}</span>
@@ -187,74 +160,64 @@ import { Subscription } from 'rxjs';
         </span>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100">
-        <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
-            <input
-              [(ngModel)]="searchQuery"
-              (ngModelChange)="movementsPage = 1"
-              name="searchQuery"
-              placeholder="Buscar por concepto, origen o pedido..."
-              [class]="tableSearchInputClass">
-            <select
-              [(ngModel)]="origenFilter"
-              (ngModelChange)="movementsPage = 1"
-              name="origenFilter"
-              class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
-              <option value="all">Todos los orígenes</option>
-              <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
-                {{ origen.nombre }}
-              </option>
-            </select>
-          </div>
+      <div [class]="'mb-3 ' + listToolbarRowClass">
+        <app-list-search-field
+          mode="filter"
+          [(query)]="searchQuery"
+          (queryChange)="movementsPage = 1"
+          name="searchQuery"
+          placeholder="Buscar..."
+          [constrainWidth]="false"
+          extraClass="flex-1 min-w-0 sm:max-w-xs">
+        </app-list-search-field>
+        <select
+          [(ngModel)]="origenFilter"
+          (ngModelChange)="movementsPage = 1"
+          name="origenFilter"
+          [class]="'hidden sm:block px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
+          <option value="all">Orígenes</option>
+          <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
+            {{ origen.nombre }}
+          </option>
+        </select>
+        <div [class]="listToolbarRowClass + ' shrink-0 sm:ml-auto'">
+          <app-activity-log-trigger module="cash"></app-activity-log-trigger>
+          <ng-container *ngIf="auth.canEditRecords">
+            <app-icon-action
+              label="Ingreso"
+              (clicked)="openMovementModal('ingreso')">
+              <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
+            </app-icon-action>
+            <app-icon-action
+              label="Egreso"
+              variant="danger"
+              (clicked)="openMovementModal('egreso')">
+              <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
+            </app-icon-action>
+          </ng-container>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
-          <div
+      </div>
+
+      <app-compact-data-list [showSearch]="false">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
+          <button
             *ngFor="let movement of paginatedFilteredMovements"
-            class="flex items-stretch gap-0.5 min-h-[40px]">
-            <button
-              type="button"
-              (click)="onMovementRowClick(movement)"
-              [class]="compactListRowClass + ' flex-1 min-w-0'">
-              <div class="min-w-0 flex-1 overflow-hidden text-left">
-                <div class="compact-list-title truncate">{{ movement.concepto }}</div>
-                <div class="compact-list-subtitle truncate">
-                  {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
-                </div>
+            type="button"
+            (click)="onMovementRowClick(movement)"
+            [class]="compactListRowClass">
+            <div class="min-w-0 flex-1 overflow-hidden text-left">
+              <div class="compact-list-title truncate">{{ movement.concepto }}</div>
+              <div class="compact-list-subtitle truncate">
+                {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
               </div>
-              <span
-                class="text-[11px] font-bold tabular-nums shrink-0 pl-1"
-                [class.text-teal-600]="movement.tipo === 'ingreso'"
-                [class.text-red-500]="movement.tipo === 'egreso'">
-                {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
-              </span>
-            </button>
-            <div
-              *ngIf="auth.canEditRecords && isManualMovement(movement)"
-              class="flex items-center shrink-0 pr-1"
-              (click)="$event.stopPropagation()">
-              <app-duplicate-action-button
-                (duplicateClick)="duplicateMovement(movement, $event)">
-              </app-duplicate-action-button>
-              <button
-                type="button"
-                (click)="openEditMovement(movement)"
-                title="Editar"
-                aria-label="Editar"
-                class="p-2 rounded-lg text-teal-600 hover:bg-teal-50">
-                <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-              </button>
-              <button
-                *ngIf="auth.canDeleteRecords && isDeletableCashMovement(movement)"
-                type="button"
-                (click)="confirmDeleteMovement(movement)"
-                title="Eliminar"
-                aria-label="Eliminar"
-                class="p-2 rounded-lg text-red-500 hover:bg-red-50">
-                <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-              </button>
             </div>
-          </div>
+            <span
+              class="text-[11px] font-bold tabular-nums shrink-0 pl-1"
+              [class.text-teal-600]="movement.tipo === 'ingreso'"
+              [class.text-red-500]="movement.tipo === 'egreso'">
+              {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+            </span>
+          </button>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
           <p *ngIf="!loading && movements.length === 0" [class]="compactListEmptyClass">
             Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
@@ -263,7 +226,7 @@ import { Subscription } from 'rxjs';
             No se encontraron movimientos con los filtros actuales.
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -315,15 +278,12 @@ import { Subscription } from 'rxjs';
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
                 <app-list-row-actions
+                  [showDuplicate]="auth.canEditRecords && isManualMovement(movement)"
+                  (duplicateClick)="duplicateMovement(movement, $event)"
                   [showEdit]="auth.canEditRecords && isManualMovement(movement)"
                   [showDelete]="auth.canDeleteRecords && isDeletableCashMovement(movement)"
                   (editClick)="openEditMovement(movement)"
                   (deleteClick)="confirmDeleteMovement(movement)">
-                  <app-duplicate-action-button
-                    rowActionStart
-                    *ngIf="auth.canEditRecords && isManualMovement(movement)"
-                    (duplicateClick)="duplicateMovement(movement, $event)">
-                  </app-duplicate-action-button>
                 </app-list-row-actions>
               </td>
             </tr>
@@ -344,21 +304,21 @@ import { Subscription } from 'rxjs';
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="movementsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredMovements.length"
           (pageChange)="movementsPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4 flex justify-center" *ngIf="hasMoreMovements && !monthFilterRange">
-          <button
-            type="button"
-            (click)="loadMoreMovements()"
-            [disabled]="loadingMoreMovements || loading"
-            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMoreMovements ? 'Cargando más...' : 'Cargar más movimientos' }}
-          </button>
-        </div>
-      </div>
+        <app-list-load-more
+          listFooter
+          [hasMore]="hasMoreMovements && !monthFilterRange"
+          [loading]="loadingMoreMovements || loading"
+          label="Cargar más movimientos"
+          loadingLabel="Cargando más..."
+          (loadMoreClick)="loadMoreMovements()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
@@ -397,14 +357,6 @@ import { Subscription } from 'rxjs';
                 name="movementConceptoText"
                 placeholder="Ej. Venta mostrador"
                 class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
-              <div *ngIf="!usesConceptList" class="hidden sm:block">
-              <app-config-settings-link
-                settingsTab="caja"
-                message="¿Falta un concepto?"
-                linkLabel="Configuralo acá"
-                [compact]="true">
-              </app-config-settings-link>
-              </div>
             </div>
             <div>
               <label class="block text-xs font-medium text-gray-700 mb-0.5">Monto</label>
@@ -501,34 +453,17 @@ import { Subscription } from 'rxjs';
             Al guardar, la ventana queda abierta para cargar otro movimiento.
           </p>
           <div class="flex items-center gap-2">
-            <ng-container *ngIf="canDuplicateInModal">
-              <div class="sm:hidden">
-                <app-duplicate-action-button
-                  [disabled]="savingMovement"
-                  label="Duplicar"
-                  (duplicateClick)="duplicateMovementInModal()">
-                </app-duplicate-action-button>
-              </div>
-              <button
-                type="button"
-                (click)="duplicateMovementInModal()"
-                [disabled]="savingMovement"
-                title="Duplicar como nuevo"
-                aria-label="Duplicar como nuevo"
-                class="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                <i-lucide name="copy" class="w-4 h-4 text-gray-500"></i-lucide>
-                Duplicar
-              </button>
-            </ng-container>
+            <app-record-action-toolbar
+              [showDuplicate]="canDuplicateInModal"
+              duplicateLabel="Duplicar"
+              [duplicateDisabled]="savingMovement"
+              (duplicateClick)="duplicateMovementInModal()"
+              [showDelete]="canDeleteInModal"
+              deleteLabel="Eliminar"
+              [deleteDisabled]="savingMovement"
+              (deleteClick)="confirmDeleteEditingMovement()">
+            </app-record-action-toolbar>
             <div class="flex-1 min-w-0"></div>
-            <button
-              type="button"
-              (click)="closeMovementModal()"
-              title="Cerrar"
-              aria-label="Cerrar"
-              class="sm:hidden inline-flex items-center justify-center rounded-lg border border-gray-200 p-2.5 min-h-[42px] min-w-[42px] text-gray-600 hover:bg-gray-50">
-              <i-lucide name="x" class="w-5 h-5"></i-lucide>
-            </button>
             <button type="button" (click)="closeMovementModal()" [class]="formCancelClass + ' hidden sm:inline-flex'">
               Cerrar
             </button>
@@ -555,9 +490,10 @@ export class CashComponent implements OnInit, OnDestroy {
   private static readonly OPENING_BALANCE_CONCEPT = 'Saldo inicial de caja';
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly listToolbarRowClass = LIST_TOOLBAR_ROW_CLASS;
+  readonly listToolbarControlHeight = LIST_TOOLBAR_CONTROL_HEIGHT;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
@@ -758,6 +694,17 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.auth.canEditRecords && this.movementModalOpen;
   }
 
+  get editingMovement(): CashMovement | undefined {
+    if (!this.editingMovementId) return undefined;
+    return this.movements.find((movement) => movement.id === this.editingMovementId);
+  }
+
+  get canDeleteInModal(): boolean {
+    const movement = this.editingMovement;
+    if (!movement || !this.auth.canDeleteRecords) return false;
+    return this.isManualMovement(movement) && isDeletableCashMovement(movement);
+  }
+
   get movementModalPrimaryButtonClass(): string {
     const base =
       'form-btn-primary rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60';
@@ -811,6 +758,14 @@ export class CashComponent implements OnInit, OnDestroy {
     if (movement.pedidoId || movement.ventaId) return false;
 
     const tipo = String(movement.origenTipo ?? '');
+    if (
+      tipo === 'colaborador_pago' ||
+      tipo === 'cuenta_pagar' ||
+      tipo === 'tarjeta_resumen' ||
+      tipo === 'compra'
+    ) {
+      return false;
+    }
     if (tipo.startsWith('pedido') || tipo === 'venta' || tipo.startsWith('venta')) return false;
     if (movement.origenGrupo === 'pedido' || movement.origenGrupo === 'venta') return false;
     if (movement.origenGrupo === 'manual') return true;
@@ -828,6 +783,10 @@ export class CashComponent implements OnInit, OnDestroy {
 
   getOrigenLabel(movement: CashMovement): string {
     if (movement.origenLabel) return movement.origenLabel;
+    const tipo = String(movement.origenTipo ?? '');
+    if (tipo === 'colaborador_pago') return 'Colaboradores · pago';
+    if (tipo === 'cuenta_pagar') return 'Cuentas a pagar';
+    if (tipo === 'tarjeta_resumen') return 'Tarjeta · resumen';
     const grupo = this.resolveOrigenGrupo(movement);
     const base = getCashOrigenNombre(this.appConfig.caja.origenes, grupo);
     if (grupo === 'manual') {
@@ -1105,6 +1064,11 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementSessionSavedCount = 0;
   }
 
+  confirmDeleteEditingMovement(): void {
+    const movement = this.editingMovement;
+    if (movement) this.confirmDeleteMovement(movement);
+  }
+
   confirmDeleteMovement(movement: CashMovement) {
     if (!movement.id) return;
 
@@ -1144,6 +1108,9 @@ export class CashComponent implements OnInit, OnDestroy {
               resolveCashAmbito(movement, this.appConfig),
               -1
             );
+            if (this.editingMovementId === movement.id) {
+              this.closeMovementModal();
+            }
             this.refreshMovementsSilently();
             this.loadCashSummary();
           },

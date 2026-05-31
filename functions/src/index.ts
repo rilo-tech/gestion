@@ -3,11 +3,11 @@ import { createApiApp } from '../../backend/create-app.ts';
 
 const API_REGION = 'southamerica-east1';
 
-let appPromise: ReturnType<typeof createApiApp> | null = null;
+let apiApp: ReturnType<typeof createApiApp> | null = null;
 
-async function getApiApp() {
-  appPromise ??= createApiApp();
-  return appPromise;
+function getApiApp() {
+  apiApp ??= createApiApp();
+  return apiApp;
 }
 
 export const api = onRequest(
@@ -17,7 +17,7 @@ export const api = onRequest(
     memory: '512MiB',
   },
   async (req, res) => {
-    const app = await getApiApp();
+    const app = getApiApp();
     return app(req, res);
   }
 );

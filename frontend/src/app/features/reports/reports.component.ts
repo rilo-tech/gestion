@@ -40,7 +40,7 @@ type PeriodPreset = '7' | '30' | '90' | '365' | 'year' | 'custom';
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Reportes</h1>
-          <p class="text-sm sm:text-base text-gray-500">
+          <p class="text-sm sm:text-base text-gray-500 desc-lg-only">
             Ventas, ganancias, stock sugerido y clientes inactivos. Combiná filtros y exportá a impresión.
           </p>
         </div>

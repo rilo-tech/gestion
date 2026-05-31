@@ -12,9 +12,15 @@ import {
   getOrderStatusLabel,
   isOrderPendingDelivery,
   normalizeOrderStatus,
-  ORDER_STATUS_CARD_KEYS,
+  getOrderStatusCardBorderClass,
+  getOrderStatusCardEstados,
+  getOrderStatusCardTitleClass,
+  getOrderStatusCardValueClass,
+  orderMatchesStatusCardFilter,
+  ORDER_STATUS_OPTIONS,
   canRegisterSaleFromOrder,
 } from '../../core/constants/order-status';
+import type { OrderEstadoConfig } from '../../core/constants/order-config';
 import {
   getOrderStockStatusBadgeClass,
   getOrderStockStatusLabel,
@@ -23,6 +29,7 @@ import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -33,79 +40,59 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+
+type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
 
 @Component({
   selector: 'app-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent, CompactListRowComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, ListPaginationComponent, CompactListRowComponent, ModulePageHeaderComponent, CompactDataListComponent, ListLoadMoreComponent, ListRowActionsComponent, ListSearchFieldComponent],
   template: `
     <div [class]="pageShellClass" (click)="clearStatusCardFilter()">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Pedidos</h1>
-          <p class="text-sm sm:text-base text-gray-500">Gestiona tus pedidos personalizados y su producción.</p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 shrink-0">
-          <app-activity-log-trigger module="orders"></app-activity-log-trigger>
-          <a
-            routerLink="/orders/new"
-            [class]="iconActionLinkClass"
-            aria-label="Nuevo pedido"
-            title="Nuevo pedido">
-            <i-lucide name="clipboard-list" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Nuevo pedido</span>
-          </a>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Pedidos"
+        description="Gestiona tus pedidos personalizados y su producción."
+        [showMobileSearch]="true"
+        [searchQuery]="searchQuery"
+        (searchQueryChange)="onSearchQueryChange($event)"
+        searchFieldName="ordersSearchQueryMobile"
+        activityModule="orders">
+        <a
+          headerActions
+          routerLink="/orders/new"
+          [class]="iconActionLinkClass"
+          aria-label="Nuevo pedido"
+          title="Nuevo pedido">
+          <i-lucide name="clipboard-list" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Nuevo pedido</span>
+        </a>
+      </app-module-page-header>
 
       <div
-        class="module-summary-kpis grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8"
+        class="module-summary-kpis grid gap-3 sm:gap-4 mb-6 sm:mb-8"
+        [ngClass]="statusCardGridClass"
         (click)="$event.stopPropagation()">
         <button
-          *ngIf="auth.canViewAllOrders"
+          *ngFor="let card of statusCardEstados; let i = index; trackBy: trackStatusCard"
           type="button"
-          (click)="setStatusCardFilter('borrador', $event)"
-          [class]="statusCardClass('borrador', 'border-gray-200')">
-          <p class="text-xs font-bold text-gray-500 uppercase mb-1">{{ getOrderEstadoCardLabel('borrador') }}</p>
-          <p class="text-xl font-bold text-gray-800">{{ statusCounts.borrador }}</p>
-        </button>
-        <button
-          *ngIf="auth.canViewAllOrders"
-          type="button"
-          (click)="setStatusCardFilter('pendiente', $event)"
-          [class]="statusCardClass('pendiente', 'border-blue-200')">
-          <p class="text-xs font-bold text-blue-500 uppercase mb-1">{{ getOrderEstadoCardLabel('pendiente') }}</p>
-          <p class="text-xl font-bold text-blue-500">{{ statusCounts.pendiente }}</p>
-        </button>
-        <button
-          type="button"
-          (click)="setStatusCardFilter('en_produccion', $event)"
-          [class]="statusCardClass('en_produccion', 'border-purple-200')">
-          <p class="text-xs font-bold text-purple-500 uppercase mb-1">{{ getOrderEstadoCardLabel('en_produccion') }}</p>
-          <p class="text-xl font-bold text-purple-500">{{ statusCounts.en_produccion }}</p>
-        </button>
-        <button
-          *ngIf="auth.canViewAllOrders"
-          type="button"
-          (click)="setStatusCardFilter('listo', $event)"
-          [class]="statusCardClass('listo', 'border-green-200')">
-          <p class="text-xs font-bold text-green-500 uppercase mb-1">{{ getOrderEstadoCardLabel('listo') }}</p>
-          <p class="text-xl font-bold text-green-500">{{ statusCounts.listo }}</p>
-        </button>
-        <button
-          *ngIf="auth.canViewDeliveredOrders"
-          type="button"
-          (click)="setStatusCardFilter('entregado', $event)"
-          [class]="statusCardClass('entregado', 'border-teal-200')">
-          <p class="text-xs font-bold text-teal-500 uppercase mb-1">{{ getOrderEstadoCardLabel('entregado') }}</p>
-          <p class="text-xl font-bold text-teal-500">{{ statusCounts.entregado }}</p>
+          (click)="setStatusCardFilter(card.value, $event)"
+          [class]="statusCardClass(card.value, getOrderStatusCardBorderClass(i))">
+          <p class="text-xs font-bold uppercase mb-1" [ngClass]="getOrderStatusCardTitleClass(i)">
+            {{ card.label }}
+          </p>
+          <p class="text-xl font-bold tabular-nums" [ngClass]="getOrderStatusCardValueClass(i)">
+            {{ statusCounts[card.value] ?? 0 }}
+          </p>
         </button>
       </div>
 
@@ -137,29 +124,32 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
         Solo ves pedidos en producción. Pedí acceso al administrador para ver el resto o los entregados.
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [ngModel]="searchQuery"
-            (ngModelChange)="onSearchQueryChange($event)"
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [query]="searchQuery"
+            (queryChange)="onSearchQueryChange($event)"
             name="ordersSearchQuery"
-            placeholder="Buscar por pedido, cliente, descripción, estado o producto..."
-            class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+            placeholder="Buscar por pedido, cliente, descripción, estado o producto...">
+          </app-list-search-field>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
             *ngFor="let order of paginatedDisplayOrders; trackBy: trackOrder"
             (activate)="openEditOrder(order)">
-            <div compactTitle class="compact-list-title truncate">
-              {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : 'Pedido' }}
+            <div compactTitle class="compact-list-title flex items-baseline gap-1.5 min-w-0">
+              <span class="shrink-0 tabular-nums">
+                {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : 'Pedido' }}
+              </span>
+              <span class="truncate min-w-0 font-normal text-gray-600">{{ getClientName(order) }}</span>
             </div>
             <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ getClientName(order) }}
-              · Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
+              Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
             </div>
             <span
               compactTrailing
-              class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 max-w-[45%] truncate"
+              class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 whitespace-nowrap"
               [ngClass]="getOrderStatusBadgeClass(order.estado)">
               {{ getOrderStatusLabelFor(order.estado) }}
             </span>
@@ -179,7 +169,7 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
             No hay pedidos registrados.
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[920px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -211,11 +201,19 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
                     class="w-3.5 h-3.5"></i-lucide>
                 </button>
               </th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
+              <th class="px-4 sm:px-6 py-3 sm:py-4">
+                <button type="button" (click)="toggleSort('estado')" [class]="sortHeaderClass('estado')">
+                  Estado
+                  <i-lucide
+                    *ngIf="sortColumn === 'estado'"
+                    [name]="sortDirection === 'desc' ? 'chevron-down' : 'chevron-up'"
+                    class="w-3.5 h-3.5"></i-lucide>
+                </button>
+              </th>
               <th *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                 {{ auth.canViewOrderSalePrice && auth.canViewAccountBalance ? 'Total / Saldo' : (auth.canViewOrderSalePrice ? 'Total' : 'Saldo') }}
               </th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -266,48 +264,22 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
                   Saldo {{ '$' + getOrderSaldo(order) }}
                 </div>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
-                <div class="flex items-center gap-1">
-                  <button
-                    type="button"
-                    (click)="openEditOrder(order)"
-                    [title]="isCancelledOrder(order) ? 'Ver pedido' : (auth.canEditRecords ? 'Editar' : 'Ver pedido')"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide [name]="auth.canEditRecords ? 'pencil' : 'clipboard-list'" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <app-duplicate-action-button
-                    *ngIf="auth.canEditRecords"
-                    (duplicateClick)="duplicateOrder(order, $event)">
-                  </app-duplicate-action-button>
-                  <button
-                    *ngIf="auth.canPrintOrders"
-                    type="button"
-                    (click)="printOrder(order)"
-                    [disabled]="printingOrderId === order.id"
-                    title="Imprimir pedido"
-                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 disabled:cursor-wait">
-                    <i-lucide
-                      [name]="printingOrderId === order.id ? 'clock' : 'printer'"
-                      class="w-4 h-4"
-                      [class.animate-pulse]="printingOrderId === order.id"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="canRegisterSale(order) && auth.canCreateSales"
-                    type="button"
-                    (click)="registerSaleFromOrder(order)"
-                    title="Registrar venta / entrega"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="truck" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="!isCancelledOrder(order) && auth.canEditRecords"
-                    type="button"
-                    (click)="confirmCancelOrder(order)"
-                    title="Cancelar pedido"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+                <app-list-row-actions
+                  [editIcon]="auth.canEditRecords ? 'pencil' : 'clipboard-list'"
+                  [editLabel]="isCancelledOrder(order) ? 'Ver pedido' : (auth.canEditRecords ? 'Editar' : 'Ver pedido')"
+                  (editClick)="openEditOrder(order)"
+                  [showDuplicate]="auth.canEditRecords"
+                  (duplicateClick)="duplicateOrder(order, $event)"
+                  [showPrint]="auth.canPrintOrders"
+                  [printLoading]="printingOrderId === order.id"
+                  (printClick)="printOrder(order)"
+                  [showRegisterSale]="auth.canCreateSales && canRegisterSale(order)"
+                  (registerSaleClick)="registerSaleFromOrder(order)"
+                  [showDelete]="!isCancelledOrder(order) && auth.canEditRecords"
+                  deleteLabel="Cancelar pedido"
+                  (deleteClick)="confirmCancelOrder(order)">
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="!loading && visibleOrders.length > 0 && displayOrders.length === 0">
@@ -334,27 +306,28 @@ import { DuplicateActionButtonComponent } from '../../shared/components/duplicat
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="ordersPage"
           [pageSize]="listPageSize"
           [totalItems]="displayOrders.length"
           (pageChange)="ordersPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4 flex justify-center" *ngIf="ordersHasMore">
-          <button
-            type="button"
-            (click)="loadMoreOrders()"
-            [disabled]="loadingMore || loading"
-            class="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMore ? 'Cargando más...' : 'Cargar más pedidos' }}
-          </button>
-        </div>
-      </div>
+        <app-list-load-more
+          listFooter
+          [hasMore]="ordersHasMore"
+          [loading]="loadingMore || loading"
+          label="Cargar más pedidos"
+          loadingLabel="Cargando más..."
+          (loadMoreClick)="loadMoreOrders()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class OrderListComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
@@ -381,6 +354,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     return getOrderStatusLabelFromConfig(value, this.appConfig.pedidos);
   }
   readonly normalizeOrderStatus = normalizeOrderStatus;
+  readonly getOrderStatusCardBorderClass = getOrderStatusCardBorderClass;
+  readonly getOrderStatusCardTitleClass = getOrderStatusCardTitleClass;
+  readonly getOrderStatusCardValueClass = getOrderStatusCardValueClass;
   readonly canRegisterSale = canRegisterSaleFromOrder;
   readonly getOrderStockStatusLabel = getOrderStockStatusLabel;
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
@@ -397,18 +373,27 @@ export class OrderListComponent implements OnInit, OnDestroy {
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   ordersPage = 1;
   listFilter: 'all' | 'pendientes-entrega' = 'all';
-  statusCardFilter: (typeof ORDER_STATUS_CARD_KEYS)[number] | null = null;
-  sortColumn: 'fecha' | 'pedido' | 'entrega' = 'pedido';
+  statusCardFilter: string | null = null;
+  sortColumn: OrderSortColumn = 'pedido';
   sortDirection: 'desc' | 'asc' = 'desc';
-  statusCounts: Record<(typeof ORDER_STATUS_CARD_KEYS)[number], number> = {
-    borrador: 0,
-    pendiente: 0,
-    en_produccion: 0,
-    listo: 0,
-    entregado: 0,
-  };
+  statusCounts: Record<string, number> = {};
 
   private searchDebounce?: ReturnType<typeof setTimeout>;
+
+  get statusCardEstados(): OrderEstadoConfig[] {
+    return getOrderStatusCardEstados(this.appConfig.pedidos).filter((card) =>
+      this.canShowStatusCard(card.value)
+    );
+  }
+
+  get statusCardGridClass(): string {
+    const count = this.statusCardEstados.length;
+    if (count <= 1) return 'grid-cols-1';
+    if (count === 2) return 'grid-cols-2';
+    if (count === 3) return 'grid-cols-2 md:grid-cols-3';
+    if (count === 4) return 'grid-cols-2 md:grid-cols-4';
+    return 'grid-cols-2 md:grid-cols-5';
+  }
 
   get visibleOrders(): Order[] {
     return this.orders.filter((order) => this.auth.canViewOrder(order.estado));
@@ -418,7 +403,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     return paginateSlice(this.displayOrders, this.ordersPage, this.listPageSize);
   }
 
-  sortHeaderClass(column: 'fecha' | 'pedido' | 'entrega'): string {
+  sortHeaderClass(column: OrderSortColumn): string {
     const base =
       'inline-flex items-center gap-1 uppercase tracking-wider font-semibold text-xs transition-colors';
     if (this.sortColumn === column) {
@@ -427,7 +412,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     return `${base} text-gray-400 hover:text-gray-600`;
   }
 
-  toggleSort(column: 'fecha' | 'pedido' | 'entrega') {
+  toggleSort(column: OrderSortColumn) {
     if (this.sortColumn === column) {
       this.sortDirection = this.sortDirection === 'desc' ? 'asc' : 'desc';
     } else {
@@ -445,7 +430,19 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.searchDebounce = setTimeout(() => this.rebuildDisplayOrders(), 120);
   }
 
-  setStatusCardFilter(status: (typeof ORDER_STATUS_CARD_KEYS)[number], event: Event) {
+  trackStatusCard(_index: number, card: OrderEstadoConfig): string {
+    return card.value;
+  }
+
+  canShowStatusCard(value: string): boolean {
+    if (value === 'en_produccion') return true;
+    if (value === 'entregado' || value === 'entregado_con_saldo') {
+      return this.auth.canViewDeliveredOrders;
+    }
+    return this.auth.canViewAllOrders;
+  }
+
+  setStatusCardFilter(status: string, event: Event) {
     event.stopPropagation();
     this.statusCardFilter = status;
     this.ordersPage = 1;
@@ -459,10 +456,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.rebuildDisplayOrders();
   }
 
-  statusCardClass(
-    status: (typeof ORDER_STATUS_CARD_KEYS)[number],
-    borderClass: string
-  ): string {
+  statusCardClass(status: string, borderClass: string): string {
     const base = `bg-gray-50 p-4 rounded-xl border text-left w-full transition-all cursor-pointer hover:shadow-sm ${borderClass}`;
     if (this.statusCardFilter !== status) return base;
     return `${base} ring-2 ring-teal-500 ring-offset-2 shadow-md`;
@@ -480,7 +474,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     }
 
     if (this.statusCardFilter) {
-      list = list.filter((order) => this.matchesStatusCardFilter(order, this.statusCardFilter!));
+      list = list.filter((order) =>
+        orderMatchesStatusCardFilter(order.estado, this.statusCardFilter!, this.appConfig.pedidos)
+      );
     }
 
     const query = this.searchQuery.trim().toLowerCase();
@@ -511,32 +507,31 @@ export class OrderListComponent implements OnInit, OnDestroy {
       (a, b) => this.compareOrders(a, b, this.sortColumn) * direction
     );
 
-    const counts: Record<(typeof ORDER_STATUS_CARD_KEYS)[number], number> = {
-      borrador: 0,
-      pendiente: 0,
-      en_produccion: 0,
-      listo: 0,
-      entregado: 0,
-    };
+    const counts: Record<string, number> = {};
+    for (const card of this.statusCardEstados) {
+      counts[card.value] = 0;
+    }
 
     for (const order of this.visibleOrders) {
-      const status = normalizeOrderStatus(order.estado);
-      if (status === 'entregado_con_saldo') {
-        counts.entregado++;
-      } else if (status !== 'otro') {
-        counts[status]++;
+      for (const card of this.statusCardEstados) {
+        if (orderMatchesStatusCardFilter(order.estado, card.value, this.appConfig.pedidos)) {
+          counts[card.value] = (counts[card.value] ?? 0) + 1;
+        }
       }
     }
 
     this.statusCounts = counts;
+
+    if (
+      this.statusCardFilter &&
+      !this.statusCardEstados.some((card) => card.value === this.statusCardFilter)
+    ) {
+      this.statusCardFilter = null;
+    }
     this.cdr.markForCheck();
   }
 
-  private compareOrders(
-    a: Order,
-    b: Order,
-    column: 'fecha' | 'pedido' | 'entrega'
-  ): number {
+  private compareOrders(a: Order, b: Order, column: OrderSortColumn): number {
     let left = 0;
     let right = 0;
 
@@ -553,6 +548,10 @@ export class OrderListComponent implements OnInit, OnDestroy {
         left = this.getSortableDate(a.fechaEntrega);
         right = this.getSortableDate(b.fechaEntrega);
         break;
+      case 'estado':
+        left = this.getOrderStatusSortValue(a);
+        right = this.getOrderStatusSortValue(b);
+        break;
     }
 
     if (left === right) {
@@ -560,6 +559,20 @@ export class OrderListComponent implements OnInit, OnDestroy {
     }
 
     return left - right;
+  }
+
+  private getOrderStatusSortValue(order: Order): number {
+    const normalized = normalizeOrderStatus(order.estado);
+    const configured = this.appConfig.pedidos.estados ?? [];
+    const configIndex = configured.findIndex(
+      (estado) => normalizeOrderStatus(estado.value) === normalized
+    );
+    if (configIndex >= 0) return configIndex;
+
+    const fallbackIndex = ORDER_STATUS_OPTIONS.findIndex((option) => option.value === normalized);
+    if (fallbackIndex >= 0) return configured.length + fallbackIndex;
+
+    return configured.length + ORDER_STATUS_OPTIONS.length;
   }
 
   private getSortableDate(value?: string | null): number {
@@ -576,17 +589,6 @@ export class OrderListComponent implements OnInit, OnDestroy {
     const label = formatOrderNumber(order).replace(/\D/g, '');
     const parsed = Number.parseInt(label, 10);
     return Number.isNaN(parsed) ? 0 : parsed;
-  }
-
-  private matchesStatusCardFilter(
-    order: Order,
-    filter: (typeof ORDER_STATUS_CARD_KEYS)[number]
-  ): boolean {
-    const status = normalizeOrderStatus(order.estado);
-    if (filter === 'entregado') {
-      return status === 'entregado' || status === 'entregado_con_saldo';
-    }
-    return status === filter;
   }
 
   ngOnInit() {
@@ -684,8 +686,15 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   openEditOrder(order: Order) {
     if (!order.id || !this.auth.canViewOrder(order.estado)) return;
+    const clientName = this.getClientName(order);
+    const orderPreview: Order = {
+      ...order,
+      clienteNombre:
+        order.clienteNombre?.trim() ||
+        (clientName !== 'Cliente sin nombre' ? clientName : undefined),
+    };
     this.router.navigate(['/orders', order.id, 'edit'], {
-      state: { orderPreview: order },
+      state: { orderPreview },
     });
   }
 

@@ -12,7 +12,7 @@ import { AuthService } from '../../core/services/auth.service';
     <div class="p-4 sm:p-6 lg:p-8 w-full max-w-2xl mx-auto">
       <div class="mb-6 sm:mb-8">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Mi cuenta</h1>
-        <p class="text-sm sm:text-base text-gray-500 mt-1">
+        <p class="text-sm sm:text-base text-gray-500 mt-1 desc-lg-only">
           Datos de tu sesión y seguridad de acceso.
         </p>
       </div>

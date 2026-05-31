@@ -21,7 +21,7 @@ import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-actio
 
       <div class="mb-6">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Faltantes de stock</h1>
-        <p class="text-sm text-gray-500 mt-1">
+        <p class="text-sm text-gray-500 mt-1 desc-lg-only">
           Mercadería que falta comprar o ingresar para completar pedidos en curso.
         </p>
       </div>

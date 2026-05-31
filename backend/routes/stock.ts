@@ -449,6 +449,32 @@ router.get('/:businessId/metrics', async (req, res) => {
   }
 });
 
+router.get('/:businessId/by-ids', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const ids = String(req.query.ids ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, 60);
+
+    if (ids.length === 0) {
+      return res.json([]);
+    }
+
+    const refs = ids.map((id) => db.collection(`negocios/${businessId}/stock`).doc(id));
+    const snaps = await db.getAll(...refs);
+    const items = snaps
+      .filter((snap) => snap.exists)
+      .map((snap) => ({ id: snap.id, ...snap.data() }));
+
+    res.json(items);
+  } catch (error) {
+    console.error('Error fetching stock items by ids:', error);
+    res.status(500).json({ error: 'Error fetching stock items' });
+  }
+});
+
 // Get one stock item
 router.get('/:businessId/:itemId', async (req, res) => {
   try {

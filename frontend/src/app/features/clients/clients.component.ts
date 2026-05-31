@@ -4,13 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Client, ClientService } from '../../core/services/client.service';
 import { DialogService } from '../../core/services/dialog.service';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import {
   ICON_ACTION_LINK_CLASS,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -32,6 +31,10 @@ import {
   NATIVE_COMPACT_LIST_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-clients',
@@ -40,7 +43,6 @@ import {
     CommonModule,
     FormsModule,
     LucideAngularModule,
-    ConfigSettingsLinkComponent,
     RouterLink,
     TransactionModalComponent,
     ClientFormPanelComponent,
@@ -48,42 +50,43 @@ import {
     ListRowActionsComponent,
     ListPaginationComponent,
     CompactListRowComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListLoadMoreComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Clientes</h1>
-          <p class="text-sm sm:text-base text-gray-500">Administra tu base de datos de clientes.</p>
-          <app-config-settings-link
-            settingsTab="clientes"
-            message="¿Falta una etiqueta?"
-            linkLabel="Configurala acá">
-          </app-config-settings-link>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="clients"></app-activity-log-trigger>
-          <a
-            routerLink="/clients/new"
-            [class]="iconActionLinkClass"
-            aria-label="Nuevo cliente"
-            title="Nuevo cliente">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Nuevo cliente</span>
-          </a>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Clientes"
+        description="Administra tu base de datos de clientes."
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="clientsPage = 1"
+        searchFieldName="clientsSearchQueryMobile"
+        activityModule="clients">
+        <a
+          headerActions
+          routerLink="/clients/new"
+          [class]="iconActionLinkClass"
+          aria-label="Nuevo cliente"
+          title="Nuevo cliente">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Nuevo cliente</span>
+        </a>
+      </app-module-page-header>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="clientsPage = 1"
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="clientsPage = 1"
             name="clientsSearchQuery"
-            placeholder="Buscar por nombre, contacto, dirección o etiqueta..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por nombre, contacto, dirección o etiqueta...">
+          </app-list-search-field>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
             *ngFor="let client of paginatedFilteredClients"
             (activate)="openClient(client)">
@@ -106,7 +109,7 @@ import {
             No se encontraron clientes.
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
@@ -192,21 +195,20 @@ import {
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="clientsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredClients.length"
           (pageChange)="clientsPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4" *ngIf="clientsHasMore">
-          <button
-            type="button"
-            (click)="loadMoreClients()"
-            [disabled]="loadingMoreClients"
-            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMoreClients ? 'Cargando...' : 'Cargar más clientes' }}
-          </button>
-        </div>
-      </div>
+        <app-list-load-more
+          listFooter
+          [hasMore]="clientsHasMore"
+          [loading]="loadingMoreClients"
+          label="Cargar más clientes"
+          (loadMoreClick)="loadMoreClients()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
@@ -230,7 +232,7 @@ export class ClientsComponent implements OnInit {
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;

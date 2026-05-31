@@ -1,7 +1,13 @@
 import {
   getOrderStatusLabelFromConfig,
+  getOrderStatusCardEstados,
+  normalizeOrderEstadoValue,
+  orderEstadoValueInConfig,
+  ORDER_STATUS_CARD_LIMIT,
   type OrderPedidosConfigShape,
 } from './order-config';
+
+export { getOrderStatusCardEstados, ORDER_STATUS_CARD_LIMIT };
 
 export const ORDER_STATUS_OPTIONS = [
   { value: 'borrador', label: 'Borrador' },
@@ -20,6 +26,7 @@ export const ORDER_WORKFLOW_STATUS_OPTIONS = ORDER_STATUS_OPTIONS.filter(
 
 export type OrderStatusValue = (typeof ORDER_STATUS_OPTIONS)[number]['value'];
 
+/** Valores por defecto de tarjetas KPI (si no hay config cargada). */
 export const ORDER_STATUS_CARD_KEYS = [
   'borrador',
   'pendiente',
@@ -28,7 +35,13 @@ export const ORDER_STATUS_CARD_KEYS = [
   'entregado',
 ] as const;
 
-export function normalizeOrderStatus(estado?: string): OrderStatusValue | 'otro' {
+export function normalizeOrderStatus(
+  estado?: string,
+  pedidos?: OrderPedidosConfigShape
+): OrderStatusValue | string | 'otro' {
+  const configured = orderEstadoValueInConfig(estado, pedidos);
+  if (configured) return configured;
+
   const value = (estado ?? '').toLowerCase().trim();
 
   if (value === 'borrador' || value.includes('borrador')) return 'borrador';
@@ -68,8 +81,53 @@ export function getOrderStatusLabel(
   return ORDER_STATUS_OPTIONS.find((option) => option.value === normalized)?.label ?? estado ?? '';
 }
 
-export function getOrderStatusBadgeClass(estado?: string): string {
-  switch (normalizeOrderStatus(estado)) {
+export function getOrderStatusCardBorderClass(index: number): string {
+  const borders = [
+    'border-gray-200',
+    'border-blue-200',
+    'border-purple-200',
+    'border-green-200',
+    'border-teal-200',
+  ];
+  return borders[index % borders.length] ?? 'border-gray-200';
+}
+
+export function getOrderStatusCardTitleClass(index: number): string {
+  const titles = [
+    'text-gray-500',
+    'text-blue-500',
+    'text-purple-500',
+    'text-green-500',
+    'text-teal-500',
+  ];
+  return titles[index % titles.length] ?? 'text-gray-500';
+}
+
+export function getOrderStatusCardValueClass(index: number): string {
+  const values = [
+    'text-gray-800',
+    'text-blue-500',
+    'text-purple-500',
+    'text-green-500',
+    'text-teal-500',
+  ];
+  return values[index % values.length] ?? 'text-gray-800';
+}
+
+export function orderMatchesStatusCardFilter(
+  orderEstado: string | undefined,
+  cardValue: string,
+  pedidos?: OrderPedidosConfigShape
+): boolean {
+  const status = normalizeOrderStatus(orderEstado, pedidos);
+  if (cardValue === 'entregado') {
+    return status === 'entregado' || status === 'entregado_con_saldo';
+  }
+  return normalizeOrderEstadoValue(String(status)) === normalizeOrderEstadoValue(cardValue);
+}
+
+export function getOrderStatusBadgeClass(estado?: string, pedidos?: OrderPedidosConfigShape): string {
+  switch (normalizeOrderStatus(estado, pedidos)) {
     case 'borrador':
       return 'bg-gray-100 text-gray-700';
     case 'pendiente':

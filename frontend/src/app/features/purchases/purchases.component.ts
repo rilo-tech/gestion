@@ -1,23 +1,28 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, ViewChild, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
-import { PurchaseService, CreatePurchasePayload, Purchase } from '../../core/services/purchase.service';
-import { Supplier, SupplierService } from '../../core/services/supplier.service';
-import { StockItem, StockService } from '../../core/services/stock.service';
+import {
+  PurchaseService,
+  Purchase,
+  formatPurchaseLabel,
+} from '../../core/services/purchase.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import {
-  SupplierFormPanelComponent,
-  SupplierFormSaveEvent,
-} from '../suppliers/supplier-form-panel.component';
-import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
+  TransactionDetailPageComponent,
+  TransactionSummaryPanelComponent,
+  TransactionSummaryRowComponent,
+  TransactionFormSaveEvent,
+  TRANSACTION_FORM_CARD_CLASS,
+} from '../../shared/components/transaction-form';
 import {
   IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -25,37 +30,67 @@ import {
   NATIVE_COMPACT_LIST_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
-
-interface PurchaseDraftLine {
-  productoId: string;
-  cantidad: number | null;
-  costoUnitario: number | null;
-}
+import { PurchaseFormPanelComponent } from './purchase-form-panel.component';
+import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
+import { prefersInlineFormPage } from '../../core/utils/responsive-form';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-purchases',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, TransactionModalComponent, SearchableSelectComponent, SupplierFormPanelComponent, IconActionComponent, ActivityLogTriggerComponent, ModalFormFooterComponent, CompactListRowComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    LucideAngularModule,
+    RouterLink,
+    TransactionModalComponent,
+    IconActionComponent,
+    ActivityLogTriggerComponent,
+    CompactListRowComponent,
+    IconToolbarButtonComponent,
+    PurchaseFormPanelComponent,
+    TransactionDetailPageComponent,
+    TransactionSummaryPanelComponent,
+    TransactionSummaryRowComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListLoadMoreComponent,
+    ListSearchFieldComponent,
+    ListRowActionsComponent,
+    ListPaginationComponent,
+  ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Compras</h1>
-          <p class="text-sm sm:text-base text-gray-500">Registrá entradas de mercadería e insumos al inventario.</p>
-          <p class="text-xs text-gray-400 mt-1">
-            Los movimientos de stock se ven en
-            <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
-          </p>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="purchases"></app-activity-log-trigger>
-          <app-icon-action label="Nueva compra" (clicked)="openPurchaseModal()">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Compras"
+        description="Registrá entradas de mercadería e insumos al inventario."
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="purchasesPage = 1"
+        searchFieldName="purchasesSearchQueryMobile"
+        activityModule="purchases">
+        <p headerExtra class="text-xs text-gray-400 mt-1 desc-lg-only">
+          Los movimientos de stock se ven en
+          <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
+        </p>
+        <app-icon-action
+          headerActions
+          label="Nueva compra"
+          (clicked)="openPurchaseModal()">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+      </app-module-page-header>
 
       <div *ngIf="auth.canViewEconomics" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
@@ -72,16 +107,27 @@ interface PurchaseDraftLine {
         </div>
       </div>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="purchasesPage = 1"
+            name="purchasesSearchQuery"
+            placeholder="Buscar por compra, proveedor, comprobante o producto...">
+          </app-list-search-field>
+        </div>
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
-            *ngFor="let purchase of purchases"
+            *ngFor="let purchase of paginatedFilteredPurchases"
             (activate)="openPurchaseDetail(purchase)">
             <div compactTitle class="compact-list-title truncate">
-              #{{ purchase.compraLabel || purchase.id?.slice(-6) }}
+              <span *ngIf="purchase.estado === 'borrador'" class="text-amber-600 font-semibold mr-1">Borrador</span>
+              <span *ngIf="purchase.estado !== 'borrador'">#{{ formatPurchaseLabel(purchase) }}</span>
+              <span *ngIf="purchase.estado === 'borrador' && purchase.proveedor?.trim()">· {{ purchase.proveedor }}</span>
             </div>
             <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ purchase.proveedor?.trim() || '—' }} · {{ purchase.items?.length || 0 }} producto(s)
+              {{ purchase.proveedor?.trim() || '—' }} · {{ purchase.items?.length || 0 }} línea(s)
             </div>
             <span compactTrailing class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
               {{ '$' + (purchase.total || 0) }}
@@ -91,291 +137,239 @@ interface PurchaseDraftLine {
           <p *ngIf="!loading && purchases.length === 0" [class]="compactListEmptyClass">
             Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
           </p>
+          <p *ngIf="!loading && purchases.length > 0 && filteredPurchases.length === 0" [class]="compactListEmptyClass">
+            No hay compras que coincidan con la búsqueda.
+          </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
+        <table [class]="nativeCompactTableClass + ' sm:min-w-[640px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Compra</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Items</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Líneas</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
             <tr
-              *ngFor="let purchase of purchases"
+              *ngFor="let purchase of paginatedFilteredPurchases"
               (click)="openPurchaseDetail(purchase)"
-              class="hover:bg-gray-50 transition-colors cursor-pointer">
+              [class]="listTableRowClass">
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(purchase.fecha) }}
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
-                #{{ purchase.compraLabel || purchase.id?.slice(-6) }}
+                <span *ngIf="purchase.estado === 'borrador'" class="text-amber-700">Borrador</span>
+                <span *ngIf="purchase.estado !== 'borrador'">#{{ formatPurchaseLabel(purchase) }}</span>
                 <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(purchase.fecha) }}</div>
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-700">
                 <div class="truncate">{{ purchase.proveedor?.trim() || '—' }}</div>
-                <div class="text-xs text-gray-400 sm:hidden">{{ purchase.items?.length || 0 }} producto(s)</div>
+                <div class="text-xs text-gray-400 sm:hidden">{{ purchase.items?.length || 0 }} línea(s)</div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
-                {{ purchase.items?.length || 0 }} producto(s)
+                {{ purchase.items?.length || 0 }} línea(s)
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ '$' + (purchase.total || 0) }}
               </td>
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+                <app-list-row-actions
+                  editIcon="clipboard-list"
+                  editLabel="Ver compra"
+                  [showDelete]="false"
+                  (editClick)="openPurchaseDetail(purchase)">
+                </app-list-row-actions>
+              </td>
             </tr>
             <tr *ngIf="loading">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">Cargando compras...</td>
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">Cargando compras...</td>
             </tr>
             <tr *ngIf="!loading && purchases.length === 0">
-              <td colspan="5" class="px-6 py-12 text-center text-gray-400">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
                 Todavía no hay compras. Usá <span class="font-semibold">Nueva compra</span> para sumar stock.
+              </td>
+            </tr>
+            <tr *ngIf="!loading && purchases.length > 0 && filteredPurchases.length === 0">
+              <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+                No hay compras que coincidan con la búsqueda.
               </td>
             </tr>
           </tbody>
         </table>
         </div>
-        <div class="px-4 sm:px-6 pb-4" *ngIf="purchasesHasMore">
-          <button
-            type="button"
-            (click)="loadMorePurchases()"
-            [disabled]="loadingMorePurchases"
-            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMorePurchases ? 'Cargando...' : 'Cargar más compras' }}
-          </button>
-        </div>
-      </div>
+        <app-list-pagination
+          listFooter
+          [page]="purchasesPage"
+          [pageSize]="listPageSize"
+          [totalItems]="filteredPurchases.length"
+          (pageChange)="purchasesPage = $event">
+        </app-list-pagination>
+        <app-list-load-more
+          listFooter
+          [hasMore]="purchasesHasMore"
+          [loading]="loadingMorePurchases"
+          label="Cargar más compras"
+          (loadMoreClick)="loadMorePurchases()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
       [open]="purchaseModalOpen"
-      title="Nueva compra"
-      subtitle="Acción rápida desde el listado. Sumá stock al inventario automáticamente."
+      [title]="purchaseModalTitle"
+      subtitle="Productos suman stock al registrar. Gastos y servicios solo afectan caja y cuentas."
+      maxWidthClass="max-w-3xl"
       (closed)="closePurchaseModal()">
-
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <div class="flex items-center justify-between gap-3 mb-1">
-                <label class="block text-sm font-medium text-gray-700">Proveedor</label>
-                <button
-                  type="button"
-                  (click)="openNewSupplierModal()"
-                  class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
-                  + Nuevo proveedor
-                </button>
-              </div>
-              <app-searchable-select
-                [(ngModel)]="purchaseProveedorId"
-                name="purchaseProveedorId"
-                [labeledOptions]="supplierOptions"
-                [creatable]="true"
-                createLabelPrefix="Crear proveedor"
-                (createRequested)="quickCreateSupplier($event)"
-                (searchChange)="pendingSupplierName = $event"
-                placeholder="Buscar proveedor..."
-                plainPlaceholder="Opcional"
-                emptyOptionsMessage="No hay proveedores cargados. Escribí el nombre para crearlo."
-                listHint="Opcional. Elegí un proveedor o creá uno nuevo.">
-              </app-searchable-select>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Notas</label>
-              <input
-                [(ngModel)]="purchaseNotas"
-                name="purchaseNotas"
-                placeholder="Opcional"
-                class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
-            </div>
-          </div>
-
-          <div class="rounded-xl border border-gray-100 overflow-hidden">
-            <div class="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <span class="text-sm font-semibold text-gray-700">Productos</span>
-              <button
-                type="button"
-                (click)="addLine()"
-                class="text-sm font-medium text-teal-600 hover:text-teal-800">
-                + Agregar línea
-              </button>
-            </div>
-            <div class="divide-y divide-gray-50">
-              <div *ngFor="let line of draftLines; let i = index" class="p-4 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                <div class="sm:col-span-5">
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Producto</label>
-                  <select
-                    [(ngModel)]="line.productoId"
-                    [name]="'productoId_' + i"
-                    (ngModelChange)="onProductSelected(line)"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
-                    <option value="">Seleccionar...</option>
-                    <option *ngFor="let item of stockItems" [value]="item.id">
-                      {{ item.nombre }}
-                    </option>
-                  </select>
-                </div>
-                <div class="sm:col-span-2">
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Cantidad</label>
-                  <input
-                    type="number"
-                    [(ngModel)]="line.cantidad"
-                    [name]="'cantidad_' + i"
-                    min="1"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-                </div>
-                <div class="sm:col-span-3">
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Costo unitario</label>
-                  <input
-                    type="number"
-                    [(ngModel)]="line.costoUnitario"
-                    [name]="'costo_' + i"
-                    min="0"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-                </div>
-                <div class="sm:col-span-2 flex justify-end">
-                  <button
-                    type="button"
-                    (click)="removeLine(i)"
-                    [disabled]="draftLines.length === 1"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-40">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="flex justify-between items-center rounded-xl bg-gray-50 px-4 py-3">
-            <span class="text-sm text-gray-500">Total estimado</span>
-            <span class="text-lg font-bold text-gray-900">{{ '$' + draftTotal }}</span>
-          </div>
-        </div>
-
-        <app-modal-form-footer
-          [saving]="savingPurchase"
-          primaryLabel="Registrar compra"
-          (cancelClick)="closePurchaseModal()"
-          (primaryClick)="submitPurchase()">
-        </app-modal-form-footer>
+      <app-icon-toolbar-button
+        *ngIf="!purchaseModalCompleted"
+        headerActions
+        class="sm:hidden"
+        icon="save"
+        label="Registrar compra"
+        variant="primary"
+        [disabled]="purchaseModalSaving"
+        [loading]="purchaseModalSaving"
+        (clicked)="purchaseFormPanel?.submitPurchase()">
+      </app-icon-toolbar-button>
+      <app-purchase-form-panel
+        #purchaseFormPanel
+        *ngIf="purchaseModalOpen"
+        [initialPurchase]="editingDraftPurchase"
+        [editingDraftId]="editingDraftPurchase?.id ?? null"
+        (saved)="onPurchaseCreated($event)"
+        (savingChange)="onPurchaseSavingChange($event)"
+        (cancelled)="closePurchaseModal()">
+      </app-purchase-form-panel>
     </app-transaction-modal>
 
-    <app-transaction-modal
-      [open]="supplierModalOpen"
-      title="Nuevo proveedor"
-      subtitle="Al guardar queda seleccionado en esta compra."
-      maxWidthClass="max-w-lg"
-      (closed)="closeSupplierModal()">
-      <app-supplier-form-panel
-        [prefillNombre]="supplierPrefillNombre"
-        (saved)="onSupplierSavedFromModal($event)"
-        (cancelled)="closeSupplierModal()">
-      </app-supplier-form-panel>
-    </app-transaction-modal>
-
-    <app-transaction-modal
-      [open]="detailModalOpen"
+    <app-transaction-detail-page
+      *ngIf="detailModalOpen"
       [title]="detailModalTitle"
-      subtitle="Detalle de la compra registrada. No se puede modificar después de cargar."
-      maxWidthClass="max-w-2xl"
-      (closed)="closePurchaseDetail()">
-      <div *ngIf="detailPurchase as purchase" class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div>
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Fecha</p>
-            <p class="text-gray-900">{{ formatDate(purchase.fecha) }}</p>
-          </div>
-          <div>
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Proveedor</p>
-            <p class="text-gray-900">{{ purchase.proveedor?.trim() || '—' }}</p>
-          </div>
+      [subtitle]="detailModalSubtitle"
+      backLabel="Volver a compras"
+      backAriaLabel="Volver a compras"
+      [loading]="detailLoading"
+      [hasContent]="!!detailPurchase"
+      loadingMessage="Cargando compra..."
+      refreshingMessage="Actualizando detalle..."
+      (closeClick)="closePurchaseDetail()">
+      <section main [class]="formCardClass" *ngIf="detailPurchase as purchase">
+        <app-purchase-form-panel
+          #detailForm
+          [readOnly]="true"
+          [initialPurchase]="purchase"
+          [pageLayout]="true"
+          [hideInlineSummary]="true">
+        </app-purchase-form-panel>
+      </section>
+
+      <app-transaction-summary-panel aside *ngIf="detailForm">
+        <div class="space-y-2 sm:space-y-3 mb-4">
+          <app-transaction-summary-row label="Líneas" [value]="'' + detailForm.draftLineCount"></app-transaction-summary-row>
+          <app-transaction-summary-row label="Productos (stock)" [value]="'' + detailForm.stockLineCount"></app-transaction-summary-row>
+          <app-transaction-summary-row label="Gastos / servicios" [value]="'' + detailForm.expenseLineCount"></app-transaction-summary-row>
+          <app-transaction-summary-row
+            label="Total compra"
+            [value]="'$' + detailForm.draftTotal"
+            [bold]="true"
+            [divider]="true"
+            size="md"></app-transaction-summary-row>
         </div>
-        <div *ngIf="purchase.notas?.trim()" class="text-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Notas</p>
-          <p class="text-gray-700">{{ purchase.notas }}</p>
-        </div>
-        <div class="rounded-xl border border-gray-100 overflow-hidden">
-          <div class="px-4 py-3 bg-gray-50 border-b border-gray-100 text-sm font-semibold text-gray-700">
-            Productos
+
+        <div class="p-3 bg-gray-800/60 rounded-lg border border-gray-700 text-xs sm:text-sm space-y-1">
+          <div class="flex justify-between gap-2">
+            <span class="text-gray-400">Medio de pago</span>
+            <span class="font-medium text-right">{{ detailForm.selectedMedioPagoLabel }}</span>
           </div>
-          <div class="divide-y divide-gray-50">
-            <div
-              *ngFor="let line of purchase.items"
-              class="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm">
-              <div class="min-w-0">
-                <p class="font-medium text-gray-900 truncate">{{ line.productoNombre || 'Producto' }}</p>
-                <p class="text-xs text-gray-500 tabular-nums">
-                  {{ line.cantidad }} × {{ '$' + line.costoUnitario }}
-                </p>
-              </div>
-              <a
-                *ngIf="line.productoId"
-                [routerLink]="['/stock', line.productoId, 'edit']"
-                (click)="$event.stopPropagation()"
-                class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
-                Ver producto
-              </a>
-            </div>
-          </div>
+          <p class="text-gray-500 leading-snug m-0">{{ detailForm.pagoResumenHint }}</p>
         </div>
-        <div class="flex justify-between items-center rounded-xl bg-gray-50 px-4 py-3">
-          <span class="text-sm text-gray-500">Total</span>
-          <span class="text-lg font-bold text-gray-900 tabular-nums">{{ '$' + (purchase.total || 0) }}</span>
-        </div>
-      </div>
-    </app-transaction-modal>
+      </app-transaction-summary-panel>
+    </app-transaction-detail-page>
   `,
 })
 export class PurchasesComponent implements OnInit {
+  @ViewChild('purchaseFormPanel') purchaseFormPanel?: PurchaseFormPanelComponent;
+  @ViewChild('detailForm') detailForm?: PurchaseFormPanelComponent;
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
 
+  formatPurchaseLabel = formatPurchaseLabel;
+
   private purchaseService = inject(PurchaseService);
-  private supplierService = inject(SupplierService);
-  private stockService = inject(StockService);
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
 
   purchases: Purchase[] = [];
-  suppliers: Supplier[] = [];
-  stockItems: StockItem[] = [];
   loading = true;
   loadingMorePurchases = false;
   purchasesHasMore = false;
   purchasesCursor: string | null = null;
-  readonly listPageSize = 80;
+  readonly serverPageSize = 80;
+
+  searchQuery = '';
+  purchasesPage = 1;
 
   purchaseModalOpen = false;
+  purchaseModalTitle = 'Nueva compra';
+  purchaseModalSaving = false;
+  purchaseModalCompleted = false;
+  editingDraftPurchase: Purchase | null = null;
   detailModalOpen = false;
   detailPurchase: Purchase | null = null;
-  supplierModalOpen = false;
-  supplierPrefillNombre = '';
-  pendingSupplierName = '';
-  creatingSupplier = false;
-  savingPurchase = false;
-  purchaseProveedorId = '';
-  purchaseNotas = '';
-  draftLines: PurchaseDraftLine[] = [this.emptyLine()];
-
-  get supplierOptions() {
-    return this.suppliers
-      .filter((supplier) => supplier.id)
-      .map((supplier) => ({
-        value: supplier.id!,
-        label: supplier.nombre,
-      }));
-  }
+  detailLoading = false;
 
   get detailModalTitle(): string {
     if (!this.detailPurchase) return 'Detalle de compra';
-    const label = this.detailPurchase.compraLabel || this.detailPurchase.id?.slice(-6);
-    return label ? `Compra #${label}` : 'Detalle de compra';
+    return `Compra #${formatPurchaseLabel(this.detailPurchase)}`;
+  }
+
+  get detailModalSubtitle(): string {
+    if (!this.detailPurchase) return 'Productos, gastos y pago de la compra.';
+    return this.detailPurchase.proveedor?.trim() || 'Detalle completo de la compra.';
+  }
+
+  get filteredPurchases(): Purchase[] {
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return this.purchases;
+
+    return this.purchases.filter((purchase) => {
+      const label = formatPurchaseLabel(purchase).toLowerCase();
+      const proveedor = (purchase.proveedor || '').toLowerCase();
+      const comprobante = (purchase.numeroComprobante || '').toLowerCase();
+      const notas = (purchase.notas || '').toLowerCase();
+      const productos = (purchase.items ?? [])
+        .map(
+          (line) =>
+            (line.productoNombre || line.categoriaLabel || line.descripcion || '').toLowerCase()
+        )
+        .join(' ');
+
+      return (
+        label.includes(query) ||
+        proveedor.includes(query) ||
+        comprobante.includes(query) ||
+        notas.includes(query) ||
+        productos.includes(query)
+      );
+    });
+  }
+
+  get paginatedFilteredPurchases(): Purchase[] {
+    return paginateSlice(this.filteredPurchases, this.purchasesPage, this.listPageSize);
   }
 
   ngOnInit() {
@@ -384,10 +378,6 @@ export class PurchasesComponent implements OnInit {
       return;
     }
     this.loadPurchases();
-    this.loadSuppliers();
-    this.stockService.getStock().subscribe({
-      next: (items) => (this.stockItems = items),
-    });
 
     this.route.queryParamMap.subscribe((params) => {
       const detailId = params.get('detail');
@@ -400,12 +390,6 @@ export class PurchasesComponent implements OnInit {
     const detailId = this.route.snapshot.queryParamMap.get('detail');
     if (!detailId) return;
     this.openPurchaseDetailById(detailId);
-  }
-
-  private loadSuppliers() {
-    this.supplierService.getSuppliers().subscribe({
-      next: (suppliers) => (this.suppliers = suppliers),
-    });
   }
 
   get totalComprado(): number {
@@ -426,14 +410,6 @@ export class PurchasesComponent implements OnInit {
       .reduce((acc, purchase) => acc + (Number(purchase.total) || 0), 0);
   }
 
-  get draftTotal(): number {
-    return this.draftLines.reduce((acc, line) => {
-      const qty = Number(line.cantidad) || 0;
-      const cost = Number(line.costoUnitario) || 0;
-      return acc + qty * cost;
-    }, 0);
-  }
-
   formatDate(value?: string): string {
     if (!value) return '—';
     const date = new Date(value);
@@ -442,24 +418,94 @@ export class PurchasesComponent implements OnInit {
   }
 
   openPurchaseModal() {
-    if (this.stockItems.length === 0) {
-      this.dialogService.alert({
-        title: 'Sin productos',
-        message: 'Cargá productos en Stock antes de registrar una compra.',
-      });
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/purchases/new']);
       return;
     }
-
-    this.purchaseProveedorId = '';
-    this.purchaseNotas = '';
-    this.pendingSupplierName = '';
-    this.draftLines = [this.emptyLine()];
+    this.purchaseModalTitle = 'Nueva compra';
+    this.purchaseModalSaving = false;
+    this.purchaseModalCompleted = false;
+    this.editingDraftPurchase = null;
     this.purchaseModalOpen = true;
   }
 
+  openPurchaseDraftEdit(purchase: Purchase) {
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/purchases/new'], { queryParams: { draftId: purchase.id } });
+      return;
+    }
+    this.editingDraftPurchase = purchase;
+    this.purchaseModalTitle = 'Borrador de compra';
+    this.purchaseModalSaving = false;
+    this.purchaseModalCompleted = false;
+    this.purchaseModalOpen = true;
+  }
+
+  onPurchaseSavingChange(saving: boolean) {
+    queueMicrotask(() => {
+      this.purchaseModalSaving = saving;
+    });
+  }
+
+  onPurchaseCreated(event?: TransactionFormSaveEvent) {
+    if (event?.draft) {
+      this.purchaseModalSaving = false;
+      this.purchaseModalTitle = 'Borrador de compra';
+      if (event.id) {
+        this.editingDraftPurchase = {
+          ...(this.editingDraftPurchase ?? {}),
+          id: event.id,
+          estado: 'borrador',
+          items: this.editingDraftPurchase?.items ?? [],
+          total: this.editingDraftPurchase?.total ?? 0,
+          fecha: this.editingDraftPurchase?.fecha ?? new Date().toISOString(),
+        };
+      }
+      this.loadPurchases();
+      return;
+    }
+    const label = event?.label || (event?.id ? formatPurchaseLabel({ id: event.id }) : '');
+    this.purchaseModalTitle = label ? `Compra #${label}` : 'Compra registrada';
+    this.purchaseModalSaving = false;
+    this.purchaseModalCompleted = true;
+    this.editingDraftPurchase = null;
+    this.loadPurchases();
+  }
+
+  closePurchaseModal() {
+    this.purchaseModalOpen = false;
+    this.purchaseModalTitle = 'Nueva compra';
+    this.purchaseModalSaving = false;
+    this.purchaseModalCompleted = false;
+    this.editingDraftPurchase = null;
+  }
+
   openPurchaseDetail(purchase: Purchase) {
-    this.detailPurchase = purchase;
+    if (purchase.estado === 'borrador') {
+      this.openPurchaseDraftEdit(purchase);
+      return;
+    }
+    if (!purchase.id) return;
+
     this.detailModalOpen = true;
+    this.detailLoading = true;
+    this.detailPurchase = purchase;
+
+    this.purchaseService.getPurchase(purchase.id).subscribe({
+      next: (fullPurchase) => {
+        this.detailPurchase = fullPurchase;
+        this.detailLoading = false;
+      },
+      error: () => {
+        this.detailLoading = false;
+        this.detailModalOpen = false;
+        this.dialogService.alert({
+          title: 'Servidor no disponible',
+          message:
+            'No se pudo cargar la compra. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
+        });
+      },
+    });
   }
 
   openPurchaseDetailById(purchaseId: string) {
@@ -467,12 +513,24 @@ export class PurchasesComponent implements OnInit {
     if (purchase) {
       this.openPurchaseDetail(purchase);
       this.clearDetailQueryParam();
+      return;
     }
+
+    this.purchaseService.getPurchase(purchaseId).subscribe({
+      next: (fullPurchase) => {
+        this.openPurchaseDetail(fullPurchase);
+        this.clearDetailQueryParam();
+      },
+      error: () => {
+        this.clearDetailQueryParam();
+      },
+    });
   }
 
   closePurchaseDetail() {
     this.detailModalOpen = false;
     this.detailPurchase = null;
+    this.detailLoading = false;
     this.clearDetailQueryParam();
   }
 
@@ -486,118 +544,9 @@ export class PurchasesComponent implements OnInit {
     });
   }
 
-  closePurchaseModal() {
-    this.purchaseModalOpen = false;
-    this.pendingSupplierName = '';
-    this.closeSupplierModal();
-  }
-
-  addLine() {
-    this.draftLines = [...this.draftLines, this.emptyLine()];
-  }
-
-  removeLine(index: number) {
-    if (this.draftLines.length === 1) return;
-    this.draftLines = this.draftLines.filter((_, i) => i !== index);
-  }
-
-  onProductSelected(line: PurchaseDraftLine) {
-    const item = this.stockItems.find((entry) => entry.id === line.productoId);
-    if (!item) return;
-    if (line.costoUnitario == null || line.costoUnitario === 0) {
-      line.costoUnitario = Number(item.costo) || 0;
-    }
-  }
-
-  submitPurchase() {
-    const items = this.draftLines
-      .map((line) => {
-        const item = this.stockItems.find((entry) => entry.id === line.productoId);
-        return {
-          productoId: line.productoId,
-          productoNombre: item?.nombre ?? '',
-          cantidad: Number(line.cantidad) || 0,
-          costoUnitario: Number(line.costoUnitario) || 0,
-        };
-      })
-      .filter((line) => line.productoId && line.cantidad > 0);
-
-    if (items.length === 0) {
-      this.dialogService.alert({
-        title: 'Datos incompletos',
-        message: 'Seleccioná al menos un producto con cantidad.',
-      });
-      return;
-    }
-
-    const payload: CreatePurchasePayload = {
-      proveedorId: this.purchaseProveedorId.trim() || undefined,
-      notas: this.purchaseNotas.trim(),
-      items,
-    };
-
-    this.savingPurchase = true;
-    this.purchaseService.createPurchase(payload).subscribe({
-      next: () => {
-        this.savingPurchase = false;
-        this.closePurchaseModal();
-        this.loadPurchases();
-      },
-      error: (err) => {
-        this.savingPurchase = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message:
-            typeof err.error?.error === 'string'
-              ? err.error.error
-              : 'No se pudo registrar la compra.',
-        });
-      },
-    });
-  }
-
-  openNewSupplierModal() {
-    this.supplierPrefillNombre = this.pendingSupplierName.trim();
-    this.supplierModalOpen = true;
-  }
-
-  quickCreateSupplier(name: string) {
-    const trimmed = name.trim();
-    if (!trimmed || this.creatingSupplier) return;
-
-    this.creatingSupplier = true;
-    this.supplierService.createSupplier({ nombre: trimmed }).subscribe({
-      next: (response) => {
-        this.creatingSupplier = false;
-        const supplier: Supplier = { id: response.id, nombre: trimmed };
-        this.suppliers = [...this.suppliers, supplier];
-        this.purchaseProveedorId = response.id;
-        this.pendingSupplierName = trimmed;
-      },
-      error: () => {
-        this.creatingSupplier = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo crear el proveedor. Intentá de nuevo o usá «Nuevo proveedor» para cargar la ficha completa.',
-        });
-      },
-    });
-  }
-
-  closeSupplierModal() {
-    this.supplierModalOpen = false;
-    this.supplierPrefillNombre = '';
-  }
-
-  onSupplierSavedFromModal(event: SupplierFormSaveEvent) {
-    this.suppliers = [...this.suppliers.filter((s) => s.id !== event.id), event.supplier];
-    this.purchaseProveedorId = event.id;
-    this.closeSupplierModal();
-  }
-
   private loadPurchases() {
     this.loading = true;
-    this.purchaseService.getPurchasesPage(this.listPageSize).subscribe({
+    this.purchaseService.getPurchasesPage(this.serverPageSize).subscribe({
       next: (page) => {
         this.purchases = page.items;
         this.purchasesHasMore = page.hasMore;
@@ -619,7 +568,7 @@ export class PurchasesComponent implements OnInit {
     if (!this.purchasesHasMore || this.loadingMorePurchases) return;
     this.loadingMorePurchases = true;
     this.purchaseService
-      .getPurchasesPage(this.listPageSize, this.purchasesCursor ?? undefined)
+      .getPurchasesPage(this.serverPageSize, this.purchasesCursor ?? undefined)
       .subscribe({
         next: (page) => {
           this.purchases = [...this.purchases, ...page.items];
@@ -631,9 +580,5 @@ export class PurchasesComponent implements OnInit {
           this.loadingMorePurchases = false;
         },
       });
-  }
-
-  private emptyLine(): PurchaseDraftLine {
-    return { productoId: '', cantidad: 1, costoUnitario: 0 };
   }
 }

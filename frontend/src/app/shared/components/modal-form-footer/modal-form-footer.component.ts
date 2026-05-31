@@ -1,27 +1,23 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import {
-  FORM_CANCEL_CLASS,
-  FORM_SUBMIT_CLASS,
-} from '../icon-action/icon-action.component';
+import { FormFooterComponent } from '../form-shell/form-footer.component';
 
+/** @deprecated Usar `app-form-footer` con `mode="modal"`. */
 @Component({
   selector: 'app-modal-form-footer',
   standalone: true,
-  imports: [CommonModule],
+  imports: [FormFooterComponent],
   template: `
-    <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
-      <button type="button" (click)="cancelClick.emit()" [class]="formCancelClass">
-        {{ cancelLabel }}
-      </button>
-      <button
-        type="button"
-        [disabled]="primaryDisabled || saving"
-        [class]="primaryButtonClass || formSubmitClass"
-        (click)="primaryClick.emit()">
-        {{ saving ? 'Guardando...' : primaryLabel }}
-      </button>
-    </div>
+    <app-form-footer
+      mode="modal"
+      [saveLabel]="primaryLabel"
+      [cancelLabel]="cancelLabel"
+      [saving]="saving"
+      [saveDisabled]="primaryDisabled"
+      [footerClass]="footerClass"
+      [saveButtonClass]="primaryButtonClass"
+      (cancelClick)="cancelClick.emit()"
+      (saveClick)="primaryClick.emit()">
+    </app-form-footer>
   `,
 })
 export class ModalFormFooterComponent {
@@ -29,11 +25,8 @@ export class ModalFormFooterComponent {
   @Input() primaryLabel = 'Guardar';
   @Input() saving = false;
   @Input() primaryDisabled = false;
-  /** Optional override (e.g. caja ingreso/egreso). */
   @Input() primaryButtonClass = '';
+  @Input() footerClass = 'mt-6 pt-2';
   @Output() cancelClick = new EventEmitter<void>();
   @Output() primaryClick = new EventEmitter<void>();
-
-  readonly formCancelClass = FORM_CANCEL_CLASS;
-  readonly formSubmitClass = FORM_SUBMIT_CLASS;
 }

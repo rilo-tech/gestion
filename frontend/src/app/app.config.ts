@@ -7,7 +7,7 @@ import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, Copy, Save } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, Copy, Save, Receipt } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -23,7 +23,9 @@ import { ReportsComponent } from './features/reports/reports.component';
 import { SettingsComponent } from './features/settings/settings.component';
 import { CashComponent } from './features/cash/cash.component';
 import { PurchasesComponent } from './features/purchases/purchases.component';
+import { NewPurchaseComponent } from './features/purchases/new-purchase.component';
 import { SalesComponent } from './features/sales/sales.component';
+import { NewSaleComponent } from './features/sales/new-sale.component';
 import { LoginComponent } from './features/auth/login.component';
 import { PlatformLoginComponent } from './features/auth/platform-login.component';
 import { PlatformComponent } from './features/platform/platform.component';
@@ -90,6 +92,11 @@ const companyRoutes: Routes = [
     component: StockComponent,
   },
   {
+    path: 'purchases/new',
+    component: NewPurchaseComponent,
+    canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+  },
+  {
     path: 'purchases',
     component: PurchasesComponent,
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
@@ -105,6 +112,20 @@ const companyRoutes: Routes = [
   {
     path: 'orders',
     component: OrderListComponent,
+  },
+  {
+    path: 'sales/new',
+    component: NewSaleComponent,
+    canActivate: [
+      requireAnyPermission(PERMISSIONS.SALES_CREATE, PERMISSIONS.SALES_VIEW_HISTORY),
+    ],
+  },
+  {
+    path: 'sales/:id/edit',
+    component: NewSaleComponent,
+    canActivate: [
+      requireAnyPermission(PERMISSIONS.SALES_CREATE, PERMISSIONS.SALES_VIEW_HISTORY),
+    ],
   },
   {
     path: 'sales',
@@ -257,6 +278,7 @@ export const appConfig: ApplicationConfig = {
         UserCog,
         Copy,
         Save,
+        Receipt,
       })
     ),
     {
@@ -267,4 +289,8 @@ export const appConfig: ApplicationConfig = {
     },
   ],
 };
+
+
+
+
 

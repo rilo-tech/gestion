@@ -22,50 +22,107 @@ import { ensureDefaultBusiness } from './auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './auth/platform.ts';
 import { ensureDefaultPlans } from './auth/plans.ts';
 
-let bootstrapPromise: Promise<void> | null = null;
+const BOOTSTRAP_TIMEOUT_MS = 45_000;
 
-async function ensureApiBootstrap(): Promise<void> {
-  if (!bootstrapPromise) {
-    bootstrapPromise = (async () => {
-      await ensureDefaultPlatformAdmin();
-      await ensureDefaultPlans();
-      if (process.env.SKIP_DEFAULT_BUSINESS !== 'true') {
-        await ensureDefaultBusiness();
-        await ensureDefaultSupervisor();
-      }
-    })();
+let bootstrapPromise: Promise<void> | null = null;
+let bootstrapState: 'idle' | 'running' | 'ready' | 'failed' = 'idle';
+
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(
+          new Error(
+            `Timeout al iniciar ${label} (${BOOTSTRAP_TIMEOUT_MS}ms). Revisá Firebase o el emulador.`
+          )
+        );
+      }, BOOTSTRAP_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+export function runApiBootstrap(): Promise<void> {
+  if (bootstrapState === 'ready') {
+    return Promise.resolve();
   }
-  await bootstrapPromise;
+
+  if (!bootstrapPromise) {
+    bootstrapState = 'running';
+    bootstrapPromise = (async () => {
+      console.log('[api] Bootstrap iniciando…');
+      await withTimeout(ensureDefaultPlatformAdmin(), 'platform admin');
+      await withTimeout(ensureDefaultPlans(), 'planes');
+      if (process.env.SKIP_DEFAULT_BUSINESS !== 'true') {
+        await withTimeout(ensureDefaultBusiness(), 'empresa demo');
+        await withTimeout(ensureDefaultSupervisor(), 'supervisor demo');
+      }
+      bootstrapState = 'ready';
+      console.log('[api] Bootstrap listo');
+    })().catch((err) => {
+      bootstrapState = 'failed';
+      bootstrapPromise = null;
+      console.error('[api] Bootstrap falló:', err);
+      throw err;
+    });
+  }
+
+  return bootstrapPromise;
+}
+
+export function getApiBootstrapState(): 'idle' | 'running' | 'ready' | 'failed' {
+  return bootstrapState;
 }
 
 /** Express app con solo rutas /api (sin Vite ni estáticos). */
-export async function createApiApp(): Promise<express.Express> {
-  await ensureApiBootstrap();
-
+export function createApiApp(): express.Express {
   const app = express();
   app.use(cors({ origin: true }));
   app.use(express.json());
 
-  app.use('/api/auth', authRoutes);
-  app.use('/api/platform', platformRoutes);
-  app.use('/api/business', businessRoutes);
-  app.use('/api/clients', clientRoutes);
-  app.use('/api/suppliers', supplierRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/stock', stockRoutes);
-  app.use('/api/purchases', purchaseRoutes);
-  app.use('/api/orders', orderRoutes);
-  app.use('/api/sales', salesRoutes);
-  app.use('/api/cash', cashRoutes);
-  app.use('/api/config', catalogConfigRoutes);
-  app.use('/api/price-catalog', priceCatalogRoutes);
-  app.use('/api/payables', payablesRoutes);
-  app.use('/api/activity', activityRoutes);
-  app.use('/api/reports', reportsRoutes);
-  app.use('/api/collaborators', collaboratorsRoutes);
-
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', message: 'RILO Gestión API is running' });
+    res.json({
+      status: bootstrapState === 'ready' ? 'ok' : bootstrapState,
+      bootstrap: bootstrapState,
+      message: 'RILO Gestión API is running',
+    });
+  });
+
+  const withBootstrap: express.RequestHandler = async (_req, res, next) => {
+    try {
+      await runApiBootstrap();
+      next();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Bootstrap failed';
+      res.status(503).json({
+        error: `Servicio no disponible: ${message}`,
+      });
+    }
+  };
+
+  const api = express.Router();
+  api.use('/auth', authRoutes);
+  api.use('/platform', platformRoutes);
+  api.use('/business', businessRoutes);
+  api.use('/clients', clientRoutes);
+  api.use('/suppliers', supplierRoutes);
+  api.use('/users', userRoutes);
+  api.use('/stock', stockRoutes);
+  api.use('/purchases', purchaseRoutes);
+  api.use('/orders', orderRoutes);
+  api.use('/sales', salesRoutes);
+  api.use('/cash', cashRoutes);
+  api.use('/config', catalogConfigRoutes);
+  api.use('/price-catalog', priceCatalogRoutes);
+  api.use('/payables', payablesRoutes);
+  api.use('/activity', activityRoutes);
+  api.use('/reports', reportsRoutes);
+  api.use('/collaborators', collaboratorsRoutes);
+
+  app.use('/api', withBootstrap, api);
+
+  void runApiBootstrap().catch(() => {
+    // El error ya se registró; las rutas /api responderán 503 hasta que arranque.
   });
 
   return app;

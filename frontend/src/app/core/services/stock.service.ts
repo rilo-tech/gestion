@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, of } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { StockShortageGroup, StockShortageRow } from './order.service';
 import { itemControlsStock as resolveItemControlsStock } from '../utils/stock-product';
@@ -194,6 +194,13 @@ export class StockService {
 
   getItem(itemId: string): Observable<StockItem> {
     return this.http.get<StockItem>(`/api/stock/${this.businessId}/${itemId}`);
+  }
+
+  getItemsByIds(itemIds: string[]): Observable<StockItem[]> {
+    const ids = [...new Set(itemIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+    if (ids.length === 0) return of([]);
+    const params = new URLSearchParams({ ids: ids.join(',') });
+    return this.http.get<StockItem[]>(`/api/stock/${this.businessId}/by-ids?${params}`);
   }
 
   createItem(item: StockItem): Observable<{ id: string }> {

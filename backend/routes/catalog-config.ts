@@ -15,6 +15,7 @@ import {
   type ConfigRemovalKind,
 } from '../utils/config-usage.ts';
 import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
+import { normalizeFinanzasConfig } from '../utils/finance-config.ts';
 import {
   normalizeCategoriasSinStock,
   normalizeCategoriasStock,
@@ -72,6 +73,7 @@ const DEFAULT_APP_CONFIG = {
     tipos: normalizeStockTipos([]),
     origenes: normalizeStockOrigenes([]),
   },
+  finanzas: normalizeFinanzasConfig({}),
 };
 
 function normalizeList(values: unknown): string[] {
@@ -110,6 +112,25 @@ function mergeCajaConcepto(
 
 function sortCajaConceptos(conceptos: CajaConcepto[]): CajaConcepto[] {
   return [...conceptos].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+/** Firestore rejects `undefined` anywhere in the document tree. */
+function stripUndefinedDeep<T>(value: T): T {
+  if (value === undefined) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item)) as T;
+  }
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (entry === undefined) continue;
+      result[key] = stripUndefinedDeep(entry);
+    }
+    return result as T;
+  }
+  return value;
 }
 
 function normalizeCajaConceptos(caja: Record<string, unknown>): CajaConcepto[] {
@@ -199,6 +220,7 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
   const origenes = normalizeCajaOrigenes(caja.origenes);
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
   const stock = (data.stock as Record<string, unknown>) ?? {};
+  const finanzas = (data.finanzas as Record<string, unknown>) ?? {};
 
   return {
     productos: normalizeProductos(productos as Record<string, unknown>),
@@ -239,6 +261,7 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
       tipos: normalizeStockTipos(stock.tipos),
       origenes: normalizeStockOrigenes(stock.origenes),
     },
+    finanzas: normalizeFinanzasConfig(finanzas),
   };
 }
 
@@ -307,10 +330,10 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
       }
     }
 
-    const payload = {
+    const payload = stripUndefinedDeep({
       ...next,
       updatedAt: new Date().toISOString(),
-    };
+    });
 
     await db.doc(`negocios/${businessId}/config/app`).set(payload);
     if (syncCategoriaStock) {

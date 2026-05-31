@@ -31,6 +31,19 @@ import {
   type OrderPedidosConfigShape,
   type OrderStockMode,
 } from '../constants/order-config';
+import {
+  DEFAULT_CATEGORIAS_GASTO,
+  DEFAULT_MEDIOS_PAGO,
+  type CategoriaGastoConfig,
+  type MedioPagoComportamiento,
+  type MedioPagoConfig,
+  type PurchaseLineTipo,
+  type TarjetaConfig,
+  medioPagoGeneratesImmediateCash,
+  medioPagoGeneratesPayables,
+  medioPagoRequiereCuentaHija,
+  syncMedioPagoFlags,
+} from '../../../../../shared/finance-config.ts';
 
 export type { OrderEstadoConfig, OrderExtraCostPreset, OrderPedidosConfigShape, OrderStockMode, CategoriaStockRegla };
 export {
@@ -49,6 +62,22 @@ export { DEFAULT_CAJA_ORIGENES, getCashOrigenes, getCashOrigenNombre, slugifyOri
 export type { StockOrigenMovimiento, StockTipoMovimiento };
 export { DEFAULT_STOCK_ORIGENES, DEFAULT_STOCK_TIPOS };
 
+export type {
+  CategoriaGastoConfig,
+  MedioPagoComportamiento,
+  MedioPagoConfig,
+  PurchaseLineTipo,
+  TarjetaConfig,
+};
+export {
+  DEFAULT_CATEGORIAS_GASTO,
+  DEFAULT_MEDIOS_PAGO,
+  medioPagoGeneratesImmediateCash,
+  medioPagoGeneratesPayables,
+  medioPagoRequiereCuentaHija,
+  syncMedioPagoFlags,
+};
+
 export type ConfigRemovalKind =
   | 'clientes.etiquetas'
   | 'proveedores.etiquetas'
@@ -58,7 +87,10 @@ export type ConfigRemovalKind =
   | 'caja.conceptos'
   | 'caja.ambitos'
   | 'caja.origenes'
-  | 'stock.origenes';
+  | 'stock.origenes'
+  | 'finanzas.categoriasGasto'
+  | 'finanzas.mediosPago'
+  | 'finanzas.tarjetas';
 
 export interface ConfigUsageHit {
   module: string;
@@ -148,6 +180,11 @@ export interface AppConfig {
     tipos: StockTipoMovimiento[];
     origenes: StockOrigenMovimiento[];
   };
+  finanzas: {
+    mediosPago: MedioPagoConfig[];
+    tarjetas: TarjetaConfig[];
+    categoriasGasto: CategoriaGastoConfig[];
+  };
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -201,6 +238,11 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   stock: {
     tipos: [...DEFAULT_STOCK_TIPOS],
     origenes: [...DEFAULT_STOCK_ORIGENES],
+  },
+  finanzas: {
+    mediosPago: [...DEFAULT_MEDIOS_PAGO],
+    tarjetas: [],
+    categoriasGasto: [...DEFAULT_CATEGORIAS_GASTO],
   },
 };
 
@@ -292,6 +334,34 @@ export function slugifyCajaAmbitoId(label: string): string {
 
 export function getCajaAmbitos(config: AppConfig): CajaAmbitoConfig[] {
   return normalizeCajaAmbitos(config.caja ?? {});
+}
+
+export function getMediosPagoActivos(config: AppConfig): MedioPagoConfig[] {
+  return (config.finanzas?.mediosPago ?? DEFAULT_MEDIOS_PAGO).filter((m) => m.activo !== false);
+}
+
+export function getTarjetasActivas(config: AppConfig): TarjetaConfig[] {
+  return (config.finanzas?.tarjetas ?? []).filter((t) => t.activa !== false);
+}
+
+export function getCategoriasGasto(config: AppConfig): CategoriaGastoConfig[] {
+  return config.finanzas?.categoriasGasto ?? DEFAULT_CATEGORIAS_GASTO;
+}
+
+export function getMedioPagoConfig(
+  config: AppConfig,
+  medioPagoId: string
+): MedioPagoConfig | undefined {
+  return getMediosPagoActivos(config).find((m) => m.id === medioPagoId);
+}
+
+export function getMediosPagoConCuentaHija(config: AppConfig): MedioPagoConfig[] {
+  return getMediosPagoActivos(config).filter((medio) => medioPagoRequiereCuentaHija(medio));
+}
+
+export function getTarjetasForMedio(config: AppConfig, medioPagoId: string): TarjetaConfig[] {
+  const key = medioPagoId.trim().toLowerCase();
+  return getTarjetasActivas(config).filter((tarjeta) => tarjeta.medioPagoId === key);
 }
 
 export function getCashConceptOptions(

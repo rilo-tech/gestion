@@ -35,12 +35,12 @@ import { isDeletableStockMovement } from '../../core/utils/deletion-rules';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { LucideAngularModule } from 'lucide-angular';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import {
   ICON_ACTION_LINK_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import {
@@ -48,7 +48,7 @@ import {
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { DuplicateActionButtonComponent } from '../../shared/components/duplicate-action-button/duplicate-action-button.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
   CompactInlineStatsComponent,
@@ -61,43 +61,41 @@ import {
 } from '../../shared/components/compact-list/compact-list.constants';
 import { getOrderStatusLabel } from '../../core/constants/order-status';
 import { OrderService, ReservationTargetOrder } from '../../core/services/order.service';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 type StockTab = 'productos' | 'movimientos' | 'reservas';
 
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConfigSettingsLinkComponent, ConceptRefLinksComponent, HasPermissionDirective, ActivityLogTriggerComponent, ListPaginationComponent, DuplicateActionButtonComponent, CompactListRowComponent, CompactInlineStatsComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConceptRefLinksComponent, HasPermissionDirective, ListPaginationComponent, ListRowActionsComponent, CompactListRowComponent, CompactInlineStatsComponent, ModulePageHeaderComponent, CompactDataListComponent, ListLoadMoreComponent, ListSearchFieldComponent],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Stock & Inventario</h1>
-          <app-config-settings-link
-            settingsTab="productos"
-            message="¿Falta tipo, talle o color?"
-            linkLabel="Configuralo acá">
-          </app-config-settings-link>
-          <p class="mt-2">
-            <a
-              routerLink="/stock/faltantes"
-              class="text-sm font-semibold text-orange-700 hover:text-orange-900 hover:underline">
-              Ver faltantes para comprar
-            </a>
-          </p>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="stock"></app-activity-log-trigger>
-          <a
-            routerLink="/stock/new"
-            [class]="iconActionLinkClass"
-            aria-label="Nuevo producto"
-            title="Nuevo producto">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Nuevo producto</span>
+      <app-module-page-header
+        title="Stock & Inventario"
+        [showMobileSearch]="activeTab === 'productos' || activeTab === 'movimientos' || activeTab === 'reservas'"
+        [searchQuery]="headerSearchQuery"
+        (searchQueryChange)="onHeaderSearchChange($event)"
+        [searchFieldName]="headerSearchFieldName"
+        activityModule="stock">
+        <p headerExtra class="mt-2">
+          <a routerLink="/stock/faltantes" class="text-sm font-semibold text-orange-700 hover:text-orange-900 hover:underline">
+            Ver faltantes para comprar
           </a>
-        </div>
-      </div>
+        </p>
+        <a
+          headerActions
+          routerLink="/stock/new"
+          [class]="iconActionLinkClass"
+          aria-label="Nuevo producto"
+          title="Nuevo producto">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Nuevo producto</span>
+        </a>
+      </app-module-page-header>
 
       <div
         *ngIf="!auth.canViewStockCosts"
@@ -186,17 +184,19 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         <a routerLink="/stock" class="font-semibold text-orange-700 hover:underline">Ver todos</a>
       </div>
 
-      <div *ngIf="activeTab === 'productos'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="onProductsSearchChange()"
+      <app-compact-data-list *ngIf="activeTab === 'productos'" [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass + ' px-3 py-2 sm:px-6 sm:py-4'">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="onProductsSearchChange()"
             name="searchQuery"
             placeholder="Buscar producto..."
-            class="w-full sm:max-w-md px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            extraClass="sm:max-w-md">
+          </app-list-search-field>
         </div>
 
-        <div class="sm:hidden native-compact-list">
+        <div listMobile class="sm:hidden native-compact-list">
           <app-compact-list-row
             *ngFor="let item of paginatedFilteredItems"
             (activate)="openEditItem(item)">
@@ -228,7 +228,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </p>
         </div>
 
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -305,28 +305,14 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 {{ itemValorEstimadoLabel(item) }}
               </td>
               <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
-                <div class="flex items-center gap-1">
-                  <button
-                    *ngIf="auth.canEditRecords"
-                    type="button"
-                    (click)="openEditItem(item)"
-                    title="Editar"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                    <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <app-duplicate-action-button
-                    *ngIf="auth.canEditRecords"
-                    (duplicateClick)="duplicateItem(item, $event)">
-                  </app-duplicate-action-button>
-                  <button
-                    *ngIf="auth.canDeleteRecords"
-                    type="button"
-                    (click)="confirmDeleteItem(item)"
-                    title="Eliminar"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
+                <app-list-row-actions
+                  [showEdit]="auth.canEditRecords"
+                  (editClick)="openEditItem(item)"
+                  [showDuplicate]="auth.canEditRecords"
+                  (duplicateClick)="duplicateItem(item, $event)"
+                  [showDelete]="auth.canDeleteRecords"
+                  (deleteClick)="confirmDeleteItem(item)">
+                </app-list-row-actions>
               </td>
             </tr>
             <tr *ngIf="loadingItems">
@@ -351,22 +337,25 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="productsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredItems.length"
           (pageChange)="productsPage = $event">
         </app-list-pagination>
-      </div>
+      </app-compact-data-list>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
         <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50 space-y-1.5 sm:space-y-2">
           <div class="grid grid-cols-1 gap-2 sm:flex sm:flex-row sm:items-center sm:gap-3">
-            <input
-              [(ngModel)]="movementSearchQuery"
-              (ngModelChange)="onMovementsSearchChange()"
+            <app-list-search-field
+              mode="filter"
+              [(query)]="movementSearchQuery"
+              (queryChange)="onMovementsSearchChange()"
               name="movementSearchQuery"
               placeholder="Buscar por producto o motivo..."
-              class="w-full sm:max-w-md px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              extraClass="hidden sm:block sm:max-w-md">
+            </app-list-search-field>
             <div class="grid grid-cols-2 gap-2 sm:contents">
               <select
                 [(ngModel)]="movementTipoFilter"
@@ -387,12 +376,6 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </select>
             </div>
           </div>
-          <app-config-settings-link
-            settingsTab="stock"
-            message="¿Querés renombrar tipos u orígenes?"
-            linkLabel="Configuralo acá"
-            [compact]="true">
-          </app-config-settings-link>
         </div>
         <div [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
@@ -547,15 +530,17 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
 
       <div *ngIf="activeTab === 'reservas'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50 space-y-2">
-          <p class="text-sm text-gray-600">
+          <p class="text-sm text-gray-600 desc-lg-only">
             Stock apartado para pedidos pendientes. El depósito real baja al pasar a producción.
           </p>
-          <input
-            [(ngModel)]="reservationSearchQuery"
-            (ngModelChange)="onReservationsSearchChange()"
+          <app-list-search-field
+            mode="filter"
+            [(query)]="reservationSearchQuery"
+            (queryChange)="onReservationsSearchChange()"
             name="reservationSearchQuery"
             placeholder="Buscar producto, pedido o cliente..."
-            class="w-full max-w-md px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            extraClass="hidden sm:block sm:max-w-md">
+          </app-list-search-field>
         </div>
         <div class="sm:hidden native-compact-list">
           <app-compact-list-row
@@ -701,6 +686,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
 })
 export class StockComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
@@ -711,6 +697,33 @@ export class StockComponent implements OnInit, OnDestroy {
   readonly getStockDisponible = getStockDisponible;
   readonly getOrderStatusLabel = getOrderStatusLabel;
   isDeletableStockMovement = isDeletableStockMovement;
+
+  get headerSearchQuery(): string {
+    if (this.activeTab === 'movimientos') return this.movementSearchQuery;
+    if (this.activeTab === 'reservas') return this.reservationSearchQuery;
+    return this.searchQuery;
+  }
+
+  get headerSearchFieldName(): string {
+    if (this.activeTab === 'movimientos') return 'movementSearchQueryMobile';
+    if (this.activeTab === 'reservas') return 'reservationSearchQueryMobile';
+    return 'searchQueryMobile';
+  }
+
+  onHeaderSearchChange(value: string) {
+    if (this.activeTab === 'movimientos') {
+      this.movementSearchQuery = value;
+      this.onMovementsSearchChange();
+      return;
+    }
+    if (this.activeTab === 'reservas') {
+      this.reservationSearchQuery = value;
+      this.onReservationsSearchChange();
+      return;
+    }
+    this.searchQuery = value;
+    this.onProductsSearchChange();
+  }
 
   private stockService = inject(StockService);
   private orderService = inject(OrderService);

@@ -1,4 +1,11 @@
 import { db } from '../firebase.ts';
+import { createCashEgreso } from './cash-egreso.ts';
+import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
+import {
+  getMedioPagoById,
+  loadFinanzasConfig,
+  medioPagoGeneratesImmediateCash,
+} from './finance-config.ts';
 
 export type CollaboratorModalidad = 'por_hora' | 'fijo' | 'mixto';
 export type CollaboratorPeriodoReferencia = 'semana' | 'quincena' | 'mes';
@@ -39,6 +46,8 @@ export type CollaboratorMovementRecord = {
   periodoDesde?: string;
   periodoHasta?: string;
   notas?: string;
+  medioPagoId?: string;
+  movimientoCajaId?: string;
   createdAt: string;
 };
 
@@ -243,6 +252,7 @@ export async function parseMovementInput(
 
   const monto = Number(body.monto);
   if (!Number.isFinite(monto) || monto <= 0) return null;
+  const medioPagoId = String(body.medioPagoId ?? 'efectivo').trim().toLowerCase();
   return {
     colaboradorId,
     tipo,
@@ -251,7 +261,152 @@ export async function parseMovementInput(
     periodoDesde,
     periodoHasta,
     notas,
+    medioPagoId,
   };
+}
+
+function cashFechaFromDateOnly(fecha: string): string {
+  const raw = String(fecha ?? '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return new Date(`${raw}T12:00:00`).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function buildCollaboratorPaymentConcepto(
+  colaboradorNombre: string,
+  periodoDesde?: string,
+  periodoHasta?: string
+): string {
+  let concepto = `Pago colaborador · ${colaboradorNombre}`;
+  if (periodoDesde && periodoHasta) {
+    concepto += ` · ${periodoDesde} → ${periodoHasta}`;
+  } else if (periodoDesde) {
+    concepto += ` · ${periodoDesde}`;
+  }
+  return concepto;
+}
+
+export async function createCashForCollaboratorPayment(
+  businessId: string,
+  params: {
+    movementId: string;
+    colaboradorId: string;
+    colaboradorNombre: string;
+    monto: number;
+    medioPagoId: string;
+    fecha: string;
+    periodoDesde?: string;
+    periodoHasta?: string;
+  }
+): Promise<string> {
+  const finanzas = await loadFinanzasConfig(businessId);
+  const medio = getMedioPagoById(finanzas.mediosPago, params.medioPagoId);
+  if (!medio || !medioPagoGeneratesImmediateCash(medio)) {
+    throw new Error('MEDIO_PAGO_INVALID');
+  }
+
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  const caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+
+  return createCashEgreso(businessId, {
+    monto: params.monto,
+    concepto: buildCollaboratorPaymentConcepto(
+      params.colaboradorNombre,
+      params.periodoDesde,
+      params.periodoHasta
+    ),
+    medioPagoId: params.medioPagoId,
+    ambito: getBusinessCashAmbitoId(caja),
+    origenId: params.movementId,
+    origenTipo: 'colaborador_pago',
+    origenGrupo: 'otro',
+    colaboradorId: params.colaboradorId,
+    colaboradorNombre: params.colaboradorNombre,
+    fecha: cashFechaFromDateOnly(params.fecha),
+  });
+}
+
+export async function updateCashForCollaboratorPayment(
+  businessId: string,
+  movimientoCajaId: string,
+  params: {
+    colaboradorNombre: string;
+    monto: number;
+    medioPagoId: string;
+    fecha: string;
+    periodoDesde?: string;
+    periodoHasta?: string;
+  }
+): Promise<void> {
+  const finanzas = await loadFinanzasConfig(businessId);
+  const medio = getMedioPagoById(finanzas.mediosPago, params.medioPagoId);
+  if (!medio || !medioPagoGeneratesImmediateCash(medio)) {
+    throw new Error('MEDIO_PAGO_INVALID');
+  }
+
+  const ref = db.collection(`negocios/${businessId}/movimientos_caja`).doc(movimientoCajaId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+
+  await ref.update({
+    monto: params.monto,
+    concepto: buildCollaboratorPaymentConcepto(
+      params.colaboradorNombre,
+      params.periodoDesde,
+      params.periodoHasta
+    ),
+    medio: medio.label,
+    medioPagoId: params.medioPagoId,
+    fecha: cashFechaFromDateOnly(params.fecha),
+  });
+}
+
+export async function deleteCashForCollaboratorPayment(
+  businessId: string,
+  movimientoCajaId: string
+): Promise<void> {
+  const ref = db.collection(`negocios/${businessId}/movimientos_caja`).doc(movimientoCajaId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  await ref.delete();
+}
+
+export async function syncCollaboratorPaymentCash(
+  businessId: string,
+  movementId: string,
+  input: Omit<CollaboratorMovementRecord, 'id' | 'createdAt' | 'colaboradorNombre'> & {
+    colaboradorNombre: string;
+  },
+  existingMovimientoCajaId?: string
+): Promise<string | null> {
+  if (input.tipo !== 'pago') {
+    if (existingMovimientoCajaId) {
+      await deleteCashForCollaboratorPayment(businessId, existingMovimientoCajaId);
+    }
+    return null;
+  }
+
+  const medioPagoId = input.medioPagoId ?? 'efectivo';
+  const params = {
+    colaboradorNombre: input.colaboradorNombre,
+    monto: input.monto,
+    medioPagoId,
+    fecha: input.fecha,
+    periodoDesde: input.periodoDesde,
+    periodoHasta: input.periodoHasta,
+  };
+
+  if (existingMovimientoCajaId) {
+    await updateCashForCollaboratorPayment(businessId, existingMovimientoCajaId, params);
+    return existingMovimientoCajaId;
+  }
+
+  return createCashForCollaboratorPayment(businessId, {
+    movementId,
+    colaboradorId: input.colaboradorId,
+    ...params,
+  });
 }
 
 export async function buildCollaboratorsPeriodSummary(

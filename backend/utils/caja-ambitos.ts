@@ -77,7 +77,7 @@ export function getDefaultCashAmbitoId(caja: Record<string, unknown> = {}): stri
 }
 
 export function usesCashAmbitoSeparationFromCaja(caja: Record<string, unknown> = {}): boolean {
-  return normalizeCajaAmbitos(caja).length >= 1;
+  return normalizeCajaAmbitos(caja).length > 1;
 }
 
 export function normalizeMovementAmbito(

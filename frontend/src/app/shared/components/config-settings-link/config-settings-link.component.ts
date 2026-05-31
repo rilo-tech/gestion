@@ -8,7 +8,7 @@ export type SettingsConfigTab = 'productos' | 'clientes' | 'proveedores' | 'caja
   standalone: true,
   imports: [RouterLink],
   template: `
-    <p class="text-xs text-gray-400" [class.mt-1]="compact" [class.mt-2]="!compact">
+    <p class="text-xs text-gray-400 desc-lg-only" [class.mt-1]="compact" [class.mt-2]="!compact">
       {{ message }}
       <a
         [routerLink]="['/settings']"

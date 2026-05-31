@@ -18,7 +18,7 @@ import { Router, RouterLink } from '@angular/router';
     <div [class]="pageShellClass">
       <div class="mb-6 sm:mb-10">
         <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">¡Hola, {{ auth.currentUserName }}!</h1>
-        <p class="text-sm sm:text-base text-gray-500">Aquí tienes un resumen de tu negocio hoy.</p>
+        <p class="text-sm sm:text-base text-gray-500 desc-lg-only">Aquí tienes un resumen de tu negocio hoy.</p>
       </div>
 
       <div [class]="summaryKpisClass + ' grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10'">
@@ -86,27 +86,27 @@ import { Router, RouterLink } from '@angular/router';
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div
           *ngIf="hasQuickAccess"
-          class="order-1 lg:order-2 bg-gray-900 p-5 sm:p-6 rounded-2xl shadow-xl text-white">
-          <h2 class="text-lg font-bold mb-3 text-teal-400">Accesos Rápidos</h2>
+          class="home-quick-access order-1 lg:order-2 bg-gray-900 p-5 sm:p-6 rounded-2xl shadow-xl text-white">
+          <h2 class="home-quick-access-title text-lg font-bold mb-3 text-teal-400">Accesos Rápidos</h2>
           <div class="flex gap-2 sm:gap-3">
             <button
               *ngIf="auth.canEditRecords"
               routerLink="/orders/new"
-              class="flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
+              class="home-quick-access-btn flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
               <i-lucide name="clipboard-list" class="w-4 h-4 sm:w-5 sm:h-5 mb-1"></i-lucide>
               <p class="text-xs sm:text-sm font-bold leading-tight">Nuevo Pedido</p>
             </button>
             <button
               *ngIf="auth.canAccessSales"
               routerLink="/sales"
-              class="flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
+              class="home-quick-access-btn flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
               <i-lucide name="shopping-cart" class="w-4 h-4 sm:w-5 sm:h-5 mb-1"></i-lucide>
               <p class="text-xs sm:text-sm font-bold leading-tight">Ventas</p>
             </button>
             <button
               *ngIf="auth.canAccessCash"
               routerLink="/cash"
-              class="flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
+              class="home-quick-access-btn flex-1 min-w-0 p-2.5 sm:p-3 bg-gray-800 rounded-lg hover:bg-teal-500 hover:text-gray-900 transition-all text-left">
               <i-lucide name="wallet" class="w-4 h-4 sm:w-5 sm:h-5 mb-1"></i-lucide>
               <p class="text-xs sm:text-sm font-bold leading-tight">Caja</p>
             </button>

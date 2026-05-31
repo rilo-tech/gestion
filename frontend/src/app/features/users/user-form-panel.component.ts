@@ -25,6 +25,10 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
+import {
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 
 export interface UserFormSaveEvent {
   id: string;
@@ -47,31 +51,31 @@ export interface UserFormSaveEvent {
         class="space-y-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+            <label [class]="formLabelClass">Nombre *</label>
             <input
               [(ngModel)]="userForm.nombre"
               name="userNombre"
               required
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              [class]="formControlClass">
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label [class]="formLabelClass">Email</label>
             <input
               type="email"
               [(ngModel)]="userForm.email"
               name="userEmail"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              [class]="formControlClass">
           </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+            <label [class]="formLabelClass">Rol</label>
             <select
               [(ngModel)]="userForm.rol"
               name="userRol"
               (ngModelChange)="onRoleChange($event)"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              [class]="formControlClass">
               <option value="staff">{{ roleLabels.staff }}</option>
               <option value="admin">{{ roleLabels.admin }}</option>
             </select>
@@ -134,6 +138,9 @@ export interface UserFormSaveEvent {
   `,
 })
 export class UserFormPanelComponent implements OnChanges {
+  readonly formControlClass = FORM_CONTROL_CLASS;
+  readonly formLabelClass = FORM_LABEL_CLASS;
+
   @Input() userId: string | null = null;
   @Output() saved = new EventEmitter<UserFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();

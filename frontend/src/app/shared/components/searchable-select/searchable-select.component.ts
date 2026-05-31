@@ -102,6 +102,8 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
 
   @Input() options: string[] = [];
   @Input() labeledOptions?: SearchableSelectOption[];
+  /** Etiqueta a mostrar si el valor aún no está en las opciones (p. ej. cliente del pedido). */
+  @Input() fallbackLabel?: string;
   @Input() placeholder = 'Buscar...';
   @Input() plainPlaceholder = '';
   @Input() plainHint = '';
@@ -154,11 +156,11 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    const optionsChanged = changes['options'] || changes['labeledOptions'];
+    const optionsChanged = changes['options'] || changes['labeledOptions'] || changes['fallbackLabel'];
     if (!optionsChanged) return;
 
     const nextKey = this.serializeOptionsKey();
-    if (nextKey === this.optionsSnapshot) return;
+    if (nextKey === this.optionsSnapshot && !changes['fallbackLabel']) return;
 
     this.optionsSnapshot = nextKey;
     this.refreshDropdownItems();
@@ -168,7 +170,11 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   }
 
   writeValue(value: string | null): void {
-    this.value = value ?? '';
+    const next = value ?? '';
+    if (next === this.value && !this.inputFocused) {
+      return;
+    }
+    this.value = next;
     if (!this.inputFocused) {
       this.syncDisplayTextFromValue();
       this.refreshDropdownItems();
@@ -408,14 +414,18 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
       this.searchText = '';
       return;
     }
-    this.searchText = this.getDisplayTextForValue() || this.value;
+    this.searchText = this.getDisplayTextForValue();
   }
 
   private getDisplayTextForValue(): string {
     if (!this.value) return '';
 
     if (this.useEntityMode) {
-      return (this.labeledOptions ?? []).find((option) => option.value === this.value)?.label ?? '';
+      const label = (this.labeledOptions ?? []).find((option) => option.value === this.value)?.label;
+      if (label) return label;
+      const fallback = String(this.fallbackLabel ?? '').trim();
+      if (fallback) return fallback;
+      return '';
     }
 
     return this.value;

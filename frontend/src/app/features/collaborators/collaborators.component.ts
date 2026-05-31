@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
@@ -17,6 +17,12 @@ import {
   todayDate,
   weekStartDate,
 } from '../../core/services/collaborators.service';
+import {
+  AppConfig,
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  getMediosPagoActivos,
+} from '../../core/services/catalog-config.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
@@ -25,7 +31,7 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import {
@@ -34,8 +40,10 @@ import {
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { Subscription } from 'rxjs';
 
 type PeriodPreset = 'semana' | 'mes' | 'custom';
 type ActiveTab = 'resumen' | 'movimientos' | 'equipo';
@@ -51,36 +59,35 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
     SearchableSelectComponent,
     TransactionModalComponent,
     IconActionComponent,
-    ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     FormPanelFooterComponent,
+    ModulePageHeaderComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Colaboradores</h1>
-          <p class="text-sm sm:text-base text-gray-500">
-            Horarios, sueldos, extras (repartos, aguinaldo, premios) y pagos. Flexible por semana, mes o período custom.
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2 shrink-0">
-          <app-activity-log-trigger module="collaborators"></app-activity-log-trigger>
-          <app-icon-action *ngIf="auth.canEditRecords" label="Registrar horas" variant="secondary" (clicked)="openMovementModal('horas')">
-            <i-lucide name="clock" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <app-icon-action *ngIf="auth.canEditRecords" label="Extra / aguinaldo" variant="secondary" (clicked)="openMovementModal('extra')">
-            <i-lucide name="gift" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <app-icon-action *ngIf="auth.canEditRecords" label="Registrar pago" (clicked)="openMovementModal('pago')">
-            <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <app-icon-action *ngIf="auth.canEditRecords" label="Nuevo colaborador" (clicked)="openCollaboratorModal()">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Colaboradores"
+        description="Horarios, sueldos, extras (repartos, aguinaldo, premios) y pagos. Flexible por semana, mes o período custom."
+        [showMobileSearch]="activeTab === 'movimientos'"
+        [(searchQuery)]="movementSearch"
+        (searchQueryChange)="movementsPage = 1"
+        searchFieldName="movementSearchMobile"
+        activityModule="collaborators">
+        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Registrar horas" variant="secondary" (clicked)="openMovementModal('horas')">
+          <i-lucide name="clock" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Extra / aguinaldo" variant="secondary" (clicked)="openMovementModal('extra')">
+          <i-lucide name="gift" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Registrar pago" (clicked)="openMovementModal('pago')">
+          <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Nuevo colaborador" (clicked)="openCollaboratorModal()">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+      </app-module-page-header>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
@@ -222,13 +229,14 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
       </div>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="movementSearch"
-            (ngModelChange)="movementsPage = 1"
+        <div [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="movementSearch"
+            (queryChange)="movementsPage = 1"
             name="movementSearch"
-            placeholder="Buscar por colaborador, concepto o notas..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por colaborador, concepto o notas...">
+          </app-list-search-field>
         </div>
         <div [class]="tableScrollClass">
           <table [class]="tableMinWidthClass">
@@ -453,6 +461,13 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
             <span class="text-sm font-medium text-gray-700 mb-1 block">Monto pagado ($) *</span>
             <input [(ngModel)]="movementDraft.monto" name="movMontoPago" type="number" min="0" step="0.01" required class="form-control">
           </label>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700 mb-1 block">Medio de pago</span>
+            <select [(ngModel)]="movementDraft.medioPagoId" name="movMedioPago" class="form-control">
+              <option *ngFor="let medio of mediosPagoCaja" [ngValue]="medio.id">{{ medio.label }}</option>
+            </select>
+          </label>
+          <p class="text-xs text-gray-500">Se registrará un egreso en Caja al guardar.</p>
           <div class="grid grid-cols-2 gap-3">
             <label class="block">
               <span class="text-sm font-medium text-gray-700 mb-1 block">Período desde</span>
@@ -478,16 +493,20 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
     </app-transaction-modal>
   `,
 })
-export class CollaboratorsComponent implements OnInit {
+export class CollaboratorsComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   private service = inject(CollaboratorsService);
   private dialog = inject(DialogService);
+  private catalogConfig = inject(CatalogConfigService);
+  private configSub?: Subscription;
+
+  appConfig: AppConfig = DEFAULT_APP_CONFIG;
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
 
   summaryPage = 1;
@@ -581,8 +600,20 @@ export class CollaboratorsComponent implements OnInit {
     return Math.round(horas * valor * 100) / 100;
   }
 
+  get mediosPagoCaja() {
+    return getMediosPagoActivos(this.appConfig).filter((m) => m.comportamiento === 'caja_inmediata');
+  }
+
   ngOnInit(): void {
+    this.catalogConfig.getAppConfig().subscribe();
+    this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
+      this.appConfig = config;
+    });
     this.loadData();
+  }
+
+  ngOnDestroy(): void {
+    this.configSub?.unsubscribe();
   }
 
   applyPreset(preset: PeriodPreset): void {
@@ -686,7 +717,10 @@ export class CollaboratorsComponent implements OnInit {
   openMovementModal(tipo: MovementModalMode, movement?: CollaboratorMovement): void {
     this.editingMovement = movement ?? null;
     if (movement) {
-      this.movementDraft = { ...movement };
+      this.movementDraft = {
+        ...movement,
+        medioPagoId: movement.medioPagoId ?? 'efectivo',
+      };
     } else {
       this.movementDraft = this.emptyMovementDraft(tipo);
       this.movementDraft.colaboradorId = this.filterColaboradorId || '';
@@ -806,6 +840,7 @@ export class CollaboratorsComponent implements OnInit {
       extraTipo: tipo === 'extra' ? 'reparto' : undefined,
       horas: tipo === 'horas' ? 8 : undefined,
       monto: tipo === 'pago' ? undefined : tipo === 'extra' ? undefined : undefined,
+      medioPagoId: tipo === 'pago' ? 'efectivo' : undefined,
     };
   }
 }

@@ -1,36 +1,23 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import {
-  FORM_CANCEL_CLASS,
-  FORM_SUBMIT_CLASS,
-} from '../icon-action/icon-action.component';
+import { FormFooterComponent } from '../form-shell/form-footer.component';
 
+/** @deprecated Usar `app-form-footer` con `mode="inline"`. */
 @Component({
   selector: 'app-form-panel-footer',
   standalone: true,
-  imports: [CommonModule],
+  imports: [FormFooterComponent],
   template: `
-    <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-      <button
-        *ngIf="deleteLabel"
-        type="button"
-        (click)="deleteClick.emit()"
-        class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
-        {{ deleteLabel }}
-      </button>
-      <div class="flex justify-end gap-3 sm:ml-auto">
-        <button type="button" (click)="cancelClick.emit()" [class]="formCancelClass">
-          {{ cancelLabel }}
-        </button>
-        <button
-          *ngIf="showSave"
-          type="submit"
-          [disabled]="saving || saveDisabled"
-          [class]="formSubmitClass">
-          {{ saving ? 'Guardando...' : saveLabel }}
-        </button>
-      </div>
-    </div>
+    <app-form-footer
+      mode="inline"
+      [saveLabel]="saveLabel"
+      [cancelLabel]="cancelLabel"
+      [deleteLabel]="deleteLabel"
+      [saving]="saving"
+      [saveDisabled]="saveDisabled"
+      [showSave]="showSave"
+      (cancelClick)="cancelClick.emit()"
+      (deleteClick)="deleteClick.emit()">
+    </app-form-footer>
   `,
 })
 export class FormPanelFooterComponent {
@@ -42,7 +29,4 @@ export class FormPanelFooterComponent {
   @Input() showSave = true;
   @Output() cancelClick = new EventEmitter<void>();
   @Output() deleteClick = new EventEmitter<void>();
-
-  readonly formCancelClass = FORM_CANCEL_CLASS;
-  readonly formSubmitClass = FORM_SUBMIT_CLASS;
 }

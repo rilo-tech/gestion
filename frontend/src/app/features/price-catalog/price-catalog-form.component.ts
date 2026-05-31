@@ -1,30 +1,26 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { LucideAngularModule } from 'lucide-angular';
+import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import {
   PriceCatalogFormPanelComponent,
   PriceCatalogFormSaveEvent,
 } from './price-catalog-form-panel.component';
+import { FormPageHeaderComponent } from '../../shared/components/form-shell';
 
 @Component({
   selector: 'app-price-catalog-form',
   standalone: true,
-  imports: [CommonModule, RouterLink, LucideAngularModule, PriceCatalogFormPanelComponent],
+  imports: [CommonModule, PriceCatalogFormPanelComponent, FormPageHeaderComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-20">
-      <div class="mb-4 sm:mb-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">
-          {{ isEditing ? 'Editar referencia' : 'Nueva referencia' }}
-        </h1>
-        <a
-          routerLink="/price-catalog"
-          class="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 whitespace-nowrap">
-          <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
-          Volver
-        </a>
-      </div>
+      <app-form-page-header
+        [title]="isEditing ? 'Editar referencia' : 'Nueva referencia'"
+        backLabel="Volver al catálogo"
+        backShortLabel="Volver"
+        backAriaLabel="Volver al catálogo"
+        backRouterLink="/price-catalog">
+      </app-form-page-header>
 
       <div class="max-w-6xl">
         <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 lg:p-6">

@@ -67,26 +67,66 @@ const STOCK_TRIGGER_EXCLUDED = new Set([
   'entregado_con_saldo',
 ]);
 
+export function slugifyOrderEstadoValue(label: string): string {
+  const slug = String(label ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return slug || 'estado';
+}
+
+export function normalizeOrderEstadoValue(estado?: string): string {
+  return String(estado ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
 export function normalizeOrderEstados(raw: unknown): OrderEstadoConfig[] {
   const saved = Array.isArray(raw) ? raw : [];
-  const labelByValue = new Map<string, string>();
+  const result: OrderEstadoConfig[] = [];
+  const seen = new Set<string>();
 
   for (const entry of saved) {
     if (!entry || typeof entry !== 'object') continue;
     const obj = entry as Record<string, unknown>;
-    const value = String(obj.value ?? '')
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, '_');
     const label = String(obj.label ?? '').trim();
-    if (!value || !label) continue;
-    labelByValue.set(value, label);
+    if (!label) continue;
+
+    let value = normalizeOrderEstadoValue(String(obj.value ?? ''));
+    if (!value) value = slugifyOrderEstadoValue(label);
+    if (seen.has(value)) continue;
+
+    seen.add(value);
+    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
+    result.push({
+      value,
+      label,
+      sistema: obj.sistema === true || defaults?.sistema === true,
+    });
   }
 
-  return DEFAULT_ORDER_ESTADOS.map((defaults) => ({
-    ...defaults,
-    label: labelByValue.get(defaults.value) ?? defaults.label,
-  }));
+  if (result.length === 0) {
+    return DEFAULT_ORDER_ESTADOS.map((item) => ({ ...item }));
+  }
+
+  const ensure = (value: string, position: 'start' | 'end') => {
+    if (seen.has(value)) return;
+    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
+    if (!defaults) return;
+    const row = { ...defaults };
+    if (position === 'start') result.unshift(row);
+    else result.push(row);
+    seen.add(value);
+  };
+
+  ensure('borrador', 'start');
+  ensure('cancelado', 'end');
+
+  return result;
 }
 
 const STOCK_CONSUME_EXCLUDED = new Set(['borrador', 'cancelado']);
@@ -252,13 +292,6 @@ export function getOrderEstadoLabel(
   const match = estados.find((item) => item.value === value);
   if (match) return match.label;
   return estado?.trim() || 'Sin estado';
-}
-
-export function normalizeOrderEstadoValue(estado?: string): string {
-  return String(estado ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_');
 }
 
 export function orderEstadoMatchesTrigger(

@@ -16,7 +16,10 @@ export type ConfigRemovalKind =
   | 'caja.conceptos'
   | 'caja.ambitos'
   | 'caja.origenes'
-  | 'stock.origenes';
+  | 'stock.origenes'
+  | 'finanzas.categoriasGasto'
+  | 'finanzas.mediosPago'
+  | 'finanzas.tarjetas';
 
 export interface ConfigRemovalItem {
   kind: ConfigRemovalKind;
@@ -134,6 +137,85 @@ export async function getConfigItemUsage(
         ? [{ module: kind === 'caja.origenes' ? 'caja' : 'stock', label, count }]
         : [];
     }
+    case 'finanzas.categoriasGasto': {
+      const id = trimmed.toLowerCase();
+      const [obligSnap, comprasSnap] = await Promise.all([
+        loadCollection(businessId, 'cuentas_pagar_obligaciones'),
+        loadCollection(businessId, 'compras'),
+      ]);
+      const hits: ConfigUsageHit[] = [];
+      const obligCount = countFieldEquals(obligSnap.docs, 'categoriaId', id);
+      const comprasCount = comprasSnap.docs.filter((doc) => {
+        const data = doc.data();
+        if (norm(String(data.categoriaId ?? '')) === id) return true;
+        const lineas = data.lineas;
+        if (!Array.isArray(lineas)) return false;
+        return lineas.some((line) => {
+          if (!line || typeof line !== 'object') return false;
+          return norm(String((line as Record<string, unknown>).categoriaId ?? '')) === id;
+        });
+      }).length;
+      if (obligCount > 0) {
+        hits.push({ module: 'payables', label: 'Cuentas a pagar', count: obligCount });
+      }
+      if (comprasCount > 0) {
+        hits.push({ module: 'purchases', label: 'Compras', count: comprasCount });
+      }
+      return hits;
+    }
+    case 'finanzas.mediosPago': {
+      const id = trimmed.toLowerCase();
+      const [comprasSnap, cuotasSnap, cajaSnap] = await Promise.all([
+        loadCollection(businessId, 'compras'),
+        loadCollection(businessId, 'cuentas_pagar_cuotas'),
+        loadCollection(businessId, 'movimientos_caja'),
+      ]);
+      const hits: ConfigUsageHit[] = [];
+      const comprasCount = comprasSnap.docs.filter((doc) => {
+        const data = doc.data();
+        const pago = data.pago;
+        if (pago && typeof pago === 'object') {
+          return norm(String((pago as Record<string, unknown>).medioPagoId ?? '')) === id;
+        }
+        return norm(String(data.medioPagoId ?? '')) === id;
+      }).length;
+      const cuotasCount = countFieldEquals(cuotasSnap.docs, 'medioPagoId', id);
+      const cajaCount = countFieldEquals(cajaSnap.docs, 'medioPagoId', id);
+      if (comprasCount > 0) {
+        hits.push({ module: 'purchases', label: 'Compras', count: comprasCount });
+      }
+      if (cuotasCount > 0) {
+        hits.push({ module: 'payables', label: 'Cuotas en cuentas a pagar', count: cuotasCount });
+      }
+      if (cajaCount > 0) {
+        hits.push({ module: 'caja', label: 'Movimientos de caja', count: cajaCount });
+      }
+      return hits;
+    }
+    case 'finanzas.tarjetas': {
+      const id = trimmed.toLowerCase();
+      const [cuotasSnap, comprasSnap] = await Promise.all([
+        loadCollection(businessId, 'cuentas_pagar_cuotas'),
+        loadCollection(businessId, 'compras'),
+      ]);
+      const hits: ConfigUsageHit[] = [];
+      const cuotasCount = countFieldEquals(cuotasSnap.docs, 'tarjetaId', id);
+      const comprasCount = comprasSnap.docs.filter((doc) => {
+        const data = doc.data();
+        const pago = data.pago;
+        if (pago && typeof pago === 'object') {
+          return norm(String((pago as Record<string, unknown>).tarjetaId ?? '')) === id;
+        }
+        return norm(String(data.tarjetaId ?? '')) === id;
+      }).length;
+      if (cuotasCount > 0) {
+        hits.push({ module: 'payables', label: 'Cuotas de tarjeta', count: cuotasCount });
+      }
+      if (comprasCount > 0) {
+        hits.push({ module: 'purchases', label: 'Compras', count: comprasCount });
+      }
+      return hits;
+    }
     default:
       return [];
   }
@@ -171,6 +253,10 @@ type NormalizedConfig = {
     ambitos: { id: string; label: string }[];
   };
   stock: { origenes: { grupo: string; nombre: string }[] };
+  finanzas: {
+    categoriasGasto: { id: string; label: string }[];
+    tarjetas: { id: string; label: string }[];
+  };
 };
 
 function removedStrings(prev: string[], next: string[], kind: ConfigRemovalKind): ConfigRemovalItem[] {
@@ -215,6 +301,41 @@ export function diffConfigRemovals(prev: NormalizedConfig, next: NormalizedConfi
   for (const origen of prev.stock.origenes) {
     if (!nextStockOrigenGrupos.has(norm(origen.grupo))) {
       removals.push({ kind: 'stock.origenes', value: origen.grupo, display: origen.nombre });
+    }
+  }
+
+  const nextCategorias = new Set(
+    next.finanzas.categoriasGasto.map((item) => norm(item.id))
+  );
+  for (const cat of prev.finanzas.categoriasGasto) {
+    if (!nextCategorias.has(norm(cat.id))) {
+      removals.push({
+        kind: 'finanzas.categoriasGasto',
+        value: cat.id,
+        display: cat.label,
+      });
+    }
+  }
+
+  const nextMedios = new Set(next.finanzas.mediosPago.map((item) => norm(item.id)));
+  for (const medio of prev.finanzas.mediosPago) {
+    if (!nextMedios.has(norm(medio.id))) {
+      removals.push({
+        kind: 'finanzas.mediosPago',
+        value: medio.id,
+        display: medio.label,
+      });
+    }
+  }
+
+  const nextTarjetas = new Set(next.finanzas.tarjetas.map((item) => norm(item.id)));
+  for (const tarjeta of prev.finanzas.tarjetas) {
+    if (!nextTarjetas.has(norm(tarjeta.id))) {
+      removals.push({
+        kind: 'finanzas.tarjetas',
+        value: tarjeta.id,
+        display: tarjeta.label,
+      });
     }
   }
 

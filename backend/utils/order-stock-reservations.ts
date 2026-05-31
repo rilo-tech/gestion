@@ -1301,6 +1301,32 @@ export async function consumeOrderStockForProduction(
   };
 }
 
+/** Al entregar, desconta del depósito lo que quedó pendiente (p. ej. reservado sin bajar). */
+export async function consumeOrderStockOnDelivery(
+  businessId: string,
+  orderId: string,
+  order: OrderStockRecord
+): Promise<ConsumeOrderStockResult> {
+  const normalizedItems = normalizeOrderItemsStock(order.items ?? []);
+
+  if (!orderHasPendingPhysicalStock(normalizedItems)) {
+    return {
+      items: normalizedItems,
+      stockDescontado: order.stockDescontado ?? true,
+      estadoStock: computeOrderStockStatus(normalizedItems),
+      stockPreparado: order.stockPreparado ?? true,
+    };
+  }
+
+  return consumeOrderStockInternal(businessId, orderId, order, {
+    motivo: (orderLabel) => formatOrderStockMotivo(orderLabel, 'Entrega'),
+    origenTipo: 'pedido_entrega',
+    scope: 'pedido_completo',
+    buildInsufficientMessage: (nombre, stockActual, toConsume) =>
+      `Stock insuficiente para entregar «${nombre}»: hay ${stockActual} u. en depósito y faltan descontar ${toConsume} u.`,
+  });
+}
+
 export async function consumeOrderStockOnStatusChange(
   businessId: string,
   orderId: string,

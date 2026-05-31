@@ -11,6 +11,10 @@ import {
   setPayableInstallmentPaid,
   setPayableObligationActive,
 } from '../utils/payables.ts';
+import {
+  listCardStatementSummaries,
+  payCardStatement,
+} from '../utils/card-statements.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
@@ -79,10 +83,14 @@ router.post('/:businessId/obligations', async (req, res) => {
 router.patch('/:businessId/installments/:cuotaId/paid', async (req, res) => {
   try {
     const paid = req.body.paid !== false;
+    const medioPagoId = req.body.medioPagoId
+      ? String(req.body.medioPagoId).trim().toLowerCase()
+      : undefined;
     const cuota = await setPayableInstallmentPaid(
       req.params.businessId,
       req.params.cuotaId,
-      paid
+      paid,
+      paid ? { medioPagoId } : undefined
     );
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
@@ -95,6 +103,9 @@ router.patch('/:businessId/installments/:cuotaId/paid', async (req, res) => {
   } catch (error) {
     if (error instanceof Error && error.message === 'CUOTA_NOT_FOUND') {
       return res.status(404).json({ error: 'Vencimiento no encontrado.' });
+    }
+    if (error instanceof Error && error.message === 'MEDIO_PAGO_INVALID') {
+      return res.status(400).json({ error: 'Medio de pago inválido para registrar el egreso.' });
     }
     console.error('Error updating payable installment:', error);
     res.status(500).json({ error: 'No se pudo actualizar el pago.' });
@@ -144,6 +155,62 @@ router.delete('/:businessId/obligations/:obligacionId', async (req, res) => {
     }
     console.error('Error deleting payable obligation:', error);
     res.status(500).json({ error: 'No se pudo eliminar la obligación.' });
+  }
+});
+
+router.get('/:businessId/card-statements', async (req, res) => {
+  try {
+    const mes = String(req.query.mes ?? '').trim() || undefined;
+    const summaries = await listCardStatementSummaries(req.params.businessId, mes);
+    res.json(summaries);
+  } catch (error) {
+    console.error('Error listing card statements:', error);
+    res.status(500).json({ error: 'No se pudieron cargar los resúmenes de tarjeta.' });
+  }
+});
+
+router.post('/:businessId/card-statements/pay', async (req, res) => {
+  try {
+    const tarjetaId = String(req.body.tarjetaId ?? '').trim();
+    const mes = String(req.body.mes ?? '').trim();
+    const medioPagoId = String(req.body.medioPagoId ?? 'transferencia').trim().toLowerCase();
+    const ambito = req.body.ambito ? String(req.body.ambito).trim().toLowerCase() : undefined;
+
+    if (!tarjetaId || !mes) {
+      return res.status(400).json({ error: 'Indicá tarjeta y mes del resumen.' });
+    }
+
+    const result = await payCardStatement(req.params.businessId, {
+      tarjetaId,
+      mes,
+      medioPagoId,
+      ambito,
+      notas: String(req.body.notas ?? '').trim() || undefined,
+    });
+
+    await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
+      module: 'payables',
+      action: 'payment',
+      entityType: 'tarjeta_resumen',
+      entityId: `${tarjetaId}_${mes}`,
+      summary: `Pagó resumen ${tarjetaId} ${mes} · ${result.cuotasPagadas} cuotas · $${result.total}`,
+    });
+
+    res.json(result);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'TARJETA_NOT_FOUND') {
+        return res.status(400).json({ error: 'Tarjeta no encontrada.' });
+      }
+      if (error.message === 'NO_CUOTAS_PENDING') {
+        return res.status(400).json({ error: 'No hay cuotas pendientes para esa tarjeta y mes.' });
+      }
+      if (error.message === 'MEDIO_PAGO_INVALID') {
+        return res.status(400).json({ error: 'Medio de pago inválido para registrar el egreso.' });
+      }
+    }
+    console.error('Error paying card statement:', error);
+    res.status(500).json({ error: 'No se pudo registrar el pago del resumen.' });
   }
 });
 

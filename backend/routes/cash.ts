@@ -68,7 +68,18 @@ function normalizeAmbito(value: unknown, caja: Record<string, unknown>): string 
   return normalizeMovementAmbito(value, caja);
 }
 
+function isLinkedSystemMovement(movement: Record<string, unknown>): boolean {
+  const tipo = String(movement.origenTipo ?? '');
+  return (
+    tipo === 'colaborador_pago' ||
+    tipo === 'cuenta_pagar' ||
+    tipo === 'tarjeta_resumen' ||
+    tipo === 'compra'
+  );
+}
+
 function isManualMovement(movement: Record<string, unknown>): boolean {
+  if (isLinkedSystemMovement(movement)) return false;
   if (movement.origenGrupo === 'manual') return true;
 
   const tipo = String(movement.origenTipo ?? '');
@@ -106,6 +117,11 @@ function resolveOrigenLabel(
   grupo: OrigenGrupo,
   origenes: CajaOrigen[]
 ): string {
+  const tipo = String(movement.origenTipo ?? '');
+  if (tipo === 'colaborador_pago') return 'Colaboradores · pago';
+  if (tipo === 'cuenta_pagar') return 'Cuentas a pagar';
+  if (tipo === 'tarjeta_resumen') return 'Tarjeta · resumen';
+
   const base = getCashOrigenNombre(origenes, grupo);
   if (grupo === 'manual') {
     return movement.tipo === 'egreso' ? `${base} · egreso` : `${base} · ingreso`;

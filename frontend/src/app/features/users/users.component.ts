@@ -13,7 +13,7 @@ import {
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -30,6 +30,9 @@ import {
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import { UserFormPanelComponent, UserFormSaveEvent } from './user-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-users',
@@ -45,34 +48,39 @@ import { LucideAngularModule } from 'lucide-angular';
     ListRowActionsComponent,
     ListPaginationComponent,
     CompactListRowComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Usuarios</h1>
-          <p class="text-sm sm:text-base text-gray-500">
-            Administrá quién accede al sistema y qué puede hacer cada persona.
-          </p>
-        </div>
+      <app-module-page-header
+        title="Usuarios"
+        description="Administrá quién accede al sistema y qué puede hacer cada persona."
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="usersPage = 1"
+        searchFieldName="usersSearchQueryMobile">
         <app-icon-action
+          headerActions
           *appHasPermission="permissions.USERS_MANAGE"
           label="Nuevo usuario"
           (clicked)="openNewUser()">
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
         </app-icon-action>
-      </div>
+      </app-module-page-header>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="usersPage = 1"
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="usersPage = 1"
             name="usersSearchQuery"
-            placeholder="Buscar por nombre o email..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por nombre o email...">
+          </app-list-search-field>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
             *ngFor="let user of paginatedFilteredUsers"
             (activate)="openUser(user)">
@@ -98,7 +106,7 @@ import { LucideAngularModule } from 'lucide-angular';
             No se encontraron usuarios para "{{ searchQuery }}".
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
           <table [class]="nativeCompactTableClass + ' sm:table-fixed sm:min-w-[640px]'">
             <colgroup class="hidden sm:table-column-group">
               <col />
@@ -177,12 +185,13 @@ import { LucideAngularModule } from 'lucide-angular';
           </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="usersPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredUsers.length"
           (pageChange)="usersPage = $event">
         </app-list-pagination>
-      </div>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
@@ -205,7 +214,7 @@ export class UsersComponent implements OnInit {
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;

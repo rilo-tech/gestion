@@ -51,6 +51,8 @@ export interface OrderPayment {
 export interface Order {
   id?: string;
   clienteId: string;
+  /** Nombre del cliente resuelto en lectura (evita mostrar el id). */
+  clienteNombre?: string;
   estado: string;
   fechaEntrega: string;
   movimientoSeniaId?: string;

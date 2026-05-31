@@ -21,14 +21,14 @@ import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
+import { FORM_COMPACT_FIELD_CLASS, FORM_COMPACT_LABEL_CLASS } from '../../shared/components/form-shell/form-field.constants';
 
 export interface PriceCatalogFormSaveEvent {
   id: string;
   entry: PriceCatalogEntry;
 }
 
-const FIELD_CLASS =
-  'w-full h-9 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white';
+const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
 
 @Component({
   selector: 'app-price-catalog-form-panel',
@@ -46,7 +46,7 @@ const FIELD_CLASS =
         class="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(240px,300px)] lg:gap-5 lg:items-start">
         <fieldset [disabled]="formReadOnly" class="space-y-4 border-0 p-0 m-0 min-w-0">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Producto *</label>
+            <label [class]="labelClass">Producto *</label>
             <input
               [(ngModel)]="entryForm.nombre"
               name="catalogNombre"
@@ -149,13 +149,13 @@ const FIELD_CLASS =
 
           <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:items-end">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Notas</label>
+              <label [class]="labelClass">Notas</label>
               <textarea
                 [(ngModel)]="entryForm.notas"
                 name="catalogNotas"
                 rows="2"
                 placeholder="Opcional"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
+                [class]="fieldClass + ' resize-none'"></textarea>
             </div>
             <label class="inline-flex items-center gap-2 text-sm text-gray-700 pb-1 sm:pb-2">
               <input
@@ -216,6 +216,7 @@ const FIELD_CLASS =
 export class PriceCatalogFormPanelComponent implements OnChanges {
   readonly auth = inject(AuthService);
   readonly fieldClass = FIELD_CLASS;
+  readonly labelClass = FORM_COMPACT_LABEL_CLASS;
 
   @Input() entryId: string | null = null;
   @Output() saved = new EventEmitter<PriceCatalogFormSaveEvent>();

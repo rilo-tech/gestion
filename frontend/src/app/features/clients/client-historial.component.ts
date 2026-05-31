@@ -15,12 +15,16 @@ import { TransactionModalComponent } from '../../shared/components/transaction-m
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import {
   IconActionComponent,
+  ICON_TOOLBAR_OUTLINE_LINK_CLASS,
+  LIST_TOOLBAR_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { FormPageHeaderComponent } from '../../shared/components/form-shell';
 
 type CollectTarget =
   | { kind: 'pedido'; item: ClientAccountOrder }
@@ -39,25 +43,27 @@ type CollectMode = 'client' | 'item';
     TransactionModalComponent,
     IconActionComponent,
     ConceptRefLinksComponent,
+    ListSearchFieldComponent,
+    FormPageHeaderComponent,
   ],
   template: `
     <div [class]="pageShellClass + ' pb-20 sm:pb-24'">
-      <div class="mb-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="min-w-0">
-          <a
-            routerLink="/clients"
-            class="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 mb-3">
-            <i-lucide name="arrow-left" class="w-4 h-4"></i-lucide>
-            Volver a clientes
-          </a>
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">
-            Historial · {{ clientName }}
-          </h1>
-          <p class="text-sm text-gray-500 mt-1">
-            Cuenta corriente, compras y cobros registrados en caja.
-          </p>
-        </div>
-        <div class="flex flex-col sm:flex-row gap-2 shrink-0">
+      <app-form-page-header
+        [title]="'Historial · ' + clientName"
+        subtitle="Cuenta corriente, compras y cobros registrados en caja."
+        backLabel="Volver a clientes"
+        backShortLabel="Volver"
+        backRouterLink="/clients"
+        [hasHeaderActions]="true">
+        <div headerActions [class]="listToolbarRowClass + ' w-full sm:w-auto'">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            name="historialSearchQueryMobile"
+            placeholder="Buscar..."
+            [constrainWidth]="false"
+            extraClass="sm:hidden flex-1 min-w-0">
+          </app-list-search-field>
           <app-icon-action
             *ngIf="auth.canAccessCash && account?.debe"
             label="Cobrar cuenta"
@@ -67,12 +73,14 @@ type CollectMode = 'client' | 'item';
           <a
             *ngIf="clientId"
             [routerLink]="['/clients', clientId, 'edit']"
-            class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 shrink-0">
+            [class]="iconToolbarOutlineLinkClass"
+            aria-label="Editar datos"
+            title="Editar datos">
             <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
             <span class="hidden sm:inline">Editar datos</span>
           </a>
         </div>
-      </div>
+      </app-form-page-header>
 
       <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando historial...</div>
 
@@ -171,12 +179,13 @@ type CollectMode = 'client' | 'item';
         </section>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div class="xl:col-span-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-            <input
-              [(ngModel)]="searchQuery"
+          <div class="hidden sm:block xl:col-span-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+            <app-list-search-field
+              mode="filter"
+              [(query)]="searchQuery"
               name="historialSearchQuery"
-              placeholder="Buscar por pedido, venta, descripción u origen..."
-              class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+              placeholder="Buscar por pedido, venta, descripción u origen...">
+            </app-list-search-field>
           </div>
 
           <section class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -350,6 +359,8 @@ type CollectMode = 'client' | 'item';
 })
 export class ClientHistorialComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+  readonly listToolbarRowClass = LIST_TOOLBAR_ROW_CLASS;
+  readonly iconToolbarOutlineLinkClass = ICON_TOOLBAR_OUTLINE_LINK_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
   readonly auth = inject(AuthService);

@@ -38,7 +38,7 @@ export class DuplicateActionButtonComponent {
     const variants: Record<'ghost' | 'outline' | 'dark', string> = {
       ghost: 'p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
       outline:
-        'p-2 border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 min-h-[36px] min-w-[36px]',
+        'p-2.5 border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 min-h-[40px] min-w-[40px]',
       dark: 'flex-1 py-2 px-2.5 border border-gray-700 bg-gray-800/50 text-gray-200 hover:bg-gray-800',
     };
     return `${base} ${variants[this.variant]}`;

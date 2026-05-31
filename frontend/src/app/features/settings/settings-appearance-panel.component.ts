@@ -27,7 +27,7 @@ import { ThemePreference, ThemeService } from '../../core/services/theme.service
             [class.border-gray-200]="theme.preference() !== 'light'">
             <span class="block text-sm font-semibold text-gray-900">Fondo claro</span>
             <span class="block text-xs text-gray-500 mt-1 desc-lg-only">Ideal para ambientes luminosos.</span>
-            <span class="mt-3 block h-10 rounded-lg bg-gray-50 border border-gray-200"></span>
+            <span class="mt-3 block h-10 rounded-lg border theme-preview-swatch-light"></span>
           </button>
 
           <button
@@ -40,7 +40,7 @@ import { ThemePreference, ThemeService } from '../../core/services/theme.service
             [class.border-gray-200]="theme.preference() !== 'dark'">
             <span class="block text-sm font-semibold text-gray-900">Fondo oscuro</span>
             <span class="block text-xs text-gray-500 mt-1 desc-lg-only">Similar al login, más cómodo de noche.</span>
-            <span class="mt-3 block h-10 rounded-lg bg-gray-950 border border-gray-700"></span>
+            <span class="mt-3 block h-10 rounded-lg border theme-preview-swatch-dark"></span>
           </button>
         </div>
       </article>

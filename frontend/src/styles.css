@@ -80,7 +80,78 @@ html.dark .border-gray-300 {
   border-color: rgb(75 85 99) !important;
 }
 
-/* Sidebar oscuro fijo: subtítulo legible aunque el tema general sea claro */
+/* Muestras de tema en Apariencia: colores fijos aunque el resto esté en oscuro */
+.theme-preview-swatch-light {
+  background-color: #ffffff !important;
+  border-color: #e5e7eb !important;
+}
+
+.theme-preview-swatch-dark {
+  background-color: #030712 !important;
+  border-color: #374151 !important;
+}
+
+/* Tema claro: barra lateral y accesos rápidos con superficie clara */
+html:not(.dark) app-sidebar .app-sidebar {
+  background-color: #ffffff !important;
+  color: rgb(55 65 81);
+  border-right: 1px solid rgb(229 231 235);
+  box-shadow: 1px 0 0 rgb(243 244 246);
+}
+
+html:not(.dark) app-sidebar .app-sidebar h1 {
+  color: rgb(13 148 136) !important;
+}
+
+html:not(.dark) app-sidebar .app-sidebar a {
+  color: rgb(55 65 81);
+}
+
+html:not(.dark) app-sidebar .app-sidebar a:hover {
+  background-color: rgb(243 244 246) !important;
+  color: rgb(17 24 39);
+}
+
+html:not(.dark) app-sidebar .app-sidebar a.bg-gray-800 {
+  background-color: rgb(240 253 250) !important;
+  color: rgb(15 118 110) !important;
+}
+
+html:not(.dark) app-sidebar .app-sidebar .border-gray-800 {
+  border-color: rgb(229 231 235) !important;
+}
+
+html:not(.dark) app-sidebar .app-sidebar button.text-gray-400 {
+  color: rgb(107 114 128);
+}
+
+html:not(.dark) app-sidebar .app-sidebar button.text-gray-400:hover {
+  background-color: rgb(243 244 246) !important;
+  color: rgb(17 24 39);
+}
+
+html:not(.dark) .home-quick-access {
+  background-color: #ffffff !important;
+  color: rgb(17 24 39);
+  border: 1px solid rgb(243 244 246);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+html:not(.dark) .home-quick-access-title {
+  color: rgb(13 148 136) !important;
+}
+
+html:not(.dark) .home-quick-access-btn {
+  background-color: rgb(243 244 246) !important;
+  color: rgb(17 24 39);
+}
+
+html:not(.dark) .home-quick-access-btn:hover {
+  background-color: rgb(45 212 191) !important;
+  color: rgb(17 24 39) !important;
+}
+
+/* Sidebar: subtítulo legible en ambos temas */
 app-sidebar .sidebar-subtitle {
   color: rgb(156 163 175);
 }
@@ -209,6 +280,30 @@ html.dark .bg-purple-50 {
 
 html.dark .bg-green-100 {
   background-color: rgb(20 83 45 / 0.35) !important;
+}
+
+html.dark .bg-teal-100 {
+  background-color: rgb(19 78 74 / 0.45) !important;
+}
+
+html.dark .bg-violet-100 {
+  background-color: rgb(76 29 149 / 0.4) !important;
+}
+
+html.dark .bg-sky-100 {
+  background-color: rgb(12 74 110 / 0.4) !important;
+}
+
+html.dark .bg-white\/80 {
+  background-color: rgb(17 24 39 / 0.85) !important;
+}
+
+html.dark .text-violet-800 {
+  color: rgb(221 214 254) !important;
+}
+
+html.dark .text-sky-800 {
+  color: rgb(186 230 253) !important;
 }
 
 html.dark .bg-orange-100 {
@@ -360,9 +455,44 @@ html.dark .disabled\:text-gray-500:disabled {
     border-top: 1px solid rgb(243 244 246);
   }
 
+  .form-actions.purchase-form-footer {
+    border-top: none;
+    background: linear-gradient(to top, rgb(255 255 255) 88%, rgb(255 255 255 / 0));
+    padding-top: 0.5rem;
+  }
+
   html.dark .form-actions {
     background: linear-gradient(to top, rgb(17 24 39) 78%, rgb(17 24 39 / 0));
     border-top-color: rgb(31 41 55);
+  }
+
+  html.dark .form-actions.purchase-form-footer {
+    border-top: none;
+    background: linear-gradient(to top, rgb(17 24 39) 88%, rgb(17 24 39 / 0));
+  }
+
+  app-transaction-modal .form-actions,
+  app-transaction-form-page .form-actions {
+    position: static;
+    margin-left: 0;
+    margin-right: 0;
+    margin-bottom: 0;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0 0;
+    padding-bottom: 0;
+    background: transparent;
+    border-top: none;
+  }
+
+  html.dark app-transaction-modal .form-actions,
+  html.dark app-transaction-form-page .form-actions {
+    background: transparent;
+    border-top: none;
+  }
+
+  app-transaction-modal .form-actions .form-btn-secondary,
+  app-transaction-form-page .form-actions .form-btn-secondary {
+    display: none;
   }
 
   .form-actions > .flex,
@@ -414,13 +544,24 @@ html.dark .disabled\:text-gray-500:disabled {
 
 .form-control {
   width: 100%;
-  min-height: 2.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.75rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.5rem;
   border: 1px solid rgb(229 231 235);
-  font-size: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
   outline: none;
   background-color: rgb(255 255 255);
+}
+
+@media (min-width: 640px) {
+  .form-control {
+    min-height: 2.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
 }
 
 .form-control:focus {
@@ -442,8 +583,8 @@ html.dark .order-status-select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  padding-right: 2.5rem;
+  background-position: right 0.5rem center;
+  padding-right: 2rem;
 }
 
 html.dark select.order-status-select option,
@@ -456,8 +597,8 @@ html.dark .order-status-select option {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  padding-right: 2.5rem;
+  background-position: right 0.5rem center;
+  padding-right: 2rem;
 }
 
 html.dark app-searchable-select .searchable-select-input {
@@ -512,6 +653,59 @@ html.dark .product-search-option--interactive:hover {
   background-color: rgb(19 78 74 / 0.45) !important;
 }
 
+html.dark .product-search-option--active {
+  background-color: rgb(19 78 74 / 0.45) !important;
+}
+
+html.dark .product-search-option--active p {
+  color: rgb(255 255 255) !important;
+}
+
+html.dark .product-search-option--active .text-gray-500 {
+  color: rgb(204 251 241) !important;
+}
+
+.product-search-option--active {
+  background-color: rgb(240 253 250);
+}
+
+.product-search-add-btn {
+  border-color: rgb(153 246 228);
+  background-color: rgb(240 253 250);
+  color: rgb(15 118 110);
+}
+
+.product-search-add-btn:hover:not(:disabled) {
+  background-color: rgb(204 251 241);
+  border-color: rgb(45 212 191);
+}
+
+.product-search-add-btn--added,
+.product-search-add-btn:disabled {
+  border-color: rgb(229 231 235);
+  background-color: rgb(243 244 246);
+  color: rgb(156 163 175);
+  cursor: default;
+}
+
+html.dark .product-search-add-btn {
+  border-color: rgb(45 212 191 / 0.45) !important;
+  background-color: rgb(19 78 74 / 0.35) !important;
+  color: rgb(45 212 191) !important;
+}
+
+html.dark .product-search-add-btn:hover:not(:disabled) {
+  background-color: rgb(19 78 74 / 0.55) !important;
+  border-color: rgb(45 212 191) !important;
+}
+
+html.dark .product-search-add-btn--added,
+html.dark .product-search-add-btn:disabled {
+  border-color: rgb(55 65 81) !important;
+  background-color: rgb(31 41 55) !important;
+  color: rgb(107 114 128) !important;
+}
+
 html.dark .product-search-option--interactive:hover p {
   color: rgb(255 255 255) !important;
 }
@@ -534,17 +728,29 @@ html.dark .form-label {
 
 .form-label {
   display: block;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: rgb(55 65 81);
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.125rem;
+}
+
+@media (min-width: 640px) {
+  .form-label {
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+  }
 }
 
 @media (max-width: 639px) {
-  .form-control {
-    min-height: 2.75rem;
-    font-size: 16px;
-    padding: 0.625rem 1rem;
+  .txn-mobile-num-input {
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: none !important;
+  }
+
+  html.dark .txn-mobile-num-input {
+    background-color: transparent !important;
+    border-radius: 0 !important;
   }
 }
 

@@ -5,12 +5,18 @@ import { allocateSaleNumber, resolveSaleLabel } from '../utils/sale-number.ts';
 import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-commitments.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { isPrivilegedRole } from '../auth/constants.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   getBusinessCashAmbitoId,
   resolveCashReversalAmbito,
 } from '../utils/caja-ambitos.ts';
 import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
+import { productControlsStock } from '../utils/stock-product.ts';
+import {
+  consumeOrderStockOnDelivery,
+  orderHasPendingPhysicalStock,
+} from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
 
@@ -163,10 +169,6 @@ function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   if (pago.movimientoCajaId) clean.movimientoCajaId = pago.movimientoCajaId;
   if (pago.notas) clean.notas = pago.notas;
   return clean;
-}
-
-function productControlsStock(data: Record<string, unknown> | undefined): boolean {
-  return data?.controlaStock !== false;
 }
 
 function normalizeSaleLineExtraCosts(
@@ -356,6 +358,233 @@ async function restoreStockForVenta(
   scheduleStockMetricsRefresh(businessId);
 }
 
+/** Revierte salidas de depósito registradas al crear la venta (productos que controlan stock). */
+async function reverseStockMovementsForDeletedVenta(
+  businessId: string,
+  ventaId: string,
+  ventaLabel: string,
+  items: SaleLine[]
+): Promise<void> {
+  const salidaByProduct = new Map<string, number>();
+  const stockSnap = await db
+    .collection(`negocios/${businessId}/movimientos_stock`)
+    .where('ventaId', '==', ventaId)
+    .get();
+
+  for (const doc of stockSnap.docs) {
+    const data = doc.data() ?? {};
+    if (data.tipo !== 'salida') continue;
+    const origenTipo = String(data.origenTipo ?? '');
+    if (origenTipo === 'venta_anulada') continue;
+    if (!origenTipo.startsWith('venta')) continue;
+
+    const productoId = String(data.productoId ?? '').trim();
+    const qty = Number(data.cantidad) || 0;
+    if (!productoId || qty <= 0) continue;
+    salidaByProduct.set(productoId, (salidaByProduct.get(productoId) ?? 0) + qty);
+  }
+
+  if (salidaByProduct.size === 0) {
+    await restoreStockForVenta(businessId, ventaId, ventaLabel, items);
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+
+  for (const [productoId, qty] of salidaByProduct) {
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(productoId);
+    const itemSnap = await itemRef.get();
+    if (!itemSnap.exists) continue;
+
+    const itemData = itemSnap.data() ?? {};
+    if (!productControlsStock(itemData)) continue;
+
+    const currentStock = Number(itemData.stockActual) || 0;
+    await itemRef.update({ stockActual: currentStock + qty, updatedAt: timestamp });
+
+    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+      productoId,
+      tipo: 'entrada',
+      cantidad: qty,
+      fecha: timestamp,
+      motivo: `Anulación venta #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta_anulada',
+      origenGrupo: 'venta',
+      ventaId,
+      usuarioId: 'admin',
+      negocioId: businessId,
+    });
+  }
+
+  scheduleStockMetricsRefresh(businessId);
+}
+
+async function collectCashMovementIdsForDeletedVenta(
+  businessId: string,
+  ventaId: string,
+  venta: Record<string, unknown>
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+
+  if (venta.movimientoCajaId) ids.add(String(venta.movimientoCajaId));
+  for (const cobro of Array.isArray(venta.cobros) ? venta.cobros : []) {
+    if (cobro?.movimientoCajaId) ids.add(String(cobro.movimientoCajaId));
+  }
+
+  const cashSnap = await db
+    .collection(`negocios/${businessId}/movimientos_caja`)
+    .where('ventaId', '==', ventaId)
+    .get();
+
+  for (const doc of cashSnap.docs) {
+    const data = doc.data() ?? {};
+    if (data.tipo !== 'ingreso') continue;
+    if (data.movimientoAnuladoId) continue;
+    const origenTipo = String(data.origenTipo ?? '');
+    if (origenTipo === 'venta_eliminada') continue;
+    ids.add(doc.id);
+  }
+
+  return ids;
+}
+
+function isDraftSaleEstado(estado?: unknown): boolean {
+  return String(estado ?? '').trim().toLowerCase() === 'borrador';
+}
+
+function buildMostradorDraftFields(params: {
+  clienteId: string;
+  items: SaleLine[];
+  total: number;
+  economics: { costoReal: number; gananciaEstimada: number };
+  montoCobrado: number;
+  medioPago: string;
+  notas: string;
+  timestamp: string;
+  businessId: string;
+}) {
+  return {
+    origen: 'mostrador',
+    pedidoId: null,
+    estado: 'borrador',
+    clienteId: params.clienteId,
+    items: params.items,
+    total: params.total,
+    costoReal: params.economics.costoReal,
+    gananciaEstimada: params.economics.gananciaEstimada,
+    totalPagadoAnterior: 0,
+    montoCobrado: params.montoCobrado,
+    saldoPendiente: Math.max(0, params.total - params.montoCobrado),
+    medioPago: params.medioPago,
+    notas: params.notas,
+    fecha: params.timestamp,
+    negocioId: params.businessId,
+    updatedAt: params.timestamp,
+  };
+}
+
+async function confirmMostradorSaleDraft(
+  businessId: string,
+  ventaId: string,
+  reqBody: Record<string, unknown>
+) {
+  const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+  const ventaSnap = await ventaRef.get();
+  if (!ventaSnap.exists) {
+    throw new Error('SALE_NOT_FOUND');
+  }
+
+  const venta = ventaSnap.data() ?? {};
+  if (!isDraftSaleEstado(venta.estado)) {
+    throw new Error('NOT_DRAFT');
+  }
+  if (venta.origen === 'pedido') {
+    throw new Error('NOT_MOSTRADOR_DRAFT');
+  }
+
+  const clienteId = String(venta.clienteId ?? '').trim();
+  const items = (Array.isArray(venta.items) ? venta.items : []) as SaleLine[];
+  const total = Number(venta.total) || 0;
+  const montoCobrado = Number(venta.montoCobrado) || 0;
+  const medioPago = String(venta.medioPago ?? 'efectivo').trim() || 'efectivo';
+  const notas = String(venta.notas ?? '').trim();
+  const timestamp = new Date().toISOString();
+
+  if (!clienteId) {
+    throw new Error('CLIENT_REQUIRED');
+  }
+  if (items.length === 0) {
+    throw new Error('EMPTY_DRAFT');
+  }
+  if (montoCobrado > total) {
+    throw new Error('INVALID_AMOUNT');
+  }
+
+  const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
+
+  await ventaRef.update({
+    estado: 'confirmada',
+    numeroVenta,
+    ventaLabel,
+    updatedAt: timestamp,
+  });
+
+  for (const line of items) {
+    const stockError = await applyStockForVenta(businessId, ventaId, ventaLabel, [line]);
+    if (stockError) {
+      await reverseStockMovementsForDeletedVenta(businessId, ventaId, ventaLabel, items);
+      await ventaRef.update({
+        estado: 'borrador',
+        numeroVenta: null,
+        ventaLabel: 'Borrador',
+        updatedAt: timestamp,
+      });
+      throw new Error(stockError);
+    }
+  }
+
+  let movimientoCajaId: string | null = null;
+  if (montoCobrado > 0) {
+    movimientoCajaId = await createCashIncome(businessId, {
+      monto: montoCobrado,
+      concepto: `Venta mostrador #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta_mostrador',
+      medio: medioPago,
+      clienteId,
+      ventaId,
+      ventaLabel,
+      pedidoId: null,
+    });
+    await ventaRef.update({ movimientoCajaId });
+  }
+
+  const saldoPendiente = Math.max(0, total - montoCobrado);
+  const compromisoId = await maybeCreateCompromisoPago(businessId, {
+    body: reqBody,
+    saldoPendiente,
+    clienteId,
+    origenTipo: 'venta',
+    origenId: ventaId,
+    referenciaLabel: `Venta mostrador #${ventaLabel}`,
+    ventaId,
+  });
+
+  if (compromisoId) {
+    await ventaRef.update({ compromisoPagoId: compromisoId });
+  }
+
+  return {
+    id: ventaId,
+    ventaLabel,
+    total,
+    montoCobrado,
+    saldoPendiente,
+    compromisoPagoId: compromisoId,
+  };
+}
+
 async function applyStockForVenta(
   businessId: string,
   ventaId: string,
@@ -518,7 +747,10 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
     })
   );
 
-  const orderMap = new Map<string, { numeroPedidoLabel?: string; descripcion?: string }>();
+  const orderMap = new Map<
+    string,
+    { numeroPedidoLabel?: string; descripcion?: string; saldo?: number }
+  >();
   await Promise.all(
     [...orderIds].map(async (orderId) => {
       const snap = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
@@ -527,6 +759,7 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
       orderMap.set(orderId, {
         numeroPedidoLabel: data.numeroPedidoLabel ?? resolveOrderLabel(data as OrderRecord),
         descripcion: data.descripcion,
+        saldo: Math.max(0, Number(data.saldo) || 0),
       });
     })
   );
@@ -535,6 +768,11 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
     const clienteId = sale.clienteId ? String(sale.clienteId) : '';
     const pedidoId = sale.pedidoId ? String(sale.pedidoId) : '';
     const orderData = pedidoId ? orderMap.get(pedidoId) : undefined;
+    const storedSaldo = Math.max(0, Number(sale.saldoPendiente) || 0);
+    const saldoPendiente =
+      sale.origen === 'pedido' && pedidoId
+        ? Math.max(storedSaldo, orderData?.saldo ?? 0)
+        : storedSaldo;
 
     return {
       ...sale,
@@ -542,6 +780,7 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
       clienteNombre: clientMap.get(clienteId) ?? '',
       numeroPedidoLabel: sale.numeroPedidoLabel ?? orderData?.numeroPedidoLabel ?? null,
       pedidoDescripcion: orderData?.descripcion ?? null,
+      saldoPendiente,
     };
   });
 }
@@ -817,6 +1056,17 @@ router.post('/:businessId', async (req, res) => {
       const totalPagado = totalPagadoAnterior + montoCobrado;
       const saldo = Math.max(0, total - totalPagado);
 
+      let deliveryStockPatch: Record<string, unknown> = {};
+      if (orderHasPendingPhysicalStock(order.items ?? [])) {
+        const deliveryConsumption = await consumeOrderStockOnDelivery(businessId, pedidoId, order);
+        deliveryStockPatch = {
+          items: deliveryConsumption.items,
+          stockDescontado: deliveryConsumption.stockDescontado,
+          estadoStock: deliveryConsumption.estadoStock,
+          stockPreparado: deliveryConsumption.stockPreparado ?? order.stockPreparado,
+        };
+      }
+
       await orderRef.update({
         ventaId: ventaRef.id,
         estado: 'entregado',
@@ -824,6 +1074,7 @@ router.post('/:businessId', async (req, res) => {
         pagos: nuevosPagos.map(sanitizePagoForFirestore),
         totalPagado,
         saldo,
+        ...deliveryStockPatch,
       });
 
       if (movimientoCajaId) {
@@ -868,27 +1119,81 @@ router.post('/:businessId', async (req, res) => {
 
     const clienteId = String(req.body.clienteId ?? '').trim();
     const rawItems = req.body.items;
+    const isDraft = req.body.draft === true;
+    const draftVentaId = String(req.body.ventaId ?? req.body.id ?? '').trim();
 
     if (!clienteId) {
       return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
     }
 
     const built = await buildMostradorItemsFromBody(businessId, rawItems);
+    let items = built.items;
+    let total = built.total;
     if (built.error) {
-      return res.status(400).json({ error: built.error });
+      if (!isDraft) {
+        return res.status(400).json({ error: built.error });
+      }
+      items = [];
+      total = 0;
     }
-
-    const { items, total } = built;
 
     const economics = buildSaleEconomics(items, total);
 
     const montoCobrado =
       Number.isFinite(montoCobradoInput) && montoCobradoInput >= 0 ? montoCobradoInput : total;
 
-    if (montoCobrado > total) {
+    if (!isDraft && montoCobrado > total) {
       return res.status(400).json({
         error: `El monto cobrado no puede superar el total de la venta ($${total}).`,
       });
+    }
+
+    if (isDraft) {
+      const draftFields = buildMostradorDraftFields({
+        clienteId,
+        items,
+        total,
+        economics,
+        montoCobrado: Math.min(montoCobrado, total),
+        medioPago,
+        notas,
+        timestamp,
+        businessId,
+      });
+
+      if (draftVentaId) {
+        const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(draftVentaId);
+        const ventaSnap = await ventaRef.get();
+        if (!ventaSnap.exists || !isDraftSaleEstado(ventaSnap.data()?.estado)) {
+          return res.status(400).json({ error: 'Solo se pueden actualizar ventas en borrador.' });
+        }
+        await ventaRef.update(draftFields);
+        await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+          module: 'sales',
+          action: 'draft',
+          entityType: 'venta',
+          entityId: draftVentaId,
+          entityLabel: 'Borrador',
+          summary: 'Actualizó borrador de venta',
+        });
+        return res.status(200).json({ id: draftVentaId, ventaLabel: 'Borrador', draft: true });
+      }
+
+      const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
+        ...draftFields,
+        createdAt: timestamp,
+      });
+
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'sales',
+        action: 'draft',
+        entityType: 'venta',
+        entityId: ventaRef.id,
+        entityLabel: 'Borrador',
+        summary: 'Guardó borrador de venta',
+      });
+
+      return res.status(201).json({ id: ventaRef.id, ventaLabel: 'Borrador', draft: true });
     }
 
     const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
@@ -896,6 +1201,7 @@ router.post('/:businessId', async (req, res) => {
     const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
       origen: 'mostrador',
       pedidoId: null,
+      estado: 'confirmada',
       numeroVenta,
       ventaLabel,
       clienteId,
@@ -920,6 +1226,13 @@ router.post('/:businessId', async (req, res) => {
         [line]
       );
       if (stockError) {
+        await reverseStockMovementsForDeletedVenta(
+          businessId,
+          ventaRef.id,
+          ventaLabel,
+          items
+        );
+        await ventaRef.delete();
         return res.status(400).json({ error: stockError });
       }
     }
@@ -975,6 +1288,52 @@ router.post('/:businessId', async (req, res) => {
   } catch (error) {
     console.error('Error creating sale:', error);
     res.status(500).json({ error: 'Error creating sale' });
+  }
+});
+
+router.post('/:businessId/:ventaId/confirm', async (req, res) => {
+  try {
+    const { businessId, ventaId } = req.params;
+
+    let result;
+    try {
+      result = await confirmMostradorSaleDraft(businessId, ventaId, req.body as Record<string, unknown>);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message === 'SALE_NOT_FOUND') {
+        return res.status(404).json({ error: 'Venta no encontrada.' });
+      }
+      if (message === 'NOT_DRAFT') {
+        return res.status(400).json({ error: 'Solo se pueden confirmar ventas en borrador.' });
+      }
+      if (message === 'EMPTY_DRAFT') {
+        return res.status(400).json({ error: 'Agregá al menos un producto antes de confirmar.' });
+      }
+      if (message === 'CLIENT_REQUIRED') {
+        return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
+      }
+      if (message === 'INVALID_AMOUNT') {
+        return res.status(400).json({ error: 'El monto cobrado supera el total de la venta.' });
+      }
+      if (message.includes('Stock insuficiente') || message.includes('no existe')) {
+        return res.status(400).json({ error: message });
+      }
+      throw err;
+    }
+
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'sales',
+      action: 'confirm',
+      entityType: 'venta',
+      entityId: result.id,
+      entityLabel: result.ventaLabel,
+      summary: `Confirmó venta mostrador #${result.ventaLabel} · $${result.total}`,
+    });
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Error confirming sale:', error);
+    res.status(500).json({ error: 'Error confirming sale' });
   }
 });
 
@@ -1098,6 +1457,44 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
         error: 'Las ventas por pedido se editan desde el pedido asociado.',
         pedidoId: venta.pedidoId ?? null,
       });
+    }
+
+    if (isDraftSaleEstado(venta.estado)) {
+      const clienteId = String(req.body.clienteId ?? venta.clienteId ?? '').trim();
+      if (!clienteId) {
+        return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
+      }
+
+      const built = await buildMostradorItemsFromBody(businessId, req.body.items);
+      let items = built.items;
+      let total = built.total;
+      if (built.error) {
+        items = [];
+        total = 0;
+      }
+
+      const economics = buildSaleEconomics(items, total);
+      const montoCobradoInput = req.body.montoCobrado;
+      const montoCobrado =
+        Number.isFinite(Number(montoCobradoInput)) && Number(montoCobradoInput) >= 0
+          ? Number(montoCobradoInput)
+          : Number(venta.montoCobrado) || 0;
+
+      await ventaRef.update(
+        buildMostradorDraftFields({
+          clienteId,
+          items,
+          total,
+          economics,
+          montoCobrado: Math.min(montoCobrado, total),
+          medioPago: String(req.body.medioPago ?? venta.medioPago ?? 'efectivo').trim() || 'efectivo',
+          notas: String(req.body.notas ?? venta.notas ?? '').trim(),
+          timestamp: new Date().toISOString(),
+          businessId,
+        })
+      );
+
+      return res.json({ id: ventaId, ventaLabel: 'Borrador', draft: true });
     }
 
     const clienteId = String(req.body.clienteId ?? venta.clienteId ?? '').trim();
@@ -1240,9 +1637,53 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
   }
 });
 
+async function detachOrderFromDeletedVenta(
+  businessId: string,
+  ventaId: string,
+  venta: Record<string, unknown>,
+  ventaLabel: string,
+  cashMovementIds: Set<string>
+): Promise<void> {
+  const pedidoId = String(venta.pedidoId ?? '').trim();
+  if (!pedidoId) return;
+
+  const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(pedidoId);
+  const orderSnap = await orderRef.get();
+  if (!orderSnap.exists) return;
+
+  const order = orderSnap.data() as OrderRecord;
+  if (String(order.ventaId ?? '') !== ventaId) return;
+
+  const pagos = normalizePagos(order).filter((pago) => {
+    if (pago.movimientoCajaId && cashMovementIds.has(String(pago.movimientoCajaId))) {
+      return false;
+    }
+    if (String(pago.id).startsWith('pago_venta_')) return false;
+    const notas = String(pago.notas ?? '');
+    if (notas.includes(`venta #${ventaLabel}`) || notas.includes(`Venta #${ventaLabel}`)) {
+      return false;
+    }
+    return true;
+  });
+
+  const total = Number(order.total) || 0;
+  const totalPagado = pagos.reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
+  const saldo = Math.max(0, total - totalPagado);
+
+  await orderRef.update({
+    ventaId: null,
+    estado: 'listo',
+    entregadoAt: null,
+    pagos: pagos.map(sanitizePagoForFirestore),
+    totalPagado,
+    saldo,
+  });
+}
+
 router.delete('/:businessId/:ventaId', async (req, res) => {
   try {
     const { businessId, ventaId } = req.params;
+    const authReq = req as AuthenticatedRequest;
     const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
     const ventaSnap = await ventaRef.get();
     if (!ventaSnap.exists) {
@@ -1250,22 +1691,22 @@ router.delete('/:businessId/:ventaId', async (req, res) => {
     }
 
     const venta = ventaSnap.data() ?? {};
-    if (venta.origen === 'pedido') {
+    if (venta.origen === 'pedido' && !isPrivilegedRole(authReq.auth?.user?.rol)) {
       return res.status(400).json({
-        error: 'Las ventas por pedido no se eliminan desde acá. Gestioná el pedido asociado.',
+        error: 'Las ventas por pedido solo las puede eliminar un administrador.',
         pedidoId: venta.pedidoId ?? null,
       });
     }
 
     const ventaLabel = resolveSaleLabel(venta);
     const items = (Array.isArray(venta.items) ? venta.items : []) as SaleLine[];
-    await restoreStockForVenta(businessId, ventaId, ventaLabel, items);
+    await reverseStockMovementsForDeletedVenta(businessId, ventaId, ventaLabel, items);
 
-    const movimientoIds = new Set<string>();
-    if (venta.movimientoCajaId) movimientoIds.add(String(venta.movimientoCajaId));
-    for (const cobro of Array.isArray(venta.cobros) ? venta.cobros : []) {
-      if (cobro?.movimientoCajaId) movimientoIds.add(String(cobro.movimientoCajaId));
-    }
+    const movimientoIds = await collectCashMovementIdsForDeletedVenta(
+      businessId,
+      ventaId,
+      venta
+    );
 
     for (const movimientoId of movimientoIds) {
       await reverseCashMovement(businessId, movimientoId, {
@@ -1275,6 +1716,15 @@ router.delete('/:businessId/:ventaId', async (req, res) => {
         ventaLabel,
         clienteId: String(venta.clienteId ?? ''),
       });
+    }
+
+    const compromisoPagoId = String(venta.compromisoPagoId ?? '').trim();
+    if (compromisoPagoId) {
+      await db.collection(`negocios/${businessId}/compromisos_pago`).doc(compromisoPagoId).delete();
+    }
+
+    if (venta.origen === 'pedido') {
+      await detachOrderFromDeletedVenta(businessId, ventaId, venta, ventaLabel, movimientoIds);
     }
 
     await ventaRef.delete();

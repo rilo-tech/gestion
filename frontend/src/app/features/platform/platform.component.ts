@@ -15,8 +15,12 @@ import {
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import { TABLE_SCROLL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import {
+  TABLE_SCROLL_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 type PlatformTab = 'empresas' | 'pagos' | 'planes';
 type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
@@ -24,12 +28,12 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 @Component({
   selector: 'app-platform',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionModalComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionModalComponent, ListSearchFieldComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">Administración de plataforma</h1>
-        <p class="text-sm text-gray-500 mt-1">
+        <p class="text-sm text-gray-500 mt-1 desc-lg-only">
           Gestioná empresas, suscripciones y planes desde un solo lugar.
         </p>
       </div>
@@ -74,11 +78,19 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
       <!-- EMPRESAS -->
       <section *ngIf="activeTab === 'empresas'" class="space-y-4">
-        <div class="flex justify-end">
+        <div class="flex items-center gap-2">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="businessSearchQuery"
+            name="businessSearchQueryMobile"
+            placeholder="Buscar..."
+            [constrainWidth]="false"
+            extraClass="sm:hidden flex-1 min-w-0">
+          </app-list-search-field>
           <button
             type="button"
             (click)="toggleCreateBusinessForm()"
-            class="text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+            class="shrink-0 text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline whitespace-nowrap">
             {{ showCreateBusinessForm ? 'Cancelar' : '+ Crear empresa' }}
           </button>
         </div>
@@ -150,12 +162,13 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </article>
 
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-            <input
-              [(ngModel)]="businessSearchQuery"
+          <div [class]="desktopListSearchWrapClass">
+            <app-list-search-field
+              mode="filter"
+              [(query)]="businessSearchQuery"
               name="businessSearchQuery"
-              placeholder="Buscar por nombre o código..."
-              class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+              placeholder="Buscar por nombre o código...">
+            </app-list-search-field>
           </div>
           <div [class]="tableScrollClass">
             <table class="w-full sm:min-w-[720px] text-left border-collapse sm:table-fixed">
@@ -288,6 +301,14 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </div>
 
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="paymentSearchQuery"
+            name="paymentSearchQueryMobile"
+            placeholder="Buscar..."
+            [constrainWidth]="false"
+            extraClass="w-full sm:hidden">
+          </app-list-search-field>
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
@@ -305,7 +326,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               <span *ngIf="filter.count !== null" class="ml-1 opacity-80">({{ filter.count }})</span>
             </button>
           </div>
-          <label class="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+          <label class="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer shrink-0">
             <input
               type="checkbox"
               [(ngModel)]="includeSuspendedInPayments"
@@ -316,12 +337,13 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </div>
 
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-            <input
-              [(ngModel)]="paymentSearchQuery"
+          <div [class]="desktopListSearchWrapClass">
+            <app-list-search-field
+              mode="filter"
+              [(query)]="paymentSearchQuery"
               name="paymentSearchQuery"
-              placeholder="Buscar empresa por nombre o código..."
-              class="w-full max-w-xl px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+              placeholder="Buscar empresa por nombre o código...">
+            </app-list-search-field>
           </div>
           <div [class]="tableScrollClass">
             <table class="w-full sm:min-w-[880px] text-left border-collapse">
@@ -805,6 +827,7 @@ export class PlatformComponent implements OnInit {
   private dialogService = inject(DialogService);
 
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly statusLabels = SUBSCRIPTION_STATUS_LABELS;
   readonly paymentStatusLabels = SUBSCRIPTION_PAYMENT_STATUS_LABELS;
 

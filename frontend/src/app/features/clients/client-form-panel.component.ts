@@ -27,7 +27,9 @@ import {
   FORM_CONTROL_CLASS,
   FORM_LABEL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
+import {
+  FORM_COMPACT_CHIP_INPUT_WRAP_CLASS,
+} from '../../shared/components/form-shell/form-field.constants';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { Subscription } from 'rxjs';
@@ -49,21 +51,12 @@ export interface ClientFormSaveEvent {
     FormsModule,
     LucideAngularModule,
     SearchableSelectComponent,
-    ConfigSettingsLinkComponent,
     RouterLink,
     SelectOnFocusDirective,
     FormPanelFooterComponent,
   ],
   template: `
     <div class="space-y-4">
-      <app-config-settings-link
-        *ngIf="showConfigLink"
-        settingsTab="clientes"
-        message="¿Falta una etiqueta?"
-        linkLabel="Configurala acá"
-        [compact]="true">
-      </app-config-settings-link>
-
       <a
         *ngIf="isEditing && clientId && showHistorialLink"
         [routerLink]="['/clients', clientId, 'historial']"
@@ -102,7 +95,7 @@ export interface ClientFormSaveEvent {
             [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">WhatsApp / Teléfono</label>
+          <label [class]="formLabelClass">WhatsApp / Teléfono</label>
           <input
             [(ngModel)]="clientForm.telefono"
             name="clientTelefono"
@@ -136,7 +129,7 @@ export interface ClientFormSaveEvent {
 
           <div *ngIf="useEtiquetaList; else freeEtiquetas">
             <div
-              class="flex flex-wrap items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white focus-within:ring-2 focus-within:ring-primary">
+              [class]="chipInputWrapClass">
               <span
                 *ngFor="let tag of selectedEtiquetas"
                 class="inline-flex items-center gap-1 rounded-full border border-teal-100 bg-teal-50 px-2.5 py-0.5 text-xs font-medium text-teal-800">
@@ -197,7 +190,6 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   @Input() prefillNombre = '';
   @Input() showHistorialLink = true;
   @Input() wideLayout = false;
-  @Input() showConfigLink = true;
   @Output() saved = new EventEmitter<ClientFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() deleted = new EventEmitter<void>();
@@ -208,6 +200,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   readonly auth = inject(AuthService);
   readonly formControlClass = FORM_CONTROL_CLASS;
   readonly formLabelClass = FORM_LABEL_CLASS;
+  readonly chipInputWrapClass = FORM_COMPACT_CHIP_INPUT_WRAP_CLASS;
   private configSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
@@ -217,6 +210,9 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   clientForm: Partial<Client> = this.emptyClientForm();
   etiquetaPicker = '';
   etiquetasText = '';
+  private readonly emptyEtiquetas: string[] = [];
+  etiquetaSelectOptionsCache: SearchableSelectOption[] = [];
+  private etiquetaSelectOptionsKey = '';
 
   get isEditing(): boolean {
     return !!this.clientId;
@@ -231,23 +227,34 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   get etiquetaSelectOptions(): SearchableSelectOption[] {
-    const selected = new Set(this.selectedEtiquetas.map((tag) => tag.toLowerCase()));
-    return this.catalogConfigService
+    const selectedTags = this.clientForm.etiquetas ?? this.emptyEtiquetas;
+    const tagsKey = selectedTags.join('\u0001');
+    const optionsKey = JSON.stringify(this.catalogConfigService.getFieldOptions(this.appConfig, 'clientes.etiquetas'));
+    const key = `${tagsKey}\u0002${optionsKey}`;
+    if (key === this.etiquetaSelectOptionsKey) {
+      return this.etiquetaSelectOptionsCache;
+    }
+    this.etiquetaSelectOptionsKey = key;
+    const selected = new Set(selectedTags.map((tag) => tag.toLowerCase()));
+    this.etiquetaSelectOptionsCache = this.catalogConfigService
       .getFieldOptions(this.appConfig, 'clientes.etiquetas')
       .filter((tag) => !selected.has(tag.toLowerCase()))
       .map((tag) => ({
         value: tag,
         label: tag,
       }));
+    return this.etiquetaSelectOptionsCache;
   }
 
   get selectedEtiquetas(): string[] {
-    return this.clientForm.etiquetas ?? [];
+    return this.clientForm.etiquetas ?? this.emptyEtiquetas;
   }
 
   ngOnInit() {
     this.configSub = this.catalogConfigService.appConfig$.subscribe((config) => {
+      if (config === this.appConfig) return;
       this.appConfig = config;
+      this.etiquetaSelectOptionsKey = '';
     });
     this.catalogConfigService.getAppConfig().subscribe();
     this.resetForm();

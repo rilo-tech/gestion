@@ -1,17 +1,16 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Supplier, SupplierService } from '../../core/services/supplier.service';
 import { DialogService } from '../../core/services/dialog.service';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import {
   ICON_ACTION_LINK_CLASS,
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -32,7 +31,11 @@ import {
 } from './supplier-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { prefersInlineFormPage } from '../../core/utils/responsive-form';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-suppliers',
@@ -41,45 +44,53 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
     CommonModule,
     FormsModule,
     LucideAngularModule,
-    ConfigSettingsLinkComponent,
+    RouterLink,
     TransactionModalComponent,
     SupplierFormPanelComponent,
-    ActivityLogTriggerComponent,
     IconActionComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     CompactListRowComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListLoadMoreComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Proveedores</h1>
-          <p class="text-sm sm:text-base text-gray-500">Administra tus proveedores para compras e insumos.</p>
-          <app-config-settings-link
-            settingsTab="proveedores"
-            message="¿Falta una etiqueta?"
-            linkLabel="Configurala acá">
-          </app-config-settings-link>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="suppliers"></app-activity-log-trigger>
-          <app-icon-action label="Nuevo proveedor" (clicked)="openNewSupplier()">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Proveedores"
+        description="Administra tus proveedores para compras e insumos."
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="suppliersPage = 1"
+        searchFieldName="suppliersSearchQueryMobile"
+        activityModule="suppliers">
+        <a
+          headerActions
+          routerLink="/suppliers/new"
+          [class]="iconActionLinkClass + ' hidden lg:inline-flex'"
+          aria-label="Nuevo proveedor"
+          title="Nuevo proveedor">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Nuevo proveedor</span>
+        </a>
+        <app-icon-action headerActions label="Nuevo proveedor" class="lg:hidden" (clicked)="openNewSupplier()">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+      </app-module-page-header>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="suppliersPage = 1"
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="suppliersPage = 1"
             name="suppliersSearchQuery"
-            placeholder="Buscar por nombre, contacto, dirección o etiqueta..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por nombre, contacto, dirección o etiqueta...">
+          </app-list-search-field>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
             *ngFor="let supplier of paginatedFilteredSuppliers"
             (activate)="openSupplier(supplier)">
@@ -102,7 +113,7 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
             No se encontraron proveedores.
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
@@ -180,21 +191,20 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="suppliersPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredSuppliers.length"
           (pageChange)="suppliersPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4" *ngIf="suppliersHasMore">
-          <button
-            type="button"
-            (click)="loadMoreSuppliers()"
-            [disabled]="loadingMoreSuppliers"
-            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMoreSuppliers ? 'Cargando...' : 'Cargar más proveedores' }}
-          </button>
-        </div>
-      </div>
+        <app-list-load-more
+          listFooter
+          [hasMore]="suppliersHasMore"
+          [loading]="loadingMoreSuppliers"
+          label="Cargar más proveedores"
+          (loadMoreClick)="loadMoreSuppliers()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
@@ -218,7 +228,7 @@ export class SuppliersComponent implements OnInit {
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
@@ -284,13 +294,25 @@ export class SuppliersComponent implements OnInit {
       const isNew = params.get('new') === '1';
 
       if (editId) {
-        this.openSupplierModal(editId);
+        if (prefersInlineFormPage()) {
+          this.router.navigate(['/suppliers', editId, 'edit'], { replaceUrl: true });
+        } else {
+          this.openSupplierModal(editId);
+        }
         this.clearSupplierQueryParams();
         return;
       }
 
       if (isNew) {
-        this.openNewSupplier(params.get('nombre') ?? '');
+        const nombre = params.get('nombre')?.trim();
+        if (prefersInlineFormPage()) {
+          this.router.navigate(['/suppliers/new'], {
+            ...(nombre ? { queryParams: { nombre } } : {}),
+            replaceUrl: true,
+          });
+        } else {
+          this.openNewSupplier(nombre ?? '');
+        }
         this.clearSupplierQueryParams();
       }
     });
@@ -306,6 +328,13 @@ export class SuppliersComponent implements OnInit {
   }
 
   openNewSupplier(prefillNombre = '') {
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/suppliers/new'], {
+        ...(prefillNombre.trim() ? { queryParams: { nombre: prefillNombre.trim() } } : {}),
+      });
+      return;
+    }
+
     this.editingSupplierId = null;
     this.supplierPrefillNombre = prefillNombre.trim();
     this.supplierModalOpen = true;
@@ -386,6 +415,10 @@ export class SuppliersComponent implements OnInit {
 
   openSupplier(supplier: Supplier) {
     if (!supplier.id) return;
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/suppliers', supplier.id, 'edit']);
+      return;
+    }
     this.openSupplierModal(supplier.id);
   }
 

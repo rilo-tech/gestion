@@ -1,4 +1,11 @@
 import { db } from '../firebase.ts';
+import { createCashEgreso } from './cash-egreso.ts';
+import {
+  getCategoriaGastoById,
+  getMedioPagoById,
+  loadFinanzasConfig,
+  medioPagoGeneratesImmediateCash,
+} from './finance-config.ts';
 
 export type PayableTipo = 'unico' | 'mensual';
 export type PayableCuotaEstado = 'pendiente' | 'pagada';
@@ -14,6 +21,14 @@ export interface PayableObligationRecord {
   activo: boolean;
   ambito?: string;
   notas?: string;
+  categoriaId?: string;
+  categoriaLabel?: string;
+  origenTipo?: string;
+  compraId?: string;
+  compraLabel?: string;
+  tarjetaId?: string;
+  tarjetaLabel?: string;
+  medioPagoId?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -29,6 +44,15 @@ export interface PayableCuotaRecord {
   fechaPago?: string;
   tipo: PayableTipo;
   ambito?: string;
+  origenTipo?: string;
+  compraId?: string;
+  compraLabel?: string;
+  tarjetaId?: string;
+  tarjetaLabel?: string;
+  medioPagoId?: string;
+  cuotaTotal?: number;
+  descripcion?: string;
+  movimientoCajaId?: string;
   createdAt?: string;
 }
 
@@ -40,6 +64,16 @@ export interface CreatePayableObligationInput {
   fechaPrimerVencimiento: string;
   ambito?: string;
   notas?: string;
+  categoriaId?: string;
+  categoriaLabel?: string;
+  origenTipo?: string;
+  compraId?: string;
+  compraLabel?: string;
+  tarjetaId?: string;
+  tarjetaLabel?: string;
+  medioPagoId?: string;
+  cuotaTotal?: number;
+  descripcionBase?: string;
 }
 
 const MENSUAL_HORIZON_MONTHS = 12;
@@ -93,6 +127,8 @@ export function parseCreatePayableInput(raw: unknown): CreatePayableObligationIn
 
   if (!beneficiario || monto <= 0 || !fechaPrimerVencimiento) return null;
 
+  const categoriaId = String(data.categoriaId ?? '').trim() || undefined;
+
   return {
     beneficiario,
     monto,
@@ -101,6 +137,7 @@ export function parseCreatePayableInput(raw: unknown): CreatePayableObligationIn
     fechaPrimerVencimiento,
     ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
     notas: notas || undefined,
+    categoriaId,
   };
 }
 
@@ -115,6 +152,14 @@ function mapObligation(id: string, data: Record<string, unknown>): PayableObliga
     activo: data.activo !== false,
     ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
     notas: data.notas ? String(data.notas).trim() : undefined,
+    categoriaId: data.categoriaId ? String(data.categoriaId).trim() : undefined,
+    categoriaLabel: data.categoriaLabel ? String(data.categoriaLabel).trim() : undefined,
+    origenTipo: data.origenTipo ? String(data.origenTipo).trim() : undefined,
+    compraId: data.compraId ? String(data.compraId).trim() : undefined,
+    compraLabel: data.compraLabel ? String(data.compraLabel).trim() : undefined,
+    tarjetaId: data.tarjetaId ? String(data.tarjetaId).trim() : undefined,
+    tarjetaLabel: data.tarjetaLabel ? String(data.tarjetaLabel).trim() : undefined,
+    medioPagoId: data.medioPagoId ? String(data.medioPagoId).trim().toLowerCase() : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
   };
@@ -132,6 +177,15 @@ function mapCuota(id: string, data: Record<string, unknown>): PayableCuotaRecord
     fechaPago: data.fechaPago ? String(data.fechaPago) : undefined,
     tipo: data.tipo === 'mensual' ? 'mensual' : 'unico',
     ambito: data.ambito ? String(data.ambito).trim().toLowerCase() : undefined,
+    origenTipo: data.origenTipo ? String(data.origenTipo).trim() : undefined,
+    compraId: data.compraId ? String(data.compraId).trim() : undefined,
+    compraLabel: data.compraLabel ? String(data.compraLabel).trim() : undefined,
+    tarjetaId: data.tarjetaId ? String(data.tarjetaId).trim() : undefined,
+    tarjetaLabel: data.tarjetaLabel ? String(data.tarjetaLabel).trim() : undefined,
+    medioPagoId: data.medioPagoId ? String(data.medioPagoId).trim().toLowerCase() : undefined,
+    cuotaTotal: data.cuotaTotal ? Math.max(1, Number(data.cuotaTotal) || 1) : undefined,
+    descripcion: data.descripcion ? String(data.descripcion).trim() : undefined,
+    movimientoCajaId: data.movimientoCajaId ? String(data.movimientoCajaId).trim() : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
   };
 }
@@ -225,6 +279,8 @@ export async function ensureMensualCuotasHorizon(businessId: string): Promise<vo
         estado: 'pendiente',
         tipo: 'mensual',
         ambito: obligation.ambito ?? '',
+        origenTipo: obligation.origenTipo ?? 'manual',
+        descripcion: `${obligation.beneficiario}${obligation.categoriaLabel ? ` · ${obligation.categoriaLabel}` : ''} · ${latestDate.slice(0, 7)}`,
         createdAt: new Date().toISOString(),
       });
       writes += 1;
@@ -268,6 +324,13 @@ export async function createPayableObligation(
   businessId: string,
   input: CreatePayableObligationInput
 ): Promise<{ obligation: PayableObligationRecord; cuotasCreated: number }> {
+  const finanzas = await loadFinanzasConfig(businessId);
+  const categoria = input.categoriaId
+    ? getCategoriaGastoById(finanzas.categoriasGasto, input.categoriaId)
+    : undefined;
+  const categoriaLabel = input.categoriaLabel ?? categoria?.label;
+  const categoriaId = categoria?.id ?? input.categoriaId;
+
   const now = new Date().toISOString();
   const obligationRef = await obligationsCollection(businessId).add({
     beneficiario: input.beneficiario,
@@ -278,13 +341,35 @@ export async function createPayableObligation(
     activo: input.tipo === 'mensual',
     ambito: input.ambito ?? '',
     notas: input.notas ?? '',
+    categoriaId: categoriaId ?? null,
+    categoriaLabel: categoriaLabel ?? null,
+    origenTipo: input.origenTipo ?? 'manual',
+    compraId: input.compraId ?? null,
+    compraLabel: input.compraLabel ?? null,
+    tarjetaId: input.tarjetaId ?? null,
+    tarjetaLabel: input.tarjetaLabel ?? null,
+    medioPagoId: input.medioPagoId ?? null,
     createdAt: now,
     updatedAt: now,
   });
 
+  const cuotaTotal = input.cuotaTotal ?? input.cantidadCuotas;
+  const descripcionBase = input.descripcionBase ?? input.beneficiario;
+
   const initialCuotas = buildInitialCuotas(input).map((cuota) => ({
     ...cuota,
     obligacionId: obligationRef.id,
+    origenTipo: input.origenTipo ?? 'manual',
+    compraId: input.compraId ?? null,
+    compraLabel: input.compraLabel ?? null,
+    tarjetaId: input.tarjetaId ?? null,
+    tarjetaLabel: input.tarjetaLabel ?? null,
+    medioPagoId: input.medioPagoId ?? null,
+    cuotaTotal,
+    descripcion:
+      input.origenTipo === 'compra' && input.compraLabel
+        ? `Cuota ${cuota.numeroCuota}/${cuotaTotal} · Compra #${input.compraLabel} · ${descripcionBase}${input.tarjetaLabel ? ` · ${input.tarjetaLabel}` : ''}`
+        : `${input.beneficiario}${categoriaLabel ? ` · ${categoriaLabel}` : ''}${input.tipo === 'mensual' ? ` · ${cuota.fechaVencimiento.slice(0, 7)}` : ''}`,
     createdAt: now,
   }));
 
@@ -304,7 +389,8 @@ export async function createPayableObligation(
 export async function setPayableInstallmentPaid(
   businessId: string,
   cuotaId: string,
-  paid: boolean
+  paid: boolean,
+  options?: { medioPagoId?: string }
 ): Promise<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }> {
   const ref = cuotasCollection(businessId).doc(cuotaId);
   const snap = await ref.get();
@@ -312,9 +398,36 @@ export async function setPayableInstallmentPaid(
     throw new Error('CUOTA_NOT_FOUND');
   }
 
+  const before = mapCuota(snap.id, snap.data() as Record<string, unknown>);
+  let movimientoCajaId = before.movimientoCajaId;
+  let medioPagoId = before.medioPagoId;
+
+  if (paid && !movimientoCajaId && options?.medioPagoId) {
+    const finanzas = await loadFinanzasConfig(businessId);
+    const medio = getMedioPagoById(finanzas.mediosPago, options.medioPagoId);
+    if (!medio || !medioPagoGeneratesImmediateCash(medio)) {
+      throw new Error('MEDIO_PAGO_INVALID');
+    }
+
+    movimientoCajaId = await createCashEgreso(businessId, {
+      monto: before.monto,
+      concepto: before.descripcion || before.beneficiario,
+      medioPagoId: options.medioPagoId,
+      ambito: before.ambito ?? 'negocio',
+      origenId: cuotaId,
+      origenTipo: 'cuenta_pagar',
+      origenGrupo: before.origenTipo === 'compra' ? 'compra' : 'manual',
+      compraId: before.compraId,
+      compraLabel: before.compraLabel,
+    });
+    medioPagoId = options.medioPagoId;
+  }
+
   await ref.update({
     estado: paid ? 'pagada' : 'pendiente',
     fechaPago: paid ? new Date().toISOString() : null,
+    movimientoCajaId: paid ? movimientoCajaId ?? null : before.movimientoCajaId ?? null,
+    medioPagoId: paid ? medioPagoId ?? null : before.medioPagoId ?? null,
   });
 
   const updated = await ref.get();

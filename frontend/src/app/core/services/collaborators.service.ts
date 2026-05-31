@@ -42,6 +42,8 @@ export interface CollaboratorMovement {
   periodoDesde?: string;
   periodoHasta?: string;
   notas?: string;
+  medioPagoId?: string;
+  movimientoCajaId?: string;
   createdAt?: string;
 }
 

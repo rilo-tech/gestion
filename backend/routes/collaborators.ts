@@ -4,12 +4,14 @@ import { requirePermission } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   buildCollaboratorsPeriodSummary,
+  deleteCashForCollaboratorPayment,
   getCollaborator,
   listCollaboratorMovements,
   listCollaborators,
   movementsCollection,
   parseCollaboratorInput,
   parseMovementInput,
+  syncCollaboratorPaymentCash,
   collaboratorsCollection,
 } from '../utils/collaborators.ts';
 
@@ -156,8 +158,21 @@ router.post('/:businessId/movimientos', async (req, res) => {
     const docRef = await movementsCollection(req.params.businessId).add({
       ...input,
       colaboradorNombre: collaborator?.nombre ?? '',
+      movimientoCajaId: null,
       createdAt,
     });
+
+    let movimientoCajaId: string | null = null;
+    if (input.tipo === 'pago') {
+      movimientoCajaId = await syncCollaboratorPaymentCash(
+        req.params.businessId,
+        docRef.id,
+        { ...input, colaboradorNombre: collaborator?.nombre ?? '' }
+      );
+      if (movimientoCajaId) {
+        await docRef.update({ movimientoCajaId });
+      }
+    }
 
     const tipoLabel =
       input.tipo === 'horas' ? `${input.horas} h` : input.tipo === 'extra' ? 'extra' : 'pago';
@@ -171,8 +186,17 @@ router.post('/:businessId/movimientos', async (req, res) => {
       summary: `Registró ${tipoLabel} · ${collaborator?.nombre ?? ''} · $${input.monto}`,
     });
 
-    res.status(201).json({ id: docRef.id, ...input, colaboradorNombre: collaborator?.nombre, createdAt });
+    res.status(201).json({
+      id: docRef.id,
+      ...input,
+      colaboradorNombre: collaborator?.nombre,
+      movimientoCajaId,
+      createdAt,
+    });
   } catch (error) {
+    if (error instanceof Error && error.message === 'MEDIO_PAGO_INVALID') {
+      return res.status(400).json({ error: 'Medio de pago inválido para registrar el egreso en caja.' });
+    }
     console.error('Error creating collaborator movement:', error);
     res.status(500).json({ error: 'No se pudo registrar el movimiento.' });
   }
@@ -189,10 +213,22 @@ router.patch('/:businessId/movimientos/:movimientoId', async (req, res) => {
     const existing = await ref.get();
     if (!existing.exists) return res.status(404).json({ error: 'Movimiento no encontrado.' });
 
+    const existingData = existing.data() ?? {};
     const collaborator = await getCollaborator(req.params.businessId, input.colaboradorId);
+    const colaboradorNombre = collaborator?.nombre ?? '';
+
+    const movimientoCajaId = await syncCollaboratorPaymentCash(
+      req.params.businessId,
+      req.params.movimientoId,
+      { ...input, colaboradorNombre },
+      existingData.movimientoCajaId ? String(existingData.movimientoCajaId) : undefined
+    );
+
     await ref.update({
       ...input,
-      colaboradorNombre: collaborator?.nombre ?? '',
+      colaboradorNombre,
+      movimientoCajaId: movimientoCajaId ?? null,
+      medioPagoId: input.tipo === 'pago' ? input.medioPagoId ?? 'efectivo' : null,
     });
 
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
@@ -204,8 +240,16 @@ router.patch('/:businessId/movimientos/:movimientoId', async (req, res) => {
       summary: `Actualizó movimiento · ${collaborator?.nombre ?? ''}`,
     });
 
-    res.json({ id: req.params.movimientoId, ...input, colaboradorNombre: collaborator?.nombre });
+    res.json({
+      id: req.params.movimientoId,
+      ...input,
+      colaboradorNombre,
+      movimientoCajaId,
+    });
   } catch (error) {
+    if (error instanceof Error && error.message === 'MEDIO_PAGO_INVALID') {
+      return res.status(400).json({ error: 'Medio de pago inválido para registrar el egreso en caja.' });
+    }
     console.error('Error updating collaborator movement:', error);
     res.status(500).json({ error: 'No se pudo actualizar el movimiento.' });
   }
@@ -217,6 +261,13 @@ router.delete('/:businessId/movimientos/:movimientoId', async (req, res) => {
     const existing = await ref.get();
     if (!existing.exists) return res.status(404).json({ error: 'Movimiento no encontrado.' });
     const data = existing.data() ?? {};
+
+    if (data.movimientoCajaId) {
+      await deleteCashForCollaboratorPayment(
+        req.params.businessId,
+        String(data.movimientoCajaId)
+      );
+    }
 
     await ref.delete();
 

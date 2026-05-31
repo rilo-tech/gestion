@@ -11,10 +11,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
-  const app = await createApiApp();
+  const app = createApiApp();
   const PORT = Number(process.env.PORT) || 3000;
 
   if (process.env.NODE_ENV !== 'production') {
+    console.log('[dev] Iniciando Vite…');
     const viteMode = 'development';
     const viteEnv = loadEnv(viteMode, path.resolve(__dirname), '');
     for (const [key, value] of Object.entries(viteEnv)) {
@@ -32,6 +33,7 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    console.log('[dev] Vite listo');
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));

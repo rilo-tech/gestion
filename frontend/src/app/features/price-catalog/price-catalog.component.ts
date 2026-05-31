@@ -13,7 +13,7 @@ import { AuthService } from '../../core/services/auth.service';
 import {
   IconActionComponent,
   PAGE_SHELL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import {
   DEFAULT_LIST_PAGE_SIZE,
@@ -21,6 +21,9 @@ import {
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-price-catalog',
@@ -30,39 +33,41 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
     FormsModule,
     LucideAngularModule,
     IconActionComponent,
-    ActivityLogTriggerComponent,
     ListPaginationComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0 flex-1">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Precios de venta</h1>
-          <p class="text-sm sm:text-base text-gray-500 mt-1">
-            Catálogo por detalle (con/sin estampado) y cantidad. Solo precios de venta, sin costos.
-          </p>
-        </div>
-        <div class="flex gap-2 shrink-0 self-start">
-          <app-activity-log-trigger module="price_catalog"></app-activity-log-trigger>
-          <app-icon-action
-            *ngIf="auth.canManagePriceCatalog"
-            label="Nueva referencia"
-            (clicked)="router.navigate(['/price-catalog/new'])">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Precios de venta"
+        description="Catálogo por detalle (con/sin estampado) y cantidad. Solo precios de venta, sin costos."
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="catalogPage = 1"
+        searchFieldName="priceCatalogSearchMobile"
+        activityModule="price_catalog">
+        <app-icon-action
+          headerActions
+          *ngIf="auth.canManagePriceCatalog"
+          label="Nueva referencia"
+          (clicked)="router.navigate(['/price-catalog/new'])">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+      </app-module-page-header>
 
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="catalogPage = 1"
+      <app-compact-data-list class="block mb-6" [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="catalogPage = 1"
             name="priceCatalogSearch"
-            placeholder="Buscar por producto, detalle o notas..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por producto, detalle o notas...">
+          </app-list-search-field>
         </div>
-      </div>
+      </app-compact-data-list>
 
       <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando referencias...</div>
 
@@ -132,7 +137,7 @@ import { ActivityLogTriggerComponent } from '../../shared/components/activity-lo
 })
 export class PriceCatalogComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
   readonly getSummary = buildPriceSummary;

@@ -16,7 +16,7 @@ import { COMPACT_LIST_ROW_CLASS } from './compact-list.constants';
         <ng-content select="[compactTitle]"></ng-content>
         <ng-content select="[compactSubtitle]"></ng-content>
       </div>
-      <div class="shrink-0 pl-1 max-w-[48%] overflow-hidden">
+      <div class="shrink-0 pl-2 self-center">
         <ng-content select="[compactTrailing]"></ng-content>
       </div>
     </button>

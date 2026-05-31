@@ -18,6 +18,7 @@ import {
   consumeOrderStockForProduction,
   consumeOrderReservedStockManual,
   consumeOrderStockOnStatusChange,
+  consumeOrderStockOnDelivery,
   ensureStockReservationsSynced,
   orderStockFullyConsumed,
   listReservationSourcesForProduct,
@@ -225,6 +226,10 @@ function isCancelledStatus(estado?: string) {
 
 function isEntregadoTotalStatus(estado?: string) {
   return resolveOrderEstado(estado) === 'entregado';
+}
+
+function isDeliveredEstado(estado: ResolvedOrderEstado): boolean {
+  return estado === 'entregado' || estado === 'entregado_con_saldo';
 }
 
 function orderCanCreateDeliverySale(order: OrderRecord): boolean {
@@ -838,30 +843,17 @@ router.get('/:businessId/stock-reservation-targets', async (req, res) => {
 router.get('/:businessId/:orderId', async (req, res) => {
   try {
     const { businessId, orderId } = req.params;
-    await ensureStockReservationsSynced(businessId);
     const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
-    let data = doc.data() as Record<string, unknown>;
-    let items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
+    const data = doc.data() as Record<string, unknown>;
+    const items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
 
-    const productsWithGap = [
-      ...new Set(
-        items
-          .filter((line) => (Number(line.cantidadFaltante) || 0) > 0 && line.stockItemId)
-          .map((line) => String(line.stockItemId))
-      ),
-    ];
-
-    if (productsWithGap.length > 0) {
-      let reservedAny = false;
-      for (const stockItemId of productsWithGap) {
-        const result = await autoReserveIncomingStockForProduct(businessId, stockItemId);
-        if (result.reservedTotal > 0) reservedAny = true;
-      }
-      if (reservedAny) {
-        const refreshed = await doc.ref.get();
-        data = (refreshed.data() ?? {}) as Record<string, unknown>;
-        items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
+    let clienteNombre = '';
+    const clienteId = String(data.clienteId ?? '').trim();
+    if (clienteId) {
+      const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clienteId).get();
+      if (clientSnap.exists) {
+        clienteNombre = String(clientSnap.data()?.nombre ?? '').trim();
       }
     }
 
@@ -869,6 +861,7 @@ router.get('/:businessId/:orderId', async (req, res) => {
       id: doc.id,
       ...data,
       items,
+      clienteNombre,
       estadoStock: computeOrderStockStatus(items),
     });
   } catch (error) {
@@ -1079,6 +1072,22 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
+    const ventaId = order.ventaId ? String(order.ventaId).trim() : '';
+    if (ventaId) {
+      const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+      const ventaSnap = await ventaRef.get();
+      if (ventaSnap.exists) {
+        const ventaData = ventaSnap.data() ?? {};
+        const totalVenta = Number(ventaData.total) || total;
+        const montoCobrado = Math.max(0, totalVenta - saldo);
+        await ventaRef.update({
+          montoCobrado,
+          saldoPendiente: saldo,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'orders',
       action: 'payment',
@@ -1268,6 +1277,25 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       Object.assign(mergedOrder, productionStockPatch);
       stockDescontado = consumption.stockDescontado;
       stockWarning = consumption.stockWarning;
+    }
+
+    const isDeliveryTransition = isDeliveredEstado(nextEstado) && !isDeliveredEstado(previousEstado);
+    if (isDeliveryTransition) {
+      const deliveryConsumption = await consumeOrderStockOnDelivery(businessId, orderId, mergedOrder);
+      productionStockPatch = {
+        ...productionStockPatch,
+        items: deliveryConsumption.items,
+        stockDescontado: deliveryConsumption.stockDescontado,
+        estadoStock: deliveryConsumption.estadoStock,
+        stockPreparado: deliveryConsumption.stockPreparado ?? mergedOrder.stockPreparado,
+      };
+      Object.assign(mergedOrder, productionStockPatch);
+      stockDescontado = deliveryConsumption.stockDescontado;
+      if (deliveryConsumption.stockWarning) {
+        stockWarning = stockWarning
+          ? `${stockWarning}\n${deliveryConsumption.stockWarning}`
+          : deliveryConsumption.stockWarning;
+      }
     }
 
     if (nextEstado === 'entregado' && previousEstado !== 'entregado') {

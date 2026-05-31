@@ -20,25 +20,28 @@ import {
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { LucideAngularModule } from 'lucide-angular';
+import { ConfigModuleHeaderComponent } from '../../shared/components/config-module-header/config-module-header.component';
 
 @Component({
   selector: 'app-settings-users-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule],
+  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, ConfigModuleHeaderComponent],
   template: `
     <section class="space-y-4 sm:space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h2 class="text-xl font-bold text-gray-900">Usuarios y permisos</h2>
-          <p class="text-sm text-gray-500 mt-1 desc-lg-only">
-            Como administrador de la empresa podés crear operadores y asignar permisos.
-            El plan y la suscripción los gestiona la plataforma RILO.
-          </p>
-        </div>
+      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <app-config-module-header
+          class="min-w-0 flex-1"
+          title="Usuarios y permisos"
+          description="Como administrador de la empresa podés crear operadores y asignar permisos. El plan y la suscripción los gestiona la plataforma RILO."
+          [saving]="!!savingUserId"
+          [saveDisabled]="!canSaveExpandedUser"
+          saveTitle="Guardar usuario"
+          (saveClick)="saveExpandedUser()">
+        </app-config-module-header>
         <button
           type="button"
           (click)="toggleCreateUserForm()"
-          class="text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0 self-start sm:self-auto">
+          class="text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0 self-start sm:self-auto sm:mt-1">
           {{ showCreateUserForm ? 'Cancelar' : '+ Crear usuario' }}
         </button>
       </div>
@@ -142,7 +145,7 @@ import { LucideAngularModule } from 'lucide-angular';
             tabindex="0"
             (click)="toggleUserPanel(user.id)"
             (keydown.enter)="toggleUserPanel(user.id)"
-            class="border-l-4 p-4 sm:p-5 cursor-pointer transition-colors hover:bg-white/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+            class="border-l-4 p-4 sm:p-5 cursor-pointer transition-colors hover:bg-white/50 dark:hover:bg-gray-800/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
             [ngClass]="getUserAccentClass(user)">
             <div class="flex items-center gap-3 min-w-0">
               <span
@@ -152,64 +155,65 @@ import { LucideAngularModule } from 'lucide-angular';
               </span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <h3 class="font-bold text-gray-900">{{ user.nombre }}</h3>
+                  <h3 class="font-bold text-gray-900 dark:text-gray-100">{{ user.nombre }}</h3>
                   <span class="px-2 py-0.5 rounded-full text-xs font-semibold" [ngClass]="getUserRoleBadgeClass(user)">
                     {{ roleLabels[user.rol] }}
                   </span>
-                  <span *ngIf="user.id === auth.currentUser?.id" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800">
+                  <span
+                    *ngIf="user.id === auth.currentUser?.id"
+                    class="px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-800 dark:bg-teal-900/60 dark:text-teal-200 dark:ring-1 dark:ring-teal-700/50">
                     Vos
                   </span>
                   <span
                     *ngIf="user.rol !== 'supervisor'"
                     class="px-2 py-0.5 rounded-full text-xs font-semibold"
-                    [class.bg-green-100]="user.activo !== false"
-                    [class.text-green-800]="user.activo !== false"
-                    [class.bg-gray-200]="user.activo === false"
-                    [class.text-gray-600]="user.activo === false">
+                    [ngClass]="user.activo !== false
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200'
+                      : 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400'">
                     {{ user.activo !== false ? 'Activo' : 'Inactivo' }}
                   </span>
                 </div>
-                <p class="text-sm text-gray-600 mt-1 truncate">
+                <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 truncate">
                   {{ getUserCollapsedSummary(user) }}
                 </p>
               </div>
               <i-lucide
                 [name]="isUserExpanded(user.id) ? 'chevron-up' : 'chevron-down'"
-                class="w-5 h-5 shrink-0 text-gray-400">
+                class="w-5 h-5 shrink-0 text-gray-400 dark:text-gray-500">
               </i-lucide>
             </div>
           </div>
 
           <div
             *ngIf="isUserExpanded(user.id)"
-            class="border-t border-gray-200/80 bg-white/80 px-4 sm:px-5 py-4 sm:py-5"
+            class="border-t border-gray-200/80 bg-gray-50/90 dark:border-gray-700 dark:bg-gray-900/70 px-4 sm:px-5 py-4 sm:py-5"
             (click)="$event.stopPropagation()">
-            <div class="rounded-lg border border-gray-100 bg-white p-4 mb-4 space-y-2 text-sm">
+            <div class="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/90 p-4 mb-4 space-y-2 text-sm">
               <div class="flex flex-wrap gap-x-4 gap-y-1">
-                <span class="text-gray-500">Email</span>
-                <span class="font-medium text-gray-900">{{ user.email || 'Sin email' }}</span>
+                <span class="text-gray-500 dark:text-gray-400">Email</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ user.email || 'Sin email' }}</span>
               </div>
               <div *ngIf="user.loginUsername" class="flex flex-wrap gap-x-4 gap-y-1">
-                <span class="text-gray-500">Usuario</span>
-                <span class="font-medium text-gray-900">{{ user.loginUsername }}</span>
+                <span class="text-gray-500 dark:text-gray-400">Usuario</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{ user.loginUsername }}</span>
               </div>
               <div class="flex flex-wrap gap-x-4 gap-y-1">
-                <span class="text-gray-500">Acceso</span>
-                <span class="font-medium text-gray-900">
+                <span class="text-gray-500 dark:text-gray-400">Acceso</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
                   <span *ngIf="user.hasPassword">Contraseña</span>
                   <span *ngIf="user.hasPassword && user.hasGoogle"> · </span>
                   <span *ngIf="user.hasGoogle">Google</span>
                   <span *ngIf="!user.hasPassword && !user.hasGoogle">Sin métodos registrados</span>
                 </span>
               </div>
-              <p *ngIf="user.id === auth.currentUser?.id" class="text-xs text-teal-700 pt-1">
-                <a routerLink="/mi-cuenta" class="font-medium hover:underline">Cambiar mi contraseña</a>
+              <p *ngIf="user.id === auth.currentUser?.id" class="text-xs text-teal-700 dark:text-teal-400 pt-1">
+                <a routerLink="/mi-cuenta" class="font-medium hover:underline hover:text-teal-600 dark:hover:text-teal-300">Cambiar mi contraseña</a>
               </p>
             </div>
 
             <label
               *ngIf="user.rol !== 'supervisor'"
-              class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm mb-4 cursor-pointer">
+              class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800/90 dark:text-gray-200 px-3 py-2.5 text-sm mb-4 cursor-pointer">
               <input
                 type="checkbox"
                 [(ngModel)]="user.activo"
@@ -218,59 +222,38 @@ import { LucideAngularModule } from 'lucide-angular';
               Cuenta activa
             </label>
 
-            <p *ngIf="user.rol === 'supervisor'" class="text-sm text-gray-600 mb-4 desc-lg-only">
+            <p *ngIf="user.rol === 'supervisor'" class="text-sm text-gray-600 dark:text-gray-400 mb-4 desc-lg-only">
               Administrador principal de la empresa. Acceso completo y gestión de operadores.
             </p>
-            <p *ngIf="user.rol === 'admin'" class="text-sm text-gray-600 mb-4 desc-lg-only">
+            <p *ngIf="user.rol === 'admin'" class="text-sm text-gray-600 dark:text-gray-400 mb-4 desc-lg-only">
               Administrador delegado con acceso completo al negocio, sin gestionar usuarios.
             </p>
 
             <ng-container *ngIf="user.rol === 'staff'">
-              <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+              <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-3">
                 Permisos del operador
               </p>
               <div class="space-y-4">
                 <div *ngFor="let group of staffPermissionGroups" class="space-y-2">
-                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">{{ group.label }}</p>
+                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ group.label }}</p>
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                     <label
                       *ngFor="let perm of group.permissions"
-                      class="flex items-start gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2.5 cursor-pointer hover:border-teal-200">
+                      class="flex items-start gap-3 rounded-lg border border-gray-100 bg-white dark:border-gray-600 dark:bg-gray-800/90 px-3 py-2.5 cursor-pointer hover:border-teal-200 dark:hover:border-teal-700">
                       <input
                         type="checkbox"
                         [checked]="hasPermission(user, perm.key)"
                         (change)="togglePermission(user, perm.key, $any($event.target).checked)"
                         class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600">
                       <span class="min-w-0">
-                        <span class="block text-sm font-medium text-gray-800">{{ perm.label }}</span>
-                        <span *ngIf="perm.description" class="block text-xs text-gray-500 desc-lg-only">{{ perm.description }}</span>
+                        <span class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ perm.label }}</span>
+                        <span *ngIf="perm.description" class="block text-xs text-gray-500 dark:text-gray-400 desc-lg-only">{{ perm.description }}</span>
                       </span>
                     </label>
                   </div>
                 </div>
               </div>
             </ng-container>
-
-            <div class="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                (click)="toggleUserPanel(user.id)"
-                class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                Cerrar
-              </button>
-              <button
-                *ngIf="user.rol !== 'supervisor'"
-                type="button"
-                (click)="saveUser(user)"
-                [disabled]="savingUserId === user.id"
-                class="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-                {{
-                  savingUserId === user.id
-                    ? 'Guardando...'
-                    : (user.rol === 'staff' ? 'Guardar cambios' : 'Guardar estado')
-                }}
-              </button>
-            </div>
           </div>
         </article>
       </div>
@@ -382,9 +365,13 @@ export class SettingsUsersPanelComponent implements OnInit {
   }
 
   getUserCardShellClass(user: AppUser): string {
-    if (user.rol === 'supervisor') return 'bg-violet-50/60 border-violet-100';
-    if (user.rol === 'admin') return 'bg-sky-50/60 border-sky-100';
-    return 'bg-teal-50/40 border-teal-100';
+    if (user.rol === 'supervisor') {
+      return 'bg-violet-50/60 border-violet-100 dark:bg-violet-950/50 dark:border-violet-800/40';
+    }
+    if (user.rol === 'admin') {
+      return 'bg-sky-50/60 border-sky-100 dark:bg-sky-950/50 dark:border-sky-800/40';
+    }
+    return 'bg-teal-50/40 border-teal-100 dark:bg-teal-950/40 dark:border-teal-800/40';
   }
 
   getUserAccentClass(user: AppUser): string {
@@ -400,9 +387,13 @@ export class SettingsUsersPanelComponent implements OnInit {
   }
 
   getUserRoleBadgeClass(user: AppUser): string {
-    if (user.rol === 'supervisor') return 'bg-violet-100 text-violet-800';
-    if (user.rol === 'admin') return 'bg-sky-100 text-sky-800';
-    return 'bg-teal-100 text-teal-800';
+    if (user.rol === 'supervisor') {
+      return 'bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200';
+    }
+    if (user.rol === 'admin') {
+      return 'bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200';
+    }
+    return 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200';
   }
 
   togglePermission(user: AppUser, permission: Permission, checked: boolean) {
@@ -453,6 +444,18 @@ export class SettingsUsersPanelComponent implements OnInit {
         });
       },
     });
+  }
+
+  get canSaveExpandedUser(): boolean {
+    if (!this.expandedUserId || this.savingUserId) return false;
+    const user = this.users.find((row) => row.id === this.expandedUserId);
+    return !!user && user.rol !== 'supervisor';
+  }
+
+  saveExpandedUser() {
+    if (!this.expandedUserId) return;
+    const user = this.users.find((row) => row.id === this.expandedUserId);
+    if (user) this.saveUser(user);
   }
 
   saveUser(user: AppUser) {

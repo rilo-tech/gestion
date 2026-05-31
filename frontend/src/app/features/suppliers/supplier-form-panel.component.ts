@@ -23,9 +23,13 @@ import {
   SearchableSelectComponent,
   SearchableSelectOption,
 } from '../../shared/components/searchable-select/searchable-select.component';
-import { ConfigSettingsLinkComponent } from '../../shared/components/config-settings-link/config-settings-link.component';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
+import {
+  FORM_CONTROL_CLASS,
+  FORM_LABEL_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
+import { FORM_COMPACT_CHIP_INPUT_WRAP_CLASS } from '../../shared/components/form-shell/form-field.constants';
 import { Subscription } from 'rxjs';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
@@ -42,19 +46,11 @@ export interface SupplierFormSaveEvent {
     CommonModule,
     FormsModule,
     SearchableSelectComponent,
-    ConfigSettingsLinkComponent,
     SelectOnFocusDirective,
     FormPanelFooterComponent,
   ],
   template: `
     <div class="space-y-4">
-      <app-config-settings-link
-        settingsTab="proveedores"
-        message="¿Falta una etiqueta?"
-        linkLabel="Configurala acá"
-        [compact]="true">
-      </app-config-settings-link>
-
       <div *ngIf="loadingSupplier" class="py-8 text-center text-sm text-gray-400">
         Cargando proveedor...
       </div>
@@ -65,49 +61,48 @@ export interface SupplierFormSaveEvent {
         class="space-y-4">
         <fieldset [disabled]="formReadOnly" class="space-y-4 border-0 p-0 m-0 min-w-0">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+          <label [class]="formLabelClass">Nombre</label>
           <input
             [(ngModel)]="supplierForm.nombre"
             name="supplierNombre"
             required
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">WhatsApp / Teléfono</label>
+          <label [class]="formLabelClass">WhatsApp / Teléfono</label>
           <input
             [(ngModel)]="supplierForm.telefono"
             name="supplierTelefono"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">IG / Web</label>
+          <label [class]="formLabelClass">IG / Web</label>
           <input
             [(ngModel)]="supplierForm.redes!.igWeb"
             name="supplierIgWeb"
             placeholder="@usuario o https://..."
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+          <label [class]="formLabelClass">Dirección</label>
           <input
             [(ngModel)]="supplierForm.direccion"
             name="supplierDireccion"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <label [class]="formLabelClass">Email</label>
           <input
             [(ngModel)]="supplierForm.email"
             name="supplierEmail"
             type="email"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+            [class]="formControlClass">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Etiquetas</label>
+          <label [class]="formLabelClass">Etiquetas</label>
 
           <div *ngIf="useEtiquetaList; else freeEtiquetas">
-            <div
-              class="flex flex-wrap items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white focus-within:ring-2 focus-within:ring-primary">
+            <div [class]="chipInputWrapClass">
               <span
                 *ngFor="let tag of selectedEtiquetas"
                 class="inline-flex items-center gap-1 rounded-full border border-teal-100 bg-teal-50 px-2.5 py-0.5 text-xs font-medium text-teal-800">
@@ -144,7 +139,7 @@ export interface SupplierFormSaveEvent {
               [(ngModel)]="etiquetasText"
               name="etiquetasText"
               placeholder="Ej. Mayorista, Local"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              [class]="formControlClass">
             <p class="mt-1 text-xs text-gray-400">Separá varias etiquetas con coma.</p>
           </ng-template>
         </div>
@@ -164,6 +159,10 @@ export interface SupplierFormSaveEvent {
   `,
 })
 export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy {
+  readonly formControlClass = FORM_CONTROL_CLASS;
+  readonly formLabelClass = FORM_LABEL_CLASS;
+  readonly chipInputWrapClass = FORM_COMPACT_CHIP_INPUT_WRAP_CLASS;
+
   @Input() supplierId: string | null = null;
   @Input() prefillNombre = '';
   @Output() saved = new EventEmitter<SupplierFormSaveEvent>();
@@ -182,6 +181,8 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   supplierForm: Partial<Supplier> = this.emptySupplierForm();
   etiquetaPicker = '';
   etiquetasText = '';
+  private etiquetaSelectOptionsCache: SearchableSelectOption[] = [];
+  private etiquetaSelectOptionsKey = '';
 
   get isEditing(): boolean {
     return !!this.supplierId;
@@ -196,14 +197,7 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   get etiquetaSelectOptions(): SearchableSelectOption[] {
-    const selected = new Set(this.selectedEtiquetas.map((tag) => tag.toLowerCase()));
-    return this.catalogConfigService
-      .getFieldOptions(this.appConfig, 'proveedores.etiquetas')
-      .filter((tag) => !selected.has(tag.toLowerCase()))
-      .map((tag) => ({
-        value: tag,
-        label: tag,
-      }));
+    return this.etiquetaSelectOptionsCache;
   }
 
   get selectedEtiquetas(): string[] {
@@ -213,9 +207,27 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   ngOnInit() {
     this.configSub = this.catalogConfigService.appConfig$.subscribe((config) => {
       this.appConfig = config;
+      this.syncEtiquetaSelectOptions();
     });
     this.catalogConfigService.getAppConfig().subscribe();
     this.resetForm();
+  }
+
+  private syncEtiquetaSelectOptions(): void {
+    const selected = new Set(this.selectedEtiquetas.map((tag) => tag.toLowerCase()));
+    const key = [
+      ...this.catalogConfigService.getFieldOptions(this.appConfig, 'proveedores.etiquetas'),
+      ...selected,
+    ].join('\u0002');
+    if (key === this.etiquetaSelectOptionsKey) return;
+    this.etiquetaSelectOptionsKey = key;
+    this.etiquetaSelectOptionsCache = this.catalogConfigService
+      .getFieldOptions(this.appConfig, 'proveedores.etiquetas')
+      .filter((tag) => !selected.has(tag.toLowerCase()))
+      .map((tag) => ({
+        value: tag,
+        label: tag,
+      }));
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -241,6 +253,7 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     }
     this.etiquetasText = '';
     this.etiquetaPicker = '';
+    this.syncEtiquetaSelectOptions();
   }
 
   private loadSupplier(id: string) {
@@ -292,10 +305,12 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     const current = this.supplierForm.etiquetas ?? [];
     if (current.some((item) => item.toLowerCase() === tag.toLowerCase())) return;
     this.supplierForm.etiquetas = [...current, tag];
+    this.syncEtiquetaSelectOptions();
   }
 
   removeEtiqueta(tag: string) {
     this.supplierForm.etiquetas = (this.supplierForm.etiquetas ?? []).filter((item) => item !== tag);
+    this.syncEtiquetaSelectOptions();
   }
 
   resolveEtiquetas(): string[] {

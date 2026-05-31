@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, ViewChild, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -10,31 +10,29 @@ import {
   SaleLine,
   SaleLineExtraCost,
   SalesService,
-  UpdateSalePayload,
   formatSaleLabel,
 } from '../../core/services/sales.service';
 import { Client, ClientService } from '../../core/services/client.service';
 import { OrderService } from '../../core/services/order.service';
-import { StockItem, StockService } from '../../core/services/stock.service';
+import { StockService } from '../../core/services/stock.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
-  ClientFormPanelComponent,
-  ClientFormSaveEvent,
-} from '../clients/client-form-panel.component';
-import {
-  saveSalesFormDraft,
   readSalesFormDraft,
   clearSalesFormDraft,
+  saveSalesFormDraft,
 } from '../../core/utils/form-return-context';
+import { prefersInlineFormPage } from '../../core/utils/responsive-form';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
-  TABLE_SEARCH_INPUT_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
+  FORM_SUBMIT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import { SaleCounterFormPanelComponent } from './sale-counter-form-panel.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
@@ -53,14 +51,26 @@ import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
-
-interface SaleDraftLine {
-  stockItemId: string;
-  cantidad: number | null;
-  precioUnitario: number | null;
-  costoUnitario: number;
-  costosExtra: SaleLineExtraCost[];
-}
+import {
+  TransactionLinesTableComponent,
+  buildTransactionTableColumns,
+  SALE_DETAIL_TABLE_COLUMNS,
+} from '../../shared/components/transaction-lines-table/transaction-lines-table.component';
+import { TransactionTableLine } from '../../shared/components/transaction-lines-table/transaction-lines-table.types';
+import { TransactionLinesSectionComponent } from '../../shared/components/transaction-lines-section/transaction-lines-section.component';
+import {
+  TransactionDetailPageComponent,
+  TransactionDetailMetadataComponent,
+  TransactionDetailMetaItem,
+  TransactionSummaryPanelComponent,
+  TransactionSummaryRowComponent,
+  TransactionFormSaveEvent,
+} from '../../shared/components/transaction-form';
+import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
+import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
+import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 
 type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
@@ -76,32 +86,43 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     TransactionModalComponent,
     IconActionComponent,
     HasPermissionDirective,
-    ClientFormPanelComponent,
     ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     ModalFormFooterComponent,
     CompactListRowComponent,
+    SaleCounterFormPanelComponent,
+    TransactionLinesTableComponent,
+    TransactionLinesSectionComponent,
+    TransactionDetailPageComponent,
+    TransactionDetailMetadataComponent,
+    TransactionSummaryPanelComponent,
+    TransactionSummaryRowComponent,
+    RecordActionToolbarComponent,
+    IconToolbarButtonComponent,
+    ModulePageHeaderComponent,
+    CompactDataListComponent,
+    ListLoadMoreComponent,
+    ListSearchFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Ventas</h1>
-          <p class="text-sm sm:text-base text-gray-500">
-            Ventas de mostrador o entregas de pedidos. Los pagos previos del pedido no se duplican en caja.
-          </p>
-        </div>
-        <div class="flex gap-2 shrink-0">
-          <app-activity-log-trigger module="sales"></app-activity-log-trigger>
-          <app-icon-action *ngIf="auth.canCreateSales" label="Venta mostrador" (clicked)="openSaleModal('mostrador')">
-            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <app-icon-action *ngIf="auth.canCreateSales" label="Entrega pedido" variant="secondary" (clicked)="openSaleModal('pedido')">
-            <i-lucide name="truck" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-        </div>
-      </div>
+      <app-module-page-header
+        title="Ventas"
+        description="Ventas de mostrador acá; la entrega de un pedido se registra desde Pedidos. Los pagos previos del pedido no se duplican en caja."
+        [showMobileSearch]="auth.canViewSalesHistory"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="salesPage = 1"
+        searchFieldName="salesSearchQueryMobile"
+        activityModule="sales">
+        <app-icon-action
+          headerActions
+          *ngIf="auth.canCreateSales"
+          label="Venta mostrador"
+          (clicked)="openSaleModal('mostrador')">
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+        </app-icon-action>
+      </app-module-page-header>
 
       <div *ngIf="auth.canViewSalesSummary" class="module-summary-kpis grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
         <div class="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 shadow-sm">
@@ -124,27 +145,34 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
       <div
         *ngIf="auth.canCreateSales && !auth.canViewSalesHistory"
-        class="mb-6 rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-        Podés registrar ventas y entregas de pedidos. El historial completo lo ve quien tenga ese permiso.
+        class="mb-6 rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-800 desc-lg-only">
+        Podés registrar ventas de mostrador. Las entregas de pedidos se hacen desde Pedidos. El historial completo lo ve quien tenga ese permiso.
       </div>
 
-      <div *ngIf="auth.canViewSalesHistory" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <input
-            [(ngModel)]="searchQuery"
-            (ngModelChange)="salesPage = 1"
+      <app-compact-data-list *ngIf="auth.canViewSalesHistory" [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <app-list-search-field
+            mode="filter"
+            [(query)]="searchQuery"
+            (queryChange)="salesPage = 1"
             name="salesSearchQuery"
-            placeholder="Buscar por venta, cliente, pedido o producto..."
-            [class]="tableSearchInputClass">
+            placeholder="Buscar por venta, cliente, pedido o producto...">
+          </app-list-search-field>
         </div>
-        <div [class]="'sm:hidden ' + nativeCompactListClass">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
             *ngFor="let sale of paginatedFilteredSales"
             (activate)="openSaleDetail(sale)">
-            <div compactTitle class="compact-list-title truncate">#{{ formatSaleLabel(sale) }}</div>
+            <div compactTitle class="compact-list-title flex items-baseline gap-1.5 min-w-0">
+              <span
+                *ngIf="sale.estado === 'borrador'"
+                class="shrink-0 text-amber-600 font-semibold">
+                Borrador
+              </span>
+              <span *ngIf="sale.estado !== 'borrador'" class="shrink-0 tabular-nums">#{{ formatSaleLabel(sale) }}</span>
+              <span class="truncate min-w-0 font-normal text-gray-600">{{ sale.clienteNombre?.trim() || '—' }}</span>
+            </div>
             <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ sale.clienteNombre?.trim() || '—' }}
-              ·
               <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
               <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
             </div>
@@ -165,13 +193,13 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando ventas...</p>
           <p *ngIf="!loading && sales.length === 0" [class]="compactListEmptyClass">
-            Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
+            Todavía no hay ventas. Registrá una venta de mostrador o entregá un pedido listo desde Pedidos.
           </p>
           <p *ngIf="!loading && sales.length > 0 && filteredSales.length === 0" [class]="compactListEmptyClass">
             No hay ventas que coincidan con la búsqueda.
           </p>
         </div>
-        <div class="hidden sm:block" [class]="tableScrollClass">
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:min-w-[720px]'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
@@ -193,7 +221,8 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                 {{ formatDate(sale.fecha) }}
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
-                #{{ formatSaleLabel(sale) }}
+                <span *ngIf="sale.estado === 'borrador'" class="text-amber-700">Borrador</span>
+                <span *ngIf="sale.estado !== 'borrador'">#{{ formatSaleLabel(sale) }}</span>
                 <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(sale.fecha) }}</div>
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-700">
@@ -240,16 +269,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                   (deleteClick)="confirmDeleteSale(sale)">
                   <button
                     rowActionStart
-                    *ngIf="auth.canAccessCash"
+                    *ngIf="auth.canAccessCash && canCollectSaleBalance(sale)"
                     type="button"
                     (click)="openCollectModal(sale); $event.stopPropagation()"
-                    [disabled]="!canCollectSaleBalance(sale)"
                     title="Cobrar saldo"
-                    class="p-2 rounded-lg disabled:cursor-not-allowed"
-                    [class.text-orange-600]="canCollectSaleBalance(sale)"
-                    [class.hover:bg-orange-50]="canCollectSaleBalance(sale)"
-                    [class.hover:text-orange-700]="canCollectSaleBalance(sale)"
-                    [class.text-gray-300]="!canCollectSaleBalance(sale)">
+                    aria-label="Cobrar saldo"
+                    class="p-2 rounded-lg text-orange-600 hover:bg-orange-50 hover:text-orange-700 dark:text-orange-400 dark:hover:bg-orange-950/40">
                     <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
                   </button>
                 </app-list-row-actions>
@@ -260,7 +285,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             </tr>
             <tr *ngIf="!loading && sales.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-gray-400">
-                Todavía no hay ventas. Registrá una venta de mostrador o la entrega de un pedido listo.
+                Todavía no hay ventas. Registrá una venta de mostrador o entregá un pedido listo desde Pedidos.
               </td>
             </tr>
             <tr *ngIf="!loading && sales.length > 0 && filteredSales.length === 0">
@@ -272,29 +297,50 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         </table>
         </div>
         <app-list-pagination
+          listFooter
           [page]="salesPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredSales.length"
           (pageChange)="salesPage = $event">
         </app-list-pagination>
-        <div class="px-4 sm:px-6 pb-4" *ngIf="salesHasMore">
-          <button
-            type="button"
-            (click)="loadMoreSales()"
-            [disabled]="loadingMoreSales"
-            class="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
-            {{ loadingMoreSales ? 'Cargando...' : 'Cargar más ventas' }}
-          </button>
-        </div>
-      </div>
+        <app-list-load-more
+          listFooter
+          [hasMore]="salesHasMore"
+          [loading]="loadingMoreSales"
+          label="Cargar más ventas"
+          (loadMoreClick)="loadMoreSales()">
+        </app-list-load-more>
+      </app-compact-data-list>
     </div>
 
     <app-transaction-modal
       [open]="saleModalOpen"
       [title]="saleModalTitle"
       [subtitle]="saleModalSubtitle"
-      layout="fullscreen"
       (closed)="closeSaleModal()">
+
+        <app-icon-toolbar-button
+          *ngIf="saleModalMode === 'mostrador' || saleModalMode === 'edit'"
+          headerActions
+          class="sm:hidden"
+          icon="save"
+          [label]="saleModalSaveLabel"
+          variant="primary"
+          [disabled]="saleModalSaving"
+          [loading]="saleModalSaving"
+          (clicked)="saleCounterPanel?.submitSale()">
+        </app-icon-toolbar-button>
+        <app-icon-toolbar-button
+          *ngIf="saleModalMode === 'pedido'"
+          headerActions
+          class="sm:hidden"
+          icon="save"
+          [label]="saleModalPrimaryLabel"
+          variant="primary"
+          [disabled]="!!saleSubmitBlockedReason || savingSale"
+          [loading]="savingSale"
+          (clicked)="submitSale()">
+        </app-icon-toolbar-button>
 
         <ng-container *ngIf="saleModalMode === 'pedido'">
           <div class="mb-4">
@@ -351,183 +397,74 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               {{ selectedOrder.descripcion }}
             </p>
           </div>
-        </ng-container>
 
-        <ng-container *ngIf="saleModalMode === 'mostrador' || saleModalMode === 'edit'">
-          <div class="mb-4">
-            <div class="flex items-center justify-between gap-3 mb-1">
-              <label class="block text-sm font-medium text-gray-700">Cliente</label>
-              <button
-                type="button"
-                (click)="goToNewClientForm()"
-                class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0">
-                + Nuevo cliente
-              </button>
-            </div>
-            <app-searchable-select
-              [(ngModel)]="saleClienteId"
-              name="saleClienteId"
-              [labeledOptions]="clientOptions"
-              [creatable]="true"
-              createLabelPrefix="Crear cliente"
-              (createRequested)="quickCreateClient($event)"
-              (searchChange)="pendingClientName = $event"
-              placeholder="Buscar cliente..."
-              emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
-            </app-searchable-select>
-          </div>
-
-          <div class="space-y-3 mb-4">
-            <div
-              *ngFor="let line of draftLines; let i = index"
-              class="rounded-lg border border-gray-100 p-3 space-y-2">
-              <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
-                <div class="sm:col-span-5">
-                  <label *ngIf="i === 0" class="block text-xs font-medium text-gray-500 mb-1">Producto</label>
-                  <select
-                    [(ngModel)]="line.stockItemId"
-                    [name]="'saleProduct' + i"
-                    (ngModelChange)="onProductSelected(line)"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-                    <option value="">Seleccionar...</option>
-                    <option *ngFor="let item of stockItems" [value]="item.id">{{ item.nombre }}</option>
-                  </select>
-                  <button
-                    *ngIf="line.stockItemId && auth.canEditPersonalization"
-                    type="button"
-                    (click)="openExtraCostsModal(i)"
-                    class="text-teal-600 text-xs font-medium hover:text-teal-800 mt-1">
-                    {{ getExtraCostsActionLabel(line) }}
-                  </button>
-                </div>
-                <div class="sm:col-span-2">
-                  <label *ngIf="i === 0" class="block text-xs font-medium text-gray-500 mb-1">Cant.</label>
-                  <input
-                    type="number"
-                    [(ngModel)]="line.cantidad"
-                    [name]="'saleQty' + i"
-                    (ngModelChange)="onDraftLineChange()"
-                    min="1"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-                <div class="sm:col-span-3">
-                  <label *ngIf="i === 0" class="block text-xs font-medium text-gray-500 mb-1">Precio u.</label>
-                  <input
-                    type="number"
-                    [(ngModel)]="line.precioUnitario"
-                    [name]="'salePrice' + i"
-                    (ngModelChange)="onDraftLineChange()"
-                    min="0"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-                <div class="sm:col-span-2 flex gap-1 justify-end sm:justify-start">
-                  <button
-                    type="button"
-                    (click)="removeLine(i)"
-                    [disabled]="draftLines.length === 1"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-40">
-                    <i-lucide name="minus" class="w-4 h-4"></i-lucide>
-                  </button>
-                  <button
-                    *ngIf="i === draftLines.length - 1"
-                    type="button"
-                    (click)="addLine()"
-                    class="p-2 rounded-lg text-teal-600 hover:bg-teal-50">
-                    <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-                  </button>
-                </div>
-              </div>
-              <p *ngIf="line.stockItemId && auth.canViewStockCosts" class="text-xs text-gray-400">
-                Costo stock: {{ '$' + line.costoUnitario }}
-                <ng-container *ngIf="auth.canEditPersonalization">
-                  · Extras: {{ '$' + getLineExtraCostTotal(line) }}
-                </ng-container>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Monto a cobrar ahora</label>
+              <input
+                type="number"
+                [(ngModel)]="montoCobrado"
+                min="0"
+                class="w-full px-4 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-teal-500"
+                [class.border-red-300]="montoCobradoError"
+                [class.border-gray-200]="!montoCobradoError">
+              <p *ngIf="montoCobradoError" class="text-xs text-red-600 mt-1">
+                {{ montoCobradoError }}
+                <button
+                  *ngIf="montoCobradoExceedsMax"
+                  type="button"
+                  (click)="useMaxMontoCobrado()"
+                  class="ml-1 font-semibold text-teal-700 hover:underline">
+                  Usar \${{ maxMontoCobrado }}
+                </button>
               </p>
-              <p *ngIf="line.stockItemId && !auth.canViewStockCosts && auth.canEditPersonalization" class="text-xs text-gray-400">
-                Extras personalización: {{ '$' + getLineExtraCostTotal(line) }}
-              </p>
-            </div>
-          </div>
-
-          <div class="rounded-lg bg-gray-50 border border-gray-100 p-3 mb-4 space-y-1 text-sm">
-            <div class="flex justify-between">
-              <span class="text-gray-600">Total venta</span>
-              <span class="font-bold tabular-nums">{{ '$' + draftTotal }}</span>
-            </div>
-            <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-gray-500">
-              <span>Costo estimado</span>
-              <span class="tabular-nums">{{ '$' + draftCostTotal }}</span>
-            </div>
-            <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-teal-700 font-medium">
-              <span>Ganancia estimada</span>
-              <span class="tabular-nums">{{ '$' + draftProfitTotal }}</span>
-            </div>
-          </div>
-        </ng-container>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Monto a cobrar ahora</label>
-            <input
-              type="number"
-              [(ngModel)]="montoCobrado"
-              min="0"
-              [disabled]="saleModalMode === 'edit' && editHasExtraCobros"
-              class="w-full px-4 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
-              [class.border-red-300]="montoCobradoError"
-              [class.border-gray-200]="!montoCobradoError">
-            <p *ngIf="montoCobradoError" class="text-xs text-red-600 mt-1">
-              {{ montoCobradoError }}
-              <button
-                *ngIf="montoCobradoExceedsMax"
-                type="button"
-                (click)="useMaxMontoCobrado()"
-                class="ml-1 font-semibold text-teal-700 hover:underline">
-                Usar \${{ maxMontoCobrado }}
-              </button>
-            </p>
-            <p *ngIf="!montoCobradoError" class="text-xs text-gray-400 mt-1">
-              <ng-container *ngIf="saleModalMode === 'edit' && editHasExtraCobros">
-                El cobro inicial ya no se puede cambiar porque hay cobros posteriores. Usá «Cobrar saldo» para el resto.
-              </ng-container>
-              <ng-container *ngIf="!(saleModalMode === 'edit' && editHasExtraCobros)">
+              <p *ngIf="!montoCobradoError" class="text-xs text-gray-400 mt-1">
                 Dejá menos que el total si el cliente paga después.
-              </ng-container>
-            </p>
+              </p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago</label>
+              <select
+                [(ngModel)]="medioPago"
+                class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago</label>
-            <select
-              [(ngModel)]="medioPago"
-              [disabled]="saleModalMode === 'edit' && editHasExtraCobros"
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50">
-              <option value="efectivo">Efectivo</option>
-              <option value="transferencia">Transferencia</option>
-              <option value="tarjeta">Tarjeta</option>
-              <option value="otro">Otro</option>
-            </select>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+            <textarea
+              [(ngModel)]="saleNotas"
+              rows="2"
+              class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+            </textarea>
           </div>
-        </div>
 
-        <div class="mb-4">
-          <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
-          <textarea
-            [(ngModel)]="saleNotas"
-            rows="2"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-          </textarea>
-        </div>
+          <p *ngIf="saleSubmitBlockedReason" class="text-sm text-red-600 mb-2 text-right">
+            {{ saleSubmitBlockedReason }}
+          </p>
+          <app-modal-form-footer
+            [saving]="savingSale"
+            [primaryLabel]="saleModalPrimaryLabel"
+            [primaryDisabled]="!!saleSubmitBlockedReason"
+            (cancelClick)="closeSaleModal()"
+            (primaryClick)="submitSale()">
+          </app-modal-form-footer>
+        </ng-container>
 
-        <p *ngIf="saleSubmitBlockedReason" class="text-sm text-red-600 mb-2 text-right">
-          {{ saleSubmitBlockedReason }}
-        </p>
-        <app-modal-form-footer
-          [saving]="savingSale"
-          [primaryLabel]="saleModalPrimaryLabel"
-          [primaryDisabled]="!!saleSubmitBlockedReason"
-          (cancelClick)="closeSaleModal()"
-          (primaryClick)="submitSale()">
-        </app-modal-form-footer>
+        <app-sale-counter-form-panel
+          *ngIf="saleModalOpen && (saleModalMode === 'mostrador' || saleModalMode === 'edit')"
+          #saleCounterPanel
+          [editingSaleId]="saleModalMode === 'edit' ? editingSaleId : null"
+          [pageLayout]="false"
+          (saved)="onCounterSaleSaved($event)"
+          (savingChange)="onCounterSaleSavingChange($event)"
+          (cancelled)="closeSaleModal()">
+        </app-sale-counter-form-panel>
     </app-transaction-modal>
 
     <app-transaction-modal
@@ -578,246 +515,110 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
       </app-modal-form-footer>
     </app-transaction-modal>
 
-    <app-transaction-modal
-      [open]="extraCostsModalIndex !== null && !!extraCostsModalLine"
-      title="Costos de personalización"
-      [subtitle]="extraCostsModalLine ? getDraftLineName(extraCostsModalLine) : ''"
-      maxWidthClass="max-w-lg"
-      zIndexClass="z-[60]"
-      (closed)="cancelExtraCostsModal()">
-          <div class="flex gap-2 items-end mb-4">
-            <div class="flex-1 min-w-0">
-              <label class="block text-xs font-medium text-gray-500 mb-1">Concepto</label>
-              <input
-                [(ngModel)]="extraCostInputNombre"
-                name="saleExtraCostInputNombre"
-                placeholder="Ej. Estampado"
-                (keydown.enter)="confirmExtraCostInput()"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-            </div>
-            <div class="w-28">
-              <label class="block text-xs font-medium text-gray-500 mb-1">Costo</label>
-              <input
-                type="number"
-                [(ngModel)]="extraCostInputCosto"
-                name="saleExtraCostInputCosto"
-                (keydown.enter)="confirmExtraCostInput()"
-                min="0"
-                placeholder="0"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-right tabular-nums outline-none focus:ring-2 focus:ring-teal-500">
-            </div>
-            <button
-              type="button"
-              (click)="confirmExtraCostInput()"
-              class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 shrink-0"
-              title="Agregar">
-              <i-lucide name="check" class="w-4 h-4"></i-lucide>
-            </button>
-          </div>
-
-          <div *ngIf="extraCostsDraft.length === 0" class="text-sm text-gray-400 text-center py-4 border border-dashed border-gray-200 rounded-lg">
-            Agregá costos extra de personalización, materiales, etc.
-          </div>
-
-          <div *ngIf="extraCostsDraft.length > 0" class="space-y-2">
-            <div
-              *ngFor="let extra of extraCostsDraft; let j = index"
-              class="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2">
-              <span class="flex-1 min-w-0 text-sm text-gray-900 truncate">{{ extra.nombre }}</span>
-              <span class="text-sm font-semibold tabular-nums">{{ '$' + extra.costo }}</span>
-              <button
-                type="button"
-                (click)="removeExtraCostFromDraft(j)"
-                class="text-red-400 hover:text-red-600 p-1"
-                title="Quitar">
-                ×
-              </button>
-            </div>
-          </div>
-
-        <div class="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
-          <div>
-            <span class="text-sm text-gray-500">Total extras</span>
-            <span class="ml-2 text-base font-bold tabular-nums">{{ '$' + getExtraCostsDraftTotal() }}</span>
-          </div>
-          <button
-            type="button"
-            (click)="acceptExtraCostsModal()"
-            class="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700">
-            Listo
-          </button>
-        </div>
-    </app-transaction-modal>
-
-    <app-transaction-modal
-      [open]="clientModalOpen"
-      title="Nuevo cliente"
-      subtitle="Al guardar queda seleccionado en esta venta."
-      maxWidthClass="max-w-lg"
-      zIndexClass="z-[60]"
-      (closed)="closeClientModal()">
-      <app-client-form-panel
-        [prefillNombre]="clientModalPrefillNombre"
-        [showHistorialLink]="false"
-        (saved)="onClientSavedFromModal($event)"
-        (cancelled)="closeClientModal()">
-      </app-client-form-panel>
-    </app-transaction-modal>
-
-    <app-transaction-modal
-      [open]="detailModalOpen"
+    <app-transaction-detail-page
+      *ngIf="detailModalOpen"
       [title]="detailModalTitle"
       [subtitle]="detailModalSubtitle"
-      layout="fullscreen"
-      (closed)="closeDetailModal()">
-      <div *ngIf="detailLoading" class="py-12 text-center text-gray-400">Cargando venta...</div>
+      backLabel="Volver a ventas"
+      backAriaLabel="Volver a ventas"
+      [loading]="detailLoading"
+      [hasContent]="!!detailSale"
+      [hasHeaderActions]="!!detailSale"
+      loadingMessage="Cargando venta..."
+      refreshingMessage="Actualizando detalle..."
+      (closeClick)="closeDetailModal()">
+      <div headerActions *ngIf="detailSale as sale">
+        <app-record-action-toolbar
+          [showDuplicate]="canDuplicateDetailSale(sale)"
+          duplicateLabel="Duplicar venta"
+          (duplicateClick)="duplicateDetailSale()"
+          [showEdit]="canEditSale(sale)"
+          editLabel="Editar venta"
+          (editClick)="editFromDetail()"
+          [showCollect]="canCollectSaleBalance(sale)"
+          (collectClick)="collectFromDetail()"
+          [showDelete]="canDeleteSale(sale)"
+          deleteLabel="Eliminar venta"
+          (deleteClick)="confirmDeleteFromDetail()">
+        </app-record-action-toolbar>
+      </div>
 
-      <ng-container *ngIf="!detailLoading && detailSale">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5 text-sm">
-          <div class="rounded-lg bg-gray-50 border border-gray-100 p-3">
-            <p class="text-xs text-gray-400 uppercase mb-1">Cliente</p>
-            <p class="font-medium text-gray-900">{{ detailSale.clienteNombre?.trim() || '—' }}</p>
-          </div>
-          <div class="rounded-lg bg-gray-50 border border-gray-100 p-3">
-            <p class="text-xs text-gray-400 uppercase mb-1">Fecha</p>
-            <p class="font-medium text-gray-900">{{ formatDate(detailSale.fecha) }}</p>
-          </div>
-          <div class="rounded-lg bg-gray-50 border border-gray-100 p-3">
-            <p class="text-xs text-gray-400 uppercase mb-1">Origen</p>
-            <p class="font-medium text-gray-900">
-              <ng-container *ngIf="detailSale.origen === 'pedido'">
-                Pedido #{{ detailSale.numeroPedidoLabel || '—' }}
-              </ng-container>
-              <ng-container *ngIf="detailSale.origen !== 'pedido'">Mostrador</ng-container>
-            </p>
-          </div>
-          <div class="rounded-lg bg-gray-50 border border-gray-100 p-3">
-            <p class="text-xs text-gray-400 uppercase mb-1">Medio de pago</p>
-            <p class="font-medium text-gray-900">{{ detailSale.medioPago || '—' }}</p>
-          </div>
-        </div>
+      <ng-container main *ngIf="detailSale as sale">
+        <app-transaction-detail-metadata [items]="getDetailSaleMetaItems(sale)"></app-transaction-detail-metadata>
 
-        <div class="rounded-xl border border-gray-100 overflow-hidden mb-5">
-          <table class="w-full text-left text-sm">
-            <thead class="bg-gray-50 text-xs uppercase text-gray-400">
-              <tr>
-                <th class="px-4 py-3">Producto</th>
-                <th class="px-4 py-3 text-right">Cant.</th>
-                <th class="px-4 py-3 text-right">Precio u.</th>
-                <th class="px-4 py-3 text-right">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let line of detailSale.items">
-                <td class="px-4 py-3">
-                  <p class="font-medium text-gray-900">{{ line.nombre || 'Producto' }}</p>
-                  <p *ngIf="getDetailLineExtras(line).length" class="text-xs text-gray-500 mt-1">
-                    Extras:
-                    <span *ngFor="let extra of getDetailLineExtras(line); let last = last">
-                      {{ extra.nombre }} {{ '$' + extra.costo }}<span *ngIf="!last"> · </span>
-                    </span>
-                  </p>
-                </td>
-                <td class="px-4 py-3 text-right tabular-nums">{{ line.cantidad }}</td>
-                <td class="px-4 py-3 text-right tabular-nums">{{ '$' + line.precioUnitario }}</td>
-                <td class="px-4 py-3 text-right tabular-nums font-semibold">
-                  {{ '$' + (line.subtotal ?? line.cantidad * line.precioUnitario) }}
-                </td>
-              </tr>
-              <tr *ngIf="!(detailSale.items?.length)">
-                <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin productos registrados.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <app-transaction-lines-section
+          title="Productos"
+          icon="package"
+          [lineCount]="sale.items?.length ?? 0"
+          [searchVisible]="false"
+          emptyMessage="Sin productos registrados.">
+          <app-transaction-lines-table
+            [lines]="getDetailSaleTableLines(sale)"
+            [columns]="detailSaleTableColumns"
+            [readOnly]="true"
+            emptyMessage="Sin productos registrados.">
+          </app-transaction-lines-table>
+        </app-transaction-lines-section>
 
-        <div class="rounded-lg bg-gray-50 border border-gray-100 p-4 mb-4 space-y-2 text-sm">
-          <div class="flex justify-between gap-4">
-            <span class="text-gray-600">Total venta</span>
-            <span class="font-bold tabular-nums">{{ '$' + (detailSale.total || 0) }}</span>
+        <div *ngIf="sale.cobros?.length" class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
+          <div class="px-3 sm:px-4 py-2 sm:py-3 bg-gray-50 dark:bg-gray-800/80 border-b border-gray-100 dark:border-gray-800">
+            <p class="text-[11px] sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Cobros posteriores</p>
           </div>
-          <div *ngIf="detailSale.totalPagadoAnterior" class="flex justify-between gap-4 text-teal-700">
-            <span>Ya pagado en pedido</span>
-            <span class="font-semibold tabular-nums">{{ '$' + detailSale.totalPagadoAnterior }}</span>
-          </div>
-          <div class="flex justify-between gap-4">
-            <span class="text-gray-600">Cobrado en esta venta</span>
-            <span class="font-semibold tabular-nums text-teal-700">{{ '$' + (detailSale.montoCobrado || 0) }}</span>
-          </div>
-          <div class="flex justify-between gap-4">
-            <span class="text-gray-600">Saldo pendiente</span>
-            <span
-              class="font-semibold tabular-nums"
-              [class.text-orange-600]="(detailSale.saldoPendiente || 0) > 0"
-              [class.text-gray-500]="!(detailSale.saldoPendiente || 0)">
-              {{ '$' + (detailSale.saldoPendiente || 0) }}
-            </span>
-          </div>
-          <div *ngIf="auth.canViewEconomics && detailSale.costoReal != null" class="flex justify-between gap-4 text-xs text-gray-500 pt-2 border-t border-gray-200">
-            <span>Costo · Ganancia estimada</span>
-            <span class="tabular-nums">{{ '$' + detailSale.costoReal }} · {{ '$' + (detailSale.gananciaEstimada || 0) }}</span>
-          </div>
-        </div>
-
-        <div *ngIf="detailSale.cobros?.length" class="mb-4">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Cobros posteriores</p>
-          <div class="space-y-2">
+          <div class="divide-y divide-gray-50 dark:divide-gray-800">
             <div
-              *ngFor="let cobro of detailSale.cobros"
-              class="flex justify-between gap-4 rounded-lg border border-gray-100 px-3 py-2 text-sm">
-              <span class="text-gray-600">{{ formatDate(cobro.fecha) }} · {{ cobro.medioPago || 'efectivo' }}</span>
-              <span class="font-semibold tabular-nums text-teal-700">{{ '$' + cobro.monto }}</span>
+              *ngFor="let cobro of sale.cobros"
+              class="flex justify-between gap-4 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm">
+              <span class="text-gray-600 dark:text-gray-400">{{ formatDate(cobro.fecha) }} · {{ cobro.medioPago || 'efectivo' }}</span>
+              <span class="font-semibold tabular-nums text-teal-700 dark:text-teal-400">{{ '$' + cobro.monto }}</span>
             </div>
           </div>
         </div>
 
-        <p *ngIf="detailSale.notas?.trim()" class="text-sm text-gray-600 mb-4">
-          <span class="font-medium text-gray-700">Notas:</span> {{ detailSale.notas }}
+        <p *ngIf="sale.notas?.trim()" class="text-xs sm:text-sm text-gray-600 dark:text-gray-400 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 p-3 sm:p-4">
+          <span class="font-medium text-gray-700 dark:text-gray-300">Notas:</span> {{ sale.notas }}
         </p>
       </ng-container>
 
-      <div class="flex flex-wrap justify-end gap-3 mt-6">
-        <button
-          type="button"
-          (click)="closeDetailModal()"
-          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
-          Cerrar
-        </button>
-        <a
-          *ngIf="detailSale?.origen === 'pedido' && detailSale?.pedidoId"
-          [routerLink]="['/orders', detailSale!.pedidoId!, 'edit']"
-          (click)="closeDetailModal()"
-          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
-          Ver pedido
-        </a>
-        <button
-          *ngIf="detailSale && canEditSale(detailSale)"
-          type="button"
-          (click)="editFromDetail()"
-          class="rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-semibold text-teal-800 hover:bg-teal-100">
-          Editar
-        </button>
-        <button
-          *ngIf="detailSale && canCollectSaleBalance(detailSale)"
-          type="button"
-          (click)="collectFromDetail()"
-          class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700">
-          Cobrar saldo
-        </button>
-      </div>
-    </app-transaction-modal>
+      <app-transaction-summary-panel aside *ngIf="detailSale as sale">
+        <div class="space-y-2 sm:space-y-3">
+          <app-transaction-summary-row label="Total venta" [value]="'$' + (sale.total || 0)"></app-transaction-summary-row>
+          <app-transaction-summary-row
+            *ngIf="sale.totalPagadoAnterior"
+            label="Ya pagado en pedido"
+            [value]="'$' + sale.totalPagadoAnterior"
+            valueTone="teal"></app-transaction-summary-row>
+          <app-transaction-summary-row
+            label="Cobrado en esta venta"
+            [value]="'$' + (sale.montoCobrado || 0)"
+            valueTone="teal"></app-transaction-summary-row>
+          <app-transaction-summary-row
+            label="Saldo pendiente"
+            [value]="'$' + (sale.saldoPendiente || 0)"
+            [valueTone]="(sale.saldoPendiente || 0) > 0 ? 'orange' : 'default'"></app-transaction-summary-row>
+          <app-transaction-summary-row
+            *ngIf="auth.canViewEconomics && sale.costoReal != null"
+            label="Costo · Ganancia"
+            [value]="'$' + sale.costoReal + ' · $' + (sale.gananciaEstimada || 0)"
+            [divider]="true"
+            size="sm"></app-transaction-summary-row>
+        </div>
+      </app-transaction-summary-panel>
+    </app-transaction-detail-page>
   `,
 })
 export class SalesComponent implements OnInit {
+  @ViewChild('saleCounterPanel') saleCounterPanel?: SaleCounterFormPanelComponent;
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
-  readonly tableSearchInputClass = TABLE_SEARCH_INPUT_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
+  readonly formSubmitClass = FORM_SUBMIT_CLASS;
 
   formatSaleLabel = formatSaleLabel;
 
@@ -837,15 +638,13 @@ export class SalesComponent implements OnInit {
   salesPage = 1;
   eligibleOrders: EligibleOrderForSale[] = [];
   clients: Client[] = [];
-  stockItems: StockItem[] = [];
   loading = true;
 
   saleModalOpen = false;
   saleModalMode: SaleModalMode = 'mostrador';
+  saleModalSaving = false;
   savingSale = false;
   editingSaleId: string | null = null;
-  editingSaleLabel = '';
-  editHasExtraCobros = false;
 
   collectModalOpen = false;
   collectingSale: Sale | null = null;
@@ -858,37 +657,38 @@ export class SalesComponent implements OnInit {
   detailSale: Sale | null = null;
   detailLoading = false;
 
-  saleClienteId = '';
-  pendingClientName = '';
-  creatingClient = false;
-  clientModalOpen = false;
-  clientModalPrefillNombre = '';
-  draftLines: SaleDraftLine[] = [this.emptyLine()];
+  readonly detailSaleTableColumns = buildTransactionTableColumns(SALE_DETAIL_TABLE_COLUMNS);
+
   selectedOrderId = '';
   orderFilterClienteId = '';
   montoCobrado: number | null = null;
   medioPago = 'efectivo';
   saleNotas = '';
 
-  extraCostsModalIndex: number | null = null;
-  extraCostsDraft: SaleLineExtraCost[] = [];
-  extraCostInputNombre = '';
-  extraCostInputCosto: number | null = null;
-
   get saleModalTitle(): string {
     if (this.saleModalMode === 'edit') {
-      return `Editar venta #${this.editingSaleLabel || '—'}`;
+      const sale = this.sales.find((entry) => entry.id === this.editingSaleId);
+      if (sale?.estado === 'borrador') return 'Borrador de venta';
+      return 'Editar venta';
     }
     return this.saleModalMode === 'pedido' ? 'Registrar entrega / venta' : 'Venta de mostrador';
   }
 
   get saleModalSubtitle(): string {
     if (this.saleModalMode === 'edit') {
+      const sale = this.sales.find((entry) => entry.id === this.editingSaleId);
+      if (sale?.estado === 'borrador') {
+        return 'Guardá el borrador sin mover stock ni caja. Confirmá cuando esté listo.';
+      }
       return 'Corregí productos, cantidades o el monto cobrado al registrar la venta.';
     }
     return this.saleModalMode === 'pedido'
       ? 'Acción rápida desde el listado. Solo se registra en caja el saldo que cobrás ahora.'
       : 'Acción rápida desde el listado. Descuenta stock y registra el cobro en caja.';
+  }
+
+  get saleModalSaveLabel(): string {
+    return this.saleModalMode === 'edit' ? 'Guardar cambios' : 'Registrar venta';
   }
 
   get filteredSales(): Sale[] {
@@ -919,9 +719,7 @@ export class SalesComponent implements OnInit {
   }
 
   get saleModalPrimaryLabel(): string {
-    if (this.saleModalMode === 'edit') return 'Guardar cambios';
-    if (this.saleModalMode === 'pedido') return 'Registrar entrega';
-    return 'Registrar venta';
+    return 'Registrar entrega';
   }
 
   get detailModalTitle(): string {
@@ -952,29 +750,22 @@ export class SalesComponent implements OnInit {
   }
 
   get maxMontoCobrado(): number {
-    if (this.saleModalMode === 'pedido' && this.selectedOrder) {
-      return this.selectedOrder.saldoPedido;
-    }
-    return this.draftTotal;
+    return this.selectedOrder?.saldoPedido ?? 0;
   }
 
   get montoCobradoExceedsMax(): boolean {
-    if (this.saleModalMode === 'edit' && this.editHasExtraCobros) return false;
     const monto = Number(this.montoCobrado);
     if (!Number.isFinite(monto)) return false;
     return monto > this.maxMontoCobrado;
   }
 
   get montoCobradoError(): string | null {
-    if (this.saleModalMode === 'edit' && this.editHasExtraCobros) return null;
     const monto = Number(this.montoCobrado);
     if (!Number.isFinite(monto) || monto < 0) {
       return 'Ingresá un monto a cobrar válido.';
     }
     if (this.montoCobradoExceedsMax) {
-      const limitLabel =
-        this.saleModalMode === 'pedido' ? 'el saldo pendiente del pedido' : 'el total de la venta';
-      return `El monto no puede superar ${limitLabel} ($${this.maxMontoCobrado}).`;
+      return `El monto no puede superar el saldo pendiente del pedido ($${this.maxMontoCobrado}).`;
     }
     return null;
   }
@@ -982,21 +773,7 @@ export class SalesComponent implements OnInit {
   get saleSubmitBlockedReason(): string | null {
     if (this.savingSale) return null;
     if (this.montoCobradoError) return this.montoCobradoError;
-    if (this.saleModalMode === 'mostrador' || this.saleModalMode === 'edit') {
-      if (!this.saleClienteId && !this.pendingClientNameMatchesClient()) {
-        if (!this.pendingClientName.trim()) {
-          return 'Seleccioná un cliente para la venta.';
-        }
-        return 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».';
-      }
-      const hasItems = this.draftLines.some(
-        (line) => line.stockItemId && (Number(line.cantidad) || 0) > 0
-      );
-      if (!hasItems) {
-        return 'Agregá al menos un producto con cantidad.';
-      }
-    }
-    if (this.saleModalMode === 'pedido' && !this.selectedOrderId) {
+    if (!this.selectedOrderId) {
       return 'Seleccioná el pedido que estás entregando.';
     }
     return null;
@@ -1013,31 +790,6 @@ export class SalesComponent implements OnInit {
       return `Pedido #${this.collectingSale.numeroPedidoLabel || '—'} · se registra en caja y actualiza el saldo del pedido.`;
     }
     return `Venta #${label} · el cobro se registra en caja y reduce el saldo pendiente.`;
-  }
-
-  get draftTotal(): number {
-    return this.draftLines.reduce((acc, line) => {
-      const qty = Number(line.cantidad) || 0;
-      const price = Number(line.precioUnitario) || 0;
-      return acc + qty * price;
-    }, 0);
-  }
-
-  get draftCostTotal(): number {
-    return this.draftLines.reduce((acc, line) => {
-      const qty = Number(line.cantidad) || 0;
-      const base = qty * (Number(line.costoUnitario) || 0);
-      return acc + base + this.getLineExtraCostTotal(line);
-    }, 0);
-  }
-
-  get draftProfitTotal(): number {
-    return Math.round((this.draftTotal - this.draftCostTotal) * 100) / 100;
-  }
-
-  get extraCostsModalLine(): SaleDraftLine | null {
-    if (this.extraCostsModalIndex === null) return null;
-    return this.draftLines[this.extraCostsModalIndex] ?? null;
   }
 
   get totalFacturado(): number {
@@ -1059,8 +811,9 @@ export class SalesComponent implements OnInit {
       this.loading = false;
     }
 
-    this.clientService.getClients().subscribe((clients) => (this.clients = clients));
-    this.stockService.getStock().subscribe((items) => (this.stockItems = items));
+    this.clientService.getClientsPage(120).subscribe((page) => {
+      this.clients = page.items;
+    });
     if (this.auth.canCreateSales) {
       this.loadEligibleOrders();
     }
@@ -1132,9 +885,14 @@ export class SalesComponent implements OnInit {
   openSaleDetail(sale: Sale) {
     if (!sale.id) return;
 
+    if (sale.estado === 'borrador' && sale.origen === 'mostrador') {
+      this.openEditSale(sale);
+      return;
+    }
+
     this.detailModalOpen = true;
     this.detailLoading = true;
-    this.detailSale = null;
+    this.detailSale = sale;
 
     this.salesService.getSale(sale.id).subscribe({
       next: (fullSale) => {
@@ -1145,8 +903,9 @@ export class SalesComponent implements OnInit {
         this.detailLoading = false;
         this.detailModalOpen = false;
         this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo cargar el detalle de la venta.',
+          title: 'Servidor no disponible',
+          message:
+            'No se pudo cargar la venta. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
         });
       },
     });
@@ -1172,6 +931,60 @@ export class SalesComponent implements OnInit {
     this.openCollectModal(sale);
   }
 
+  duplicateDetailSale() {
+    if (!this.detailSale || !this.canDuplicateDetailSale(this.detailSale)) return;
+    const sale = this.detailSale;
+
+    saveSalesFormDraft({
+      saleModalMode: 'mostrador',
+      saleModalOpen: true,
+      saleClienteId: sale.clienteId ?? '',
+      pendingClientName: '',
+      draftLines: (sale.items ?? []).map((line) => ({
+        stockItemId: line.stockItemId,
+        cantidad: line.cantidad,
+        precioUnitario: line.precioUnitario,
+        costoUnitario: line.costoUnitario ?? 0,
+        costosExtra: this.getDetailLineExtras(line),
+      })),
+      selectedOrderId: '',
+      montoCobrado: sale.montoCobrado ?? sale.total,
+      medioPago: sale.medioPago ?? 'efectivo',
+      saleNotas: '',
+      editingSaleId: null,
+      editingSaleLabel: '',
+      editHasExtraCobros: false,
+      orderFilterClienteId: '',
+    });
+
+    this.closeDetailModal();
+
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/sales/new'], { queryParams: { restoreDraft: '1' } });
+      return;
+    }
+
+    this.stockService.getStock().subscribe((items) => {
+      if (items.length === 0) {
+        clearSalesFormDraft();
+        this.dialogService.alert({
+          title: 'Sin productos',
+          message: 'Cargá productos en Stock antes de duplicar una venta.',
+        });
+        return;
+      }
+      this.saleModalMode = 'mostrador';
+      this.editingSaleId = null;
+      this.saleModalOpen = true;
+      queueMicrotask(() => this.saleCounterPanel?.restoreFromSessionDraft(null));
+    });
+  }
+
+  confirmDeleteFromDetail() {
+    if (!this.detailSale) return;
+    this.confirmDeleteSale(this.detailSale, () => this.closeDetailModal());
+  }
+
   getDetailLineExtras(line: SaleLine): SaleLineExtraCost[] {
     if (line.costosExtra?.length) {
       return line.costosExtra;
@@ -1180,6 +993,46 @@ export class SalesComponent implements OnInit {
       return [{ nombre: 'Personalización', costo: line.costoPersonalizacion }];
     }
     return [];
+  }
+
+  getDetailSaleTableLines(sale: Sale): TransactionTableLine[] {
+    return (sale.items ?? []).map((line) => ({
+      productName: line.nombre || 'Producto',
+      quantity: line.cantidad,
+      unitSale: line.precioUnitario,
+      subtotal: line.subtotal ?? (Number(line.cantidad) || 0) * (Number(line.precioUnitario) || 0),
+      extrasSummary: this.formatDetailLineExtrasSummary(line),
+    }));
+  }
+
+  private formatDetailLineExtrasSummary(line: SaleLine): string | undefined {
+    const extras = this.getDetailLineExtras(line);
+    if (!extras.length) return undefined;
+    return (
+      'Extras: ' +
+      extras.map((extra) => `${extra.nombre} $${extra.costo}`).join(' · ')
+    );
+  }
+
+  getDetailSaleMetaItems(sale: Sale): TransactionDetailMetaItem[] {
+    const items: TransactionDetailMetaItem[] = [
+      { label: 'Cliente', value: sale.clienteNombre?.trim() || '—' },
+      { label: 'Fecha', value: this.formatDate(sale.fecha) },
+      { label: 'Medio de pago', value: sale.medioPago || '—', capitalize: true },
+    ];
+
+    if (sale.origen === 'pedido' && sale.pedidoId) {
+      items.push({
+        label: 'Origen',
+        value: `Pedido #${sale.numeroPedidoLabel || '—'}`,
+        routerLink: ['/orders', sale.pedidoId, 'edit'],
+        linkClick: () => this.closeDetailModal(),
+      });
+    } else {
+      items.push({ label: 'Origen', value: 'Mostrador' });
+    }
+
+    return items;
   }
 
   formatDate(value?: string): string {
@@ -1194,171 +1047,111 @@ export class SalesComponent implements OnInit {
     return this.clients.find((client) => client.id === clienteId)?.nombre ?? 'Cliente';
   }
 
-  private refreshClients() {
-    this.clientService.getClients().subscribe((clients) => {
-      this.clients = clients;
-    });
-  }
-
-  private resolveSaleClienteId(): void {
-    if (this.saleClienteId) return;
-    const query = this.pendingClientName.trim();
-    if (!query) return;
-    const match = this.clients.find(
-      (client) =>
-        client.id && client.nombre?.trim().toLowerCase() === query.toLowerCase()
-    );
-    if (match?.id) {
-      this.saleClienteId = match.id;
-    }
-  }
-
-  private pendingClientNameMatchesClient(): boolean {
-    const query = this.pendingClientName.trim();
-    if (!query) return false;
-    return this.clients.some(
-      (client) =>
-        client.id && client.nombre?.trim().toLowerCase() === query.toLowerCase()
-    );
-  }
-
-  quickCreateClient(name: string) {
-    const trimmed = name.trim();
-    if (!trimmed || this.creatingClient) return;
-
-    this.creatingClient = true;
-    this.clientService.createClient({ nombre: trimmed }).subscribe({
-      next: (response) => {
-        this.creatingClient = false;
-        const client: Client = { id: response.id, nombre: trimmed };
-        this.clients = [...this.clients, client];
-        this.saleClienteId = response.id;
-        this.pendingClientName = trimmed;
-      },
-      error: () => {
-        this.creatingClient = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo crear el cliente. Intentá de nuevo o usá «Nuevo cliente» para cargar la ficha completa.',
-        });
-      },
-    });
-  }
-
-  goToNewClientForm() {
-    if (!this.auth.canCreateSales) return;
-
-    saveSalesFormDraft({
-      saleModalMode: this.saleModalMode,
-      saleModalOpen: this.saleModalOpen,
-      saleClienteId: this.saleClienteId,
-      pendingClientName: this.pendingClientName,
-      draftLines: structuredClone(this.draftLines),
-      selectedOrderId: this.selectedOrderId,
-      montoCobrado: this.montoCobrado,
-      medioPago: this.medioPago,
-      saleNotas: this.saleNotas,
-      editingSaleId: this.editingSaleId,
-      editingSaleLabel: this.editingSaleLabel,
-      editHasExtraCobros: this.editHasExtraCobros,
-      orderFilterClienteId: this.orderFilterClienteId,
-    });
-
-    const nombre = this.pendingClientName.trim();
-    this.router.navigate(['/clients/new'], {
-      queryParams: {
-        ...(nombre ? { nombre } : {}),
-        returnTo: 'sales',
-      },
-    });
-  }
-
   private tryRestoreSalesFormDraft(clienteId: string | null) {
     const draft = readSalesFormDraft();
     if (!draft) return;
 
+    if (
+      prefersInlineFormPage() &&
+      (draft.saleModalMode === 'mostrador' || draft.saleModalMode === 'edit')
+    ) {
+      const queryParams: Record<string, string> = { restoreDraft: '1' };
+      if (clienteId) queryParams.clienteId = clienteId;
+
+      if (draft.saleModalMode === 'edit' && draft.editingSaleId) {
+        this.router.navigate(['/sales', draft.editingSaleId, 'edit'], { queryParams });
+      } else {
+        this.router.navigate(['/sales/new'], { queryParams });
+      }
+      return;
+    }
+
     this.saleModalMode = draft.saleModalMode as SaleModalMode;
-    this.saleClienteId = draft.saleClienteId;
-    this.pendingClientName = draft.pendingClientName;
-    this.draftLines = draft.draftLines.length
-      ? structuredClone(draft.draftLines)
-      : [this.emptyLine()];
     this.selectedOrderId = draft.selectedOrderId;
     this.montoCobrado = draft.montoCobrado;
     this.medioPago = draft.medioPago;
     this.saleNotas = draft.saleNotas;
     this.editingSaleId = draft.editingSaleId;
-    this.editingSaleLabel = draft.editingSaleLabel;
-    this.editHasExtraCobros = draft.editHasExtraCobros;
     this.orderFilterClienteId = draft.orderFilterClienteId;
 
-    if (clienteId) {
-      this.saleClienteId = clienteId;
-      this.pendingClientName = '';
-    }
+    if (draft.saleModalMode === 'pedido') {
+      clearSalesFormDraft();
+      this.clientService.getClientsPage(120).subscribe((page) => {
+        this.clients = page.items;
+      });
 
-    clearSalesFormDraft();
-    this.clientService.getClients().subscribe((clients) => (this.clients = clients));
-
-    if (draft.saleModalOpen) {
-      if (this.saleModalMode === 'pedido') {
+      if (draft.saleModalOpen) {
         this.loadEligibleOrders(undefined, () => {
           if (this.selectedOrderId) {
             this.onOrderSelected();
           }
           this.saleModalOpen = true;
         });
-      } else {
-        this.saleModalOpen = true;
       }
+      return;
     }
-  }
 
-  openClientModal() {
-    const fromSearch = this.pendingClientName.trim();
-    const fromSelection = this.saleClienteId
-      ? (this.clients.find((client) => client.id === this.saleClienteId)?.nombre ?? '').trim()
-      : '';
-    this.clientModalPrefillNombre = fromSearch || fromSelection;
-    this.clientModalOpen = true;
+    if (!draft.saleModalOpen) {
+      clearSalesFormDraft();
+      return;
+    }
+
+    this.saleModalMode = draft.saleModalMode as SaleModalMode;
+    this.editingSaleId = draft.editingSaleId;
+    this.saleModalOpen = true;
+    queueMicrotask(() => {
+      this.saleCounterPanel?.restoreFromSessionDraft(clienteId);
+    });
   }
 
   useMaxMontoCobrado() {
     this.montoCobrado = this.maxMontoCobrado;
   }
 
-  closeClientModal() {
-    this.clientModalOpen = false;
-    this.clientModalPrefillNombre = '';
-  }
-
-  onClientSavedFromModal(event: ClientFormSaveEvent) {
-    this.saleClienteId = event.id;
-    this.pendingClientName = event.client.nombre ?? '';
-    this.refreshClients();
-    this.closeClientModal();
-  }
-
   openSaleModal(mode: SaleModalMode, preselectedOrderId?: string) {
     if (!this.auth.canCreateSales) return;
 
+    if (mode === 'mostrador' && prefersInlineFormPage()) {
+      this.stockService.getStock().subscribe((items) => {
+        if (items.length === 0) {
+          this.dialogService.alert({
+            title: 'Sin productos',
+            message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
+          });
+          return;
+        }
+        this.router.navigate(['/sales/new']);
+      });
+      return;
+    }
+
     this.saleModalMode = mode;
     this.editingSaleId = null;
-    this.editingSaleLabel = '';
-    this.editHasExtraCobros = false;
-    this.saleClienteId = '';
-    this.pendingClientName = '';
-    this.draftLines = [this.emptyLine()];
     this.selectedOrderId = preselectedOrderId ?? '';
     this.orderFilterClienteId = '';
     this.medioPago = 'efectivo';
     this.saleNotas = '';
     this.montoCobrado = null;
 
-    if (mode === 'mostrador' && this.stockItems.length === 0) {
-      this.dialogService.alert({
-        title: 'Sin productos',
-        message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
+    if (mode === 'mostrador') {
+      this.stockService.getStock().subscribe({
+        next: (items) => {
+          if (items.length === 0) {
+            this.dialogService.alert({
+              title: 'Sin productos',
+              message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
+            });
+            return;
+          }
+          this.saleModalOpen = true;
+        },
+        error: () => {
+          this.dialogService.alert({
+            title: 'Servidor no disponible',
+            message:
+              'No se pudo conectar con la API. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
+          });
+        },
       });
       return;
     }
@@ -1382,21 +1175,36 @@ export class SalesComponent implements OnInit {
         this.onOrderSelected();
         this.saleModalOpen = true;
       });
-      return;
     }
-
-    this.onOrderSelected();
-    this.saleModalOpen = true;
   }
 
   closeSaleModal() {
     this.saleModalOpen = false;
     this.editingSaleId = null;
-    this.editingSaleLabel = '';
-    this.editHasExtraCobros = false;
-    this.pendingClientName = '';
-    this.closeClientModal();
-    this.cancelExtraCostsModal();
+    this.saleModalSaving = false;
+  }
+
+  onCounterSaleSavingChange(saving: boolean) {
+    queueMicrotask(() => {
+      this.saleModalSaving = saving;
+    });
+  }
+
+  onCounterSaleSaved(event?: TransactionFormSaveEvent) {
+    if (event?.draft) {
+      this.saleModalMode = 'edit';
+      this.editingSaleId = event.id;
+      this.saleModalSaving = false;
+      this.loadSales();
+      return;
+    }
+    if (event?.id) {
+      this.saleModalMode = 'edit';
+      this.editingSaleId = event.id;
+    }
+    this.saleModalSaving = false;
+    this.loadSales();
+    this.loadEligibleOrders();
   }
 
   canEditSale(sale: Sale): boolean {
@@ -1404,54 +1212,41 @@ export class SalesComponent implements OnInit {
   }
 
   canDeleteSale(sale: Sale): boolean {
-    return this.auth.canDeleteRecords && sale.origen === 'mostrador' && !!sale.id;
+    if (!this.auth.canDeleteRecords || !sale.id) return false;
+    return sale.origen === 'mostrador' || this.auth.isPrivileged;
+  }
+
+  canDuplicateDetailSale(sale: Sale): boolean {
+    return this.auth.canCreateSales && sale.origen === 'mostrador';
+  }
+
+  getSaleCollectableSaldo(sale: Sale): number {
+    return Math.max(0, Number(sale.saldoPendiente) || 0);
   }
 
   canCollectSaleBalance(sale: Sale): boolean {
-    return (Number(sale.saldoPendiente) || 0) > 0 && !!sale.id;
+    if (sale.estado === 'borrador') return false;
+    return !!sale.id && this.getSaleCollectableSaldo(sale) > 0;
   }
 
   openEditSale(sale: Sale) {
     if (!sale.id || sale.origen !== 'mostrador') return;
 
-    this.salesService.getSale(sale.id).subscribe({
-      next: (fullSale) => {
-        this.saleModalMode = 'edit';
-        this.editingSaleId = fullSale.id ?? sale.id!;
-        this.editingSaleLabel = fullSale.ventaLabel || sale.ventaLabel || '';
-        this.saleClienteId = fullSale.clienteId ?? '';
-        this.medioPago = fullSale.medioPago || 'efectivo';
-        this.saleNotas = fullSale.notas || '';
-        this.montoCobrado = Number(fullSale.montoCobrado) || 0;
-        this.editHasExtraCobros = this.saleHasExtraCobros(fullSale);
-        this.draftLines = (fullSale.items ?? []).map((line) => ({
-          stockItemId: line.stockItemId,
-          cantidad: line.cantidad,
-          precioUnitario: line.precioUnitario,
-          costoUnitario: Number(line.costoUnitario) || 0,
-          costosExtra: (line.costosExtra ?? []).map((extra) => ({
-            nombre: extra.nombre,
-            costo: Number(extra.costo) || 0,
-          })),
-        }));
-        if (this.draftLines.length === 0) {
-          this.draftLines = [this.emptyLine()];
-        }
-        this.saleModalOpen = true;
-      },
-      error: () => {
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudo cargar la venta para editar.',
-        });
-      },
-    });
+    if (prefersInlineFormPage()) {
+      this.router.navigate(['/sales', sale.id, 'edit']);
+      return;
+    }
+
+    this.saleModalMode = 'edit';
+    this.editingSaleId = sale.id;
+    this.saleModalOpen = true;
   }
 
   openCollectModal(sale: Sale) {
-    if (!sale.id || !(Number(sale.saldoPendiente) > 0)) return;
+    const saldo = this.getSaleCollectableSaldo(sale);
+    if (!sale.id || saldo <= 0) return;
     this.collectingSale = sale;
-    this.collectMonto = Number(sale.saldoPendiente) || 0;
+    this.collectMonto = saldo;
     this.collectMedio = 'efectivo';
     this.collectNotas = '';
     this.collectModalOpen = true;
@@ -1525,22 +1320,37 @@ export class SalesComponent implements OnInit {
     });
   }
 
-  confirmDeleteSale(sale: Sale) {
-    if (!sale.id || sale.origen !== 'mostrador') return;
+  confirmDeleteSale(sale: Sale, onSuccess?: () => void) {
+    if (!sale.id || !this.canDeleteSale(sale)) return;
     const label = formatSaleLabel(sale);
+    const relatedParts = [
+      'Se devolverán al depósito los productos de la venta que controlan stock (movimientos de stock vinculados).',
+      'Se anularán en caja los ingresos generados al registrar la venta o cobros posteriores.',
+    ];
+    if (sale.origen === 'mostrador') {
+      relatedParts.push(
+        'Esto deshace lo que creó automáticamente la venta de mostrador (caja + stock del depósito).'
+      );
+    }
+    if (sale.origen === 'pedido') {
+      relatedParts.push('El pedido asociado quedará sin venta registrada (podés volver a registrar la entrega).');
+    }
 
     this.dialogService
       .confirm({
         title: 'Eliminar venta',
-        message: `¿Eliminar la venta #${label}? Se restaurará el stock y se anularán los cobros en caja.`,
-        confirmLabel: 'Eliminar',
+        message: `¿Eliminar la venta #${label} y todo lo vinculado?\n\n${relatedParts.join('\n')}`,
+        confirmLabel: 'Eliminar todo',
         variant: 'danger',
       })
       .subscribe((confirmed) => {
         if (!confirmed) return;
 
         this.salesService.deleteSale(sale.id!).subscribe({
-          next: () => this.loadSales(),
+          next: () => {
+            this.loadSales();
+            onSuccess?.();
+          },
           error: (err: HttpErrorResponse) => {
             this.dialogService.alert({
               title: 'Error',
@@ -1554,18 +1364,12 @@ export class SalesComponent implements OnInit {
       });
   }
 
-  private saleHasExtraCobros(sale: Sale & { cobros?: Array<{ monto?: number }> }): boolean {
-    return Array.isArray(sale.cobros) && sale.cobros.length > 0;
-  }
-
   onOrderSelected() {
-    if (this.saleModalMode === 'pedido' && this.selectedOrder) {
+    if (this.selectedOrder) {
       this.montoCobrado = this.selectedOrder.saldoPedido;
       if (this.selectedOrder.clienteId && !this.orderFilterClienteId) {
         this.orderFilterClienteId = this.selectedOrder.clienteId;
       }
-    } else if (this.saleModalMode === 'mostrador') {
-      this.montoCobrado = this.draftTotal;
     }
   }
 
@@ -1593,130 +1397,7 @@ export class SalesComponent implements OnInit {
     });
   }
 
-  addLine() {
-    this.draftLines = [...this.draftLines, this.emptyLine()];
-  }
-
-  removeLine(index: number) {
-    if (this.draftLines.length === 1) return;
-    if (this.extraCostsModalIndex === index) {
-      this.cancelExtraCostsModal();
-    } else if (this.extraCostsModalIndex !== null && this.extraCostsModalIndex > index) {
-      this.extraCostsModalIndex--;
-    }
-    this.draftLines = this.draftLines.filter((_, i) => i !== index);
-    if (this.saleModalMode === 'mostrador') {
-      this.montoCobrado = this.draftTotal;
-    }
-  }
-
-  onDraftLineChange() {
-    if (this.saleModalMode === 'mostrador' || this.saleModalMode === 'edit') {
-      if (this.saleModalMode === 'mostrador') {
-        this.montoCobrado = this.draftTotal;
-      }
-    }
-  }
-
-  onProductSelected(line: SaleDraftLine) {
-    const item = this.stockItems.find((entry) => entry.id === line.stockItemId);
-    if (!item) return;
-    line.costoUnitario = Number(item.costo) || 0;
-    if (line.precioUnitario == null || line.precioUnitario === 0) {
-      line.precioUnitario = Number(item.precioSugerido) || line.costoUnitario || 0;
-    }
-    if (!line.costosExtra.length) {
-      line.costosExtra = [];
-    }
-    this.onDraftLineChange();
-  }
-
-  getExtraCostsActionLabel(line: SaleDraftLine): string {
-    return line.costosExtra.length > 0 ? 'Editar costos' : '+ Agregar costo';
-  }
-
-  getDraftLineName(line: SaleDraftLine): string {
-    const item = this.stockItems.find((entry) => entry.id === line.stockItemId);
-    return item?.nombre ?? 'Producto';
-  }
-
-  getLineExtraCostTotal(line: SaleDraftLine): number {
-    return line.costosExtra.reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
-  }
-
-  openExtraCostsModal(lineIndex: number) {
-    const line = this.draftLines[lineIndex];
-    if (!line) return;
-    this.extraCostsDraft = line.costosExtra.map((extra) => ({
-      nombre: extra.nombre,
-      costo: Number(extra.costo) || 0,
-    }));
-    this.extraCostInputNombre = '';
-    this.extraCostInputCosto = null;
-    this.extraCostsModalIndex = lineIndex;
-  }
-
-  cancelExtraCostsModal() {
-    this.extraCostsModalIndex = null;
-    this.extraCostsDraft = [];
-    this.extraCostInputNombre = '';
-    this.extraCostInputCosto = null;
-  }
-
-  acceptExtraCostsModal() {
-    const line = this.extraCostsModalLine;
-    if (!line) return;
-    line.costosExtra = this.extraCostsDraft.map((extra) => ({
-      nombre: extra.nombre,
-      costo: Number(extra.costo) || 0,
-    }));
-    this.cancelExtraCostsModal();
-  }
-
-  confirmExtraCostInput() {
-    const nombre = this.extraCostInputNombre.trim();
-    const costo = Number(this.extraCostInputCosto);
-
-    if (!nombre) {
-      this.dialogService.alert({
-        title: 'Campo requerido',
-        message: 'Ingresá el concepto del costo.',
-      });
-      return;
-    }
-
-    if (
-      this.extraCostInputCosto === null ||
-      this.extraCostInputCosto === undefined ||
-      Number.isNaN(costo) ||
-      costo < 0
-    ) {
-      this.dialogService.alert({
-        title: 'Campo requerido',
-        message: 'Ingresá un costo válido.',
-      });
-      return;
-    }
-
-    this.extraCostsDraft.push({ nombre, costo });
-    this.extraCostInputNombre = '';
-    this.extraCostInputCosto = null;
-  }
-
-  removeExtraCostFromDraft(index: number) {
-    this.extraCostsDraft.splice(index, 1);
-  }
-
-  getExtraCostsDraftTotal(): number {
-    return this.extraCostsDraft.reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
-  }
-
   submitSale() {
-    if (this.saleModalMode === 'edit') {
-      this.submitEditSale();
-      return;
-    }
-
     const monto = Number(this.montoCobrado);
     if (!Number.isFinite(monto) || monto < 0) {
       this.dialogService.alert({
@@ -1726,92 +1407,29 @@ export class SalesComponent implements OnInit {
       return;
     }
 
-    let payload: CreateSalePayload;
-
-    if (this.saleModalMode === 'pedido') {
-      if (!this.selectedOrderId) {
-        this.dialogService.alert({
-          title: 'Pedido requerido',
-          message: 'Seleccioná el pedido que estás entregando.',
-        });
-        return;
-      }
-
-      if (monto > (this.selectedOrder?.saldoPedido ?? 0)) {
-        this.dialogService.alert({
-          title: 'Monto excedido',
-          message: 'El monto no puede superar el saldo pendiente del pedido.',
-        });
-        return;
-      }
-
-      payload = {
-        origen: 'pedido',
-        pedidoId: this.selectedOrderId,
-        montoCobrado: monto,
-        medioPago: this.medioPago,
-        notas: this.saleNotas.trim(),
-      };
-    } else {
-      this.resolveSaleClienteId();
-      if (!this.saleClienteId) {
-        this.dialogService.alert({
-          title: 'Cliente requerido',
-          message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
-        });
-        return;
-      }
-
-      const items = this.draftLines
-        .map((line) => {
-          const item = this.stockItems.find((entry) => entry.id === line.stockItemId);
-          const costosExtra = (line.costosExtra ?? []).filter(
-            (extra) => extra.nombre?.trim() || extra.costo
-          );
-          const costoPersonalizacion = costosExtra.reduce(
-            (acc, extra) => acc + (Number(extra.costo) || 0),
-            0
-          );
-          return {
-            stockItemId: line.stockItemId,
-            nombre: item?.nombre ?? '',
-            cantidad: Number(line.cantidad) || 0,
-            precioUnitario: Number(line.precioUnitario) || 0,
-            costoUnitario: Number(line.costoUnitario) || Number(item?.costo) || 0,
-            costoPersonalizacion,
-            costosExtra: costosExtra.map((extra) => ({
-              nombre: extra.nombre.trim(),
-              costo: Number(extra.costo) || 0,
-            })),
-          };
-        })
-        .filter((line) => line.stockItemId && line.cantidad > 0);
-
-      if (items.length === 0) {
-        this.dialogService.alert({
-          title: 'Productos requeridos',
-          message: 'Agregá al menos un producto con cantidad.',
-        });
-        return;
-      }
-
-      if (monto > this.draftTotal) {
-        this.dialogService.alert({
-          title: 'Monto excedido',
-          message: 'El monto cobrado no puede superar el total de la venta.',
-        });
-        return;
-      }
-
-      payload = {
-        origen: 'mostrador',
-        clienteId: this.saleClienteId,
-        items,
-        montoCobrado: monto,
-        medioPago: this.medioPago,
-        notas: this.saleNotas.trim(),
-      };
+    if (!this.selectedOrderId) {
+      this.dialogService.alert({
+        title: 'Pedido requerido',
+        message: 'Seleccioná el pedido que estás entregando.',
+      });
+      return;
     }
+
+    if (monto > (this.selectedOrder?.saldoPedido ?? 0)) {
+      this.dialogService.alert({
+        title: 'Monto excedido',
+        message: 'El monto no puede superar el saldo pendiente del pedido.',
+      });
+      return;
+    }
+
+    const payload: CreateSalePayload = {
+      origen: 'pedido',
+      pedidoId: this.selectedOrderId,
+      montoCobrado: monto,
+      medioPago: this.medioPago,
+      notas: this.saleNotas.trim(),
+    };
 
     this.savingSale = true;
     this.salesService.createSale(payload).subscribe({
@@ -1827,104 +1445,6 @@ export class SalesComponent implements OnInit {
           title: 'Error',
           message:
             typeof err.error?.error === 'string' ? err.error.error : 'No se pudo registrar la venta.',
-        });
-      },
-    });
-  }
-
-  private submitEditSale() {
-    if (!this.editingSaleId) return;
-
-    const monto = Number(this.montoCobrado);
-    if (!Number.isFinite(monto) || monto < 0) {
-      this.dialogService.alert({
-        title: 'Monto inválido',
-        message: 'Ingresá un monto a cobrar válido.',
-      });
-      return;
-    }
-
-    this.resolveSaleClienteId();
-    if (!this.saleClienteId) {
-      this.dialogService.alert({
-        title: 'Cliente requerido',
-        message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
-      });
-      return;
-    }
-
-    const items = this.draftLines
-      .map((line) => {
-        const item = this.stockItems.find((entry) => entry.id === line.stockItemId);
-        const costosExtra = (line.costosExtra ?? []).filter(
-          (extra) => extra.nombre?.trim() || extra.costo
-        );
-        const costoPersonalizacion = costosExtra.reduce(
-          (acc, extra) => acc + (Number(extra.costo) || 0),
-          0
-        );
-        return {
-          stockItemId: line.stockItemId,
-          nombre: item?.nombre ?? '',
-          cantidad: Number(line.cantidad) || 0,
-          precioUnitario: Number(line.precioUnitario) || 0,
-          costoUnitario: Number(line.costoUnitario) || Number(item?.costo) || 0,
-          costoPersonalizacion,
-          costosExtra: costosExtra.map((extra) => ({
-            nombre: extra.nombre.trim(),
-            costo: Number(extra.costo) || 0,
-          })),
-        };
-      })
-      .filter((line) => line.stockItemId && line.cantidad > 0);
-
-    if (items.length === 0) {
-      this.dialogService.alert({
-        title: 'Productos requeridos',
-        message: 'Agregá al menos un producto con cantidad.',
-      });
-      return;
-    }
-
-    const draftTotal = items.reduce(
-      (acc, line) => acc + line.cantidad * line.precioUnitario,
-      0
-    );
-
-    if (monto > draftTotal) {
-      this.dialogService.alert({
-        title: 'Monto excedido',
-        message: 'El monto cobrado no puede superar el total de la venta.',
-      });
-      return;
-    }
-
-    const payload: UpdateSalePayload = {
-      clienteId: this.saleClienteId,
-      items,
-      notas: this.saleNotas.trim(),
-      medioPago: this.medioPago,
-    };
-
-    if (!this.editHasExtraCobros) {
-      payload.montoCobrado = monto;
-    }
-
-    this.savingSale = true;
-    this.salesService.updateSale(this.editingSaleId, payload).subscribe({
-      next: () => {
-        this.savingSale = false;
-        this.closeSaleModal();
-        this.loadSales();
-      },
-      error: (err: HttpErrorResponse) => {
-        this.savingSale = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message:
-            typeof err.error?.error === 'string'
-              ? err.error.error
-              : 'No se pudo actualizar la venta.',
         });
       },
     });
@@ -1969,9 +1489,5 @@ export class SalesComponent implements OnInit {
         this.loadingMoreSales = false;
       },
     });
-  }
-
-  private emptyLine(): SaleDraftLine {
-    return { stockItemId: '', cantidad: 1, precioUnitario: 0, costoUnitario: 0, costosExtra: [] };
   }
 }
