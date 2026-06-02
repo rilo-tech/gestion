@@ -299,6 +299,34 @@ export async function listPayableObligations(
   return snapshot.docs.map((doc) => mapObligation(doc.id, doc.data() as Record<string, unknown>));
 }
 
+function installmentEstadoSortOrder(estado: PayableDisplayEstado): number {
+  switch (estado) {
+    case 'vencida':
+      return 0;
+    case 'pendiente':
+      return 1;
+    case 'pagada':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function compareInstallmentsByDueDate(
+  a: PayableCuotaRecord & { displayEstado: PayableDisplayEstado },
+  b: PayableCuotaRecord & { displayEstado: PayableDisplayEstado }
+): number {
+  const statusCmp =
+    installmentEstadoSortOrder(a.displayEstado) - installmentEstadoSortOrder(b.displayEstado);
+  if (statusCmp !== 0) return statusCmp;
+
+  const dateA = a.fechaVencimiento?.slice(0, 10) || '';
+  const dateB = b.fechaVencimiento?.slice(0, 10) || '';
+  if (dateA !== dateB) return dateA.localeCompare(dateB);
+
+  return a.beneficiario.localeCompare(b.beneficiario, 'es');
+}
+
 export async function listPayableInstallments(
   businessId: string
 ): Promise<Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>> {
@@ -313,11 +341,7 @@ export async function listPayableInstallments(
         displayEstado: resolveDisplayEstado(cuota.estado, cuota.fechaVencimiento),
       };
     })
-    .sort((a, b) => {
-      const dateCompare = a.fechaVencimiento.localeCompare(b.fechaVencimiento);
-      if (dateCompare !== 0) return dateCompare;
-      return a.beneficiario.localeCompare(b.beneficiario, 'es');
-    });
+    .sort(compareInstallmentsByDueDate);
 }
 
 export async function createPayableObligation(

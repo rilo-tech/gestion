@@ -13,6 +13,10 @@ export interface CashMovement {
   monto: number;
   medio?: string;
   concepto: string;
+  /** Detalle opcional del movimiento manual. */
+  descripcion?: string | null;
+  /** Categoría de gasto (Finanzas) cuando el egreso manual eligió una categoría. */
+  categoriaId?: string | null;
   fecha: string;
   ambito?: CashAmbito;
   origenId?: string;
@@ -34,16 +38,27 @@ export interface PaginatedCashMovements {
   hasMore: boolean;
 }
 
+export interface CashPeriodSummary {
+  mes: number;
+  anio: number;
+  /** Saldo arrastrado del mes anterior + ingresos del período. */
+  ingreso: number;
+  /** Solo egresos del período. */
+  egreso: number;
+}
+
 export interface CashAmbitoSummary {
   ingreso: number;
   egreso: number;
   saldo: number;
+  periodo?: CashPeriodSummary;
 }
 
 export interface CashSummary {
   ingreso: number;
   egreso: number;
   saldo: number;
+  periodo?: CashPeriodSummary;
   ambitos: Record<string, CashAmbitoSummary>;
 }
 
@@ -68,17 +83,25 @@ export class CashService {
     return this.http.get<PaginatedCashMovements>(`/api/cash/${this.businessId}`, { params });
   }
 
-  getSummary(): Observable<CashSummary> {
-    return this.http.get<CashSummary>(`/api/cash/${this.businessId}/summary`);
+  getSummary(mes?: number, anio?: number): Observable<CashSummary> {
+    const params: Record<string, string> = {};
+    if (mes != null) params.mes = String(mes);
+    if (anio != null) params.anio = String(anio);
+    return this.http.get<CashSummary>(`/api/cash/${this.businessId}/summary`, { params });
   }
 
-  createMovement(movement: Omit<CashMovement, 'id' | 'fecha'>): Observable<{ id: string }> {
+  createMovement(
+    movement: Omit<CashMovement, 'id' | 'fecha'> & { fecha?: string }
+  ): Observable<{ id: string }> {
     return this.http.post<{ id: string }>(`/api/cash/${this.businessId}`, movement);
   }
 
   updateMovement(
     movementId: string,
-    movement: Pick<CashMovement, 'tipo' | 'monto' | 'concepto' | 'medio' | 'ambito'>
+    movement: Pick<
+      CashMovement,
+      'tipo' | 'monto' | 'concepto' | 'medio' | 'ambito' | 'descripcion' | 'fecha'
+    >
   ): Observable<{ id: string }> {
     return this.http.put<{ id: string }>(
       `/api/cash/${this.businessId}/${movementId}`,

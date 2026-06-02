@@ -5,9 +5,16 @@ export const NATIVE_COMPACT_LIST_CLASS = 'native-compact-list divide-y divide-gr
 export const NATIVE_COMPACT_TABLE_CLASS =
   'native-compact-table app-data-table w-full text-left border-collapse';
 
-/** Celda de encabezado en desktop (misma altura que reservas de stock). */
-export const DESKTOP_TABLE_TH_CLASS =
-  'px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider';
+/** Encabezado de tabla de módulo (mayúsculas, mismo peso visual en todas las columnas). */
+export const MODULE_TABLE_HEAD_CELL_CLASS =
+  'px-4 sm:px-6 py-3 text-[11px] leading-tight font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 align-middle';
+
+/** Celda de encabezado en desktop (alias del estilo unificado de módulos). */
+export const DESKTOP_TABLE_TH_CLASS = MODULE_TABLE_HEAD_CELL_CLASS;
+
+/** Encabezados en tablas anidadas (detalle por compra, etc.). */
+export const MODULE_TABLE_HEAD_CELL_NESTED_CLASS =
+  'px-3 py-2 text-[10px] leading-tight font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 align-middle';
 
 /** Celda de cuerpo en desktop. */
 export const DESKTOP_TABLE_TD_CLASS = 'px-4 sm:px-6 py-3 text-sm';

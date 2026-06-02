@@ -179,6 +179,7 @@ export interface ClientFormSaveEvent {
           [showSave]="!formReadOnly"
           [saving]="savingClient"
           (cancelClick)="cancelled.emit()"
+          (saveClick)="saveClient()"
           (deleteClick)="confirmDeleteClient()">
         </app-form-panel-footer>
       </form>

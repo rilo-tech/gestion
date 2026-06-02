@@ -6,5 +6,6 @@ export * from './transaction-summary-row.component';
 export * from './transaction-party-field.component';
 export * from './transaction-payment-simple.component';
 export * from './transaction-notes-field.component';
+export * from './transaction-date-field.component';
 export * from './transaction-detail-metadata.component';
 export * from './transaction-detail-page.component';

@@ -6,9 +6,10 @@ import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
 @Component({
   selector: 'app-record-action-toolbar',
   standalone: true,
+  host: { class: 'inline-flex shrink-0' },
   imports: [CommonModule, DuplicateActionButtonComponent, IconToolbarButtonComponent],
   template: `
-    <div class="inline-flex items-center gap-2 flex-wrap">
+    <div class="inline-flex items-center gap-2.5 sm:gap-3 flex-wrap">
       <app-duplicate-action-button
         *ngIf="showDuplicate"
         [label]="duplicateLabel"

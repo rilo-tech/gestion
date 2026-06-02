@@ -1,8 +1,8 @@
 import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, NavigationEnd, Router, RouterLink } from '@angular/router';
-import { filter, Subscription } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   StockItem,
   StockMovement,
@@ -191,7 +191,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             [(query)]="searchQuery"
             (queryChange)="onProductsSearchChange()"
             name="searchQuery"
-            placeholder="Buscar producto..."
+            placeholder="Buscar por nombre o código..."
             extraClass="sm:max-w-md">
           </app-list-search-field>
         </div>
@@ -233,6 +233,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
+              <th *ngIf="showCodigoColumn" class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Código</th>
               <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
               <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Unidades en depósito">
                 Depósito
@@ -275,6 +276,9 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   class="inline-flex mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-violet-50 text-violet-700">
                   Servicio
                 </span>
+              </td>
+              <td *ngIf="showCodigoColumn" class="px-4 py-4 text-sm tabular-nums text-gray-700">
+                {{ item.codigo || '—' }}
               </td>
               <td class="px-4 py-4">
                 <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
@@ -343,6 +347,14 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           [totalItems]="filteredItems.length"
           (pageChange)="productsPage = $event">
         </app-list-pagination>
+        <app-list-load-more
+          listFooter
+          [hasMore]="productsHasMore"
+          [loading]="loadingMoreProducts || loadingItems"
+          label="Cargar más productos"
+          loadingLabel="Cargando más..."
+          (loadMoreClick)="loadMoreProducts()">
+        </app-list-load-more>
       </app-compact-data-list>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -733,7 +745,6 @@ export class StockComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private configSub?: Subscription;
   private catalogSub?: Subscription;
-  private routerSub?: Subscription;
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   items: StockItem[] = [];
@@ -758,6 +769,9 @@ export class StockComponent implements OnInit, OnDestroy {
   movementsPage = 1;
   reservationsPage = 1;
   loadingItems = true;
+  loadingMoreProducts = false;
+  productsHasMore = false;
+  productsNextCursor: string | null = null;
   loadingMovements = false;
   loadingReservations = false;
   private movementsLoaded = false;
@@ -798,24 +812,13 @@ export class StockComponent implements OnInit, OnDestroy {
       this.onStockCatalogChanged(change);
     });
 
-    this.routerSub = this.router.events
-      .pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd))
-      .subscribe((event) => {
-        if (event.urlAfterRedirects.startsWith('/stock') && !event.urlAfterRedirects.includes('/edit')) {
-          this.loadStockMetrics(true);
-          if (this.activeTab === 'productos') {
-            this.loadStock();
-          }
-        }
-      });
-
-    this.refreshStockData();
+    this.loadStockMetrics(false);
+    this.loadStock(false);
   }
 
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.catalogSub?.unsubscribe();
-    this.routerSub?.unsubscribe();
   }
 
   get stockOrigenes() {
@@ -847,7 +850,7 @@ export class StockComponent implements OnInit, OnDestroy {
     });
     this.ensureTabDataLoaded(tab);
     if (tab === 'productos') {
-      this.loadStockMetrics(true);
+      this.loadStockMetrics(false);
     }
     if (tab === 'reservas') {
       this.loadReservations(this.reservationProductFilter || undefined);
@@ -913,10 +916,7 @@ export class StockComponent implements OnInit, OnDestroy {
 
   get estimatedStockValue(): number {
     if (this.items.length > 0) {
-      return computeValorDepositoEstimado(
-        this.items,
-        this.appConfig.productos?.categoriasSinStock ?? []
-      );
+      return computeValorDepositoEstimado(this.items);
     }
     return this.stockMetrics.valorDepositoEstimado;
   }
@@ -932,7 +932,7 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   itemValorEstimado(item: StockItem): number {
-    return computeItemValorEstimado(item, this.appConfig.productos?.categoriasSinStock ?? []);
+    return computeItemValorEstimado(item);
   }
 
   itemValorEstimadoLabel(item: StockItem): string {
@@ -967,7 +967,7 @@ export class StockComponent implements OnInit, OnDestroy {
     const query = this.searchQuery.trim().toLowerCase();
     if (query) {
       list = list.filter((item) => {
-        const searchable = [item.nombre, item.nombreBase, item.categoria, item.talle, item.color]
+        const searchable = [item.nombre, item.nombreBase, item.categoria, item.talle, item.color, item.codigo]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
@@ -1029,15 +1029,21 @@ export class StockComponent implements OnInit, OnDestroy {
   isLowStock(item: StockItem): boolean {
     const minStock = Number(item.stockMinimo) || 0;
     if (!this.controlsStockItem(item) || minStock <= 0) return false;
-    return itemIsLowStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
+    return itemIsLowStock(item);
   }
 
   controlsStockItem(item: StockItem): boolean {
-    return itemControlsStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
+    return itemControlsStock(item);
+  }
+
+  get showCodigoColumn(): boolean {
+    if (this.appConfig.productos?.codigo?.automatico) return true;
+    return this.items.some((item) => String(item.codigo ?? '').trim().length > 0);
   }
 
   get productTableDesktopColspan(): number {
     let cols = 7;
+    if (this.showCodigoColumn) cols += 1;
     if (this.auth.canViewStockCosts) cols += 1;
     if (this.auth.isAdmin) cols += 1;
     return cols;
@@ -1062,13 +1068,15 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   productMobileSubtitle(item: StockItem): string {
+    const codigo = String(item.codigo ?? '').trim();
     if (!this.controlsStockItem(item)) {
       const categoria = String(item.categoria ?? '').trim();
-      return categoria ? `${categoria} · Servicio` : 'Servicio';
+      const parts = [codigo, categoria ? `${categoria} · Servicio` : 'Servicio'].filter(Boolean);
+      return parts.join(' · ');
     }
     const color = String(item.color ?? '').trim();
     const talle = String(item.talle ?? '').trim();
-    const variant = [color, talle].filter(Boolean).join(' · ');
+    const variant = [codigo, color, talle].filter(Boolean).join(' · ');
     if (variant) return variant;
     return String(item.categoria ?? '').trim() || '—';
   }
@@ -1285,6 +1293,13 @@ export class StockComponent implements OnInit, OnDestroy {
     this.loadStock(true);
   }
 
+  loadMoreProducts() {
+    if (!this.productsHasMore || !this.productsNextCursor || this.loadingMoreProducts || this.loadingItems) {
+      return;
+    }
+    this.loadStock(false, true);
+  }
+
   private onStockCatalogChanged(change?: StockCatalogChange | void) {
     const patch = change?.item;
     if (patch?.id) {
@@ -1328,36 +1343,54 @@ export class StockComponent implements OnInit, OnDestroy {
 
   private applyMetricsFromLoadedItems() {
     if (this.items.length === 0) return;
-    const categoriasSinStock = this.appConfig.productos?.categoriasSinStock ?? [];
     this.stockMetrics = {
       ...this.stockMetrics,
       totalItems: this.items.length,
       lowStockCount: this.items.filter((item) => this.isLowStock(item)).length,
-      valorDepositoEstimado: computeValorDepositoEstimado(this.items, categoriasSinStock),
+      valorDepositoEstimado: computeValorDepositoEstimado(this.items),
     };
   }
 
-  private loadStock(refreshMetrics = false) {
-    this.loadingItems = true;
-    this.productsPage = 1;
-    this.stockService.getStock().subscribe({
-      next: (items) => {
-        this.items = this.sortItemsByName(items);
-        this.loadingItems = false;
-        if (refreshMetrics) {
-          this.loadStockMetrics(true);
-        } else {
-          this.applyMetricsFromLoadedItems();
-        }
-      },
-      error: () => {
-        this.loadingItems = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudieron cargar los productos.',
-        });
-      },
-    });
+  private loadStock(refreshMetrics = false, append = false) {
+    if (append) {
+      this.loadingMoreProducts = true;
+    } else {
+      this.loadingItems = true;
+      this.productsPage = 1;
+      this.productsNextCursor = null;
+    }
+
+    this.stockService
+      .getStockPage(120, append ? this.productsNextCursor ?? undefined : undefined)
+      .subscribe({
+        next: (page) => {
+          const incoming = page.items ?? [];
+          const merged = append
+            ? this.sortItemsByName([
+                ...this.items,
+                ...incoming.filter((item) => !this.items.some((existing) => existing.id === item.id)),
+              ])
+            : this.sortItemsByName(incoming);
+          this.items = merged;
+          this.productsHasMore = page.hasMore;
+          this.productsNextCursor = page.nextCursor;
+          this.loadingItems = false;
+          this.loadingMoreProducts = false;
+          if (refreshMetrics) {
+            this.loadStockMetrics(true);
+          } else if (!this.stockMetrics.updatedAt) {
+            this.applyMetricsFromLoadedItems();
+          }
+        },
+        error: () => {
+          this.loadingItems = false;
+          this.loadingMoreProducts = false;
+          this.dialogService.alert({
+            title: 'Error',
+            message: 'No se pudieron cargar los productos.',
+          });
+        },
+      });
   }
 
   private loadMovements() {

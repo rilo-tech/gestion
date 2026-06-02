@@ -131,6 +131,7 @@ export interface UserFormSaveEvent {
           [saveLabel]="isEditing ? 'Guardar' : 'Crear usuario'"
           [saving]="savingUser"
           (cancelClick)="cancelled.emit()"
+          (saveClick)="saveUser()"
           (deleteClick)="confirmDeleteUser()">
         </app-form-panel-footer>
       </form>

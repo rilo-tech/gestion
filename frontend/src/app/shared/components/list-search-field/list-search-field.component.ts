@@ -92,10 +92,21 @@ export class ListSearchFieldComponent {
   }
 
   focus() {
-    window.setTimeout(() => this.inputEl?.nativeElement?.focus(), 0);
+    const el = this.inputEl?.nativeElement;
+    if (!el) return;
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      el.focus();
+    }
   }
 
   blur() {
     this.inputEl?.nativeElement?.blur();
+  }
+
+  isFocused(): boolean {
+    const el = this.inputEl?.nativeElement;
+    return !!el && document.activeElement === el;
   }
 }

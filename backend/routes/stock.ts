@@ -29,6 +29,19 @@ import {
   recomputeStockMetrics,
   scheduleStockMetricsRefresh,
 } from '../utils/stock-metrics.ts';
+import {
+  previewNextProductCode,
+  resolveCodigoForCreate,
+  regenerateProductCodesForCategory,
+  resolveCodigoForUpdate,
+  findStockItemByCodigo,
+  loadProductosCodigoConfig,
+} from '../utils/product-code.ts';
+import { findPrefijoOwnerForCodigo } from '../../shared/product-code-config.ts';
+import {
+  filterStockSearchEntries,
+  type StockSearchEntry,
+} from '../../shared/stock-search.ts';
 
 const router = createCompanyRouter();
 
@@ -129,8 +142,17 @@ router.post('/:businessId', async (req, res) => {
       });
     }
 
+    const codigoResult = await resolveCodigoForCreate(businessId, {
+      categoria: itemData.categoria,
+      codigo: itemData.codigo,
+    });
+    if (!codigoResult.ok) {
+      return res.status(codigoResult.status).json({ error: codigoResult.error });
+    }
+
     const docRef = await db.collection(`negocios/${businessId}/stock`).add({
       ...itemData,
+      ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : {}),
       stockActual,
       stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
       stockReservado: 0,
@@ -174,35 +196,56 @@ router.post('/:businessId', async (req, res) => {
   }
 });
 
-// Search stock items (does not return full catalog)
+const STOCK_SEARCH_INDEX_FIELDS = [
+  'nombre',
+  'nombreBase',
+  'categoria',
+  'talle',
+  'color',
+  'codigo',
+  'costo',
+  'stockActual',
+  'stockReservado',
+  'controlaStock',
+  'tipo',
+] as const;
+
+async function loadStockSearchIndex(businessId: string): Promise<StockSearchEntry[]> {
+  const snapshot = await db
+    .collection(`negocios/${businessId}/stock`)
+    .select(...STOCK_SEARCH_INDEX_FIELDS)
+    .get();
+
+  return snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  })) as StockSearchEntry[];
+}
+
+// Índice liviano para búsqueda en cliente (pedidos, ventas, compras)
+router.get('/:businessId/search-index', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const items = await loadStockSearchIndex(businessId);
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: 'Error loading stock search index' });
+  }
+});
+
+// Search stock items (fallback servidor; misma lógica que el filtro en cliente)
 router.get('/:businessId/search', async (req, res) => {
   try {
     const { businessId } = req.params;
-    const query = String(req.query.q ?? '').trim().toLowerCase();
+    const query = String(req.query.q ?? '').trim();
     const limit = Math.min(Number(req.query.limit) || 20, 50);
 
     if (query.length < 2) {
       return res.json([]);
     }
 
-    const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
-    const items = snapshot.docs
-      .map((doc) => ({ id: doc.id, ...doc.data() }))
-      .filter((item) => {
-        const haystack = [
-          item.nombre,
-          item.nombreBase,
-          item.categoria,
-          item.talle,
-          item.color,
-        ]
-          .map((value) => String(value ?? '').toLowerCase())
-          .join(' ');
-        return haystack.includes(query);
-      })
-      .slice(0, limit);
-
-    res.json(items);
+    const items = await loadStockSearchIndex(businessId);
+    res.json(filterStockSearchEntries(items, query, limit));
   } catch (error) {
     res.status(500).json({ error: 'Error searching stock' });
   }
@@ -475,6 +518,59 @@ router.get('/:businessId/by-ids', async (req, res) => {
   }
 });
 
+// Preview next auto code for a category (informational)
+router.get('/:businessId/next-code', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const categoria = String(req.query.categoria ?? '').trim();
+    if (!categoria) {
+      return res.status(400).json({ error: 'Indicá la categoría.' });
+    }
+    const result = await previewNextProductCode(businessId, categoria);
+    if ('error' in result) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Error previewing next product code:', error);
+    res.status(500).json({ error: 'Error al obtener el próximo código.' });
+  }
+});
+
+// Check if a product code is available (duplicate + prefix hints)
+router.get('/:businessId/codigo-check', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const codigo = String(req.query.codigo ?? '').trim();
+    const excludeId = String(req.query.excludeId ?? '').trim();
+    const categoria = String(req.query.categoria ?? '').trim();
+
+    if (!codigo) {
+      return res.json({ available: true, prefijoConflict: null });
+    }
+
+    const config = await loadProductosCodigoConfig(businessId);
+    const duplicate = await findStockItemByCodigo(
+      businessId,
+      codigo,
+      excludeId || undefined
+    );
+    const prefijoConflict = findPrefijoOwnerForCodigo(
+      config,
+      codigo,
+      categoria || undefined
+    );
+
+    res.json({
+      available: !duplicate,
+      prefijoConflict,
+    });
+  } catch (error) {
+    console.error('Error checking product code:', error);
+    res.status(500).json({ error: 'Error al verificar el código.' });
+  }
+});
+
 // Get one stock item
 router.get('/:businessId/:itemId', async (req, res) => {
   try {
@@ -509,7 +605,24 @@ router.put('/:businessId/:itemId', async (req, res) => {
       });
     }
 
-    const previousStock = Number(existing.data()?.stockActual) || 0;
+    const existingData = existing.data() ?? {};
+    const codigoResult = await resolveCodigoForUpdate(
+      businessId,
+      itemId,
+      {
+        categoria: itemData.categoria,
+        codigo: itemData.codigo,
+      },
+      {
+        codigo: existingData.codigo,
+        categoria: existingData.categoria,
+      }
+    );
+    if (!codigoResult.ok) {
+      return res.status(codigoResult.status).json({ error: codigoResult.error });
+    }
+
+    const previousStock = Number(existingData.stockActual) || 0;
     const controlsStock = productControlsStock(itemData);
     const requestedStock = controlsStock ? Number(itemData.stockActual) || 0 : 0;
     const nextStock = controlsStock
@@ -520,6 +633,7 @@ router.put('/:businessId/:itemId', async (req, res) => {
 
     await itemRef.update({
       ...itemData,
+      ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : { codigo: '' }),
       stockActual: nextStock,
       stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
       stockReservado: controlsStock ? Number(itemData.stockReservado) || 0 : 0,
@@ -529,6 +643,13 @@ router.put('/:businessId/:itemId', async (req, res) => {
       precioSugerido: Number(itemData.precioSugerido) || 0,
       updatedAt: new Date().toISOString(),
     });
+
+    if (codigoResult.regenerateOldCategoria) {
+      await regenerateProductCodesForCategory(
+        businessId,
+        codigoResult.regenerateOldCategoria
+      );
+    }
 
     if (controlsStock && previousStock <= 0 && nextStock > 0) {
       await autoReserveIncomingStockForProduct(businessId, itemId);

@@ -44,8 +44,18 @@ import {
   medioPagoRequiereCuentaHija,
   syncMedioPagoFlags,
 } from '../../../../../shared/finance-config.ts';
+import {
+  DEFAULT_PRODUCTOS_CODIGO_CONFIG,
+  getPrefijoForCategoria,
+  findCategoriaByPrefijo,
+  findPrefijoOwnerForCodigo,
+  validateUniquePrefijos,
+  shouldAutoAssignProductCode,
+  normalizeProductosCodigo,
+  type ProductosCodigoConfig,
+} from '../../../../../shared/product-code-config.ts';
 
-export type { OrderEstadoConfig, OrderExtraCostPreset, OrderPedidosConfigShape, OrderStockMode, CategoriaStockRegla };
+export type { OrderEstadoConfig, OrderExtraCostPreset, OrderPedidosConfigShape, OrderStockMode };
 export {
   DEFAULT_ORDER_ESTADOS,
   normalizeOrderPedidosConfig,
@@ -57,7 +67,16 @@ export {
   validateOrderEstadoTransition,
 };
 
-export type { CajaOrigen, CashOrigenGrupo };
+export type { ProductosCodigoConfig };
+export {
+  DEFAULT_PRODUCTOS_CODIGO_CONFIG,
+  getPrefijoForCategoria,
+  findCategoriaByPrefijo,
+  findPrefijoOwnerForCodigo,
+  validateUniquePrefijos,
+  shouldAutoAssignProductCode,
+  normalizeProductosCodigo,
+};
 export { DEFAULT_CAJA_ORIGENES, getCashOrigenes, getCashOrigenNombre, slugifyOrigenGrupo };
 export type { StockOrigenMovimiento, StockTipoMovimiento };
 export { DEFAULT_STOCK_ORIGENES, DEFAULT_STOCK_TIPOS };
@@ -119,19 +138,10 @@ export interface CajaConcepto {
   tipo: CajaConceptoTipo;
 }
 
-export interface CategoriaStockRegla {
-  configurado: boolean;
-  controlaStock: boolean;
-  permitirStockNegativo: boolean;
-}
-
 export interface AppConfig {
   productos: {
     tipos: string[];
     categorias: string[];
-    /** Legacy; migrado a categoriasStock. */
-    categoriasSinStock: string[];
-    categoriasStock: Record<string, CategoriaStockRegla>;
     talles: string[];
     colores: string[];
     modo: {
@@ -140,6 +150,7 @@ export interface AppConfig {
       talles: FieldInputMode;
       colores: FieldInputMode;
     };
+    codigo: ProductosCodigoConfig;
   };
   clientes: {
     etiquetas: string[];
@@ -191,8 +202,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   productos: {
     tipos: [],
     categorias: [],
-    categoriasSinStock: [],
-    categoriasStock: {},
     talles: [],
     colores: [],
     modo: {
@@ -201,6 +210,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
       talles: 'texto',
       colores: 'texto',
     },
+    codigo: { ...DEFAULT_PRODUCTOS_CODIGO_CONFIG },
   },
   clientes: {
     etiquetas: [],
@@ -306,6 +316,71 @@ export function usesCashConceptList(config: AppConfig): boolean {
   return config.caja?.modo?.conceptos === 'lista' && (config.caja?.conceptos?.length ?? 0) > 0;
 }
 
+/** Opciones de egreso definidas solo en Caja (legacy), sin depender del modo lista. */
+function getLegacyCajaEgresoConceptNames(config: AppConfig): string[] {
+  return (config.caja?.conceptos ?? [])
+    .filter(
+      (concepto) => concepto.tipo === 'egreso' || concepto.tipo === 'ambos'
+    )
+    .map((concepto) => concepto.nombre.trim())
+    .filter((nombre) => nombre.length > 0);
+}
+
+export function findCategoriaGastoByLabel(
+  config: AppConfig,
+  label: string
+): CategoriaGastoConfig | undefined {
+  const key = label.trim().toLowerCase();
+  if (!key) return undefined;
+  return getCategoriasGasto(config).find((c) => c.label.trim().toLowerCase() === key);
+}
+
+export function resolveCategoriaIdForCashConcept(
+  config: AppConfig,
+  movementTipo: 'ingreso' | 'egreso',
+  concepto: string
+): string | undefined {
+  if (movementTipo !== 'egreso') return undefined;
+  return findCategoriaGastoByLabel(config, concepto)?.id;
+}
+
+/**
+ * Conceptos del popup de Caja: ingresos desde lista de Caja; egresos desde categorías de Finanzas
+ * más conceptos de egreso legacy en Caja.
+ */
+export function getCashMovementConceptOptions(
+  config: AppConfig,
+  movementTipo: 'ingreso' | 'egreso'
+): string[] {
+  if (movementTipo === 'egreso') {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const cat of getCategoriasGasto(config)) {
+      const label = cat.label.trim();
+      if (!label) continue;
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(label);
+    }
+    for (const nombre of getLegacyCajaEgresoConceptNames(config)) {
+      const key = nombre.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(nombre);
+    }
+    return merged.sort((a, b) => a.localeCompare(b, 'es'));
+  }
+  return getCashConceptOptions(config, 'ingreso');
+}
+
+export function usesCashMovementConceptPicker(
+  config: AppConfig,
+  movementTipo: 'ingreso' | 'egreso'
+): boolean {
+  return getCashMovementConceptOptions(config, movementTipo).length > 0;
+}
+
 export type CashAmbito = string;
 
 export type { CajaAmbitoConfig } from '../constants/caja-ambitos';
@@ -352,7 +427,8 @@ export function getMedioPagoConfig(
   config: AppConfig,
   medioPagoId: string
 ): MedioPagoConfig | undefined {
-  return getMediosPagoActivos(config).find((m) => m.id === medioPagoId);
+  const raw = getMediosPagoActivos(config).find((m) => m.id === medioPagoId);
+  return raw ? syncMedioPagoFlags(raw) : undefined;
 }
 
 export function getMediosPagoConCuentaHija(config: AppConfig): MedioPagoConfig[] {
@@ -415,12 +491,19 @@ export class CatalogConfigService {
 
   updateAppConfig(
     config: AppConfig,
-    options?: { confirmConfigRemovals?: boolean; syncCategoriaStock?: string }
+    options?: {
+      confirmConfigRemovals?: boolean;
+      renameCategoria?: { from: string; to: string };
+      regenerateCodigosCategoria?: string;
+    }
   ): Observable<AppConfig> {
     const body = {
       ...config,
       confirmConfigRemovals: options?.confirmConfigRemovals ?? false,
-      ...(options?.syncCategoriaStock ? { syncCategoriaStock: options.syncCategoriaStock } : {}),
+      ...(options?.renameCategoria ? { renameCategoria: options.renameCategoria } : {}),
+      ...(options?.regenerateCodigosCategoria
+        ? { regenerateCodigosCategoria: options.regenerateCodigosCategoria }
+        : {}),
     };
     return this.http
       .patch<AppConfig>(`/api/config/${this.businessId}`, body)

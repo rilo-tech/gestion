@@ -7,12 +7,14 @@ import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
-  getCashConceptOptions,
+  findCategoriaGastoByLabel,
+  getCashMovementConceptOptions,
   getCashOrigenes,
   getCashOrigenNombre,
   getCajaAmbitos,
   getDefaultCashAmbitoId,
-  usesCashConceptList,
+  resolveCategoriaIdForCashConcept,
+  usesCashMovementConceptPicker,
   usesCashAmbitoSeparation,
   resolveCashAmbito,
   getCashAmbitoLabel,
@@ -27,19 +29,28 @@ import {
   CalendarMonthRange,
   formatMonthYearLabel,
   isIsoDateInRange,
+  monthYearQueryParams,
   parseMonthYearQueryParams,
 } from '../../core/utils/calendar-range';
+import {
+  computeCashPeriodKpisFromMovements,
+  resolveCashSummaryPeriodRange,
+} from '../../core/utils/cash-period-summary';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   IconActionComponent,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
   LIST_TABLE_ROW_CLASS,
   LIST_TOOLBAR_CONTROL_HEIGHT,
-  LIST_TOOLBAR_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import {
+  CompactInlineStat,
+  CompactInlineStatsComponent,
+} from '../../shared/components/compact-list/compact-inline-stats.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
   COMPACT_LIST_ROW_CLASS,
@@ -57,9 +68,17 @@ import { CompactDataListComponent } from '../../shared/components/compact-list/c
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { FORM_CANCEL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
+import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { TransactionDateFieldComponent } from '../../shared/components/transaction-form';
+import {
+  combineDateAndTimeToIso,
+  currentTimeInputValue,
+  todayDateInputValue,
+  toDateInputValue,
+  toTimeInputValue,
+} from '../../core/utils/transaction-date';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -73,7 +92,8 @@ import { Subscription } from 'rxjs';
     TransactionModalComponent,
     IconActionComponent,
     ConceptRefLinksComponent,
-    ActivityLogTriggerComponent,
+    ModulePageHeaderComponent,
+    CompactInlineStatsComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     CompactListRowComponent,
@@ -81,12 +101,28 @@ import { Subscription } from 'rxjs';
     CompactDataListComponent,
     ListLoadMoreComponent,
     ListSearchFieldComponent,
+    TransactionDateFieldComponent,
   ],
   template: `
     <div [class]="pageShellClass">
-      <div class="mb-3">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Caja</h1>
-      </div>
+      <app-module-page-header
+        title="Caja"
+        description="Ingresos y egresos del negocio. Pedidos y ventas se registran solos; usá Ingreso o Egreso para movimientos manuales. Ing. y Egr. son del mes; Saldo es acumulado."
+        [hideDescriptionOnMobile]="false"
+        [showMobileSearch]="true"
+        [(searchQuery)]="searchQuery"
+        (searchQueryChange)="movementsPage = 1"
+        searchFieldName="cashSearchQueryMobile"
+        activityModule="cash">
+        <ng-container headerActions *ngIf="auth.canEditRecords">
+          <app-icon-action label="Ingreso" (clicked)="openMovementModal('ingreso')">
+            <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <app-icon-action label="Egreso" variant="danger" (clicked)="openMovementModal('egreso')">
+            <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </ng-container>
+      </app-module-page-header>
 
       <div
         *ngIf="monthFilterLabel"
@@ -126,98 +162,91 @@ import { Subscription } from 'rxjs';
               <span class="text-base font-bold tabular-nums text-teal-900">{{ '$' + totalNetoSaldo }}</span>
             </div>
           </div>
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5 text-xs">
-            <span class="tabular-nums">
-              <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Ing.</span>
-              <span class="font-bold text-teal-600">{{ '$' + activeAmbitoIngresos }}</span>
-            </span>
-            <span class="tabular-nums">
-              <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Egr.</span>
-              <span class="font-bold text-red-500">{{ '$' + activeAmbitoEgresos }}</span>
-            </span>
-            <span class="tabular-nums">
-              <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Saldo</span>
-              <span class="font-bold text-gray-900">{{ '$' + activeAmbitoSaldo }}</span>
-            </span>
+          <div class="px-3 py-1.5 border-t border-gray-100 dark:border-gray-800">
+            <app-compact-inline-stats
+              variant="strip"
+              [items]="activeAmbitoKpiItems"
+              [centerCaption]="kpiPeriodMonthLabel"
+              ariaLabel="Indicadores del mes y saldo acumulado">
+            </app-compact-inline-stats>
           </div>
         </div>
       </div>
 
       <div
         *ngIf="!usesAmbitoSeparation"
-        class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-sm text-xs">
-        <span class="tabular-nums">
-          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Ing.</span>
-          <span class="font-bold text-teal-600">{{ '$' + totalIngresos }}</span>
-        </span>
-        <span class="tabular-nums">
-          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Egr.</span>
-          <span class="font-bold text-red-500">{{ '$' + totalEgresos }}</span>
-        </span>
-        <span class="tabular-nums sm:ml-auto">
-          <span class="text-[10px] font-semibold uppercase text-gray-400 mr-1">Saldo</span>
-          <span class="font-bold text-gray-900">{{ '$' + saldoCaja }}</span>
-        </span>
+        class="mb-3 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 shadow-sm">
+        <app-compact-inline-stats
+          variant="strip"
+          [items]="cashKpiItems"
+          [centerCaption]="kpiPeriodMonthLabel"
+          ariaLabel="Indicadores del mes y saldo acumulado">
+        </app-compact-inline-stats>
       </div>
 
-      <div [class]="'mb-3 ' + listToolbarRowClass">
-        <app-list-search-field
-          mode="filter"
-          [(query)]="searchQuery"
-          (queryChange)="movementsPage = 1"
-          name="searchQuery"
-          placeholder="Buscar..."
-          [constrainWidth]="false"
-          extraClass="flex-1 min-w-0 sm:max-w-xs">
-        </app-list-search-field>
-        <select
-          [(ngModel)]="origenFilter"
-          (ngModelChange)="movementsPage = 1"
-          name="origenFilter"
-          [class]="'hidden sm:block px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
-          <option value="all">Orígenes</option>
-          <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
-            {{ origen.nombre }}
-          </option>
-        </select>
-        <div [class]="listToolbarRowClass + ' shrink-0 sm:ml-auto'">
-          <app-activity-log-trigger module="cash"></app-activity-log-trigger>
-          <ng-container *ngIf="auth.canEditRecords">
-            <app-icon-action
-              label="Ingreso"
-              (clicked)="openMovementModal('ingreso')">
-              <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
-            </app-icon-action>
-            <app-icon-action
-              label="Egreso"
-              variant="danger"
-              (clicked)="openMovementModal('egreso')">
-              <i-lucide name="arrow-down" class="w-4 h-4"></i-lucide>
-            </app-icon-action>
-          </ng-container>
+      <app-compact-data-list [showSearch]="true">
+        <div listSearch [class]="desktopListSearchWrapClass">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+            <div class="min-w-0 w-full sm:flex-1 sm:max-w-xl">
+              <app-list-search-field
+                mode="filter"
+                [(query)]="searchQuery"
+                (queryChange)="movementsPage = 1"
+                name="cashSearchQuery"
+                placeholder="Buscar..."
+                [constrainWidth]="false"
+                extraClass="w-full">
+              </app-list-search-field>
+            </div>
+            <select
+              [(ngModel)]="origenFilter"
+              (ngModelChange)="movementsPage = 1"
+              name="origenFilter"
+              [class]="'hidden sm:block shrink-0 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
+              <option value="all">Orígenes</option>
+              <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
+                {{ origen.nombre }}
+              </option>
+            </select>
+          </div>
         </div>
-      </div>
-
-      <app-compact-data-list [showSearch]="false">
         <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
-          <button
+          <div
             *ngFor="let movement of paginatedFilteredMovements"
-            type="button"
-            (click)="onMovementRowClick(movement)"
-            [class]="compactListRowClass">
-            <div class="min-w-0 flex-1 overflow-hidden text-left">
-              <div class="compact-list-title truncate">{{ movement.concepto }}</div>
+            [class]="compactListRowClass + ' cursor-default hover:bg-gray-50 active:bg-gray-100'">
+            <button
+              type="button"
+              class="min-w-0 flex-1 overflow-hidden text-left border-0 bg-transparent p-0 cursor-pointer"
+              (click)="onMovementRowClick(movement)">
+              <div class="compact-list-title truncate">
+                <app-concept-ref-links
+                  [text]="movement.concepto"
+                  [pedidoId]="movement.pedidoId"
+                  [ventaId]="movement.ventaId"
+                  [numeroPedidoLabel]="getOrderNumberLabel(movement)"
+                  [ventaLabel]="movement.ventaLabel">
+                </app-concept-ref-links>
+              </div>
               <div class="compact-list-subtitle truncate">
                 {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
               </div>
-            </div>
+            </button>
             <span
               class="text-[11px] font-bold tabular-nums shrink-0 pl-1"
               [class.text-teal-600]="movement.tipo === 'ingreso'"
               [class.text-red-500]="movement.tipo === 'egreso'">
               {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
             </span>
-          </button>
+            <app-list-row-actions
+              *ngIf="showMovementRowActions"
+              [showDuplicate]="auth.canEditRecords"
+              [showEdit]="auth.canEditRecords"
+              [showDelete]="canDeleteCashAsAdmin"
+              (duplicateClick)="duplicateMovement(movement, $event)"
+              (editClick)="openEditMovement(movement)"
+              (deleteClick)="confirmDeleteMovement(movement)">
+            </app-list-row-actions>
+          </div>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
           <p *ngIf="!loading && movements.length === 0" [class]="compactListEmptyClass">
             Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
@@ -276,12 +305,13 @@ import { Subscription } from 'rxjs';
                 [class.text-red-500]="movement.tipo === 'egreso'">
                 {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-4 py-3 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
                 <app-list-row-actions
-                  [showDuplicate]="auth.canEditRecords && isManualMovement(movement)"
+                  *ngIf="showMovementRowActions"
+                  [showDuplicate]="auth.canEditRecords"
                   (duplicateClick)="duplicateMovement(movement, $event)"
-                  [showEdit]="auth.canEditRecords && isManualMovement(movement)"
-                  [showDelete]="auth.canDeleteRecords && isDeletableCashMovement(movement)"
+                  [showEdit]="auth.canEditRecords"
+                  [showDelete]="canDeleteCashAsAdmin"
                   (editClick)="openEditMovement(movement)"
                   (deleteClick)="confirmDeleteMovement(movement)">
                 </app-list-row-actions>
@@ -340,15 +370,18 @@ import { Subscription } from 'rxjs';
 
           <div class="grid grid-cols-[minmax(0,1fr)_5.25rem] sm:grid-cols-[minmax(0,1fr)_8.5rem] gap-2 sm:gap-3">
             <div #movementConceptField>
-              <label class="block text-xs font-medium text-gray-700 mb-0.5">Concepto</label>
+              <label class="block text-xs font-medium text-gray-700 mb-0.5">
+                {{ movementTipo === 'egreso' ? 'Gasto / concepto' : 'Concepto' }}
+              </label>
               <app-searchable-select
                 *ngIf="usesConceptList"
                 [(ngModel)]="movementConcepto"
+                (ngModelChange)="onMovementConceptoChange($event)"
                 name="movementConcepto"
                 [options]="conceptOptions"
                 [allowCustomValue]="true"
-                placeholder="Buscar concepto..."
-                plainPlaceholder="Ej. Venta mostrador">
+                [placeholder]="movementConceptPickerPlaceholder"
+                [plainPlaceholder]="movementConceptPlainPlaceholder">
               </app-searchable-select>
               <input
                 *ngIf="!usesConceptList"
@@ -372,6 +405,19 @@ import { Subscription } from 'rxjs';
                 class="w-full px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-gray-200 text-sm tabular-nums text-center sm:text-left outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
             </div>
           </div>
+
+          <app-transaction-date-field
+            [date]="movementFecha"
+            (dateChange)="movementFecha = $event"
+            [time]="movementHora"
+            (timeChange)="movementHora = $event"
+            fieldName="movementFecha"
+            timeFieldName="movementHora"
+            label="Fecha"
+            timeLabel="Hora"
+            [showTime]="true"
+            [disabled]="savingMovement">
+          </app-transaction-date-field>
 
           <div
             class="grid gap-2 sm:gap-3 items-start"
@@ -446,6 +492,17 @@ import { Subscription } from 'rxjs';
               <option value="tarjeta">Tarjeta</option>
             </select>
           </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-0.5">Descripción (opcional)</label>
+            <textarea
+              [(ngModel)]="movementDescripcion"
+              name="movementDescripcion"
+              rows="2"
+              placeholder="Detalle adicional del movimiento..."
+              [disabled]="savingMovement"
+              class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 resize-y min-h-[2.5rem]"></textarea>
+          </div>
         </div>
 
         <div class="form-actions mt-4 sm:mt-5 pt-2 border-t border-gray-100 sm:border-0">
@@ -490,8 +547,8 @@ export class CashComponent implements OnInit, OnDestroy {
   private static readonly OPENING_BALANCE_CONCEPT = 'Saldo inicial de caja';
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
-  readonly listToolbarRowClass = LIST_TOOLBAR_ROW_CLASS;
   readonly listToolbarControlHeight = LIST_TOOLBAR_CONTROL_HEIGHT;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
@@ -528,6 +585,9 @@ export class CashComponent implements OnInit, OnDestroy {
   editingMovementId: string | null = null;
   movementTipo: 'ingreso' | 'egreso' = 'ingreso';
   movementConcepto = '';
+  movementDescripcion = '';
+  movementFecha = todayDateInputValue();
+  movementHora = currentTimeInputValue();
   movementMonto: number | null = null;
   movementMedio = 'efectivo';
   movementAmbito = '';
@@ -551,11 +611,7 @@ export class CashComponent implements OnInit, OnDestroy {
         params.get('anio')
       );
       this.movementsPage = 1;
-      if (this.monthFilterRange) {
-        this.cashSummary = null;
-      } else {
-        this.loadCashSummary();
-      }
+      this.loadCashSummary();
       this.reloadMovements();
     });
   }
@@ -568,6 +624,11 @@ export class CashComponent implements OnInit, OnDestroy {
   get monthFilterLabel(): string {
     if (!this.monthFilterRange) return '';
     return formatMonthYearLabel(this.monthFilterRange.label);
+  }
+
+  /** Mes al que corresponden Ing. y Egr. (mes actual o filtro de URL). */
+  get kpiPeriodMonthLabel(): string {
+    return formatMonthYearLabel(this.summaryPeriodRange.label);
   }
 
   get periodMovements(): CashMovement[] {
@@ -598,44 +659,41 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get activeAmbitoIngresos(): number {
-    if (this.monthFilterRange) {
-      return this.sumByTipo('ingreso', this.activeAmbitoTab);
-    }
-    const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
-    if (row) return row.ingreso;
-    return this.sumByTipo('ingreso', this.activeAmbitoTab);
+    return this.getAmbitoPeriodKpis(this.activeAmbitoTab).ingreso;
   }
 
   get activeAmbitoEgresos(): number {
-    if (this.monthFilterRange) {
-      return this.sumByTipo('egreso', this.activeAmbitoTab);
-    }
-    const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
-    if (row) return row.egreso;
-    return this.sumByTipo('egreso', this.activeAmbitoTab);
+    return this.getAmbitoPeriodKpis(this.activeAmbitoTab).egreso;
   }
 
   get activeAmbitoSaldo(): number {
-    if (this.monthFilterRange) {
-      return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
-    }
     const row = this.cashSummary?.ambitos?.[this.activeAmbitoTab];
     if (row) return row.saldo;
-    return this.activeAmbitoIngresos - this.activeAmbitoEgresos;
+    return this.sumByTipo('ingreso', this.activeAmbitoTab) - this.sumByTipo('egreso', this.activeAmbitoTab);
+  }
+
+  get cashKpiItems(): CompactInlineStat[] {
+    return [
+      { label: 'Ing.', value: '$' + this.totalIngresos, tone: 'success' },
+      { label: 'Egr.', value: '$' + this.totalEgresos, tone: 'danger' },
+      { label: 'Saldo acum.', value: '$' + this.saldoCaja, alignEnd: true },
+    ];
+  }
+
+  get activeAmbitoKpiItems(): CompactInlineStat[] {
+    return [
+      { label: 'Ing.', value: '$' + this.activeAmbitoIngresos, tone: 'success' },
+      { label: 'Egr.', value: '$' + this.activeAmbitoEgresos, tone: 'danger' },
+      { label: 'Saldo acum.', value: '$' + this.activeAmbitoSaldo, alignEnd: true },
+    ];
   }
 
   get totalNetoSaldo(): number {
-    if (this.monthFilterRange) {
-      return this.sumByTipo('ingreso') - this.sumByTipo('egreso');
-    }
     if (this.cashSummary) return this.cashSummary.saldo;
-    return this.totalIngresos - this.totalEgresos;
+    return this.sumByTipo('ingreso') - this.sumByTipo('egreso');
   }
 
   getAmbitoSaldo(ambitoId: string): number {
-    if (this.monthFilterRange) {
-      return this.sumByTipo('ingreso', ambitoId) - this.sumByTipo('egreso', ambitoId);
-    }
     const row = this.cashSummary?.ambitos?.[ambitoId];
     if (row) return row.saldo;
     return this.sumByTipo('ingreso', ambitoId) - this.sumByTipo('egreso', ambitoId);
@@ -699,9 +757,17 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.movements.find((movement) => movement.id === this.editingMovementId);
   }
 
+  get canDeleteCashAsAdmin(): boolean {
+    return this.auth.isPrivileged;
+  }
+
+  get showMovementRowActions(): boolean {
+    return this.auth.canEditRecords || this.canDeleteCashAsAdmin;
+  }
+
   get canDeleteInModal(): boolean {
     const movement = this.editingMovement;
-    if (!movement || !this.auth.canDeleteRecords) return false;
+    if (!movement || !this.canDeleteCashAsAdmin) return false;
     return this.isManualMovement(movement) && isDeletableCashMovement(movement);
   }
 
@@ -714,29 +780,34 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get totalIngresos(): number {
-    if (this.monthFilterRange) return this.sumByTipo('ingreso');
-    if (this.cashSummary) return this.cashSummary.ingreso;
-    return this.sumByTipo('ingreso');
+    return this.getGlobalPeriodKpis().ingreso;
   }
 
   get totalEgresos(): number {
-    if (this.monthFilterRange) return this.sumByTipo('egreso');
-    if (this.cashSummary) return this.cashSummary.egreso;
-    return this.sumByTipo('egreso');
+    return this.getGlobalPeriodKpis().egreso;
   }
 
   get saldoCaja(): number {
-    if (this.monthFilterRange) return this.totalIngresos - this.totalEgresos;
     if (this.cashSummary) return this.cashSummary.saldo;
-    return this.totalIngresos - this.totalEgresos;
+    return this.sumByTipo('ingreso') - this.sumByTipo('egreso');
   }
 
   get usesConceptList(): boolean {
-    return usesCashConceptList(this.appConfig);
+    return usesCashMovementConceptPicker(this.appConfig, this.movementTipo);
   }
 
   get conceptOptions(): string[] {
-    return getCashConceptOptions(this.appConfig, this.movementTipo);
+    return getCashMovementConceptOptions(this.appConfig, this.movementTipo);
+  }
+
+  get movementConceptPickerPlaceholder(): string {
+    return this.movementTipo === 'egreso'
+      ? 'Buscar categoría de gasto...'
+      : 'Buscar concepto...';
+  }
+
+  get movementConceptPlainPlaceholder(): string {
+    return this.movementTipo === 'egreso' ? 'Ej. Envío' : 'Ej. Venta mostrador';
   }
 
   get movementModalTitle(): string {
@@ -852,13 +923,37 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private sumByTipo(tipo: 'ingreso' | 'egreso', ambito?: string): number {
-    return this.periodMovements
+    return this.movements
       .filter((movement) => {
         if (movement.tipo !== tipo) return false;
         if (!ambito) return true;
         return resolveCashAmbito(movement, this.appConfig) === ambito;
       })
       .reduce((acc, movement) => acc + (Number(movement.monto) || 0), 0);
+  }
+
+  private get summaryPeriodRange(): CalendarMonthRange {
+    return resolveCashSummaryPeriodRange(this.monthFilterRange);
+  }
+
+  private getGlobalPeriodKpis() {
+    if (this.cashSummary?.periodo) {
+      return {
+        ingreso: this.cashSummary.periodo.ingreso,
+        egreso: this.cashSummary.periodo.egreso,
+      };
+    }
+    return computeCashPeriodKpisFromMovements(this.movements, this.summaryPeriodRange);
+  }
+
+  private getAmbitoPeriodKpis(ambitoId: string) {
+    const row = this.cashSummary?.ambitos?.[ambitoId];
+    if (row?.periodo) {
+      return { ingreso: row.periodo.ingreso, egreso: row.periodo.egreso };
+    }
+    return computeCashPeriodKpisFromMovements(this.movements, this.summaryPeriodRange, (movement) =>
+      resolveCashAmbito(movement, this.appConfig) === ambitoId
+    );
   }
 
   isDeletableCashMovement = isDeletableCashMovement;
@@ -871,6 +966,9 @@ export class CashComponent implements OnInit, OnDestroy {
     this.editingMovementId = null;
     this.movementTipo = tipo;
     this.movementConcepto = '';
+    this.movementDescripcion = '';
+    this.movementFecha = todayDateInputValue();
+    this.movementHora = currentTimeInputValue();
     this.movementMonto = null;
     this.movementMedio = 'efectivo';
     this.movementAmbito = this.usesAmbitoSeparation
@@ -916,6 +1014,9 @@ export class CashComponent implements OnInit, OnDestroy {
     this.editingMovementId = null;
     this.movementTipo = 'ingreso';
     this.movementConcepto = CashComponent.OPENING_BALANCE_CONCEPT;
+    this.movementDescripcion = '';
+    this.movementFecha = todayDateInputValue();
+    this.movementHora = currentTimeInputValue();
     this.movementMonto = null;
     this.movementMedio = 'efectivo';
     this.movementAmbito = this.usesAmbitoSeparation
@@ -957,7 +1058,18 @@ export class CashComponent implements OnInit, OnDestroy {
 
   duplicateMovement(movement: CashMovement, event: Event) {
     event.stopPropagation();
-    if (!this.auth.canEditRecords || !this.isManualMovement(movement)) return;
+    if (!this.auth.canEditRecords) {
+      this.showEditPermissionAlert();
+      return;
+    }
+    if (!this.isManualMovement(movement)) {
+      this.dialogService.alert({
+        title: 'Movimiento automático',
+        message:
+          'Solo podés duplicar movimientos cargados a mano en caja. Este registro se generó desde otro módulo.',
+      });
+      return;
+    }
     this.openMovementFromTemplate(movement);
   }
 
@@ -984,7 +1096,7 @@ export class CashComponent implements OnInit, OnDestroy {
   setMovementTipo(tipo: 'ingreso' | 'egreso') {
     if (this.movementTipo === tipo) return;
     this.movementTipo = tipo;
-    if (this.usesConceptList && this.movementConcepto.trim()) {
+    if (this.movementConcepto.trim()) {
       const stillValid = this.conceptOptions.some(
         (option) => option.toLowerCase() === this.movementConcepto.trim().toLowerCase()
       );
@@ -994,10 +1106,23 @@ export class CashComponent implements OnInit, OnDestroy {
     }
   }
 
+  onMovementConceptoChange(concepto: string) {
+    if (this.movementTipo !== 'egreso' || !this.usesAmbitoSeparation) return;
+    const categoria = findCategoriaGastoByLabel(this.appConfig, concepto);
+    if (!categoria?.ambitoDefault) return;
+    const ambitos = this.cajaAmbitos.map((a) => a.id);
+    if (ambitos.includes(categoria.ambitoDefault)) {
+      this.movementAmbito = categoria.ambitoDefault;
+    }
+  }
+
   private openMovementFromTemplate(movement: CashMovement) {
     this.editingMovementId = null;
     this.movementTipo = movement.tipo;
     this.movementConcepto = movement.concepto ?? '';
+    this.movementDescripcion = movement.descripcion ?? '';
+    this.movementFecha = toDateInputValue(movement.fecha);
+    this.movementHora = toTimeInputValue(movement.fecha);
     this.movementMonto = Number(movement.monto) || null;
     this.movementMedio = movement.medio || 'efectivo';
     this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
@@ -1022,6 +1147,9 @@ export class CashComponent implements OnInit, OnDestroy {
 
   private prepareNextMovementEntry() {
     this.movementConcepto = '';
+    this.movementDescripcion = '';
+    this.movementFecha = todayDateInputValue();
+    this.movementHora = currentTimeInputValue();
     this.movementMonto = null;
     this.movementSaveHint =
       this.movementSessionSavedCount === 1
@@ -1049,12 +1177,14 @@ export class CashComponent implements OnInit, OnDestroy {
     this.editingMovementId = movement.id;
     this.movementTipo = movement.tipo;
     this.movementConcepto = movement.concepto ?? '';
+    this.movementDescripcion = movement.descripcion ?? '';
+    this.movementFecha = toDateInputValue(movement.fecha);
+    this.movementHora = toTimeInputValue(movement.fecha);
     this.movementMonto = Number(movement.monto) || null;
     this.movementMedio = movement.medio || 'efectivo';
     this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
     this.movementSaveHint = null;
     this.movementModalOpen = true;
-    this.focusMovementConcept();
   }
 
   closeMovementModal() {
@@ -1072,27 +1202,28 @@ export class CashComponent implements OnInit, OnDestroy {
   confirmDeleteMovement(movement: CashMovement) {
     if (!movement.id) return;
 
-    if (!isDeletableCashMovement(movement)) {
+    if (!this.canDeleteCashAsAdmin) {
       this.dialogService.alert({
-        title: 'Movimiento vinculado',
+        title: 'Sin permiso para eliminar',
         message:
-          'Este movimiento está vinculado a otro documento y no se puede eliminar. Registrá un documento con signo contrario desde el pedido, la venta o la compra que lo generó.',
+          'Solo un perfil administrador puede eliminar movimientos de caja. Pedile al administrador de la empresa si necesitás borrar un registro.',
       });
       return;
     }
 
-    if (!this.isManualMovement(movement)) {
+    const blockReason = this.getMovementDeleteBlockReason(movement);
+    if (blockReason) {
       this.dialogService.alert({
-        title: 'Movimiento automático',
-        message: 'Este movimiento se generó desde un pedido o venta y no se puede eliminar desde caja.',
+        title: 'No se puede eliminar',
+        message: `${this.buildMovementDetailMessage(movement)}\n\n${blockReason}`,
       });
       return;
     }
 
     this.dialogService
       .confirm({
-        title: 'Eliminar movimiento',
-        message: `¿Eliminar "${movement.concepto}" por ${this.formatMoney(movement.monto)}?`,
+        title: 'Eliminar movimiento de caja',
+        message: `${this.buildMovementDetailMessage(movement)}\n\nEsta acción no se puede deshacer.`,
         confirmLabel: 'Eliminar',
         variant: 'danger',
       })
@@ -1126,6 +1257,53 @@ export class CashComponent implements OnInit, OnDestroy {
       });
   }
 
+  private buildMovementDetailMessage(movement: CashMovement): string {
+    const lines = [
+      'Vas a eliminar este movimiento:',
+      `• Concepto: ${movement.concepto?.trim() || '—'}`,
+      `• Tipo: ${movement.tipo === 'egreso' ? 'Egreso' : 'Ingreso'}`,
+      `• Monto: ${this.formatMoney(movement.monto)}`,
+      `• Fecha: ${this.formatDate(movement.fecha)}`,
+      `• Medio: ${this.capitalizeMedio(movement.medio)}`,
+      `• Origen: ${this.getOrigenLabel(movement)}`,
+    ];
+
+    if (this.usesAmbitoSeparation) {
+      lines.push(
+        `• Ámbito: ${getCashAmbitoLabel(resolveCashAmbito(movement, this.appConfig), this.appConfig)}`
+      );
+    }
+
+    if (movement.pedidoId) {
+      const pedidoRef = movement.numeroPedidoLabel
+        ? `#${movement.numeroPedidoLabel}`
+        : movement.pedidoId;
+      lines.push(`• Pedido vinculado: ${pedidoRef}`);
+    }
+    if (movement.ventaId) {
+      const ventaRef = movement.ventaLabel ? `#${movement.ventaLabel}` : movement.ventaId;
+      lines.push(`• Venta vinculada: ${ventaRef}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  private getMovementDeleteBlockReason(movement: CashMovement): string | null {
+    if (!isDeletableCashMovement(movement)) {
+      return 'Este movimiento está vinculado a un pedido, venta u otro documento. Anulalo desde el módulo que lo generó en lugar de borrarlo acá.';
+    }
+    if (!this.isManualMovement(movement)) {
+      return 'Este movimiento no es manual (se generó desde otro módulo) y no se puede eliminar desde caja.';
+    }
+    return null;
+  }
+
+  private capitalizeMedio(medio?: string): string {
+    const value = String(medio ?? '').trim();
+    if (!value) return '—';
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
   private formatMoney(value?: number): string {
     return `$${Number(value) || 0}`;
   }
@@ -1155,11 +1333,20 @@ export class CashComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const categoriaId = resolveCategoriaIdForCashConcept(
+      this.appConfig,
+      this.movementTipo,
+      concepto
+    );
+
     const payload = {
       tipo: this.movementTipo,
       monto,
       concepto,
       medio: this.movementMedio,
+      descripcion: this.movementDescripcion.trim() || null,
+      fecha: combineDateAndTimeToIso(this.movementFecha, this.movementHora),
+      ...(categoriaId ? { categoriaId } : { categoriaId: null }),
       ...(this.usesAmbitoSeparation ? { ambito: this.movementAmbito } : {}),
     };
 
@@ -1228,7 +1415,9 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private loadCashSummary() {
-    this.cashService.getSummary().subscribe({
+    const range = this.summaryPeriodRange;
+    const { mes, anio } = monthYearQueryParams(range);
+    this.cashService.getSummary(mes, anio).subscribe({
       next: (summary) => {
         this.cashSummary = summary;
       },
@@ -1299,17 +1488,24 @@ export class CashComponent implements OnInit, OnDestroy {
       monto: number;
       concepto: string;
       medio: string;
+      descripcion?: string | null;
+      fecha?: string;
       ambito?: string;
+      categoriaId?: string | null;
     }
   ): CashMovement {
     const ambito = payload.ambito ?? getDefaultCashAmbitoId(this.appConfig);
+    const descripcion = payload.descripcion?.trim() || undefined;
+    const fechaIso = payload.fecha ?? new Date().toISOString();
     return {
       id,
       tipo: payload.tipo,
       monto: payload.monto,
       concepto: payload.concepto,
       medio: payload.medio,
-      fecha: new Date().toISOString(),
+      ...(descripcion ? { descripcion } : {}),
+      categoriaId: payload.categoriaId ?? null,
+      fecha: fechaIso,
       ambito,
       origenGrupo: 'manual',
       origenTipo: payload.tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',

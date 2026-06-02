@@ -1,7 +1,7 @@
 import { db } from '../firebase.ts';
-import { normalizeMovementAmbito } from './caja-ambitos.ts';
+import { normalizeMovementAmbito, resolveCashReversalAmbito } from './caja-ambitos.ts';
 import { createCashEgresoForAmbitoTotals } from './cash-egreso.ts';
-import { createPurchasePayables } from './card-statements.ts';
+import { syncPurchasePayablesForCompra } from './card-statements.ts';
 import {
   getCategoriaGastoById,
   getMedioPagoById,
@@ -14,7 +14,7 @@ import {
   type PurchaseLineTipo,
 } from './finance-config.ts';
 import { autoReserveIncomingStockForProduct } from './order-stock-reservations.ts';
-import { allocatePurchaseNumber } from './purchase-number.ts';
+import { allocatePurchaseNumber, resolvePurchaseLabel } from './purchase-number.ts';
 import { scheduleStockMetricsRefresh } from './stock-metrics.ts';
 
 /** Firestore rejects `undefined` anywhere in the document tree. */
@@ -96,18 +96,29 @@ function normalizeDate(value: unknown): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+type FinanzasConfig = Awaited<ReturnType<typeof loadFinanzasConfig>>;
+
 export async function parsePurchaseInput(
   businessId: string,
   body: Record<string, unknown>,
-  options?: { relaxed?: boolean }
+  options?: {
+    relaxed?: boolean;
+    /** Al re-leer una compra guardada, el proveedor ya está en el documento. */
+    skipSupplierLookup?: boolean;
+    finanzas?: FinanzasConfig;
+    caja?: Record<string, unknown>;
+  }
 ): Promise<{ input?: ParsedPurchaseInput; error?: string }> {
-  const finanzas = await loadFinanzasConfig(businessId);
-  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
-  const caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+  const finanzas = options?.finanzas ?? (await loadFinanzasConfig(businessId));
+  let caja = options?.caja;
+  if (!caja) {
+    const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+    caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+  }
 
   const proveedorId = String(body.proveedorId ?? '').trim();
   let proveedor = String(body.proveedor ?? '').trim();
-  if (proveedorId) {
+  if (proveedorId && !options?.skipSupplierLookup) {
     const supplierSnap = await db
       .collection(`negocios/${businessId}/proveedores`)
       .doc(proveedorId)
@@ -186,11 +197,21 @@ export async function parsePurchaseInput(
 
   const tarjetaId = String(pagoRaw.tarjetaId ?? body.tarjetaId ?? '').trim() || undefined;
   const tarjeta = tarjetaId ? getTarjetaById(finanzas.tarjetas, tarjetaId) : undefined;
-  if (medioPagoRequiereCuentaHija(medio) && !tarjeta && !options?.relaxed) {
-    return { error: 'Seleccioná la cuenta para este medio de pago.' };
-  }
+
+  let effectiveMedio = medio;
+  let effectiveMedioPagoId = medioPagoId;
   if (tarjeta && tarjeta.medioPagoId !== medio.id) {
-    return { error: 'La cuenta seleccionada no corresponde a este medio de pago.' };
+    const medioFromTarjeta = getMedioPagoById(finanzas.mediosPago, tarjeta.medioPagoId);
+    if (medioFromTarjeta) {
+      effectiveMedio = medioFromTarjeta;
+      effectiveMedioPagoId = medioFromTarjeta.id;
+    } else if (!options?.relaxed) {
+      return { error: 'La cuenta seleccionada no corresponde a este medio de pago.' };
+    }
+  }
+
+  if (medioPagoRequiereCuentaHija(effectiveMedio) && !tarjeta && !options?.relaxed) {
+    return { error: 'Seleccioná la cuenta para este medio de pago.' };
   }
 
   const cuotas = Math.min(Math.max(1, Math.round(Number(pagoRaw.cuotas ?? body.cuotas) || 1)), 120);
@@ -198,7 +219,7 @@ export async function parsePurchaseInput(
     pagoRaw.fechaPrimerVencimiento ?? body.fechaPrimerVencimiento
   );
 
-  if (medioPagoGeneratesPayables(medio) && !fechaPrimerVencimiento && !options?.relaxed) {
+  if (medioPagoGeneratesPayables(effectiveMedio) && !fechaPrimerVencimiento && !options?.relaxed) {
     return { error: 'Indicá la fecha del primer vencimiento.' };
   }
 
@@ -219,7 +240,7 @@ export async function parsePurchaseInput(
       fecha: normalizeDate(body.fecha),
       items,
       pago: {
-        medioPagoId,
+        medioPagoId: effectiveMedioPagoId,
         tarjetaId,
         cuotas,
         fechaPrimerVencimiento,
@@ -240,25 +261,197 @@ async function normalizePurchaseItems(
   businessId: string,
   input: ParsedPurchaseInput
 ): Promise<Array<ParsedPurchaseLine & { subtotal: number; productoNombre?: string }>> {
-  const normalizedItems = [];
-  for (const line of input.items) {
-    if (line.afectaStock && line.productoId) {
-      const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.productoId);
-      const itemSnap = await itemRef.get();
-      if (!itemSnap.exists) {
-        throw new Error(`PRODUCT_NOT_FOUND:${line.productoId}`);
-      }
-      const itemData = itemSnap.data() ?? {};
-      normalizedItems.push({
-        ...line,
-        productoNombre: line.productoNombre || String(itemData.nombre ?? 'Producto'),
-        subtotal: line.importe,
-      });
-    } else {
-      normalizedItems.push({ ...line, subtotal: line.importe });
+  const stockLines = input.items.filter((line) => line.afectaStock && line.productoId);
+  const stockSnaps = await Promise.all(
+    stockLines.map((line) =>
+      db.collection(`negocios/${businessId}/stock`).doc(line.productoId!).get()
+    )
+  );
+  const stockNameById = new Map<string, string>();
+  stockSnaps.forEach((snap, index) => {
+    const line = stockLines[index];
+    if (!snap.exists) {
+      throw new Error(`PRODUCT_NOT_FOUND:${line.productoId}`);
     }
+    stockNameById.set(
+      line.productoId!,
+      line.productoNombre || String(snap.data()?.nombre ?? 'Producto')
+    );
+  });
+
+  return input.items.map((line) => {
+    if (line.afectaStock && line.productoId) {
+      return {
+        ...line,
+        productoNombre: stockNameById.get(line.productoId) ?? line.productoNombre,
+        subtotal: line.importe,
+      };
+    }
+    return { ...line, subtotal: line.importe };
+  });
+}
+
+function totalsByAmbitoFromItems(items: ParsedPurchaseLine[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const line of items) {
+    totals.set(
+      line.ambito,
+      Math.round(((totals.get(line.ambito) ?? 0) + line.importe) * 100) / 100
+    );
   }
-  return normalizedItems;
+  return totals;
+}
+
+function stockLinesSignature(items: ParsedPurchaseLine[]): string {
+  return items
+    .filter((line) => line.afectaStock && line.productoId)
+    .map(
+      (line) =>
+        `${line.productoId}|${line.cantidad}|${line.costoUnitario}|${line.importe}|${line.ambito}`
+    )
+    .sort()
+    .join('\n');
+}
+
+function purchaseTotalsSignature(input: ParsedPurchaseInput): string {
+  const totals = totalsByAmbitoFromItems(input.items);
+  return JSON.stringify([...totals.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+function payablesSignature(input: ParsedPurchaseInput): string {
+  return JSON.stringify({
+    medio: input.pago.medioPagoId,
+    tarjeta: input.pago.tarjetaId ?? '',
+    cuotas: input.pago.cuotas,
+    fecha: input.pago.fechaPrimerVencimiento ?? '',
+    totals: purchaseTotalsSignature(input),
+  });
+}
+
+function purchasePaymentKind(
+  medioPagoId: string,
+  finanzas: FinanzasConfig
+): 'payables' | 'cash' | 'none' {
+  const medio = getMedioPagoById(finanzas.mediosPago, medioPagoId);
+  if (!medio) return 'none';
+  if (medioPagoGeneratesPayables(medio)) return 'payables';
+  if (medioPagoGeneratesImmediateCash(medio)) return 'cash';
+  return 'none';
+}
+
+function stockLinesFromItems(items: ParsedPurchaseLine[]): ParsedPurchaseLine[] {
+  return items.filter((line) => line.afectaStock && line.productoId && (Number(line.cantidad) || 0) > 0);
+}
+
+async function purchaseHasCuotasForCompra(
+  businessId: string,
+  compraId: string
+): Promise<boolean> {
+  const snap = await db
+    .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+    .where('compraId', '==', compraId)
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
+async function applyPayablesForPurchase(
+  businessId: string,
+  compraId: string,
+  compraLabel: string,
+  input: ParsedPurchaseInput,
+  finanzas: FinanzasConfig
+): Promise<void> {
+  const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId);
+  if (!medio || !medioPagoGeneratesPayables(medio)) return;
+
+  const tarjeta = input.pago.tarjetaId
+    ? getTarjetaById(finanzas.tarjetas, input.pago.tarjetaId)
+    : undefined;
+
+  let created = 0;
+  for (const [ambito, montoTotal] of totalsByAmbitoFromItems(input.items)) {
+    if (montoTotal <= 0) continue;
+    const ambitoLines = input.items.filter((line) => line.ambito === ambito);
+    const result = await syncPurchasePayablesForCompra(businessId, {
+      compraId,
+      compraLabel,
+      proveedor: input.proveedor,
+      tarjetaId: tarjeta?.id ?? input.pago.tarjetaId ?? '',
+      tarjetaLabel: tarjeta?.label ?? input.proveedor,
+      medioPagoId: input.pago.medioPagoId,
+      ambito,
+      montoTotal,
+      cuotas: input.pago.cuotas,
+      fechaPrimerVencimiento: input.pago.fechaPrimerVencimiento!,
+      lineDescriptions: ambitoLines.map(
+        (line) => line.descripcion || line.categoriaLabel || line.tipoLinea
+      ),
+    });
+    created += result.cuotasCreated;
+  }
+
+  if (created === 0) {
+    throw new Error(
+      'No se generaron cuotas en Cuentas a pagar. Revisá que el medio «Genera cuentas a pagar» esté activo y que las líneas tengan importe.'
+    );
+  }
+}
+
+async function ensurePurchasePayablesFromDocument(
+  businessId: string,
+  compraId: string,
+  compraLabel: string,
+  input: ParsedPurchaseInput,
+  finanzas: FinanzasConfig
+): Promise<void> {
+  if (purchasePaymentKind(input.pago.medioPagoId, finanzas) !== 'payables') return;
+  if (await purchaseHasCuotasForCompra(businessId, compraId)) return;
+  await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas);
+}
+
+/** Regenera cuotas de Cuentas a pagar desde el documento de compra (si faltan). */
+export async function repairPurchasePayables(
+  businessId: string,
+  compraId: string
+): Promise<{ cuotasCreated: number }> {
+  const ref = db.doc(`negocios/${businessId}/compras/${compraId}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('PURCHASE_NOT_FOUND');
+  }
+  const existing = snap.data() ?? {};
+  if (isPurchaseDraft(existing)) {
+    throw new Error('NOT_CONFIRMED');
+  }
+
+  const finanzas = await loadFinanzasConfig(businessId);
+  const parsed = await parsePurchaseInput(businessId, existing as Record<string, unknown>, {
+    skipSupplierLookup: true,
+    finanzas,
+  });
+  if (parsed.error || !parsed.input) {
+    throw new Error(parsed.error ?? 'La compra guardada tiene datos inválidos.');
+  }
+
+  const compraLabel = resolvePurchaseLabel({ ...existing, id: compraId });
+  const before = await purchaseHasCuotasForCompra(businessId, compraId);
+  await ensurePurchasePayablesFromDocument(
+    businessId,
+    compraId,
+    compraLabel,
+    parsed.input,
+    finanzas
+  );
+
+  const afterSnap = await db
+    .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+    .where('compraId', '==', compraId)
+    .get();
+
+  return {
+    cuotasCreated: before ? 0 : afterSnap.size,
+  };
 }
 
 function buildPurchaseDocumentFields(
@@ -282,34 +475,67 @@ function buildPurchaseDocumentFields(
   });
 }
 
-async function applyPurchaseSideEffects(
+type ApplyPurchaseSideEffectsOptions = {
+  /** No bloquear la respuesta HTTP (reserva de pedidos en segundo plano). */
+  deferAutoReserve?: boolean;
+};
+
+async function reserveStockForPurchaseProducts(
+  businessId: string,
+  normalizedItems: Array<ParsedPurchaseLine & { subtotal: number; productoNombre?: string }>
+): Promise<void> {
+  const productIds = [
+    ...new Set(
+      normalizedItems
+        .filter((line) => line.afectaStock && line.productoId)
+        .map((line) => String(line.productoId).trim())
+        .filter(Boolean)
+    ),
+  ];
+  for (const productoId of productIds) {
+    await autoReserveIncomingStockForProduct(businessId, productoId);
+  }
+}
+
+function scheduleReserveStockForPurchaseProducts(
+  businessId: string,
+  normalizedItems: Array<ParsedPurchaseLine & { subtotal: number; productoNombre?: string }>
+): void {
+  void reserveStockForPurchaseProducts(businessId, normalizedItems).catch((err) => {
+    console.error('Error reservando stock tras compra:', err);
+  });
+}
+
+async function applyPurchaseStockEntries(
   businessId: string,
   compraId: string,
   compraLabel: string,
-  input: ParsedPurchaseInput,
-  normalizedItems: Array<ParsedPurchaseLine & { subtotal: number; productoNombre?: string }>
+  lines: Array<ParsedPurchaseLine & { subtotal?: number; productoNombre?: string }>
 ): Promise<void> {
-  const finanzas = await loadFinanzasConfig(businessId);
-  const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId)!;
-  const tarjeta = input.pago.tarjetaId
-    ? getTarjetaById(finanzas.tarjetas, input.pago.tarjetaId)
-    : undefined;
+  const stockLines = stockLinesFromItems(lines);
+  if (stockLines.length === 0) return;
+
   const timestamp = new Date().toISOString();
+  const snaps = await Promise.all(
+    stockLines.map((line) =>
+      db.collection(`negocios/${businessId}/stock`).doc(line.productoId!).get()
+    )
+  );
 
-  for (const line of normalizedItems) {
-    if (!line.afectaStock || !line.productoId) continue;
-    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.productoId);
-    const itemSnap = await itemRef.get();
-    if (!itemSnap.exists) continue;
+  const stockBatch = db.batch();
+  const movementBatch = db.batch();
 
-    const currentStock = Number(itemSnap.data()?.stockActual) || 0;
-    await itemRef.update({
+  stockLines.forEach((line, index) => {
+    const snap = snaps[index];
+    if (!snap.exists) return;
+    const currentStock = Number(snap.data()?.stockActual) || 0;
+    stockBatch.update(snap.ref, {
       stockActual: currentStock + line.cantidad,
       ...(line.costoUnitario > 0 ? { costo: line.costoUnitario } : {}),
       updatedAt: timestamp,
     });
-
-    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+    const movementRef = db.collection(`negocios/${businessId}/movimientos_stock`).doc();
+    movementBatch.set(movementRef, {
       productoId: line.productoId,
       tipo: 'entrada',
       cantidad: line.cantidad,
@@ -322,19 +548,33 @@ async function applyPurchaseSideEffects(
       usuarioId: 'admin',
       negocioId: businessId,
     });
+  });
 
-    await autoReserveIncomingStockForProduct(businessId, line.productoId);
-  }
+  await stockBatch.commit();
+  await movementBatch.commit();
+}
 
+async function applyPurchaseSideEffects(
+  businessId: string,
+  compraId: string,
+  compraLabel: string,
+  input: ParsedPurchaseInput,
+  normalizedItems: Array<ParsedPurchaseLine & { subtotal: number; productoNombre?: string }>,
+  options?: ApplyPurchaseSideEffectsOptions & { finanzas?: FinanzasConfig }
+): Promise<void> {
+  const finanzas = options?.finanzas ?? (await loadFinanzasConfig(businessId));
+  const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId)!;
+
+  await applyPurchaseStockEntries(businessId, compraId, compraLabel, normalizedItems);
   scheduleStockMetricsRefresh(businessId);
 
-  const totalsByAmbito = new Map<string, number>();
-  for (const line of input.items) {
-    totalsByAmbito.set(
-      line.ambito,
-      Math.round(((totalsByAmbito.get(line.ambito) ?? 0) + line.importe) * 100) / 100
-    );
+  if (options?.deferAutoReserve) {
+    scheduleReserveStockForPurchaseProducts(businessId, normalizedItems);
+  } else {
+    await reserveStockForPurchaseProducts(businessId, normalizedItems);
   }
+
+  const totalsByAmbito = totalsByAmbitoFromItems(input.items);
 
   if (medioPagoGeneratesImmediateCash(medio)) {
     await createCashEgresoForAmbitoTotals(businessId, totalsByAmbito, {
@@ -347,25 +587,7 @@ async function applyPurchaseSideEffects(
       compraLabel,
     });
   } else if (medioPagoGeneratesPayables(medio)) {
-    for (const [ambito, montoTotal] of totalsByAmbito) {
-      if (montoTotal <= 0) continue;
-      const ambitoLines = input.items.filter((line) => line.ambito === ambito);
-      await createPurchasePayables(businessId, {
-        compraId,
-        compraLabel,
-        proveedor: input.proveedor,
-        tarjetaId: tarjeta?.id ?? input.pago.tarjetaId ?? '',
-        tarjetaLabel: tarjeta?.label ?? input.proveedor,
-        medioPagoId: input.pago.medioPagoId,
-        ambito,
-        montoTotal,
-        cuotas: input.pago.cuotas,
-        fechaPrimerVencimiento: input.pago.fechaPrimerVencimiento!,
-        lineDescriptions: ambitoLines.map(
-          (line) => line.descripcion || line.categoriaLabel || line.tipoLinea
-        ),
-      });
-    }
+    await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas);
   }
 }
 
@@ -453,6 +675,13 @@ export async function confirmPurchaseDraft(
   );
 
   await applyPurchaseSideEffects(businessId, compraId, compraLabel, parsed.input, normalizedItems);
+  await ensurePurchasePayablesFromDocument(
+    businessId,
+    compraId,
+    compraLabel,
+    parsed.input,
+    await loadFinanzasConfig(businessId)
+  );
 
   return { id: compraId, compraLabel, numeroCompra };
 }
@@ -473,7 +702,364 @@ export async function persistPurchase(
     })
   );
 
-  await applyPurchaseSideEffects(businessId, docRef.id, compraLabel, input, normalizedItems);
+  const finanzas = await loadFinanzasConfig(businessId);
+  await applyPurchaseSideEffects(businessId, docRef.id, compraLabel, input, normalizedItems, {
+    finanzas,
+  });
+  await ensurePurchasePayablesFromDocument(
+    businessId,
+    docRef.id,
+    compraLabel,
+    input,
+    finanzas
+  );
 
   return { id: docRef.id, compraLabel, numeroCompra };
+}
+
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+}
+
+async function validateCanReversePurchaseStock(
+  businessId: string,
+  items: ParsedPurchaseLine[]
+): Promise<string | null> {
+  const stockLines = stockLinesFromItems(items);
+  if (stockLines.length === 0) return null;
+
+  const snaps = await Promise.all(
+    stockLines.map((line) =>
+      db.collection(`negocios/${businessId}/stock`).doc(line.productoId!).get()
+    )
+  );
+
+  for (let i = 0; i < stockLines.length; i++) {
+    const line = stockLines[i];
+    const itemSnap = snaps[i];
+    const qty = Number(line.cantidad) || 0;
+    if (!itemSnap.exists) {
+      return `El producto "${line.productoNombre || line.productoId}" ya no existe en stock.`;
+    }
+    const currentStock = Number(itemSnap.data()?.stockActual) || 0;
+    if (currentStock < qty) {
+      const nombre = String(itemSnap.data()?.nombre ?? line.productoNombre ?? 'Producto');
+      return `No hay stock suficiente de "${nombre}" para deshacer la compra (hay ${currentStock}, se necesitan ${qty}).`;
+    }
+  }
+  return null;
+}
+
+async function reversePurchaseStockFromItems(
+  businessId: string,
+  compraId: string,
+  compraLabel: string,
+  items: ParsedPurchaseLine[]
+): Promise<void> {
+  const stockLines = stockLinesFromItems(items);
+  if (stockLines.length === 0) return;
+
+  const timestamp = new Date().toISOString();
+  const snaps = await Promise.all(
+    stockLines.map((line) =>
+      db.collection(`negocios/${businessId}/stock`).doc(line.productoId!).get()
+    )
+  );
+
+  const stockBatch = db.batch();
+  const movementBatch = db.batch();
+
+  stockLines.forEach((line, index) => {
+    const snap = snaps[index];
+    if (!snap.exists) return;
+    const qty = Number(line.cantidad) || 0;
+    const currentStock = Number(snap.data()?.stockActual) || 0;
+    stockBatch.update(snap.ref, {
+      stockActual: Math.max(0, currentStock - qty),
+      updatedAt: timestamp,
+    });
+    const movementRef = db.collection(`negocios/${businessId}/movimientos_stock`).doc();
+    movementBatch.set(movementRef, {
+      productoId: line.productoId,
+      tipo: 'salida',
+      cantidad: qty,
+      fecha: timestamp,
+      motivo: `Ajuste compra #${compraLabel}`,
+      origenId: compraId,
+      origenTipo: 'compra_ajuste',
+      origenGrupo: 'compra',
+      compraId,
+      usuarioId: 'admin',
+      negocioId: businessId,
+    });
+  });
+
+  await stockBatch.commit();
+  await movementBatch.commit();
+  scheduleStockMetricsRefresh(businessId);
+}
+
+async function reversePurchaseCashMovements(
+  businessId: string,
+  compraId: string,
+  compraLabel: string
+): Promise<void> {
+  const movimientosRef = db.collection(`negocios/${businessId}/movimientos_caja`);
+  const [egresoSnap, ingresoSnap] = await Promise.all([
+    movimientosRef.where('compraId', '==', compraId).where('tipo', '==', 'egreso').get(),
+    movimientosRef.where('compraId', '==', compraId).where('tipo', '==', 'ingreso').get(),
+  ]);
+
+  const reversedIds = new Set<string>();
+  for (const doc of ingresoSnap.docs) {
+    const anulado = String(doc.data().movimientoAnuladoId ?? '').trim();
+    if (anulado) reversedIds.add(anulado);
+  }
+
+  const caja = await loadCajaConfig(businessId);
+  const timestamp = new Date().toISOString();
+  const batch = db.batch();
+  let writes = 0;
+
+  for (const doc of egresoSnap.docs) {
+    if (reversedIds.has(doc.id)) continue;
+    const data = doc.data();
+    batch.set(movimientosRef.doc(), {
+      tipo: 'ingreso',
+      monto: Number(data.monto) || 0,
+      concepto: `Anulación ${String(data.concepto ?? `Compra #${compraLabel}`).trim()}`,
+      medio: data.medio ?? 'efectivo',
+      medioPagoId: data.medioPagoId ?? null,
+      ambito: resolveCashReversalAmbito(data.ambito, caja),
+      fecha: timestamp,
+      origenId: compraId,
+      origenTipo: 'compra_ajuste',
+      origenGrupo: 'compra',
+      compraId,
+      compraLabel,
+      movimientoAnuladoId: doc.id,
+      negocioId: businessId,
+    });
+    writes += 1;
+  }
+
+  if (writes > 0) {
+    await batch.commit();
+  }
+}
+
+async function removePurchasePayables(businessId: string, compraId: string): Promise<string | null> {
+  const cuotasSnap = await db
+    .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+    .where('compraId', '==', compraId)
+    .get();
+
+  if (cuotasSnap.empty) return null;
+
+  for (const doc of cuotasSnap.docs) {
+    const data = doc.data();
+    if (data.estado === 'pagada' || data.movimientoCajaId) {
+      return 'No se puede editar: hay cuotas de esta compra ya pagadas en Cuentas a pagar.';
+    }
+  }
+
+  const obligationIds = new Set<string>();
+  const batch = db.batch();
+  for (const doc of cuotasSnap.docs) {
+    batch.delete(doc.ref);
+    const obligacionId = String(doc.data().obligacionId ?? '').trim();
+    if (obligacionId) obligationIds.add(obligacionId);
+  }
+  await batch.commit();
+
+  if (obligationIds.size > 0) {
+    const obligBatch = db.batch();
+    for (const obligacionId of obligationIds) {
+      obligBatch.delete(
+        db.collection(`negocios/${businessId}/cuentas_pagar_obligaciones`).doc(obligacionId)
+      );
+    }
+    await obligBatch.commit();
+  }
+
+  return null;
+}
+
+export async function updateConfirmedPurchase(
+  businessId: string,
+  compraId: string,
+  input: ParsedPurchaseInput
+): Promise<{ id: string; compraLabel: string; numeroCompra?: number }> {
+  const ref = db.doc(`negocios/${businessId}/compras/${compraId}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('PURCHASE_NOT_FOUND');
+  }
+
+  const existing = snap.data() ?? {};
+  if (isPurchaseDraft(existing)) {
+    throw new Error('NOT_CONFIRMED');
+  }
+
+  const finanzas = await loadFinanzasConfig(businessId);
+  const parsedOld = await parsePurchaseInput(businessId, existing as Record<string, unknown>, {
+    skipSupplierLookup: true,
+    finanzas,
+  });
+  if (parsedOld.error || !parsedOld.input) {
+    throw new Error(parsedOld.error ?? 'La compra guardada tiene datos inválidos.');
+  }
+
+  const oldInput = parsedOld.input;
+  const compraLabel = resolvePurchaseLabel({ ...existing, id: compraId });
+  const numeroCompra = Number(existing.numeroCompra) || undefined;
+
+  const stockChanged = stockLinesSignature(oldInput.items) !== stockLinesSignature(input.items);
+  const oldPaymentKind = purchasePaymentKind(oldInput.pago.medioPagoId, finanzas);
+  const newPaymentKind = purchasePaymentKind(input.pago.medioPagoId, finanzas);
+  const paymentKindChanged = oldPaymentKind !== newPaymentKind;
+  const payablesChanged = payablesSignature(oldInput) !== payablesSignature(input);
+
+  const payablesStructureChanged =
+    oldInput.pago.cuotas !== input.pago.cuotas ||
+    (oldInput.pago.tarjetaId ?? '') !== (input.pago.tarjetaId ?? '') ||
+    oldInput.pago.medioPagoId !== input.pago.medioPagoId ||
+    (oldInput.pago.fechaPrimerVencimiento ?? '') !== (input.pago.fechaPrimerVencimiento ?? '');
+
+  const oldTotals = totalsByAmbitoFromItems(oldInput.items);
+  const newTotals = totalsByAmbitoFromItems(input.items);
+  const payablesAmbitosChanged =
+    [...oldTotals.keys()].sort().join('|') !== [...newTotals.keys()].sort().join('|');
+
+  const mustRemovePayables =
+    oldPaymentKind === 'payables' &&
+    (paymentKindChanged ||
+      newPaymentKind !== 'payables' ||
+      payablesStructureChanged ||
+      payablesAmbitosChanged);
+
+  const hasExistingPayables = await purchaseHasCuotasForCompra(businessId, compraId);
+  const mustApplyPayables =
+    newPaymentKind === 'payables' && (payablesChanged || !hasExistingPayables);
+
+  const totalsChanged = purchaseTotalsSignature(oldInput) !== purchaseTotalsSignature(input);
+  const mustReverseCash = oldPaymentKind === 'cash' && (paymentKindChanged || totalsChanged);
+  const mustApplyCash = newPaymentKind === 'cash' && (paymentKindChanged || totalsChanged);
+
+  const documentOnlyChange =
+    !stockChanged &&
+    !mustRemovePayables &&
+    !mustReverseCash &&
+    !mustApplyCash &&
+    !mustApplyPayables;
+
+  if (documentOnlyChange) {
+    const normalizedItems = input.items.map((line) => ({
+      ...line,
+      subtotal: line.importe,
+      productoNombre: line.productoNombre,
+    }));
+    if (newPaymentKind === 'payables' && !hasExistingPayables) {
+      await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas);
+    }
+    await ref.update(
+      buildPurchaseDocumentFields(input, normalizedItems, {
+        numeroCompra: numeroCompra ?? null,
+        compraLabel,
+        estado: String(existing.estado ?? 'recibida'),
+        negocioId: businessId,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    return {
+      id: compraId,
+      compraLabel,
+      ...(numeroCompra ? { numeroCompra } : {}),
+    };
+  }
+
+  if (stockChanged) {
+    const stockError = await validateCanReversePurchaseStock(businessId, oldInput.items);
+    if (stockError) {
+      throw new Error(stockError);
+    }
+  }
+
+  const reverseTasks: Promise<void>[] = [];
+  if (mustRemovePayables) {
+    reverseTasks.push(
+      (async () => {
+        const payablesError = await removePurchasePayables(businessId, compraId);
+        if (payablesError) throw new Error(payablesError);
+      })()
+    );
+  }
+  if (mustReverseCash) {
+    reverseTasks.push(reversePurchaseCashMovements(businessId, compraId, compraLabel));
+  }
+  if (stockChanged) {
+    reverseTasks.push(
+      reversePurchaseStockFromItems(businessId, compraId, compraLabel, oldInput.items)
+    );
+  }
+  if (reverseTasks.length > 0) {
+    await Promise.all(reverseTasks);
+  }
+
+  const normalizedItems = await normalizePurchaseItems(businessId, input);
+
+  await ref.update(
+    buildPurchaseDocumentFields(input, normalizedItems, {
+      numeroCompra: numeroCompra ?? null,
+      compraLabel,
+      estado: String(existing.estado ?? 'recibida'),
+      negocioId: businessId,
+      updatedAt: new Date().toISOString(),
+    })
+  );
+
+  const applyTasks: Promise<void>[] = [];
+  if (stockChanged) {
+    applyTasks.push(applyPurchaseStockEntries(businessId, compraId, compraLabel, normalizedItems));
+  }
+  if (mustApplyCash) {
+    applyTasks.push(
+      createCashEgresoForAmbitoTotals(businessId, newTotals, {
+        concepto: `Compra #${compraLabel}${input.proveedor ? ` · ${input.proveedor}` : ''}`,
+        medioPagoId: input.pago.medioPagoId,
+        origenId: compraId,
+        origenTipo: 'compra',
+        origenGrupo: 'compra',
+        compraId,
+        compraLabel,
+      })
+    );
+  }
+  if (mustApplyPayables) {
+    applyTasks.push(applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas));
+  }
+
+  if (applyTasks.length > 0) {
+    await Promise.all(applyTasks);
+  }
+
+  if (stockChanged) {
+    scheduleStockMetricsRefresh(businessId);
+    scheduleReserveStockForPurchaseProducts(businessId, normalizedItems);
+  }
+
+  await ensurePurchasePayablesFromDocument(
+    businessId,
+    compraId,
+    compraLabel,
+    input,
+    finanzas
+  );
+
+  return {
+    id: compraId,
+    compraLabel,
+    ...(numeroCompra ? { numeroCompra } : {}),
+  };
 }

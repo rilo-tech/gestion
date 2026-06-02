@@ -152,6 +152,7 @@ export interface SupplierFormSaveEvent {
           [showSave]="!formReadOnly"
           [saving]="savingSupplier"
           (cancelClick)="cancelled.emit()"
+          (saveClick)="saveSupplier()"
           (deleteClick)="confirmDeleteSupplier()">
         </app-form-panel-footer>
       </form>

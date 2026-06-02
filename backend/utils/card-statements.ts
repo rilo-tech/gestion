@@ -29,6 +29,16 @@ function cuotasCollection(businessId: string) {
   return db.collection(`negocios/${businessId}/cuentas_pagar_cuotas`);
 }
 
+function obligationsCollection(businessId: string) {
+  return db.collection(`negocios/${businessId}/cuentas_pagar_obligaciones`);
+}
+
+function addMonthsToDate(dateStr: string, months: number): string {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setMonth(date.getMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
 function monthKeyFromDate(dateStr: string): string {
   return String(dateStr ?? '').slice(0, 7);
 }
@@ -196,7 +206,7 @@ export async function createPurchasePayables(
   const descripcionBase = params.lineDescriptions.slice(0, 2).join(' · ') || params.proveedor;
   const beneficiario = `${params.tarjetaLabel} · Compra #${params.compraLabel}`;
 
-  const { cuotasCreated, obligation } = await createPayableObligation(businessId, {
+  const { cuotasCreated } = await createPayableObligation(businessId, {
     beneficiario,
     monto: montoCuota,
     tipo: 'unico',
@@ -214,29 +224,91 @@ export async function createPurchasePayables(
     descripcionBase,
   });
 
-  // Patch cuotas with purchase link metadata (createPayableObligation already set obligation fields)
-  const cuotasSnap = await cuotasCollection(businessId)
-    .where('obligacionId', '==', obligation.id)
-    .get();
-
-  const batch = db.batch();
-  for (const doc of cuotasSnap.docs) {
-    const data = doc.data();
-    const numero = Number(data.numeroCuota) || 1;
-    batch.update(doc.ref, {
-      compraId: params.compraId,
-      compraLabel: params.compraLabel,
-      tarjetaId: params.tarjetaId,
-      tarjetaLabel: params.tarjetaLabel,
-      medioPagoId: params.medioPagoId,
-      cuotaTotal: cuotas,
-      origenTipo: 'compra',
-      descripcion: `Cuota ${numero}/${cuotas} · Compra #${params.compraLabel} · ${descripcionBase} · ${params.tarjetaLabel}`,
-    });
-  }
-  await batch.commit();
-
   return { cuotasCreated };
+}
+
+/** Actualiza cuotas pendientes de la compra si la estructura coincide; si no, recrea. */
+export async function syncPurchasePayablesForCompra(
+  businessId: string,
+  params: CreatePurchasePayablesParams
+): Promise<{ cuotasCreated: number }> {
+  const cuotasTotal = Math.min(Math.max(1, Math.round(params.cuotas)), 120);
+  const montoCuota = Math.round((params.montoTotal / cuotasTotal) * 100) / 100;
+  const descripcionBase = params.lineDescriptions.slice(0, 2).join(' · ') || params.proveedor;
+  const beneficiario = `${params.tarjetaLabel} · Compra #${params.compraLabel}`;
+
+  const snap = await cuotasCollection(businessId).where('compraId', '==', params.compraId).get();
+  const ambitoKey = String(params.ambito ?? '').trim().toLowerCase();
+  const scoped = snap.docs.filter(
+    (doc) => String(doc.data().ambito ?? '').trim().toLowerCase() === ambitoKey
+  );
+
+  for (const doc of scoped) {
+    const data = doc.data();
+    if (data.estado === 'pagada' || data.movimientoCajaId) {
+      throw new Error('PAID_INSTALLMENTS');
+    }
+  }
+
+  const sorted = [...scoped].sort(
+    (a, b) => (Number(a.data().numeroCuota) || 0) - (Number(b.data().numeroCuota) || 0)
+  );
+
+  if (sorted.length === cuotasTotal) {
+    const now = new Date().toISOString();
+    const batch = db.batch();
+    for (let i = 0; i < sorted.length; i++) {
+      const numero = i + 1;
+      batch.update(sorted[i].ref, {
+        monto: montoCuota,
+        fechaVencimiento: addMonthsToDate(params.fechaPrimerVencimiento, i),
+        beneficiario,
+        tarjetaId: params.tarjetaId,
+        tarjetaLabel: params.tarjetaLabel,
+        medioPagoId: params.medioPagoId,
+        cuotaTotal: cuotasTotal,
+        descripcion: `Cuota ${numero}/${cuotasTotal} · Compra #${params.compraLabel} · ${descripcionBase} · ${params.tarjetaLabel}`,
+      });
+    }
+    await batch.commit();
+
+    const obligacionId = String(sorted[0]?.data()?.obligacionId ?? '').trim();
+    if (obligacionId) {
+      await obligationsCollection(businessId).doc(obligacionId).update({
+        beneficiario,
+        monto: montoCuota,
+        cantidadCuotas: cuotasTotal,
+        fechaPrimerVencimiento: params.fechaPrimerVencimiento,
+        tarjetaId: params.tarjetaId,
+        tarjetaLabel: params.tarjetaLabel,
+        medioPagoId: params.medioPagoId,
+        notas: params.lineDescriptions.join('; '),
+        updatedAt: now,
+      });
+    }
+
+    return { cuotasCreated: cuotasTotal };
+  }
+
+  if (scoped.length > 0 && sorted.length !== cuotasTotal) {
+    const obligationIds = new Set<string>();
+    const batch = db.batch();
+    for (const doc of scoped) {
+      batch.delete(doc.ref);
+      const obligacionId = String(doc.data().obligacionId ?? '').trim();
+      if (obligacionId) obligationIds.add(obligacionId);
+    }
+    await batch.commit();
+    if (obligationIds.size > 0) {
+      const obligBatch = db.batch();
+      for (const obligacionId of obligationIds) {
+        obligBatch.delete(obligationsCollection(businessId).doc(obligacionId));
+      }
+      await obligBatch.commit();
+    }
+  }
+
+  return createPurchasePayables(businessId, params);
 }
 
 export type { PayableCuotaRecord };

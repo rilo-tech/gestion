@@ -1,4 +1,13 @@
-import { Component, HostListener, ViewChild, inject, OnDestroy, OnInit } from '@angular/core';
+import {
+  Component,
+  DestroyRef,
+  HostListener,
+  ViewChild,
+  inject,
+  OnDestroy,
+  OnInit,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -90,14 +99,19 @@ import {
   TransactionPartyFieldComponent,
   TransactionSummaryPanelComponent,
   TransactionFormPageComponent,
+  TransactionDateFieldComponent,
 } from '../../shared/components/transaction-form';
+import {
+  dateInputToIso,
+  toDateInputValue,
+} from '../../core/utils/transaction-date';
 import { FormFooterComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
 
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, IconToolbarButtonComponent, TransactionFormPageComponent, FormFooterComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, IconToolbarButtonComponent, TransactionFormPageComponent, FormFooterComponent],
   template: `
     <app-transaction-form-page
       [title]="orderPageTitle"
@@ -105,19 +119,9 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
       backLabel="Volver a pedidos"
       backShortLabel="Volver"
       backAriaLabel="Volver a pedidos"
-      [hasHeaderActions]="!isReadOnlyOrder"
-      (backClick)="goBack()">
-      <div headerActions *ngIf="!isReadOnlyOrder">
-        <app-icon-toolbar-button
-          *ngIf="showSaveDraftButton"
-          class="sm:hidden"
-          icon="file-text"
-          [label]="draftButtonLabel"
-          variant="outline"
-          [disabled]="orderActionsLocked"
-          [loading]="orderSaveState === 'saving' && orderSaveAction === 'draft'"
-          (clicked)="saveDraft()">
-        </app-icon-toolbar-button>
+      backRouterLink="/orders"
+      [hasHeaderActions]="!isReadOnlyOrder">
+      <div headerActions *ngIf="!isReadOnlyOrder" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-icon-toolbar-button
           class="sm:hidden"
           icon="save"
@@ -165,13 +169,14 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
 
       <div class="space-y-4">
           <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_10.5rem] gap-4 mb-4">
+            <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_10.5rem_10.5rem] gap-4 mb-4">
               <app-transaction-party-field
                 label="Cliente"
                 [showCreateAction]="!isReadOnlyOrder"
                 createActionLabel="+ Nuevo cliente"
                 (createClick)="goToNewClientForm()">
                 <app-searchable-select
+                  [compact]="true"
                   [(ngModel)]="order.clienteId"
                   name="clienteId"
                   [labeledOptions]="clientOptions"
@@ -185,6 +190,14 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
                   emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
                 </app-searchable-select>
               </app-transaction-party-field>
+
+              <app-transaction-date-field
+                [date]="orderFechaInput"
+                (dateChange)="onOrderFechaChange($event)"
+                fieldName="orderFecha"
+                label="Fecha"
+                [disabled]="isReadOnlyOrder">
+              </app-transaction-date-field>
 
               <div class="min-w-0">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de entrega</label>
@@ -277,8 +290,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
             [lineCount]="orderLines.length"
             [searchVisible]="!isReadOnlyOrder"
             searchTitle="Agregar productos"
-            searchHint="Buscá y hacé clic en un producto para agregarlo a la lista."
-            emptyMessage="Buscá productos arriba y hacé clic en uno para agregarlo acá.">
+            searchHint="Buscá y hacé clic en un producto para agregarlo a la lista.">
             <app-transaction-product-search
               search
               *ngIf="!isReadOnlyOrder"
@@ -295,7 +307,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
 
             <app-transaction-lines-table
               #orderLinesTable
-              *ngIf="orderLines.length > 0"
+              [hideWhenEmpty]="true"
               [lines]="orderTableLines"
               [columns]="orderTableColumns"
               [readOnly]="isReadOnlyOrder"
@@ -359,7 +371,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
           mode="inline"
           [saveLabel]="primaryButtonLabel"
           [saving]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
-          [saveDisabled]="orderActionsLocked"
+          [saveDisabled]="orderActionsLocked || orderSaveState !== 'idle'"
           [successMessage]="orderSaveSuccessMessage"
           [secondaryActionLabel]="showSaveDraftButton ? draftButtonLabel : ''"
           [secondarySaving]="orderSaveState === 'saving' && orderSaveAction === 'draft'"
@@ -670,8 +682,6 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
         </div>
       </div>
 
-      </ng-container>
-
       <app-transaction-modal
         [open]="extraCostsModalIndex !== null && !!extraCostsModalLine"
         title="Costos de personalización"
@@ -875,6 +885,9 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
   `,
 })
 export class NewOrderComponent implements OnInit, OnDestroy {
+  private static readonly MAX_ORDER_LINES = 400;
+  private static readonly MAX_EXTRA_COSTS_PER_LINE = 24;
+
   private clientService = inject(ClientService);
   private stockService = inject(StockService);
   private orderService = inject(OrderService);
@@ -884,6 +897,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private destroyRef = inject(DestroyRef);
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
 
@@ -900,7 +914,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return this.orderStatusOptionsCache;
   }
   readonly controlsStockForCatalogItem = (item: StockItem) =>
-    itemControlsStock(item, this.appConfig.productos?.categoriasSinStock ?? []);
+    itemControlsStock(item);
 
   clients: Client[] = [];
   clientOptionsCache: Array<{ value: string; label: string }> = [];
@@ -921,6 +935,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   orderLines: OrderLineItem[] = [];
   private addedOrderProductIdsCache: string[] = [];
   private addedOrderProductIdsKey = '';
+  private orderTableLinesCache: TransactionTableLine[] = [];
+  private orderTableLinesKey = '';
+  private orderTableColumnsCache: ReturnType<typeof buildTransactionTableColumns> | null = null;
+  private orderTableColumnsKey = '';
+  private catalogPriceOptionsCache = new Map<string, Array<{ label: string; price: number }>>();
+  private loadOrderRequestId = 0;
   priceCatalogEntries: PriceCatalogEntry[] = [];
   extraCostsModalIndex: number | null = null;
   paymentModalOpen = false;
@@ -1240,7 +1260,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
 
   onOrderEstadoChange(newEstado: string) {
-    if (!this.editingOrderId || this.savingEstado || this.orderFormLocked) return;
+    if (!this.editingOrderId || this.savingEstado) return;
+    if (this.orderFormLocked) {
+      this.order.estado = this.savedOrderEstado || this.order.estado;
+      return;
+    }
     if (normalizeOrderStatus(this.savedOrderEstado) === 'cancelado') return;
 
     const previous = normalizeOrderStatus(this.savedOrderEstado || this.order.estado);
@@ -1285,6 +1309,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     if (isOrderDeliveryEstado(next)) {
+      this.order.estado = newEstado;
       return;
     }
 
@@ -1530,7 +1555,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get fechaEntregaInput(): string {
-    return this.toDateInputValue(this.order.fechaEntrega);
+    return toDateInputValue(this.order.fechaEntrega);
+  }
+
+  get orderFechaInput(): string {
+    return toDateInputValue(this.order.createdAt);
   }
 
   get useDetailedExtraCosts(): boolean {
@@ -1590,47 +1619,60 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
-    this.catalogConfigService.getAppConfig().subscribe((config) => {
-      this.appConfig = config;
-    });
+    this.catalogConfigService
+      .getAppConfig()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((config) => {
+        this.appConfig = config;
+      });
 
     if (this.auth.canViewPriceCatalog) {
-      this.priceCatalogService.getEntries().subscribe({
-        next: (entries) => {
-          this.priceCatalogEntries = entries.filter((entry) => entry.activo !== false);
-          this.refreshOrderLineCatalogLinks();
-        },
-      });
+      this.priceCatalogService
+        .getEntries()
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (entries) => {
+            this.priceCatalogEntries = entries.filter((entry) => entry.activo !== false);
+            this.refreshOrderLineCatalogLinks();
+          },
+        });
     }
 
     this.refreshClients();
 
-    this.route.paramMap.subscribe(() => {
-      const duplicateId = this.route.snapshot.queryParamMap.get('duplicate');
-      const orderId = this.route.snapshot.paramMap.get('id');
-      const restoreDraft = this.route.snapshot.queryParamMap.get('restoreDraft') === '1';
-      const clienteId = this.route.snapshot.queryParamMap.get('clienteId');
-
-      if (restoreDraft && this.tryRestoreOrderFormDraft(orderId, clienteId)) {
-        this.clearRestoreQueryParams();
-        return;
-      }
-
-      if (orderId) {
-        this.startEditingOrder(orderId);
-        return;
-      }
-
-      this.editingOrderId = null;
-      this.loadedOrderSnapshot = null;
-      this.orderPageReady = true;
-
-      if (duplicateId) {
-        this.loadOrderForDuplicate(duplicateId);
-      } else {
-        this.resetForm();
-      }
+    this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.syncRouteState();
     });
+
+    this.syncRouteState();
+  }
+
+  private syncRouteState(): void {
+    const duplicateId = this.route.snapshot.queryParamMap.get('duplicate');
+    const orderId = this.route.snapshot.paramMap.get('id');
+    const restoreDraft = this.route.snapshot.queryParamMap.get('restoreDraft') === '1';
+    const clienteId = this.route.snapshot.queryParamMap.get('clienteId');
+
+    if (restoreDraft && this.tryRestoreOrderFormDraft(orderId, clienteId)) {
+      this.clearRestoreQueryParams();
+      return;
+    }
+
+    if (orderId) {
+      this.startEditingOrder(orderId);
+      return;
+    }
+
+    this.editingOrderId = null;
+    this.loadedOrderSnapshot = null;
+    this.orderPageReady = true;
+    this.orderDetailLoading = false;
+
+    if (duplicateId) {
+      this.loadOrderForDuplicate(duplicateId);
+    } else {
+      this.resetForm();
+    }
   }
 
   private readOrderPreview(orderId: string): Order | null {
@@ -1643,8 +1685,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   private startEditingOrder(orderId: string) {
     this.editingOrderId = orderId;
+    this.orderLines = [];
+    this.invalidateOrderLinesViewCache();
+    this.orderPageReady = true;
+    this.orderDetailLoading = true;
+
     const preview = this.readOrderPreview(orderId);
-    const previewHasLines = !!(preview?.items?.length || preview?.stockItemId);
+    const previewHasLines = this.orderHasLinePayload(preview);
 
     if (preview) {
       if (!this.auth.canViewOrder(preview.estado)) {
@@ -1656,18 +1703,22 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         return;
       }
       this.applyLoadedOrder(preview, { includeLines: previewHasLines });
-      this.orderPageReady = true;
-      this.orderDetailLoading = !previewHasLines;
+      if (previewHasLines) {
+        this.orderDetailLoading = false;
+      }
     } else {
-      this.orderPageReady = true;
-      this.orderDetailLoading = true;
       this.order = this.emptyOrder();
-      this.orderLines = [];
       this.isDraftOrder = false;
       this.loadedOrderSnapshot = null;
     }
 
     this.loadOrder(orderId);
+  }
+
+  private orderHasLinePayload(order: Order | null | undefined): boolean {
+    if (!order) return false;
+    if (order.stockItemId) return true;
+    return this.coerceOrderItems(order.items).length > 0;
   }
 
   private refreshClients() {
@@ -1914,22 +1965,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderPrintService.printOrders([snapshot], clientsById);
   }
 
+  onOrderFechaChange(value: string) {
+    this.order.createdAt = dateInputToIso(value);
+  }
+
   onFechaEntregaChange(value: string) {
     if (!value) {
       this.order.fechaEntrega = new Date().toISOString();
       return;
     }
-    this.order.fechaEntrega = new Date(`${value}T12:00:00`).toISOString();
-  }
-
-  private toDateInputValue(value?: string): string {
-    if (!value) return this.toDateInputValue(new Date().toISOString());
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    this.order.fechaEntrega = dateInputToIso(value);
   }
 
   onOrderProductSelected(item: StockItem) {
@@ -1957,12 +2002,20 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     };
     this.attachCatalogToLine(line, item);
     this.orderLines.push(line);
+    this.invalidateOrderLinesViewCache();
     this.calculateTotals();
   }
 
   getCatalogPriceOptions(line: OrderLineItem): Array<{ label: string; price: number }> {
+    const cacheKey = `${line.priceCatalogId ?? ''}|${line.cantidad}|${line.stockItemId ?? ''}`;
+    const cached = this.catalogPriceOptionsCache.get(cacheKey);
+    if (cached) return cached;
+
     const entry = this.getCatalogEntry(line);
-    if (!entry) return [];
+    if (!entry) {
+      this.catalogPriceOptionsCache.set(cacheKey, []);
+      return [];
+    }
 
     const options: Array<{ label: string; price: number }> = [];
     for (const variant of entry.variantes ?? []) {
@@ -1976,6 +2029,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         });
       }
     }
+    this.catalogPriceOptionsCache.set(cacheKey, options);
     return options;
   }
 
@@ -2034,16 +2088,37 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get orderTableColumns() {
-    return buildTransactionTableColumns(ORDER_FORM_TABLE_COLUMNS, {
+    const key = [
+      this.isReadOnlyOrder,
+      this.auth.hasPermission(this.permissions.STOCK_VIEW_COSTS),
+      this.auth.hasPermission(this.permissions.ORDERS_PERSONALIZATION),
+      this.auth.hasPermission(this.permissions.ORDERS_VIEW_SALE_PRICE),
+    ].join('|');
+    if (key === this.orderTableColumnsKey && this.orderTableColumnsCache) {
+      return this.orderTableColumnsCache;
+    }
+    this.orderTableColumnsKey = key;
+    this.orderTableColumnsCache = buildTransactionTableColumns(ORDER_FORM_TABLE_COLUMNS, {
       unitCost: this.auth.hasPermission(this.permissions.STOCK_VIEW_COSTS),
       personalization: this.auth.hasPermission(this.permissions.ORDERS_PERSONALIZATION),
       unitSale: this.auth.hasPermission(this.permissions.ORDERS_VIEW_SALE_PRICE),
       actions: !this.isReadOnlyOrder,
     });
+    return this.orderTableColumnsCache;
   }
 
   get orderTableLines(): TransactionTableLine[] {
-    return this.orderLines.map((line) => ({
+    const key = this.orderLines
+      .map(
+        (line) =>
+          `${line.stockItemId ?? ''}\u0001${line.cantidad}\u0001${line.costoUnitario}\u0001${line.precioVenta}\u0001${this.getLinePersTotal(line)}`
+      )
+      .join('\u0002');
+    if (key === this.orderTableLinesKey) {
+      return this.orderTableLinesCache;
+    }
+    this.orderTableLinesKey = key;
+    this.orderTableLinesCache = this.orderLines.map((line) => ({
       productName: line.nombre,
       productId: line.stockItemId,
       productClickable: !!line.stockItemId,
@@ -2063,6 +2138,15 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       unitSaleEditable: !this.isReadOnlyOrder && this.auth.canViewOrderSalePrice,
       removable: !this.isReadOnlyOrder,
     }));
+    return this.orderTableLinesCache;
+  }
+
+  private invalidateOrderLinesViewCache(): void {
+    this.orderTableLinesKey = '';
+    this.orderTableLinesCache = [];
+    this.addedOrderProductIdsKey = '';
+    this.addedOrderProductIdsCache = [];
+    this.catalogPriceOptionsCache.clear();
   }
 
   onOrderTableFieldChange(event: TransactionTableFieldChange): void {
@@ -2101,6 +2185,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
     this.orderLinesTable?.clearNumericDraftsForIndex(index);
     this.orderLines.splice(index, 1);
+    this.invalidateOrderLinesViewCache();
     this.calculateTotals();
   }
 
@@ -2374,7 +2459,31 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const estado =
       !this.isEditing || this.isDraftOrder ? 'pendiente' : this.order.estado || 'pendiente';
 
-    if (!this.beginOrderSave('submit')) return;
+    if (this.isEditing && this.isDeliveryPendingSave) {
+      const nextLabel = getOrderStatusLabelFromConfig(estado, this.appConfig.pedidos);
+      this.dialogService
+        .confirm({
+          title: 'Cerrar pedido',
+          message: `Al guardar, el pedido pasará a «${nextLabel}» y quedará cerrado (no podrás editarlo después). ¿Continuar?`,
+          confirmLabel: 'Guardar y cerrar',
+          cancelLabel: 'Cancelar',
+        })
+        .subscribe((confirmed) => {
+          if (!confirmed) return;
+          if (!this.beginOrderSave('submit')) return;
+          this.persistOrder(estado);
+        });
+      return;
+    }
+
+    if (!this.beginOrderSave('submit')) {
+      if (this.orderSaveState === 'saving') return;
+      this.dialogService.alert({
+        title: 'Guardar pedido',
+        message: 'Esperá a que termine el guardado anterior o recargá la página.',
+      });
+      return;
+    }
     this.persistOrder(estado);
   }
 
@@ -2414,6 +2523,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private beginOrderSave(action: 'draft' | 'submit'): boolean {
+    if (this.orderSaveState === 'success') {
+      this.resetOrderSaveState();
+    }
     if (this.orderSaveState !== 'idle') return false;
     this.orderSaveAction = action;
     this.orderSaveState = 'saving';
@@ -2514,6 +2626,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       descripcion: this.order.descripcion?.trim() ?? '',
       estado,
       fechaEntrega: this.order.fechaEntrega || new Date().toISOString(),
+      createdAt: this.order.createdAt || new Date().toISOString(),
       total: Number(this.order.total) || 0,
       costoReal: Number(this.order.costoReal) || 0,
       gananciaEstimada: Number(this.order.gananciaEstimada) || 0,
@@ -2699,9 +2812,14 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private loadOrder(orderId: string) {
+    const requestId = ++this.loadOrderRequestId;
     this.orderService.getOrder(orderId).subscribe({
       next: (order) => {
+        if (requestId !== this.loadOrderRequestId) return;
+        if (this.editingOrderId !== orderId) return;
+
         if (!this.auth.canViewOrder(order.estado)) {
+          this.orderDetailLoading = false;
           this.dialogService.alert({
             title: 'Sin acceso',
             message: 'No tenés permiso para ver este pedido.',
@@ -2715,6 +2833,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.orderDetailLoading = false;
       },
       error: () => {
+        if (requestId !== this.loadOrderRequestId) return;
         this.orderPageReady = true;
         this.orderDetailLoading = false;
         this.dialogService.alert({
@@ -2724,6 +2843,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.router.navigate(['/orders']);
       },
     });
+  }
+
+  private coerceOrderItems(raw: unknown): OrderLineItem[] {
+    let items: OrderLineItem[] = [];
+    if (Array.isArray(raw)) {
+      items = raw.filter((line) => line && typeof line === 'object') as OrderLineItem[];
+    } else if (raw && typeof raw === 'object') {
+      items = Object.values(raw as Record<string, OrderLineItem>).filter(
+        (line) => line && typeof line === 'object'
+      );
+    }
+    if (items.length > NewOrderComponent.MAX_ORDER_LINES) {
+      items = items.slice(0, NewOrderComponent.MAX_ORDER_LINES);
+    }
+    return items;
   }
 
   private applyLoadedOrder(order: Order, options?: { includeLines?: boolean }) {
@@ -2737,6 +2871,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       clienteId: order.clienteId ?? '',
       descripcion: order.descripcion ?? '',
       estado: order.estado ?? 'pendiente',
+      createdAt: order.createdAt ?? new Date().toISOString(),
       fechaEntrega: order.fechaEntrega ?? new Date().toISOString(),
       total: Number(order.total) || 0,
       costoReal: Number(order.costoReal) || 0,
@@ -2762,9 +2897,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (order.items?.length) {
-      this.orderLines = order.items.map((line) => this.normalizeOrderLine(line));
-      this.enrichOrderLinesWithStock();
+    const items = this.coerceOrderItems(order.items);
+    this.invalidateOrderLinesViewCache();
+
+    if (items.length) {
+      this.orderLines = items.map((line) => this.normalizeOrderLine(line));
+      queueMicrotask(() => this.enrichOrderLinesWithStock());
     } else if (order.stockItemId) {
       this.orderLines = [
         this.normalizeOrderLine({
@@ -2799,13 +2937,32 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private normalizeOrderLine(line: OrderLineItem): OrderLineItem {
-    if (line.costosExtra?.length) {
+    const costosExtraRaw = Array.isArray(line.costosExtra) ? line.costosExtra : [];
+    const costosExtra = costosExtraRaw
+      .slice(0, NewOrderComponent.MAX_EXTRA_COSTS_PER_LINE)
+      .map((extra) => ({
+        nombre: String(extra?.nombre ?? '').trim() || 'Extra',
+        costo: Number(extra?.costo) || 0,
+      }));
+
+    if (costosExtra.length) {
       return {
-        ...line,
-        costosExtra: line.costosExtra.map((extra) => ({
-          nombre: extra.nombre ?? '',
-          costo: Number(extra.costo) || 0,
-        })),
+        stockItemId: String(line.stockItemId ?? '').trim(),
+        nombre: String(line.nombre ?? '').trim() || 'Producto',
+        cantidad: Math.max(1, Number(line.cantidad) || 1),
+        costoUnitario: Number(line.costoUnitario) || 0,
+        costoPersonalizacion: Number(line.costoPersonalizacion) || 0,
+        costosExtra,
+        precioVenta: line.precioVenta == null ? null : Number(line.precioVenta) || 0,
+        precioSugerido: line.precioSugerido,
+        priceCatalogId: line.priceCatalogId,
+        controlaStock: line.controlaStock,
+        permitirStockNegativo: line.permitirStockNegativo,
+        stockDisponible: line.stockDisponible,
+        cantidadReservada: line.cantidadReservada,
+        cantidadUsada: line.cantidadUsada,
+        cantidadFaltante: line.cantidadFaltante,
+        estadoStockItem: line.estadoStockItem,
       };
     }
 
@@ -2813,8 +2970,22 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const qty = Math.max(1, Number(line.cantidad) || 1);
     const legacyUnit = legacyTotal > 0 ? legacyTotal / qty : 0;
     return {
-      ...line,
+      stockItemId: String(line.stockItemId ?? '').trim(),
+      nombre: String(line.nombre ?? '').trim() || 'Producto',
+      cantidad: qty,
+      costoUnitario: Number(line.costoUnitario) || 0,
+      costoPersonalizacion: legacyTotal,
       costosExtra: legacyTotal > 0 ? [{ nombre: 'Personalización', costo: legacyUnit }] : [],
+      precioVenta: line.precioVenta == null ? null : Number(line.precioVenta) || 0,
+      precioSugerido: line.precioSugerido,
+      priceCatalogId: line.priceCatalogId,
+      controlaStock: line.controlaStock,
+      permitirStockNegativo: line.permitirStockNegativo,
+      stockDisponible: line.stockDisponible,
+      cantidadReservada: line.cantidadReservada,
+      cantidadUsada: line.cantidadUsada,
+      cantidadFaltante: line.cantidadFaltante,
+      estadoStockItem: line.estadoStockItem,
     };
   }
 
@@ -2886,6 +3057,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           }
         }
         if (changed) {
+          this.invalidateOrderLinesViewCache();
           this.calculateTotals();
         }
       },
@@ -2893,7 +3065,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private refreshOrderLineCatalogLinks() {
-    if (!this.priceCatalogEntries.length) return;
+    if (!this.priceCatalogEntries.length || this.orderDetailLoading) return;
+    this.catalogPriceOptionsCache.clear();
     this.enrichOrderLinesWithStock();
   }
 
@@ -2970,6 +3143,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       clienteId: '',
       descripcion: '',
       estado: 'pendiente',
+      createdAt: new Date().toISOString(),
       fechaEntrega: new Date().toISOString(),
       total: 0,
       costoReal: 0,

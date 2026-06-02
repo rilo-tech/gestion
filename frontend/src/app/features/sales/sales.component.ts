@@ -550,12 +550,12 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           title="Productos"
           icon="package"
           [lineCount]="sale.items?.length ?? 0"
-          [searchVisible]="false"
-          emptyMessage="Sin productos registrados.">
+          [searchVisible]="false">
           <app-transaction-lines-table
             [lines]="getDetailSaleTableLines(sale)"
             [columns]="detailSaleTableColumns"
             [readOnly]="true"
+            [showEmptyPlaceholder]="true"
             emptyMessage="Sin productos registrados.">
           </app-transaction-lines-table>
         </app-transaction-lines-section>
@@ -814,9 +814,7 @@ export class SalesComponent implements OnInit {
     this.clientService.getClientsPage(120).subscribe((page) => {
       this.clients = page.items;
     });
-    if (this.auth.canCreateSales) {
-      this.loadEligibleOrders();
-    }
+    // Pedidos elegibles: solo al abrir el modal «venta desde pedido».
 
     this.route.queryParamMap.subscribe((params) => {
       if (params.get('restoreDraft') === '1') {

@@ -405,7 +405,8 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
         </label>
         <app-form-panel-footer
           [saveLabel]="editingCollaborator?.id ? 'Guardar' : 'Crear colaborador'"
-          (cancelClick)="closeCollaboratorModal()">
+          (cancelClick)="closeCollaboratorModal()"
+          (saveClick)="saveCollaborator()">
         </app-form-panel-footer>
       </form>
     </app-transaction-modal>
@@ -487,7 +488,8 @@ type MovementModalMode = 'horas' | 'extra' | 'pago';
 
         <app-form-panel-footer
           saveLabel="Guardar"
-          (cancelClick)="closeMovementModal()">
+          (cancelClick)="closeMovementModal()"
+          (saveClick)="saveMovement()">
         </app-form-panel-footer>
       </form>
     </app-transaction-modal>

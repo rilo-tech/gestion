@@ -22,6 +22,8 @@ import {
   getCategoriasGasto,
   getDefaultCashAmbitoId,
   getMediosPagoActivos,
+  getMedioPagoConfig,
+  getTarjetasActivas,
   resolveCashAmbito,
   usesCashAmbitoSeparation,
 } from '../../core/services/catalog-config.service';
@@ -31,16 +33,77 @@ import {
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
+  DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  MODULE_TABLE_HEAD_CELL_NESTED_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
 import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import {
+  ModuleDataTableComponent,
+  ModuleTableBodyComponent,
+  ModuleTableCellComponent,
+  ModuleTableCellTextComponent,
+  ModuleTableEmptyRowComponent,
+  ModuleTableHeadCellComponent,
+  ModuleTableHeadComponent,
+  ModuleTableRowComponent,
+  ModuleTableRowTone,
+} from '../../shared/components/module-data-table';
+import { formatMonthYearLabel } from '../../core/utils/date-format';
 
-type EstadoFilter = 'all' | PayableDisplayEstado;
-type OrigenFilter = 'all' | 'servicios' | 'compras';
+type PayablesViewTab = 'month' | 'account';
+
+interface PayableInstallmentGroupSummary {
+  count: number;
+  purchaseCount: number;
+  pendingCount: number;
+  totalPending: number;
+  nextDueDate: string;
+  summaryEstado: PayableDisplayEstado;
+}
+
+interface PayableAccountCardHeader extends PayableInstallmentGroupSummary {
+  tarjetaId: string;
+  tarjetaLabel: string;
+}
+
+interface PayableAccountPurchaseHeader extends PayableInstallmentGroupSummary {
+  obligacionId: string;
+  compraId?: string;
+  compraLabel?: string;
+  title: string;
+  subtitle: string;
+}
+
+interface PayableAccountPurchaseEntry {
+  key: string;
+  header: PayableAccountPurchaseHeader;
+  rows: PayableInstallment[];
+}
+
+interface PayableAccountMonthStatement {
+  key: string;
+  mes: string;
+  pendingCount: number;
+  totalPending: number;
+  rows: PayableInstallment[];
+}
+
+interface PayableAccountCardEntry {
+  key: string;
+  header: PayableAccountCardHeader;
+  purchases: PayableAccountPurchaseEntry[];
+  monthStatements: PayableAccountMonthStatement[];
+}
 
 interface ObligationPreset {
   id: string;
@@ -68,209 +131,554 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
     ModalFormFooterComponent,
     ModulePageHeaderComponent,
     CompactDataListComponent,
+    CompactListRowComponent,
     ListSearchFieldComponent,
+    ModuleDataTableComponent,
+    ModuleTableHeadComponent,
+    ModuleTableHeadCellComponent,
+    ModuleTableBodyComponent,
+    ModuleTableRowComponent,
+    ModuleTableCellComponent,
+    ModuleTableCellTextComponent,
+    ModuleTableEmptyRowComponent,
   ],
   template: `
     <div [class]="pageShellClass">
       <app-module-page-header
         title="Cuentas a pagar"
-        description="Gastos fijos y servicios que no son compras: VPS, luz, agua, alquiler, etc. Los sueldos se gestionan en Colaboradores. Las compras con tarjeta generan cuotas acá."
         [showMobileSearch]="true"
-        [(searchQuery)]="searchQuery"
+        [searchQuery]="searchQuery"
+        (searchQueryChange)="onSearchQueryChange($event)"
         searchFieldName="searchQueryMobile"
         activityModule="payables">
+        <p headerExtra class="hidden sm:block text-xs text-gray-500 dark:text-gray-400 mt-1 leading-snug max-w-3xl">
+          <span class="font-semibold text-gray-600 dark:text-gray-300">Aviso:</span>
+          <span>
+            en <span class="font-medium">Por mes</span> pagás cuota por cuota; en <span class="font-medium">Por cuenta</span> expandí la tarjeta para ver compras y, al elegir una, sus cuotas, o usá
+            <span class="font-medium">Pagar resumen</span> en cada tarjeta.
+          </span>
+        </p>
         <app-icon-action headerActions label="Nuevo gasto fijo" (clicked)="openCreateModal()">
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
         </app-icon-action>
       </app-module-page-header>
 
-      <div *ngIf="usesAmbitoSeparation" class="mb-6 sm:mb-8">
-        <div class="flex gap-2 border-b border-gray-200 overflow-x-auto">
+      <div *ngIf="usesAmbitoSeparation" class="hidden sm:block mb-6 sm:mb-8">
+        <div [class]="payablesTabRowClass + ' border-b border-gray-200 dark:border-gray-700'">
           <button
             *ngFor="let ambito of cajaAmbitos"
             type="button"
-            (click)="activeAmbitoTab = ambito.id"
-            class="px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
+            (click)="setActiveAmbito(ambito.id)"
+            [class]="payablesTabButtonClass"
             [class.border-teal-600]="activeAmbitoTab === ambito.id"
             [class.text-teal-700]="activeAmbitoTab === ambito.id"
+            [class.dark:text-teal-400]="activeAmbitoTab === ambito.id"
             [class.border-transparent]="activeAmbitoTab !== ambito.id"
-            [class.text-gray-500]="activeAmbitoTab !== ambito.id">
+            [class.text-gray-500]="activeAmbitoTab !== ambito.id"
+            [class.dark:text-gray-400]="activeAmbitoTab !== ambito.id">
             {{ ambito.label }}
           </button>
         </div>
       </div>
 
-      <div class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+      <div class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-8">
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
-            {{ usesAmbitoSeparation ? activeAmbitoLabel + ' · ' : '' }}Pendientes
+            {{ kpiScopePrefix }}Pendientes
           </p>
           <p class="text-xl sm:text-2xl font-bold text-amber-600 tabular-nums">{{ countPendientes }}</p>
         </div>
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-red-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
-            {{ usesAmbitoSeparation ? activeAmbitoLabel + ' · ' : '' }}Vencidas
+            {{ kpiScopePrefix }}Vencidas
           </p>
           <p class="text-xl sm:text-2xl font-bold text-red-600 tabular-nums">{{ countVencidas }}</p>
         </div>
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
-            {{ usesAmbitoSeparation ? activeAmbitoLabel + ' · ' : '' }}Pagadas
+            {{ kpiScopePrefix }}Pagadas
           </p>
           <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums">{{ countPagadas }}</p>
         </div>
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm col-span-2 lg:col-span-1">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
-            {{ usesAmbitoSeparation ? activeAmbitoLabel + ' · ' : '' }}Total pendiente
+            {{ kpiScopePrefix }}Total pendiente
           </p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums">{{ '$' + totalPendiente }}</p>
         </div>
       </div>
 
-      <div *ngIf="cardStatements.length > 0" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-        <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 class="text-sm font-semibold text-gray-900">Resúmenes por cuenta</h2>
-            <p class="text-xs text-gray-500 mt-1">Pagá todas las cuotas de una tarjeta o línea de crédito en un mes de una sola vez.</p>
+      <app-compact-data-list [showSearch]="true" class="block mb-4 sm:mb-6">
+        <div listSearch class="border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40">
+          <div class="border-b border-gray-200 dark:border-gray-700">
+            <div
+              *ngIf="usesAmbitoSeparation"
+              [class]="payablesTabRowClass + ' px-2 pt-1.5 sm:hidden'">
+              <button
+                *ngFor="let ambito of cajaAmbitos"
+                type="button"
+                (click)="setActiveAmbito(ambito.id)"
+                [class]="payablesTabButtonClass"
+                [class.border-teal-600]="activeAmbitoTab === ambito.id"
+                [class.text-teal-700]="activeAmbitoTab === ambito.id"
+                [class.dark:text-teal-400]="activeAmbitoTab === ambito.id"
+                [class.border-transparent]="activeAmbitoTab !== ambito.id"
+                [class.text-gray-500]="activeAmbitoTab !== ambito.id"
+                [class.dark:text-gray-400]="activeAmbitoTab !== ambito.id">
+                {{ ambito.label }}
+              </button>
+            </div>
+            <div [class]="payablesTabRowClass + ' px-2 pt-1 pb-0 sm:px-6 sm:pt-3 sm:pb-0'">
+              <button
+                type="button"
+                (click)="setViewTab('month')"
+                [class]="payablesTabButtonClass"
+                [class.border-teal-600]="viewTab === 'month'"
+                [class.text-teal-700]="viewTab === 'month'"
+                [class.dark:text-teal-400]="viewTab === 'month'"
+                [class.border-transparent]="viewTab !== 'month'"
+                [class.text-gray-500]="viewTab !== 'month'"
+                [class.dark:text-gray-400]="viewTab !== 'month'">
+                Por mes
+              </button>
+              <button
+                type="button"
+                (click)="setViewTab('account')"
+                [class]="payablesTabButtonClass"
+                [class.border-teal-600]="viewTab === 'account'"
+                [class.text-teal-700]="viewTab === 'account'"
+                [class.dark:text-teal-400]="viewTab === 'account'"
+                [class.border-transparent]="viewTab !== 'account'"
+                [class.text-gray-500]="viewTab !== 'account'"
+                [class.dark:text-gray-400]="viewTab !== 'account'">
+                Por cuenta
+              </button>
+            </div>
           </div>
-          <input
-            type="month"
-            [(ngModel)]="cardStatementMes"
-            name="cardStatementMes"
-            (ngModelChange)="loadCardStatements()"
-            class="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+          <div class="sm:hidden px-2 py-2 border-b border-gray-100 dark:border-gray-800">
+            <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">
+              {{ viewTab === 'month' ? 'Mes' : 'Cuenta' }}
+            </label>
+            <input
+              *ngIf="viewTab === 'month'"
+              type="month"
+              [(ngModel)]="mesFilter"
+              name="mesFilterMobile"
+              (ngModelChange)="onMesFilterChange()"
+              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500"
+              title="Mes de vencimiento" />
+            <select
+              *ngIf="viewTab === 'account'"
+              [(ngModel)]="cuentaFilter"
+              (ngModelChange)="onCuentaFilterChange()"
+              name="cuentaFilterMobile"
+              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+              <option [ngValue]="''">Todas las cuentas</option>
+              <option *ngFor="let t of tarjetaFilterOptions" [ngValue]="t.id">{{ t.label }}</option>
+            </select>
+          </div>
+          <div [class]="desktopListSearchWrapClass + ' border-0 hidden sm:block'">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+              <div class="sm:flex-1 sm:min-w-[12rem]">
+                <app-list-search-field
+                  mode="filter"
+                  [query]="searchQuery"
+                  (queryChange)="onSearchQueryChange($event)"
+                  name="searchQuery"
+                  [placeholder]="viewTab === 'month' ? 'Buscar cuota, cuenta, compra...' : 'Buscar cuenta o compra...'"
+                  extraClass="w-full">
+                </app-list-search-field>
+              </div>
+              <div class="flex shrink-0 sm:pl-4 sm:border-l border-gray-200 dark:border-gray-700">
+                <input
+                  *ngIf="viewTab === 'month'"
+                  type="month"
+                  [(ngModel)]="mesFilter"
+                  name="mesFilter"
+                  (ngModelChange)="onMesFilterChange()"
+                  class="w-full sm:w-auto min-w-[10.5rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500"
+                  title="Mes de vencimiento" />
+                <select
+                  *ngIf="viewTab === 'account'"
+                  [(ngModel)]="cuentaFilter"
+                  (ngModelChange)="onCuentaFilterChange()"
+                  name="cuentaFilter"
+                  class="w-full sm:w-auto min-w-[12rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+                  <option [ngValue]="''">Todas las cuentas</option>
+                  <option *ngFor="let t of tarjetaFilterOptions" [ngValue]="t.id">{{ t.label }}</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
-        <div [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
-            <thead>
-              <tr class="bg-gray-50 border-b border-gray-100">
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Cuenta</th>
-                <th class="hidden md:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Medio</th>
-                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Mes</th>
-                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Cuotas</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Total</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Acción</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let row of scopedCardStatements" class="hover:bg-gray-50">
-                <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900">
-                  {{ row.tarjetaLabel }}
-                  <div class="text-xs text-gray-400 sm:hidden">
-                    {{ row.medioPagoLabel }} · {{ formatMes(row.mes) }} · {{ row.cuotasCount }} cuota(s)
-                  </div>
-                </td>
-                <td class="hidden md:table-cell px-6 py-3 text-sm text-gray-600">{{ row.medioPagoLabel }}</td>
-                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600">{{ formatMes(row.mes) }}</td>
-                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600 tabular-nums">{{ row.cuotasCount }}</td>
-                <td class="px-4 sm:px-6 py-3 text-sm font-semibold text-right tabular-nums">{{ '$' + row.total }}</td>
-                <td class="px-4 sm:px-6 py-3 text-right">
-                  <button
-                    type="button"
-                    (click)="openPayCardStatement(row)"
-                    class="text-xs font-semibold text-teal-700 hover:underline">
-                    Pagar resumen
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
 
-      <app-compact-data-list [showSearch]="true" class="block mb-6">
-        <div listSearch class="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100 bg-gray-50 flex flex-col sm:flex-row sm:items-center gap-3">
-          <app-list-search-field
-            mode="filter"
-            [(query)]="searchQuery"
-            name="searchQuery"
-            placeholder="Buscar por beneficiario..."
-            extraClass="hidden sm:block sm:max-w-xs">
-          </app-list-search-field>
-          <select
-            [(ngModel)]="origenFilter"
-            name="origenFilter"
-            class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
-            <option value="all">Todos los orígenes</option>
-            <option value="servicios">Gastos fijos y servicios</option>
-            <option value="compras">Cuotas de compras</option>
-          </select>
-          <select
-            [(ngModel)]="estadoFilter"
-            name="estadoFilter"
-            class="w-full sm:w-auto px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
-            <option value="all">Todos los estados</option>
-            <option value="pendiente">Pendientes</option>
-            <option value="vencida">Vencidas</option>
-            <option value="pagada">Pagadas</option>
-          </select>
-        </div>
-        <div listDesktop [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:min-w-[720px]'">
-            <thead>
-              <tr class="bg-gray-50 border-b border-gray-100">
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider w-12">Pagado</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Vencimiento</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Beneficiario</th>
-                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
-                <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cuota</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Monto</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Estado</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              <tr
-                *ngFor="let row of filteredInstallments"
-                class="transition-colors"
-                [class.bg-red-50]="row.displayEstado === 'vencida'"
-                [class.bg-teal-50/40]="row.displayEstado === 'pagada'"
-                [class.hover:bg-gray-50]="row.displayEstado === 'pendiente'">
-                <td class="px-4 sm:px-6 py-3">
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
+          <ng-container *ngIf="viewTab === 'month'">
+            <app-compact-list-row
+              *ngFor="let row of monthViewInstallments"
+              (activate)="onMobileMonthRowActivate(row)"
+              [disabled]="savingCuotaId === row.id">
+              <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100">
+                {{ installmentCuentaLabel(row) }}
+              </div>
+              <div compactSubtitle class="compact-list-subtitle truncate">
+                {{ formatDate(row.fechaVencimiento) }} · {{ cuotaLabel(row) }} · {{ installmentDetalleLabel(row) }}
+              </div>
+              <div compactTrailing class="flex flex-col items-end gap-0.5 shrink-0">
+                <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ '$' + row.monto }}</span>
+                <span
+                  class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                  [ngClass]="estadoBadgeClass(row.displayEstado)">
+                  {{ estadoLabel(row.displayEstado) }}
+                </span>
+              </div>
+            </app-compact-list-row>
+            <p *ngIf="loading" [class]="compactListEmptyClass">Cargando vencimientos...</p>
+            <p *ngIf="!loading && !mesFilter" [class]="compactListEmptyClass">
+              Elegí un mes para ver las cuotas.
+            </p>
+            <p *ngIf="!loading && mesFilter && monthViewInstallments.length === 0" [class]="compactListEmptyClass">
+              {{ emptyMonthViewMessage }}
+            </p>
+          </ng-container>
+
+          <ng-container *ngIf="viewTab === 'account'">
+            <ng-container *ngFor="let card of accountViewCards">
+              <app-compact-list-row (activate)="toggleAccountCardExpand(card.key)">
+                <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                  <i-lucide
+                    [name]="isAccountCardExpanded(card.key) ? 'chevron-down' : 'chevron-right'"
+                    class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
+                  {{ card.header.tarjetaLabel }}
+                </div>
+                <div compactSubtitle class="compact-list-subtitle truncate">
+                  {{ accountCardSubtitle(card) }}
+                </div>
+                <div compactTrailing class="flex flex-col items-end gap-1 shrink-0">
+                  <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">
+                    {{ '$' + card.header.totalPending }}
+                  </span>
                   <button
+                    *ngIf="card.header.pendingCount > 0"
                     type="button"
-                    (click)="togglePaid(row)"
-                    [disabled]="savingCuotaId === row.id"
-                    class="inline-flex items-center justify-center w-8 h-8 rounded-lg border transition-colors disabled:opacity-50"
-                    [class.border-teal-500]="row.displayEstado === 'pagada'"
-                    [class.bg-teal-500]="row.displayEstado === 'pagada'"
-                    [class.text-white]="row.displayEstado === 'pagada'"
-                    [class.border-gray-300]="row.displayEstado !== 'pagada'"
-                    [class.hover:border-teal-500]="row.displayEstado !== 'pagada'"
-                    [attr.aria-label]="row.displayEstado === 'pagada' ? 'Marcar pendiente' : 'Marcar pagado'">
-                    <i-lucide *ngIf="row.displayEstado === 'pagada'" name="check" class="w-4 h-4"></i-lucide>
+                    (click)="openPayCardStatementForCard(card); $event.stopPropagation()"
+                    class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap text-right">
+                    Pagar resumen
+                    <span *ngIf="cardPayResumenHint(card) as hint" class="block font-normal opacity-80 capitalize">{{ hint }}</span>
                   </button>
+                  <span
+                    *ngIf="card.header.pendingCount === 0"
+                    class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                    [ngClass]="estadoBadgeClass(card.header.summaryEstado)">
+                    Al día
+                  </span>
+                </div>
+              </app-compact-list-row>
+
+              <div
+                *ngIf="isAccountCardExpanded(card.key)"
+                class="border-b border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/30">
+                <ng-container *ngFor="let purchase of card.purchases">
+                  <div class="pl-3 ml-2 border-l-2 border-teal-200/70 dark:border-teal-800/60">
+                    <app-compact-list-row (activate)="toggleAccountPurchaseExpand(purchase.key)">
+                      <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                        <i-lucide
+                          [name]="isAccountPurchaseExpanded(purchase.key) ? 'chevron-down' : 'chevron-right'"
+                          class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
+                        {{ purchase.header.title }}
+                      </div>
+                      <div compactSubtitle class="compact-list-subtitle truncate">
+                        {{ purchase.header.subtitle }}
+                        <span *ngIf="purchase.header.nextDueDate"> · vence {{ formatDate(purchase.header.nextDueDate) }}</span>
+                        · {{ '$' + purchase.header.totalPending }} pend.
+                      </div>
+                      <div compactTrailing class="shrink-0 text-[10px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+                        {{ purchase.header.pendingCount }}/{{ purchase.header.count }}
+                      </div>
+                    </app-compact-list-row>
+
+                    <div *ngIf="isAccountPurchaseExpanded(purchase.key)" class="border-t border-gray-100/80 dark:border-gray-800/80">
+                      <app-compact-list-row
+                        *ngFor="let row of purchase.rows"
+                        (activate)="onMobileMonthRowActivate(row)"
+                        [disabled]="savingCuotaId === row.id">
+                        <div compactTitle class="compact-list-title truncate text-gray-800 dark:text-gray-200 pl-4">
+                          {{ cuotaLabel(row) }} · {{ formatDate(row.fechaVencimiento) }}
+                        </div>
+                        <div compactSubtitle class="compact-list-subtitle truncate capitalize pl-4">
+                          {{ formatMes(installmentMesKey(row)) }}
+                        </div>
+                        <div compactTrailing class="flex flex-col items-end gap-0.5 shrink-0">
+                          <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ '$' + row.monto }}</span>
+                          <span
+                            class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                            [ngClass]="estadoBadgeClass(row.displayEstado)">
+                            {{ estadoLabel(row.displayEstado) }}
+                          </span>
+                        </div>
+                      </app-compact-list-row>
+                    </div>
+                  </div>
+                </ng-container>
+              </div>
+            </ng-container>
+            <p *ngIf="loading" [class]="compactListEmptyClass">Cargando vencimientos...</p>
+            <p *ngIf="!loading && accountViewCards.length === 0" [class]="compactListEmptyClass">
+              {{ emptyAccountViewMessage }}
+            </p>
+          </ng-container>
+        </div>
+
+        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
+          <app-module-data-table
+            *ngIf="viewTab === 'month'"
+            minWidthClass="min-w-[52rem]">
+            <colgroup>
+              <col style="width: 3.25rem" />
+              <col style="width: 11rem" />
+              <col style="width: 9rem" />
+              <col style="width: 6.5rem" />
+              <col style="width: 5.5rem" />
+              <col style="width: 6rem" />
+              <col style="width: 5.5rem" />
+            </colgroup>
+            <thead app-module-table-head>
+              <th app-module-table-head-cell align="right" [nowrap]="true">Cuota</th>
+              <th app-module-table-head-cell>Cuenta</th>
+              <th app-module-table-head-cell>Detalle</th>
+              <th app-module-table-head-cell [nowrap]="true">Vencimiento</th>
+              <th app-module-table-head-cell align="right" [nowrap]="true">Monto</th>
+              <th app-module-table-head-cell>Estado</th>
+              <th app-module-table-head-cell align="right" [nowrap]="true">Acción</th>
+            </thead>
+            <tbody app-module-table-body>
+              <tr app-module-table-row
+                *ngFor="let row of monthViewInstallments"
+                [tone]="installmentRowTone(row)">
+                <td app-module-table-cell align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700 max-w-0">
+                  {{ cuotaLabel(row) }}
                 </td>
-                <td class="px-4 sm:px-6 py-3 text-sm whitespace-nowrap tabular-nums"
+                <td app-module-table-cell extraClass="max-w-0 overflow-hidden">
+                  <span class="block truncate font-medium text-gray-900 dark:text-gray-100" [title]="installmentCuentaLabel(row)">
+                    {{ installmentCuentaLabel(row) }}
+                  </span>
+                </td>
+                <td app-module-table-cell extraClass="max-w-0 overflow-hidden">
+                  <span class="block truncate text-gray-600 dark:text-gray-400" [title]="installmentDetalleLabel(row)">
+                    {{ installmentDetalleLabel(row) }}
+                  </span>
+                </td>
+                <td app-module-table-cell [nowrap]="true" extraClass="tabular-nums">
+                  <span
                     [class.text-red-700]="row.displayEstado === 'vencida'"
                     [class.font-semibold]="row.displayEstado === 'vencida'">
-                  {{ formatDate(row.fechaVencimiento) }}
+                    {{ formatDate(row.fechaVencimiento) }}
+                  </span>
                 </td>
-                <td class="px-4 sm:px-6 py-3 text-sm text-gray-900">
-                  <div class="font-medium truncate">{{ row.beneficiario }}</div>
-                  <div *ngIf="row.descripcion" class="text-xs text-gray-500 truncate">{{ row.descripcion }}</div>
-                  <div class="text-xs text-gray-400 sm:hidden">{{ tipoLabel(row.tipo) }} · Cuota {{ row.numeroCuota }}</div>
-                </td>
-                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600">{{ tipoLabel(row.tipo) }}</td>
-                <td class="hidden sm:table-cell px-6 py-3 text-sm text-gray-600 tabular-nums">{{ row.numeroCuota }}</td>
-                <td class="px-4 sm:px-6 py-3 text-sm font-semibold text-right tabular-nums text-gray-900">
+                <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
                   {{ '$' + row.monto }}
                 </td>
-                <td class="px-4 sm:px-6 py-3">
-                  <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
+                <td app-module-table-cell>
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
                     {{ estadoLabel(row.displayEstado) }}
                   </span>
                 </td>
-              </tr>
-              <tr *ngIf="loading">
-                <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando vencimientos...</td>
-              </tr>
-              <tr *ngIf="!loading && filteredInstallments.length === 0">
-                <td colspan="7" class="px-6 py-12 text-center text-gray-400">
-                  No hay vencimientos con esos filtros. Usá <span class="font-semibold">Nuevo gasto fijo</span> para cargar sueldos, servicios o alquiler.
+                <td app-module-table-cell align="right">
+                  <button
+                    *ngIf="row.displayEstado !== 'pagada'"
+                    type="button"
+                    (click)="togglePaid(row)"
+                    [disabled]="savingCuotaId === row.id"
+                    class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                    Pagar cuota
+                  </button>
+                  <button
+                    *ngIf="row.displayEstado === 'pagada'"
+                    type="button"
+                    (click)="togglePaid(row)"
+                    [disabled]="savingCuotaId === row.id"
+                    class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
+                    Deshacer
+                  </button>
                 </td>
               </tr>
+              <tr app-module-table-empty-row *ngIf="loading" [colspan]="7">Cargando vencimientos...</tr>
+              <tr app-module-table-empty-row *ngIf="!loading && !mesFilter" [colspan]="7">
+                Elegí un mes para ver las cuotas de todas las cuentas.
+              </tr>
+              <tr app-module-table-empty-row *ngIf="!loading && mesFilter && monthViewInstallments.length === 0" [colspan]="7">
+                {{ emptyMonthViewMessage }}
+              </tr>
             </tbody>
-          </table>
+          </app-module-data-table>
+
+          <app-module-data-table
+            *ngIf="viewTab === 'account'"
+            minWidthClass="min-w-[760px]">
+            <colgroup>
+              <col class="w-[2.5rem]" />
+              <col class="w-[14rem]" />
+              <col class="w-[12rem]" />
+              <col class="w-[7rem]" />
+              <col class="w-[6.5rem]" />
+              <col class="w-[7.5rem]" />
+            </colgroup>
+            <thead app-module-table-head>
+              <th app-module-table-head-cell></th>
+              <th app-module-table-head-cell>Cuenta</th>
+              <th app-module-table-head-cell>Resumen</th>
+              <th app-module-table-head-cell [nowrap]="true">Próx. venc.</th>
+              <th app-module-table-head-cell align="right" [nowrap]="true">Pendiente</th>
+              <th app-module-table-head-cell align="right">Acción</th>
+            </thead>
+            <tbody app-module-table-body>
+              <ng-container *ngFor="let card of accountViewCards">
+                <tr
+                  app-module-table-row
+                  tone="group"
+                  [clickable]="true"
+                  (click)="toggleAccountCardExpand(card.key)">
+                  <td app-module-table-cell align="center" extraClass="w-10">
+                    <i-lucide
+                      [name]="isAccountCardExpanded(card.key) ? 'chevron-down' : 'chevron-right'"
+                      class="w-4 h-4 text-gray-500 mx-auto"></i-lucide>
+                  </td>
+                  <td app-module-table-cell>
+                    <span class="font-medium text-gray-900 dark:text-gray-100 truncate block">{{ card.header.tarjetaLabel }}</span>
+                  </td>
+                  <td app-module-table-cell extraClass="text-gray-600 text-sm">
+                    {{ accountCardSubtitle(card) }}
+                  </td>
+                  <td app-module-table-cell [nowrap]="true" extraClass="tabular-nums text-gray-700">
+                    <span
+                      *ngIf="card.header.nextDueDate"
+                      [class.text-red-700]="card.header.summaryEstado === 'vencida'"
+                      [class.font-semibold]="card.header.summaryEstado === 'vencida'">
+                      {{ formatDate(card.header.nextDueDate) }}
+                    </span>
+                    <span *ngIf="!card.header.nextDueDate" class="text-gray-400">—</span>
+                  </td>
+                  <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+                    {{ '$' + card.header.totalPending }}
+                  </td>
+                  <td app-module-table-cell align="right">
+                    <button
+                      *ngIf="card.header.pendingCount > 0"
+                      type="button"
+                      (click)="openPayCardStatementForCard(card); $event.stopPropagation()"
+                      class="inline-flex flex-col items-end text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
+                      <span>Pagar resumen</span>
+                      <span *ngIf="cardPayResumenHint(card) as hint" class="text-[10px] font-normal opacity-80 capitalize">{{ hint }}</span>
+                    </button>
+                    <span
+                      *ngIf="card.header.pendingCount === 0"
+                      class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
+                      [ngClass]="estadoBadgeClass(card.header.summaryEstado)">
+                      Al día
+                    </span>
+                  </td>
+                </tr>
+
+                <tr *ngIf="isAccountCardExpanded(card.key)">
+                  <td colspan="6" class="p-0 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/40">
+                    <div class="divide-y divide-gray-100 dark:divide-gray-800">
+                      <div *ngFor="let purchase of card.purchases" class="border-l-4 border-teal-300/60 dark:border-teal-700/50">
+                        <button
+                          type="button"
+                          (click)="toggleAccountPurchaseExpand(purchase.key)"
+                          class="w-full px-4 py-2.5 bg-gray-100/50 dark:bg-gray-800/30 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                          <div class="flex items-start gap-2">
+                            <i-lucide
+                              [name]="isAccountPurchaseExpanded(purchase.key) ? 'chevron-down' : 'chevron-right'"
+                              class="w-4 h-4 shrink-0 text-gray-500 mt-0.5"></i-lucide>
+                            <div class="min-w-0 flex-1">
+                              <p class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ purchase.header.title }}</p>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                {{ purchase.header.subtitle }}
+                                <span *ngIf="purchase.header.nextDueDate"> · vence {{ formatDate(purchase.header.nextDueDate) }}</span>
+                                · {{ '$' + purchase.header.totalPending }} pend.
+                              </p>
+                            </div>
+                            <span class="shrink-0 text-[11px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+                              {{ purchase.header.pendingCount }}/{{ purchase.header.count }} cuotas
+                            </span>
+                          </div>
+                        </button>
+                        <table
+                          *ngIf="isAccountPurchaseExpanded(purchase.key)"
+                          [class]="nativeCompactTableClass + ' module-table-nested module-data-table-layout w-full'">
+                          <thead>
+                            <tr class="bg-gray-100/80 dark:bg-gray-800/60">
+                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Cuota</th>
+                              <th [class]="moduleTableHeadNestedClass">Venc.</th>
+                              <th [class]="moduleTableHeadNestedClass">Mes</th>
+                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Monto</th>
+                              <th [class]="moduleTableHeadNestedClass">Estado</th>
+                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-gray-50 dark:divide-gray-800">
+                            <tr
+                              app-module-table-row
+                              *ngFor="let row of purchase.rows"
+                              [tone]="installmentRowTone(row)"
+                              [hover]="false">
+                              <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700">
+                                {{ cuotaLabel(row) }}
+                              </td>
+                              <td app-module-table-cell nested [nowrap]="true" extraClass="tabular-nums">
+                                <span
+                                  [class.text-red-700]="row.displayEstado === 'vencida'"
+                                  [class.font-semibold]="row.displayEstado === 'vencida'">
+                                  {{ formatDate(row.fechaVencimiento) }}
+                                </span>
+                              </td>
+                              <td app-module-table-cell nested [nowrap]="true" extraClass="text-gray-600 capitalize">
+                                {{ formatMes(installmentMesKey(row)) }}
+                              </td>
+                              <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
+                                {{ '$' + row.monto }}
+                              </td>
+                              <td app-module-table-cell nested>
+                                <span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
+                                  {{ estadoLabel(row.displayEstado) }}
+                                </span>
+                              </td>
+                              <td app-module-table-cell nested align="right">
+                                <button
+                                  *ngIf="row.displayEstado !== 'pagada'"
+                                  type="button"
+                                  (click)="togglePaid(row)"
+                                  [disabled]="savingCuotaId === row.id"
+                                  class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                                  Pagar cuota
+                                </button>
+                                <button
+                                  *ngIf="row.displayEstado === 'pagada'"
+                                  type="button"
+                                  (click)="togglePaid(row)"
+                                  [disabled]="savingCuotaId === row.id"
+                                  class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
+                                  Deshacer
+                                </button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </ng-container>
+
+              <tr app-module-table-empty-row *ngIf="loading" [colspan]="6">
+                Cargando vencimientos...
+              </tr>
+              <tr app-module-table-empty-row *ngIf="!loading && accountViewCards.length === 0" [colspan]="6">
+                {{ emptyAccountViewMessage }}
+              </tr>
+            </tbody>
+          </app-module-data-table>
         </div>
       </app-compact-data-list>
 
@@ -477,25 +885,63 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
     <app-transaction-modal
       [open]="payCardModalOpen"
       title="Pagar resumen"
-      [subtitle]="payCardTarget ? payCardTarget.tarjetaLabel + ' · ' + formatMes(payCardTarget.mes) : ''"
+      [subtitle]="payCardModalSubtitle"
+      [hideSubtitleOnMobile]="false"
       (closed)="closePayCardModal()">
       <div *ngIf="payCardTarget as target" class="space-y-4">
-        <div class="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex justify-between items-center">
-          <span class="text-sm text-gray-600">{{ target.cuotasCount }} cuota(s) pendientes</span>
-          <span class="text-lg font-bold tabular-nums text-gray-900">{{ '$' + target.total }}</span>
+        <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 px-4 py-3 space-y-1">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Cuenta / tarjeta
+          </p>
+          <p class="text-base font-bold text-gray-900 dark:text-gray-100">{{ target.tarjetaLabel }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-300 capitalize">
+            Resumen de {{ formatMes(target.mes) }}
+          </p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 leading-snug">
+            El mes se arma por la <span class="font-medium">fecha de vencimiento</span> de cada cuota incluida abajo.
+          </p>
+        </div>
+
+        <div>
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+            Cuotas del resumen ({{ payCardPendingRows.length }})
+          </p>
+          <ul
+            class="rounded-xl border border-gray-100 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800 max-h-52 overflow-y-auto bg-white dark:bg-gray-900">
+            <li
+              *ngFor="let row of payCardPendingRows"
+              class="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+              <div class="min-w-0">
+                <p class="font-medium text-gray-900 dark:text-gray-100 truncate">
+                  {{ installmentCuotaCompraLabel(row) }}
+                </p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Vence {{ formatDate(row.fechaVencimiento) }}
+                </p>
+              </div>
+              <span class="shrink-0 font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+                {{ '$' + row.monto }}
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-900 px-4 py-3 flex justify-between items-center">
+          <span class="text-sm text-teal-900 dark:text-teal-200">Total · un egreso de caja</span>
+          <span class="text-lg font-bold tabular-nums text-teal-900 dark:text-teal-100">{{ '$' + target.total }}</span>
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago (egreso de caja)</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Medio de pago (egreso de caja)</label>
           <select
             [(ngModel)]="payCardMedioId"
             name="payCardMedioId"
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm bg-white">
+            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900">
             <option *ngFor="let medio of mediosPagoCaja" [ngValue]="medio.id">{{ medio.label }}</option>
           </select>
         </div>
         <app-modal-form-footer
           [saving]="payingCardStatement"
-          primaryLabel="Confirmar pago"
+          primaryLabel="Confirmar pago del resumen"
           (cancelClick)="closePayCardModal()"
           (primaryClick)="submitPayCardStatement()">
         </app-modal-form-footer>
@@ -504,13 +950,21 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
 
     <app-transaction-modal
       [open]="payCuotaModalOpen"
-      title="Registrar pago"
-      [subtitle]="payCuotaTarget ? payCuotaTarget.beneficiario + ' · ' + formatDate(payCuotaTarget.fechaVencimiento) : ''"
+      title="Pagar cuota"
+      [subtitle]="payCuotaModalSubtitle"
+      [hideSubtitleOnMobile]="false"
       (closed)="closePayCuotaModal()">
       <div *ngIf="payCuotaTarget as target" class="space-y-4">
-        <div class="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex justify-between items-center">
-          <span class="text-sm text-gray-600">{{ target.descripcion || target.beneficiario }}</span>
-          <span class="text-lg font-bold tabular-nums text-gray-900">{{ '$' + target.monto }}</span>
+        <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 px-4 py-3 space-y-1">
+          <p class="text-base font-bold text-gray-900 dark:text-gray-100">{{ installmentCuentaLabel(target) }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-300">{{ installmentCuotaCompraLabel(target) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            Vence {{ formatDate(target.fechaVencimiento) }} · {{ formatMes(installmentMesKey(target)) }}
+          </p>
+        </div>
+        <div class="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-900 px-4 py-3 flex justify-between items-center">
+          <span class="text-sm text-teal-900 dark:text-teal-200">Monto · un egreso de caja</span>
+          <span class="text-lg font-bold tabular-nums text-teal-900 dark:text-teal-100">{{ '$' + target.monto }}</span>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago (egreso de caja)</label>
@@ -523,7 +977,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
         </div>
         <app-modal-form-footer
           [saving]="payingCuota"
-          primaryLabel="Confirmar pago"
+          primaryLabel="Confirmar pago de la cuota"
           (cancelClick)="closePayCuotaModal()"
           (primaryClick)="submitPayCuota()">
         </app-modal-form-footer>
@@ -541,6 +995,14 @@ export class PayablesComponent implements OnInit, OnDestroy {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly moduleTableHeadNestedClass = MODULE_TABLE_HEAD_CELL_NESTED_CLASS;
+  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
+  readonly payablesTabButtonClass =
+    'px-2.5 py-1 text-[11px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap sm:px-4 sm:py-2 sm:text-sm';
+  readonly payablesTabRowClass =
+    'flex gap-0.5 sm:gap-1 overflow-x-auto';
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   activeAmbitoTab = '';
@@ -549,9 +1011,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
   installments: PayableInstallment[] = [];
   obligations: PayableObligation[] = [];
   cardStatements: CardStatementSummary[] = [];
-  cardStatementMes = new Date().toISOString().slice(0, 7);
   payCardModalOpen = false;
   payCardTarget: CardStatementSummary | null = null;
+  payCardPendingRows: PayableInstallment[] = [];
   payCardMedioId = 'transferencia';
   payingCardStatement = false;
   payCuotaModalOpen = false;
@@ -565,8 +1027,23 @@ export class PayablesComponent implements OnInit, OnDestroy {
   savingObligationId: string | null = null;
 
   searchQuery = '';
-  estadoFilter: EstadoFilter = 'all';
-  origenFilter: OrigenFilter = 'all';
+  mesFilter = '';
+  cuentaFilter = '';
+  viewTab: PayablesViewTab = 'month';
+  expandedAccountCardKeys: Record<string, boolean> = {};
+  expandedAccountPurchaseKeys: Record<string, boolean> = {};
+
+  tarjetaFilterOptions: { id: string; label: string }[] = [];
+  monthViewInstallments: PayableInstallment[] = [];
+  accountViewCards: PayableAccountCardEntry[] = [];
+  mensualObligations: PayableObligation[] = [];
+  kpiScopePrefix = '';
+  countPendientes = 0;
+  countVencidas = 0;
+  countPagadas = 0;
+  totalPendiente = 0;
+
+  private payablesViewCacheKey = '';
 
   readonly obligationPresets = OBLIGATION_PRESETS;
 
@@ -576,8 +1053,12 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
       this.syncActiveAmbitoTab();
+      this.syncPayablesView();
     });
     this.configService.getAppConfig().subscribe();
+    if (!this.mesFilter) {
+      this.mesFilter = new Date().toISOString().slice(0, 7);
+    }
     this.loadData();
   }
 
@@ -610,28 +1091,347 @@ export class PayablesComponent implements OnInit, OnDestroy {
     return getCategoriasGasto(this.appConfig);
   }
 
-  get scopedInstallments(): PayableInstallment[] {
+  private getScopedInstallments(): PayableInstallment[] {
     if (!this.usesAmbitoSeparation) return this.installments;
     return this.installments.filter(
       (row) => resolveCashAmbito(row, this.appConfig) === this.activeAmbitoTab
     );
   }
 
-  get filteredInstallments(): PayableInstallment[] {
-    const query = this.searchQuery.trim().toLowerCase();
-    return this.scopedInstallments.filter((row) => {
-      if (this.estadoFilter !== 'all' && row.displayEstado !== this.estadoFilter) return false;
-      if (this.origenFilter === 'servicios' && row.compraId) return false;
-      if (this.origenFilter === 'compras' && !row.compraId) return false;
-      if (query) {
-        const haystack = `${row.beneficiario} ${row.descripcion ?? ''}`.toLowerCase();
-        if (!haystack.includes(query)) return false;
+  onSearchQueryChange(value: string): void {
+    const next = value ?? '';
+    if (this.searchQuery === next) return;
+    this.searchQuery = next;
+    this.syncPayablesView();
+  }
+
+  onCuentaFilterChange(): void {
+    this.expandedAccountCardKeys = {};
+    this.expandedAccountPurchaseKeys = {};
+    this.syncPayablesView();
+  }
+
+  onMobileMonthRowActivate(row: PayableInstallment): void {
+    this.togglePaid(row);
+  }
+
+  setActiveAmbito(id: string): void {
+    if (this.activeAmbitoTab === id) return;
+    this.activeAmbitoTab = id;
+    this.syncPayablesView();
+  }
+
+  private buildTarjetaFilterOptions(): { id: string; label: string }[] {
+    const fromConfig = getTarjetasActivas(this.appConfig).map((t) => ({
+      id: t.id,
+      label: t.label,
+    }));
+    const seen = new Set(fromConfig.map((t) => t.id));
+    for (const row of this.getScopedInstallments()) {
+      if (row.tarjetaId && row.tarjetaLabel && !seen.has(row.tarjetaId)) {
+        fromConfig.push({ id: row.tarjetaId, label: row.tarjetaLabel });
+        seen.add(row.tarjetaId);
       }
+    }
+    return fromConfig.sort((a, b) => a.label.localeCompare(b.label, 'es'));
+  }
+
+  private syncPayablesView(): void {
+    const key = [
+      this.viewTab,
+      this.mesFilter,
+      this.cuentaFilter,
+      this.searchQuery,
+      this.activeAmbitoTab,
+      this.installments.length,
+      this.installments.map((row) => `${row.id}:${row.displayEstado}:${row.monto}`).join('\u0001'),
+      this.obligations.length,
+      getTarjetasActivas(this.appConfig).length,
+    ].join('|');
+    if (key === this.payablesViewCacheKey) return;
+    this.payablesViewCacheKey = key;
+
+    this.tarjetaFilterOptions = this.buildTarjetaFilterOptions();
+    this.monthViewInstallments = this.sortInstallments(
+      this.rowsMatchingFilters({ applyMes: true })
+    );
+    this.accountViewCards = this.buildAccountCardEntries(
+      this.sortInstallments(this.rowsMatchingFilters({ applyCuenta: true }))
+    );
+    this.syncAccountViewAutoExpand();
+    this.mensualObligations = this.buildMensualObligations();
+
+    const kpiScope = this.buildKpiScopeInstallments();
+    this.kpiScopePrefix = this.buildKpiScopePrefix();
+    this.countPendientes = kpiScope.filter((row) => row.displayEstado === 'pendiente').length;
+    this.countVencidas = kpiScope.filter((row) => row.displayEstado === 'vencida').length;
+    this.countPagadas = kpiScope.filter((row) => row.displayEstado === 'pagada').length;
+    this.totalPendiente = kpiScope
+      .filter((row) => row.displayEstado === 'pendiente' || row.displayEstado === 'vencida')
+      .reduce((sum, row) => sum + row.monto, 0);
+  }
+
+  private rowsMatchingFilters(opts: {
+    applyMes?: boolean;
+    applyCuenta?: boolean;
+  }): PayableInstallment[] {
+    const query = this.searchQuery.trim().toLowerCase();
+    const mes = this.mesFilter.trim();
+    return this.getScopedInstallments().filter((row) => {
+      if (opts.applyMes) {
+        if (!mes) return false;
+        if (this.installmentMesKey(row) !== mes) return false;
+      }
+      if (opts.applyCuenta && this.cuentaFilter) {
+        if (row.tarjetaId !== this.cuentaFilter) return false;
+      }
+      if (query && !this.installmentMatchesSearch(row, query)) return false;
       return true;
     });
   }
 
-  get mensualObligations(): PayableObligation[] {
+  private sortInstallments(rows: PayableInstallment[]): PayableInstallment[] {
+    return [...rows].sort((a, b) => this.compareInstallmentsByDueDate(a, b));
+  }
+
+  /** Vencidas y pendientes primero; dentro de cada grupo, la fecha más próxima arriba. */
+  private compareInstallmentsByDueDate(a: PayableInstallment, b: PayableInstallment): number {
+    const statusCmp =
+      this.installmentEstadoSortOrder(a.displayEstado) -
+      this.installmentEstadoSortOrder(b.displayEstado);
+    if (statusCmp !== 0) return statusCmp;
+
+    const dateA = a.fechaVencimiento?.slice(0, 10) || '';
+    const dateB = b.fechaVencimiento?.slice(0, 10) || '';
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+
+    const cuentaCmp = (a.tarjetaLabel || '').localeCompare(b.tarjetaLabel || '', 'es');
+    if (cuentaCmp !== 0) return cuentaCmp;
+    if (a.compraId && b.compraId && a.compraId === b.compraId) {
+      return (a.numeroCuota || 0) - (b.numeroCuota || 0);
+    }
+    return (a.beneficiario || '').localeCompare(b.beneficiario || '', 'es');
+  }
+
+  private installmentEstadoSortOrder(estado: PayableDisplayEstado): number {
+    switch (estado) {
+      case 'vencida':
+        return 0;
+      case 'pendiente':
+        return 1;
+      case 'pagada':
+        return 2;
+      default:
+        return 3;
+    }
+  }
+
+  private buildAccountCardEntries(rows: PayableInstallment[]): PayableAccountCardEntry[] {
+    const byCard = new Map<string, PayableInstallment[]>();
+
+    for (const row of rows) {
+      if (!row.tarjetaId) continue;
+      const ambito = (row.ambito ?? 'negocio').trim().toLowerCase();
+      const key = `${row.tarjetaId}|${ambito}`;
+      const list = byCard.get(key) ?? [];
+      list.push(row);
+      byCard.set(key, list);
+    }
+
+    return Array.from(byCard.entries())
+      .map(([key, cardRows]) => {
+        const sortedCardRows = this.sortInstallments(cardRows);
+        const byPurchase = new Map<string, PayableInstallment[]>();
+
+        for (const row of sortedCardRows) {
+          const purchaseKey = this.purchaseGroupKey(row);
+          const list = byPurchase.get(purchaseKey) ?? [];
+          list.push(row);
+          byPurchase.set(purchaseKey, list);
+        }
+
+        const purchases: PayableAccountPurchaseEntry[] = Array.from(byPurchase.entries())
+          .map(([purchaseKey, groupRows]) => {
+            const sorted = this.sortInstallments(groupRows);
+            const first = sorted[0];
+            const summary = this.buildInstallmentGroupSummary(sorted);
+            return {
+              key: `${key}|${purchaseKey}`,
+              header: {
+                ...summary,
+                obligacionId: first.obligacionId,
+                compraId: first.compraId,
+                compraLabel: first.compraLabel,
+                title: this.purchaseEntryTitle(first),
+                subtitle: this.purchaseEntrySubtitle(first, sorted),
+              },
+              rows: sorted,
+            };
+          })
+          .sort((a, b) => this.compareInstallmentsByDueDate(a.rows[0], b.rows[0]));
+
+        const first = sortedCardRows[0];
+        return {
+          key,
+          header: {
+            ...this.buildInstallmentGroupSummary(sortedCardRows),
+            tarjetaId: first?.tarjetaId ?? '',
+            tarjetaLabel: first?.tarjetaLabel ?? first?.beneficiario ?? 'Cuenta',
+          },
+          purchases,
+          monthStatements: this.buildCardMonthStatements(key, sortedCardRows),
+        };
+      })
+      .sort((a, b) => {
+        const statusCmp =
+          this.installmentEstadoSortOrder(a.header.summaryEstado) -
+          this.installmentEstadoSortOrder(b.header.summaryEstado);
+        if (statusCmp !== 0) return statusCmp;
+
+        const dateCmp = (a.header.nextDueDate || '').localeCompare(b.header.nextDueDate || '');
+        if (dateCmp !== 0) return dateCmp;
+
+        return a.header.tarjetaLabel.localeCompare(b.header.tarjetaLabel, 'es');
+      });
+  }
+
+  private purchaseGroupKey(row: PayableInstallment): string {
+    return row.compraId || row.obligacionId;
+  }
+
+  private buildInstallmentGroupSummary(rows: PayableInstallment[]): PayableInstallmentGroupSummary {
+    const sorted = this.sortInstallments(rows);
+    const pending = sorted.filter((row) => row.displayEstado !== 'pagada');
+    const purchaseIds = new Set(rows.map((row) => this.purchaseGroupKey(row)));
+    const nextDueDate =
+      pending[0]?.fechaVencimiento?.slice(0, 10) ||
+      sorted[0]?.fechaVencimiento?.slice(0, 10) ||
+      '';
+
+    return {
+      count: rows.length,
+      purchaseCount: purchaseIds.size,
+      pendingCount: pending.length,
+      totalPending: pending.reduce((sum, row) => sum + row.monto, 0),
+      nextDueDate,
+      summaryEstado: this.summarizeEstado(rows),
+    };
+  }
+
+  private buildCardMonthStatements(
+    cardKey: string,
+    rows: PayableInstallment[]
+  ): PayableAccountMonthStatement[] {
+    const byMes = new Map<string, PayableInstallment[]>();
+
+    for (const row of rows) {
+      const mes = this.installmentMesKey(row);
+      const list = byMes.get(mes) ?? [];
+      list.push(row);
+      byMes.set(mes, list);
+    }
+
+    return Array.from(byMes.entries())
+      .map(([mes, mesRows]) => {
+        const sorted = this.sortInstallments(mesRows);
+        const pending = sorted.filter((row) => row.displayEstado !== 'pagada');
+        return {
+          key: `${cardKey}|${mes}`,
+          mes,
+          pendingCount: pending.length,
+          totalPending: pending.reduce((sum, row) => sum + row.monto, 0),
+          rows: sorted,
+        };
+      })
+      .filter((stmt) => stmt.pendingCount > 0)
+      .sort((a, b) => a.mes.localeCompare(b.mes));
+  }
+
+  private purchaseEntryTitle(row: PayableInstallment): string {
+    if (row.compraLabel) return `Compra #${row.compraLabel}`;
+    return row.beneficiario?.trim() || 'Sin detalle';
+  }
+
+  private purchaseEntrySubtitle(first: PayableInstallment, rows: PayableInstallment[]): string {
+    const parts: string[] = [`${rows.length} cuota(s)`];
+    if (first.descripcion?.trim()) parts.push(first.descripcion.trim());
+    return parts.join(' · ');
+  }
+
+  private syncAccountViewAutoExpand(): void {
+    if (this.viewTab !== 'account' || !this.cuentaFilter) return;
+
+    const cards = this.accountViewCards;
+    if (cards.length !== 1) return;
+
+    const card = cards[0];
+    this.expandedAccountCardKeys = { ...this.expandedAccountCardKeys, [card.key]: true };
+  }
+
+  accountCardSubtitle(card: PayableAccountCardEntry): string {
+    const h = card.header;
+    const parts = [`${h.purchaseCount} compra(s)`, `${h.pendingCount} cuota(s) pend.`];
+    if (h.nextDueDate) parts.push(`próx. ${this.formatDate(h.nextDueDate)}`);
+    return parts.join(' · ');
+  }
+
+  cardPayResumenHint(card: PayableAccountCardEntry): string | null {
+    const stmt = card.monthStatements[0];
+    if (!stmt) return null;
+    return `Resumen ${this.formatMes(stmt.mes)}`;
+  }
+
+  get emptyMonthViewMessage(): string {
+    return 'No hay vencimientos en este mes.';
+  }
+
+  get emptyAccountViewMessage(): string {
+    if (this.cuentaFilter) {
+      return 'No hay cuotas para esta cuenta.';
+    }
+    return 'No hay cuotas para mostrar.';
+  }
+
+  setViewTab(tab: PayablesViewTab): void {
+    if (this.viewTab === tab) return;
+    this.viewTab = tab;
+    if (tab === 'account') {
+      this.expandedAccountCardKeys = {};
+      this.expandedAccountPurchaseKeys = {};
+    }
+    if (tab === 'month' && !this.mesFilter) {
+      this.mesFilter = new Date().toISOString().slice(0, 7);
+      this.onMesFilterChange();
+    } else {
+      this.syncPayablesView();
+    }
+  }
+
+  monthRowTitle(row: PayableInstallment): string {
+    return `${this.cuotaLabel(row)} · ${this.installmentCuentaLabel(row)}`;
+  }
+
+  monthRowSubtitle(row: PayableInstallment): string {
+    return `${this.installmentDetalleLabel(row)} · ${this.formatDate(row.fechaVencimiento)}`;
+  }
+
+  installmentCuentaLabel(row: PayableInstallment): string {
+    if (row.tarjetaLabel?.trim()) return row.tarjetaLabel.trim();
+    if (row.compraId) return 'Sin cuenta';
+    return row.beneficiario;
+  }
+
+  installmentDetalleLabel(row: PayableInstallment): string {
+    if (row.compraLabel) return `Compra #${row.compraLabel}`;
+    const ben = row.beneficiario?.trim() ?? '';
+    if (row.tarjetaLabel && ben.startsWith(row.tarjetaLabel)) {
+      const rest = ben.slice(row.tarjetaLabel.length).replace(/^\s*·\s*/, '').trim();
+      return rest || '—';
+    }
+    return ben || '—';
+  }
+
+  private buildMensualObligations(): PayableObligation[] {
     let list = this.obligations.filter((item) => item.tipo === 'mensual' && !item.compraId);
     if (this.usesAmbitoSeparation) {
       list = list.filter(
@@ -641,33 +1441,70 @@ export class PayablesComponent implements OnInit, OnDestroy {
     return list;
   }
 
-  get countPendientes(): number {
-    return this.scopedInstallments.filter((row) => row.displayEstado === 'pendiente').length;
+  private buildKpiScopeInstallments(): PayableInstallment[] {
+    const scoped = this.getScopedInstallments();
+    if (this.viewTab === 'month') {
+      const mes = this.mesFilter.trim();
+      if (!mes) return [];
+      return scoped.filter((row) => this.installmentMesKey(row) === mes);
+    }
+    if (this.cuentaFilter) {
+      return scoped.filter((row) => row.tarjetaId === this.cuentaFilter);
+    }
+    return scoped;
   }
 
-  get countVencidas(): number {
-    return this.scopedInstallments.filter((row) => row.displayEstado === 'vencida').length;
+  private buildKpiScopePrefix(): string {
+    const parts: string[] = [];
+    if (this.usesAmbitoSeparation) {
+      parts.push(this.activeAmbitoLabel);
+    }
+    if (this.viewTab === 'month') {
+      const mes = this.mesFilter.trim();
+      if (mes) parts.push(this.formatMes(mes));
+    } else if (this.cuentaFilter) {
+      const label = this.tarjetaFilterOptions.find((t) => t.id === this.cuentaFilter)?.label;
+      if (label) parts.push(label);
+    } else {
+      parts.push('Todas las cuentas');
+    }
+    return parts.length ? `${parts.join(' · ')} · ` : '';
   }
 
-  get countPagadas(): number {
-    return this.scopedInstallments.filter((row) => row.displayEstado === 'pagada').length;
-  }
-
-  get totalPendiente(): number {
-    return this.scopedInstallments
-      .filter((row) => row.displayEstado === 'pendiente' || row.displayEstado === 'vencida')
-      .reduce((sum, row) => sum + row.monto, 0);
-  }
-
-  openPayCardStatement(row: CardStatementSummary): void {
+  openPayCardStatement(row: CardStatementSummary, pendingRows?: PayableInstallment[]): void {
     this.payCardTarget = row;
+    this.payCardPendingRows =
+      pendingRows ??
+      this.resolvePayCardPendingRows(row).sort((a, b) => {
+        const dateCmp = (a.fechaVencimiento || '').localeCompare(b.fechaVencimiento || '');
+        if (dateCmp !== 0) return dateCmp;
+        return (a.numeroCuota || 0) - (b.numeroCuota || 0);
+      });
     this.payCardMedioId = this.mediosPagoCaja[0]?.id ?? 'transferencia';
     this.payCardModalOpen = true;
+  }
+
+  get payCardModalSubtitle(): string {
+    if (!this.payCardTarget) return '';
+    return `${this.payCardTarget.tarjetaLabel} · ${this.formatMes(this.payCardTarget.mes)}`;
+  }
+
+  get payCuotaModalSubtitle(): string {
+    if (!this.payCuotaTarget) return '';
+    return `${this.installmentCuentaLabel(this.payCuotaTarget)} · vence ${this.formatDate(this.payCuotaTarget.fechaVencimiento)}`;
+  }
+
+  private resolvePayCardPendingRows(target: CardStatementSummary): PayableInstallment[] {
+    const cuotaIds = new Set(target.cuotaIds);
+    return this.getScopedInstallments().filter(
+      (row) => cuotaIds.has(row.id) && row.displayEstado !== 'pagada'
+    );
   }
 
   closePayCardModal(): void {
     this.payCardModalOpen = false;
     this.payCardTarget = null;
+    this.payCardPendingRows = [];
   }
 
   submitPayCardStatement(): void {
@@ -704,10 +1541,125 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   formatMes(mes: string): string {
-    const [year, month] = mes.split('-');
-    if (!year || !month) return mes;
-    const date = new Date(Number(year), Number(month) - 1, 1);
-    return date.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    return formatMonthYearLabel(mes);
+  }
+
+  onMesFilterChange(): void {
+    this.syncPayablesView();
+    this.loadCardStatements();
+  }
+
+  isAccountCardExpanded(key: string): boolean {
+    return !!this.expandedAccountCardKeys[key];
+  }
+
+  isAccountPurchaseExpanded(key: string): boolean {
+    return !!this.expandedAccountPurchaseKeys[key];
+  }
+
+  toggleAccountCardExpand(key: string): void {
+    const next = !this.expandedAccountCardKeys[key];
+    this.expandedAccountCardKeys = {
+      ...this.expandedAccountCardKeys,
+      [key]: next,
+    };
+    if (!next) {
+      this.collapsePurchasesForAccount(key);
+    }
+  }
+
+  toggleAccountPurchaseExpand(key: string): void {
+    this.expandedAccountPurchaseKeys = {
+      ...this.expandedAccountPurchaseKeys,
+      [key]: !this.expandedAccountPurchaseKeys[key],
+    };
+  }
+
+  private collapsePurchasesForAccount(cardKey: string): void {
+    const prefix = `${cardKey}|`;
+    const next = { ...this.expandedAccountPurchaseKeys };
+    let changed = false;
+    for (const purchaseKey of Object.keys(next)) {
+      if (purchaseKey.startsWith(prefix)) {
+        delete next[purchaseKey];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.expandedAccountPurchaseKeys = next;
+    }
+  }
+
+  openPayCardStatementForCard(card: PayableAccountCardEntry): void {
+    const stmt = card.monthStatements[0];
+    if (!stmt) return;
+    this.openPayCardStatementForMonth(card, stmt);
+  }
+
+  openPayCardStatementForMonth(
+    card: PayableAccountCardEntry,
+    stmt: PayableAccountMonthStatement
+  ): void {
+    const pendingRows = stmt.rows.filter((row) => row.displayEstado !== 'pagada');
+    const ambito = (stmt.rows[0]?.ambito ?? 'negocio').trim().toLowerCase();
+    const match = this.scopedCardStatements.find(
+      (row) =>
+        row.tarjetaId === card.header.tarjetaId &&
+        row.mes === stmt.mes &&
+        row.ambito === ambito
+    );
+    this.openPayCardStatement(
+      match ?? this.buildCardStatementFromMonth(card, stmt),
+      pendingRows
+    );
+  }
+
+  installmentCuotaCompraLabel(row: PayableInstallment): string {
+    const compra = row.compraLabel ? `Compra #${row.compraLabel}` : 'Compra';
+    return `${compra} · Cuota ${this.cuotaLabel(row)}`;
+  }
+
+  installmentRowTone(row: PayableInstallment): ModuleTableRowTone {
+    if (row.displayEstado === 'vencida') return 'danger';
+    if (row.displayEstado === 'pagada') return 'success';
+    return 'default';
+  }
+
+  installmentDetailSecondary(row: PayableInstallment): string | undefined {
+    const parts = [row.descripcion, row.compraLabel ? `Compra #${row.compraLabel}` : null].filter(
+      Boolean
+    ) as string[];
+    return parts[0];
+  }
+
+  private buildCardStatementFromMonth(
+    card: PayableAccountCardEntry,
+    stmt: PayableAccountMonthStatement
+  ): CardStatementSummary {
+    const pending = stmt.rows.filter((row) => row.displayEstado !== 'pagada');
+    const first = stmt.rows[0];
+    const tarjeta = getTarjetasActivas(this.appConfig).find(
+      (item) => item.id === card.header.tarjetaId
+    );
+    const medioPagoId = tarjeta?.medioPagoId ?? 'tarjeta_credito';
+    const medio = getMedioPagoConfig(this.appConfig, medioPagoId);
+    return {
+      tarjetaId: card.header.tarjetaId,
+      tarjetaLabel: card.header.tarjetaLabel,
+      mes: stmt.mes,
+      medioPagoId,
+      medioPagoLabel: medio?.label ?? medioPagoId,
+      ambito: (first?.ambito ?? 'negocio').trim().toLowerCase(),
+      cuotaIds: pending.map((row) => row.id),
+      total: stmt.totalPending,
+      cuotasCount: pending.length,
+    };
+  }
+
+  private summarizeEstado(rows: PayableInstallment[]): PayableDisplayEstado {
+    if (rows.some((row) => row.displayEstado === 'vencida')) return 'vencida';
+    if (rows.some((row) => row.displayEstado === 'pendiente')) return 'pendiente';
+    return 'pagada';
   }
 
   openCreateModal(): void {
@@ -763,6 +1715,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
           this.installments = this.installments.map((item) =>
             item.id === updated.id ? updated : item
           );
+          this.payablesViewCacheKey = '';
+          this.syncPayablesView();
           this.savingCuotaId = null;
         },
         error: () => {
@@ -795,6 +1749,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
           this.installments = this.installments.map((item) =>
             item.id === updated.id ? updated : item
           );
+          this.payablesViewCacheKey = '';
+          this.syncPayablesView();
           this.closePayCuotaModal();
         },
         error: (err) => {
@@ -849,6 +1805,45 @@ export class PayablesComponent implements OnInit, OnDestroy {
     return `${day}/${month}/${year}`;
   }
 
+  installmentMesKey(row: PayableInstallment): string {
+    return row.fechaVencimiento?.slice(0, 7) || '';
+  }
+
+  cuotaLabel(row: PayableInstallment): string {
+    const total = row.cuotaTotal;
+    if (total && total > 0) {
+      return `${row.numeroCuota}/${total}`;
+    }
+    return String(row.numeroCuota);
+  }
+
+  installmentMobileTitle(row: PayableInstallment): string {
+    const mes = this.formatMes(this.installmentMesKey(row));
+    return `${mes} · ${this.cuotaLabel(row)}`;
+  }
+
+  installmentMobileSubtitle(row: PayableInstallment): string {
+    return `${this.formatDate(row.fechaVencimiento)} · ${row.beneficiario}`;
+  }
+
+  private installmentMatchesSearch(row: PayableInstallment, query: string): boolean {
+    const haystack = [
+      row.beneficiario,
+      row.descripcion,
+      row.compraLabel,
+      row.tarjetaLabel,
+      this.formatMes(this.installmentMesKey(row)),
+      this.formatDate(row.fechaVencimiento),
+      this.cuotaLabel(row),
+      String(row.numeroCuota),
+      String(row.monto),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(query);
+  }
+
   tipoLabel(tipo: PayableTipo): string {
     return tipo === 'mensual' ? 'Mensual' : 'Cuotas fijas';
   }
@@ -882,6 +1877,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.payables.getObligations().subscribe({
       next: (obligations) => {
         this.obligations = obligations;
+        this.syncPayablesView();
       },
       error: () => {
         this.obligations = [];
@@ -895,17 +1891,20 @@ export class PayablesComponent implements OnInit, OnDestroy {
       next: (installments) => {
         this.installments = installments;
         this.loading = false;
+        this.syncPayablesView();
       },
       error: () => {
         this.installments = [];
         this.loading = false;
+        this.payablesViewCacheKey = '';
+        this.syncPayablesView();
         this.dialog.alert({ message: 'No se pudieron cargar los vencimientos.' });
       },
     });
   }
 
   loadCardStatements(): void {
-    this.payables.getCardStatements(this.cardStatementMes || undefined).subscribe({
+    this.payables.getCardStatements(this.mesFilter.trim() || undefined).subscribe({
       next: (summaries) => {
         this.cardStatements = summaries;
       },

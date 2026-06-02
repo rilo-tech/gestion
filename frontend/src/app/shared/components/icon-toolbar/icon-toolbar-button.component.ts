@@ -8,6 +8,7 @@ export type IconToolbarSize = 'row' | 'header';
 @Component({
   selector: 'app-icon-toolbar-button',
   standalone: true,
+  host: { class: 'inline-flex shrink-0' },
   imports: [CommonModule, LucideAngularModule],
   template: `
     <button

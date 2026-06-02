@@ -1,5 +1,5 @@
 /**
- * Configura categoría de servicio y Estampado.
+ * Configura categoría de servicio y Estampado (stock por producto).
  * Uso: npx tsx scripts/setup-service-category.ts --apply
  */
 import dotenv from 'dotenv';
@@ -22,14 +22,8 @@ async function main(): Promise<void> {
         a.localeCompare(b, 'es')
       )
     : [SERVICE_CATEGORY];
-  const categoriasSinStock = Array.isArray(productos.categoriasSinStock)
-    ? [...new Set([...productos.categoriasSinStock.map(String), SERVICE_CATEGORY])].sort((a, b) =>
-        a.localeCompare(b, 'es')
-      )
-    : [SERVICE_CATEGORY];
 
   console.log('[setup] Categorías:', categorias.join(', '));
-  console.log('[setup] Sin stock:', categoriasSinStock.join(', '));
 
   const stockSnap = await db
     .collection(`negocios/${BUSINESS_ID}/stock`)
@@ -42,7 +36,6 @@ async function main(): Promise<void> {
         productos: {
           ...productos,
           categorias,
-          categoriasSinStock,
         },
       },
       { merge: true }
@@ -52,12 +45,13 @@ async function main(): Promise<void> {
       await doc.ref.update({
         categoria: SERVICE_CATEGORY,
         controlaStock: false,
+        permitirStockNegativo: false,
         stockActual: 0,
         stockReservado: 0,
         stockMinimo: 0,
         updatedAt: new Date().toISOString(),
       });
-      console.log(`[setup] Estampado (${doc.id}) → categoría ${SERVICE_CATEGORY}`);
+      console.log(`[setup] Estampado (${doc.id}) → categoría ${SERVICE_CATEGORY}, sin control de stock`);
     }
   } else {
     console.log('[setup] Simulación. Usá --apply para persistir.');

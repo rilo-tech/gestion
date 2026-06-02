@@ -7,6 +7,8 @@ export interface CompactInlineStat {
   label: string;
   value: string;
   tone?: CompactInlineStatTone;
+  /** En variante strip: empuja el ítem a la derecha desde sm. */
+  alignEnd?: boolean;
 }
 
 @Component({
@@ -14,19 +16,58 @@ export interface CompactInlineStat {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="text-[11px] leading-tight tabular-nums text-right" role="list" aria-label="Indicadores">
-      <ng-container *ngFor="let stat of items; let last = last">
-        <span class="inline-flex items-baseline gap-0.5" role="listitem">
-          <span class="text-gray-500">{{ stat.label }}</span>
-          <span class="font-semibold" [class]="valueClass(stat)">{{ stat.value }}</span>
+    <div
+      *ngIf="variant === 'strip'; else inlineVariant"
+      class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs w-full"
+      role="list"
+      [attr.aria-label]="ariaLabel">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+        <span *ngFor="let stat of leadingItems" class="tabular-nums" role="listitem">
+          <span class="text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1">{{ stat.label }}</span>
+          <span class="font-bold" [class]="valueClass(stat)">{{ stat.value }}</span>
         </span>
-        <span *ngIf="!last" class="text-gray-300 px-1" aria-hidden="true">·</span>
-      </ng-container>
+      </div>
+      <span
+        *ngIf="centerCaption"
+        class="w-full sm:w-auto sm:flex-1 sm:min-w-[5rem] text-center text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 capitalize px-1 order-last sm:order-none"
+        role="note">
+        {{ centerCaption }}
+      </span>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 sm:ml-auto" [class.w-full]="!centerCaption && trailingItems.length > 0">
+        <span *ngFor="let stat of trailingItems" class="tabular-nums" role="listitem" [class.sm:ml-auto]="!centerCaption && trailingItems.length === 1">
+          <span class="text-[10px] font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1">{{ stat.label }}</span>
+          <span class="font-bold" [class]="valueClass(stat)">{{ stat.value }}</span>
+        </span>
+      </div>
     </div>
+
+    <ng-template #inlineVariant>
+      <div class="text-[11px] leading-tight tabular-nums text-right" role="list" [attr.aria-label]="ariaLabel">
+        <ng-container *ngFor="let stat of items; let last = last">
+          <span class="inline-flex items-baseline gap-0.5" role="listitem">
+            <span class="text-gray-500">{{ stat.label }}</span>
+            <span class="font-semibold" [class]="valueClass(stat)">{{ stat.value }}</span>
+          </span>
+          <span *ngIf="!last" class="text-gray-300 px-1" aria-hidden="true">·</span>
+        </ng-container>
+      </div>
+    </ng-template>
   `,
 })
 export class CompactInlineStatsComponent {
   @Input() items: CompactInlineStat[] = [];
+  @Input() variant: 'inline' | 'strip' = 'inline';
+  @Input() ariaLabel = 'Indicadores';
+  /** Mes u otro texto entre Ing./Egr. y Saldo (variante strip). */
+  @Input() centerCaption = '';
+
+  get leadingItems(): CompactInlineStat[] {
+    return this.items.filter((stat) => !stat.alignEnd);
+  }
+
+  get trailingItems(): CompactInlineStat[] {
+    return this.items.filter((stat) => stat.alignEnd);
+  }
 
   valueClass(stat: CompactInlineStat): string {
     switch (stat.tone) {
@@ -35,13 +76,13 @@ export class CompactInlineStatsComponent {
       case 'warning':
         return 'text-amber-600';
       case 'success':
-        return 'text-teal-600';
+        return 'text-teal-600 dark:text-teal-400';
       case 'danger':
-        return 'text-red-600';
+        return this.variant === 'strip' ? 'text-red-500 dark:text-red-400' : 'text-red-600 dark:text-red-400';
       case 'accent':
-        return 'text-teal-700';
+        return 'text-teal-700 dark:text-teal-300';
       default:
-        return 'text-gray-900';
+        return 'text-gray-900 dark:text-gray-100';
     }
   }
 }

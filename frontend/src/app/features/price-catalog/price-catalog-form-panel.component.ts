@@ -3,6 +3,7 @@ import {
   EventEmitter,
   Input,
   OnChanges,
+  OnDestroy,
   Output,
   SimpleChanges,
   inject,
@@ -26,6 +27,7 @@ import { FORM_COMPACT_FIELD_CLASS, FORM_COMPACT_LABEL_CLASS } from '../../shared
 export interface PriceCatalogFormSaveEvent {
   id: string;
   entry: PriceCatalogEntry;
+  wasNew?: boolean;
 }
 
 const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
@@ -36,7 +38,7 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
   imports: [CommonModule, FormsModule, SelectOnFocusDirective, FormPanelFooterComponent],
   template: `
     <div>
-      <div *ngIf="loadingEntry" class="py-8 text-center text-sm text-gray-400">
+      <div *ngIf="loadingEntry" class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
         Cargando referencia...
       </div>
 
@@ -57,21 +59,21 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
 
           <section class="space-y-3">
             <div class="flex items-center justify-between gap-2">
-              <h3 class="text-sm font-bold text-gray-900">Detalles</h3>
+              <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">Detalles</h3>
               <button
                 type="button"
                 (click)="addVariant()"
-                class="h-8 px-2.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-teal-700 hover:bg-teal-50 whitespace-nowrap">
+                class="h-8 px-2.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-xs font-semibold text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40 whitespace-nowrap">
                 + Detalle
               </button>
             </div>
 
             <article
               *ngFor="let variant of entryForm.variantes; let vi = index"
-              class="rounded-lg border border-gray-200 bg-gray-50/70 p-3 space-y-2">
+              class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/80 p-3 space-y-2">
               <div class="grid grid-cols-1 sm:grid-cols-[1fr_7rem_auto] gap-2 items-end">
                 <div class="min-w-0">
-                  <label class="block text-[11px] font-medium text-gray-500 mb-0.5">Detalle</label>
+                  <label class="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-0.5">Detalle</label>
                   <input
                     [(ngModel)]="variant.nombre"
                     [name]="'variantNombre' + vi"
@@ -79,7 +81,7 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
                     [class]="fieldClass">
                 </div>
                 <div>
-                  <label class="block text-[11px] font-medium text-gray-500 mb-0.5">1 u.</label>
+                  <label class="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-0.5">1 u.</label>
                   <input
                     type="number"
                     [(ngModel)]="variant.precioReferencia"
@@ -93,18 +95,18 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
                   *ngIf="entryForm.variantes.length > 1"
                   type="button"
                   (click)="removeVariant(vi)"
-                  class="h-9 px-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-lg">
+                  class="h-9 px-2 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg">
                   Quitar
                 </button>
               </div>
 
               <div class="space-y-1.5">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Cantidad</span>
+                  <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Cantidad</span>
                   <button
                     type="button"
                     (click)="addVariantRange(vi)"
-                    class="h-7 px-2 rounded-md border border-gray-200 bg-white text-[11px] font-semibold text-teal-700 hover:bg-teal-50">
+                    class="h-7 px-2 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-[11px] font-semibold text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/40">
                     + Rango
                   </button>
                 </div>
@@ -137,14 +139,14 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
                   <button
                     type="button"
                     (click)="removeVariantRange(vi, ri)"
-                    class="h-9 w-8 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-lg">
+                    class="h-9 w-8 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg">
                     ×
                   </button>
                 </div>
               </div>
             </article>
 
-            <p class="text-[11px] text-gray-400">Hasta vacío = sin tope superior.</p>
+            <p class="text-[11px] text-gray-400 dark:text-gray-500">Hasta vacío = sin tope superior.</p>
           </section>
 
           <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 sm:items-end">
@@ -157,36 +159,36 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
                 placeholder="Opcional"
                 [class]="fieldClass + ' resize-none'"></textarea>
             </div>
-            <label class="inline-flex items-center gap-2 text-sm text-gray-700 pb-1 sm:pb-2">
+            <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 pb-1 sm:pb-2">
               <input
                 type="checkbox"
                 [(ngModel)]="entryForm.activo"
                 name="catalogActivo"
-                class="rounded border-gray-300 text-primary focus:ring-primary">
+                class="rounded border-gray-300 dark:border-gray-600 text-primary focus:ring-primary dark:bg-gray-900">
               Activa
             </label>
           </div>
         </fieldset>
 
         <aside class="mt-4 lg:mt-0 lg:sticky lg:top-4 min-w-0">
-          <section class="rounded-xl border border-teal-100 bg-teal-50/70 p-3 sm:p-4">
-            <h3 class="text-sm font-bold text-teal-900 mb-2">Vista previa</h3>
+          <section class="rounded-xl border border-teal-100 dark:border-teal-900/60 bg-teal-50/70 dark:bg-teal-950/30 p-3 sm:p-4">
+            <h3 class="text-sm font-bold text-teal-900 dark:text-teal-200 mb-2">Vista previa</h3>
 
-            <p *ngIf="!entryForm.nombre.trim() && !priceSummary.length" class="text-xs text-teal-800/70">
+            <p *ngIf="!entryForm.nombre.trim() && !priceSummary.length" class="text-xs text-teal-800/70 dark:text-teal-300/80">
               Cargá el producto y los detalles para ver el resumen acá.
             </p>
 
-            <p *ngIf="entryForm.nombre.trim()" class="text-xs font-semibold text-teal-900 mb-2 truncate">
+            <p *ngIf="entryForm.nombre.trim()" class="text-xs font-semibold text-teal-900 dark:text-teal-100 mb-2 truncate">
               {{ entryForm.nombre }}
             </p>
 
             <div *ngIf="priceSummary.length; else emptyPreview" class="space-y-2.5">
-              <div *ngFor="let row of priceSummary" class="rounded-lg bg-white/80 border border-teal-100/80 p-2.5">
-                <div class="text-xs font-semibold text-teal-900 mb-1.5 leading-snug">{{ row.variantNombre }}</div>
+              <div *ngFor="let row of priceSummary" class="rounded-lg bg-white/80 dark:bg-gray-900/80 border border-teal-100/80 dark:border-teal-900/50 p-2.5">
+                <div class="text-xs font-semibold text-teal-900 dark:text-teal-100 mb-1.5 leading-snug">{{ row.variantNombre }}</div>
                 <div class="flex flex-wrap gap-1">
                   <span
                     *ngFor="let cell of row.cells"
-                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-teal-50 text-teal-900">
+                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-teal-50 dark:bg-teal-950/50 text-teal-900 dark:text-teal-100">
                     <span>{{ cell.label }}</span>
                     <span class="font-bold tabular-nums">{{ '$' + cell.precio }}</span>
                   </span>
@@ -194,29 +196,40 @@ const FIELD_CLASS = FORM_COMPACT_FIELD_CLASS + ' sm:h-9';
               </div>
             </div>
             <ng-template #emptyPreview>
-              <p *ngIf="entryForm.nombre.trim()" class="text-xs text-teal-800/70">
+              <p *ngIf="entryForm.nombre.trim()" class="text-xs text-teal-800/70 dark:text-teal-300/80">
                 Agregá precios en los detalles.
               </p>
             </ng-template>
           </section>
         </aside>
 
-        <div class="lg:col-span-2">
+        <div class="lg:col-span-2 space-y-3">
+          <p
+            *ngIf="saveSuccessMessage"
+            [class]="saveSuccessBannerClass"
+            role="status"
+            aria-live="polite">
+            {{ saveSuccessMessage }}
+          </p>
           <app-form-panel-footer
-            [saveLabel]="isEditing ? 'Guardar' : 'Crear referencia'"
+            [saveLabel]="saveButtonLabel"
             [showSave]="auth.canManagePriceCatalog"
             [saving]="saving"
-            (cancelClick)="cancelled.emit()">
+            [successMessage]="saveSuccessMessage"
+            (cancelClick)="cancelled.emit()"
+            (saveClick)="saveEntry()">
           </app-form-panel-footer>
         </div>
       </form>
     </div>
   `,
 })
-export class PriceCatalogFormPanelComponent implements OnChanges {
+export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
   readonly auth = inject(AuthService);
   readonly fieldClass = FIELD_CLASS;
   readonly labelClass = FORM_COMPACT_LABEL_CLASS;
+  readonly saveSuccessBannerClass =
+    'rounded-lg border border-teal-300 dark:border-teal-500 bg-teal-100 dark:bg-teal-950/70 px-3 py-2.5 text-sm font-semibold text-teal-900 dark:text-teal-100';
 
   @Input() entryId: string | null = null;
   @Output() saved = new EventEmitter<PriceCatalogFormSaveEvent>();
@@ -228,6 +241,8 @@ export class PriceCatalogFormPanelComponent implements OnChanges {
   entryForm: PriceCatalogEntry = createEmptyPriceCatalogEntry();
   loadingEntry = false;
   saving = false;
+  saveSuccessMessage = '';
+  private saveSuccessTimeout: ReturnType<typeof setTimeout> | null = null;
 
   get isEditing(): boolean {
     return !!this.entryId;
@@ -239,6 +254,14 @@ export class PriceCatalogFormPanelComponent implements OnChanges {
 
   get priceSummary() {
     return buildPriceSummary(this.entryForm);
+  }
+
+  get saveButtonLabel(): string {
+    if (this.saving) return 'Guardando...';
+    if (this.saveSuccessMessage) {
+      return this.isEditing ? 'Guardado' : 'Referencia creada';
+    }
+    return this.isEditing ? 'Guardar' : 'Crear referencia';
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -291,7 +314,14 @@ export class PriceCatalogFormPanelComponent implements OnChanges {
     request$.subscribe({
       next: ({ id }) => {
         this.saving = false;
-        this.saved.emit({ id, entry: { ...payload, id } });
+        const wasNew = !this.entryId;
+        this.entryForm = { ...payload, id };
+        this.showSaveSuccess(
+          wasNew
+            ? 'Referencia creada correctamente. Ya podés usarla en pedidos.'
+            : 'Cambios guardados correctamente.'
+        );
+        this.saved.emit({ id, entry: { ...payload, id }, wasNew });
       },
       error: () => {
         this.saving = false;
@@ -301,6 +331,19 @@ export class PriceCatalogFormPanelComponent implements OnChanges {
         });
       },
     });
+  }
+
+  ngOnDestroy() {
+    if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
+  }
+
+  private showSaveSuccess(message: string) {
+    this.saveSuccessMessage = message;
+    if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
+    this.saveSuccessTimeout = setTimeout(() => {
+      this.saveSuccessMessage = '';
+      this.saveSuccessTimeout = null;
+    }, 5000);
   }
 
   private loadEntry() {

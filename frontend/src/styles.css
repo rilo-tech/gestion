@@ -40,6 +40,10 @@ html.dark .hover\:bg-gray-50:hover {
   background-color: rgb(31 41 55) !important;
 }
 
+html.dark .hover\:bg-gray-50\/80:hover {
+  background-color: rgb(55 65 81 / 0.55) !important;
+}
+
 html.dark .hover\:bg-gray-100:hover {
   background-color: rgb(55 65 81) !important;
 }
@@ -631,6 +635,10 @@ html.dark app-searchable-select .searchable-select-option.text-teal-700 {
   color: rgb(45 212 191) !important;
 }
 
+.product-search-menu {
+  -webkit-overflow-scrolling: touch;
+}
+
 html.dark .product-search-menu {
   background-color: rgb(17 24 39) !important;
   border-color: rgb(55 65 81) !important;
@@ -797,6 +805,30 @@ html.dark .form-label {
   padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
+/* Tablas de listado: layout de grilla real (thead/tbody/tr/td) */
+table.module-data-table-layout {
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+table.module-data-table-layout thead {
+  display: table-header-group;
+}
+
+table.module-data-table-layout tbody {
+  display: table-row-group;
+}
+
+table.module-data-table-layout tr {
+  display: table-row;
+}
+
+table.module-data-table-layout th,
+table.module-data-table-layout td {
+  display: table-cell;
+  vertical-align: middle;
+}
+
 /* Tablas de listado: altura de fila uniforme en desktop (referencia: reservas stock) */
 @media (min-width: 640px) {
   table.app-data-table thead th {
@@ -805,10 +837,43 @@ html.dark .form-label {
     vertical-align: middle;
   }
 
+  table.app-data-table.module-data-table-layout thead th[app-module-table-head-cell] {
+    font-size: 0.6875rem !important;
+    font-weight: 600 !important;
+    line-height: 1.25 !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    color: rgb(107 114 128) !important;
+  }
+
+  html.dark table.app-data-table.module-data-table-layout thead th[app-module-table-head-cell] {
+    color: rgb(156 163 175) !important;
+  }
+
   table.app-data-table tbody td {
     padding-top: 0.75rem !important;
     padding-bottom: 0.75rem !important;
     vertical-align: middle;
+  }
+
+  table.module-table-nested.app-data-table tbody td {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    font-size: 0.8125rem;
+  }
+
+  table.module-table-nested.app-data-table thead th {
+    font-size: 0.625rem !important;
+    font-weight: 600 !important;
+    line-height: 1.25 !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    color: rgb(107 114 128) !important;
+    vertical-align: middle;
+  }
+
+  html.dark table.module-table-nested.app-data-table thead th {
+    color: rgb(156 163 175) !important;
   }
 }
 

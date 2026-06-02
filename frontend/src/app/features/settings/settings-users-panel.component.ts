@@ -20,28 +20,32 @@ import {
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { LucideAngularModule } from 'lucide-angular';
-import { ConfigModuleHeaderComponent } from '../../shared/components/config-module-header/config-module-header.component';
 
 @Component({
   selector: 'app-settings-users-panel',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, ConfigModuleHeaderComponent],
+  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule],
   template: `
     <section class="space-y-4 sm:space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <app-config-module-header
-          class="min-w-0 flex-1"
-          title="Usuarios y permisos"
-          description="Como administrador de la empresa podés crear operadores y asignar permisos. El plan y la suscripción los gestiona la plataforma RILO."
-          [saving]="!!savingUserId"
-          [saveDisabled]="!canSaveExpandedUser"
-          saveTitle="Guardar usuario"
-          (saveClick)="saveExpandedUser()">
-        </app-config-module-header>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <button
+          *ngIf="expandedUserId && canSaveExpandedUser"
+          type="button"
+          (click)="saveExpandedUser()"
+          [disabled]="!!savingUserId"
+          title="Guardar usuario"
+          aria-label="Guardar usuario"
+          class="p-1.5 rounded-lg text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <i-lucide
+            [name]="savingUserId ? 'loader-circle' : 'save'"
+            class="w-5 h-5"
+            [class.animate-spin]="!!savingUserId">
+          </i-lucide>
+        </button>
         <button
           type="button"
           (click)="toggleCreateUserForm()"
-          class="text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline shrink-0 self-start sm:self-auto sm:mt-1">
+          class="text-sm font-semibold text-teal-700 hover:text-teal-900 dark:text-teal-400 hover:underline shrink-0">
           {{ showCreateUserForm ? 'Cancelar' : '+ Crear usuario' }}
         </button>
       </div>

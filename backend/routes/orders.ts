@@ -11,6 +11,7 @@ import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
 import {
   applyOrderStockPreparation,
   buildStockPreparationView,
@@ -165,6 +166,38 @@ function toOrderListSummary(id: string, data: Record<string, unknown>) {
       .filter(Boolean),
     items: [],
   };
+}
+
+async function enrichOrdersWithClientNames<T extends { clienteId?: unknown }>(
+  businessId: string,
+  items: T[]
+): Promise<Array<T & { clienteNombre: string }>> {
+  const ids = [
+    ...new Set(
+      items
+        .map((item) => String(item.clienteId ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  if (ids.length === 0) {
+    return items.map((item) => ({ ...item, clienteNombre: '' }));
+  }
+
+  const nameMap = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 30) {
+    const batch = ids.slice(i, i + 30);
+    const refs = batch.map((id) => db.collection(`negocios/${businessId}/clientes`).doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      nameMap.set(snap.id, String(snap.data()?.nombre ?? '').trim());
+    }
+  }
+
+  return items.map((item) => ({
+    ...item,
+    clienteNombre: nameMap.get(String(item.clienteId ?? '').trim()) ?? '',
+  }));
 }
 
 function normalizePagos(order: OrderRecord): OrderPayment[] {
@@ -781,9 +814,10 @@ router.get('/:businessId', async (req, res) => {
       const snapshot = await query.get();
       const hasMore = snapshot.docs.length > limit;
       const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-      const items = pageDocs.map((doc) =>
+      const summaries = pageDocs.map((doc) =>
         toOrderListSummary(doc.id, doc.data() as Record<string, unknown>)
       );
+      const items = await enrichOrdersWithClientNames(businessId, summaries);
       const nextCursor = hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
 
       return res.json({ items, nextCursor, hasMore });
@@ -901,7 +935,7 @@ router.post('/:businessId', async (req, res) => {
       stockPreparado: false,
       estadoStock: 'sin_preparar',
       negocioId: businessId,
-      createdAt: new Date().toISOString(),
+      createdAt: normalizeTransactionDateToIso(req.body.fecha ?? req.body.createdAt),
     });
 
     let seniaPatch: Partial<OrderRecord> = {};
@@ -1116,6 +1150,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
   try {
     const { businessId, orderId } = req.params;
     const incomingSenia = req.body.senia;
+    const incomingFecha = req.body.fecha ?? req.body.createdAt;
     const { id, createdAt, senia, movimientoSeniaId, pagos, totalPagado, seniaBloqueada, ...orderData } =
       req.body;
 
@@ -1124,6 +1159,16 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     if (!existingDoc.exists) return res.status(404).json({ error: 'Order not found' });
 
     const existingOrder = existingDoc.data() as OrderRecord;
+    if (
+      incomingFecha !== undefined &&
+      incomingFecha !== null &&
+      String(incomingFecha).trim()
+    ) {
+      orderData.createdAt = normalizeTransactionDateToIso(
+        incomingFecha,
+        new Date(String(existingOrder.createdAt ?? Date.now()))
+      );
+    }
     if (isCancelledStatus(existingOrder.estado)) {
       return res.status(403).json({ error: 'No se puede modificar un pedido cancelado.' });
     }

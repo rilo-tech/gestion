@@ -41,7 +41,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="rounded-xl border border-gray-100 dark:border-gray-800 overflow-hidden -mx-0">
+    <div
+      *ngIf="!hideWhenEmpty || lines.length > 0"
+      class="rounded-xl border border-gray-100 dark:border-gray-800 overflow-hidden -mx-0">
       <!-- Móvil: tarjetas apiladas -->
       <div class="sm:hidden divide-y divide-gray-100 dark:divide-gray-800">
         <article
@@ -203,7 +205,7 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
         </article>
 
         <p
-          *ngIf="lines.length === 0"
+          *ngIf="lines.length === 0 && showEmptyPlaceholder && emptyMessage"
           class="px-3 py-6 text-center text-sm text-gray-400 dark:text-gray-500">
           {{ emptyMessage }}
         </p>
@@ -359,7 +361,7 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
               </ng-container>
             </td>
           </tr>
-          <tr *ngIf="lines.length === 0">
+          <tr *ngIf="lines.length === 0 && showEmptyPlaceholder && emptyMessage">
             <td [attr.colspan]="visibleColumns.length" class="px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500">
               {{ emptyMessage }}
             </td>
@@ -380,6 +382,9 @@ export class TransactionLinesTableComponent {
   @Input() columns: TransactionTableColumn[] = buildTransactionTableColumns(['product', 'quantity', 'unitSale']);
   @Input() readOnly = false;
   @Input() emptyMessage = 'Sin productos.';
+  @Input() showEmptyPlaceholder = false;
+  /** Oculta la tabla (encabezados incluidos) hasta que haya al menos una línea. */
+  @Input() hideWhenEmpty = false;
   @Input() fieldNamePrefix = 'txnLine';
 
   @Output() fieldChange = new EventEmitter<TransactionTableFieldChange>();

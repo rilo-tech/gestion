@@ -62,12 +62,16 @@ function normalizeSaleLineExtraCosts(
 function sumLinePersonalizationCost(line: {
   costosExtra?: SaleLineExtraCost[];
   costoPersonalizacion?: number;
+  cantidad?: number;
 }): number {
   const fromList = (line.costosExtra ?? []).reduce(
     (acc, extra) => acc + (Number(extra.costo) || 0),
     0
   );
-  if (fromList > 0) return fromList;
+  if (fromList > 0) {
+    const qty = Math.max(0, Number(line.cantidad) || 0);
+    return qty * fromList;
+  }
   return Number(line.costoPersonalizacion) || 0;
 }
 
@@ -87,6 +91,7 @@ function buildSaleLineFromOrderLine(line: OrderLineForSale): SaleLine {
   const costoPersonalizacion = sumLinePersonalizationCost({
     costosExtra,
     costoPersonalizacion: line.costoPersonalizacion,
+    cantidad,
   });
 
   return {
@@ -102,8 +107,9 @@ function buildSaleLineFromOrderLine(line: OrderLineForSale): SaleLine {
 }
 
 function buildSaleEconomics(items: SaleLine[], total: number, fallbackCostoReal?: number) {
-  const costoReal =
-    Number(fallbackCostoReal) > 0 ? Number(fallbackCostoReal) : calculateSaleCost(items);
+  const calculated = calculateSaleCost(items);
+  const fallback = Number(fallbackCostoReal) || 0;
+  const costoReal = Math.max(calculated, fallback);
   const gananciaEstimada = Math.round((total - costoReal) * 100) / 100;
   return { costoReal, gananciaEstimada };
 }

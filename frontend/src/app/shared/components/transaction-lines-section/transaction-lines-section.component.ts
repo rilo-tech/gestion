@@ -7,7 +7,7 @@ import { LucideAngularModule } from 'lucide-angular';
   standalone: true,
   imports: [CommonModule, LucideAngularModule],
   template: `
-    <section class="rounded-xl border border-gray-100 dark:border-gray-800 overflow-hidden bg-white dark:bg-gray-900 shadow-sm">
+    <section class="rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm">
       <div
         *ngIf="title"
         class="px-2.5 sm:px-4 py-1.5 sm:py-2.5 bg-gray-50 dark:bg-gray-800/80 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2">
@@ -22,7 +22,7 @@ import { LucideAngularModule } from 'lucide-angular';
         <ng-content select="[headerAction]"></ng-content>
       </div>
 
-      <div *ngIf="searchVisible" class="px-2.5 sm:px-4 py-1.5 sm:py-4 border-b border-gray-100 dark:border-gray-800 bg-teal-50/40 dark:bg-teal-950/20">
+      <div *ngIf="searchVisible" class="relative z-30 px-2.5 sm:px-4 py-1.5 sm:py-4 border-b border-gray-100 dark:border-gray-800 bg-teal-50/40 dark:bg-teal-950/20">
         <div *ngIf="searchTitle" class="mb-1">
           <p class="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100">{{ searchTitle }}</p>
           <p *ngIf="searchHint" class="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 mt-0.5 leading-snug">{{ searchHint }}</p>
@@ -31,12 +31,12 @@ import { LucideAngularModule } from 'lucide-angular';
       </div>
 
       <div
-        *ngIf="lineCount === 0"
+        *ngIf="showEmptyPlaceholder && lineCount === 0 && emptyMessage"
         class="px-2.5 sm:px-4 py-3 sm:py-8 text-center text-[10px] sm:text-sm text-gray-400 dark:text-gray-500 leading-snug">
         {{ emptyMessage }}
       </div>
 
-      <div class="min-h-0">
+      <div class="min-h-0 overflow-hidden rounded-b-xl">
         <ng-content></ng-content>
       </div>
     </section>
@@ -48,6 +48,8 @@ export class TransactionLinesSectionComponent {
   @Input() headingLevel: 2 | 3 = 2;
   @Input() lineCount = 0;
   @Input() emptyMessage = 'Agregá productos para continuar.';
+  /** Mensaje centrado cuando no hay líneas (p. ej. gastos sin tabla). */
+  @Input() showEmptyPlaceholder = false;
   @Input() searchVisible = false;
   @Input() searchTitle = '';
   @Input() searchHint = '';

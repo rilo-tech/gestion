@@ -141,25 +141,25 @@ export function normalizeTarjetas(raw: unknown, medios: MedioPagoConfig[]): Tarj
 }
 
 export function normalizeCategoriasGasto(raw: unknown): CategoriaGastoConfig[] {
-  const byId = new Map<string, CategoriaGastoConfig>();
-  for (const def of DEFAULT_CATEGORIAS_GASTO) {
-    byId.set(def.id, { ...def });
+  if (!Array.isArray(raw)) {
+    return DEFAULT_CATEGORIAS_GASTO.map((def) => ({ ...def })).sort((a, b) =>
+      a.label.localeCompare(b.label, 'es')
+    );
   }
 
-  if (Array.isArray(raw)) {
-    for (const item of raw) {
-      if (!item || typeof item !== 'object') continue;
-      const obj = item as Record<string, unknown>;
-      const label = String(obj.label ?? '').trim();
-      if (!label) continue;
-      const id = String(obj.id ?? slugifyOrigenGrupo(label)).trim().toLowerCase();
-      byId.set(id, {
-        id,
-        label,
-        ambitoDefault: String(obj.ambitoDefault ?? BUSINESS_CASH_AMBITO_ID).trim().toLowerCase(),
-        afectaReporteNegocio: obj.afectaReporteNegocio !== false,
-      });
-    }
+  const byId = new Map<string, CategoriaGastoConfig>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const label = String(obj.label ?? '').trim();
+    if (!label) continue;
+    const id = String(obj.id ?? slugifyOrigenGrupo(label)).trim().toLowerCase();
+    byId.set(id, {
+      id,
+      label,
+      ambitoDefault: String(obj.ambitoDefault ?? BUSINESS_CASH_AMBITO_ID).trim().toLowerCase(),
+      afectaReporteNegocio: obj.afectaReporteNegocio !== false,
+    });
   }
 
   return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label, 'es'));

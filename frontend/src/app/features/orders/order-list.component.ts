@@ -1,9 +1,8 @@
 import { Component, inject, OnDestroy, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { forkJoin } from 'rxjs';
 import { OrderService, Order, formatOrderNumber, resolveOrderBalance } from '../../core/services/order.service';
-import { ClientService, Client } from '../../core/services/client.service';
+import type { Client } from '../../core/services/client.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
 import { CatalogConfigService, AppConfig, DEFAULT_APP_CONFIG, getOrderStatusLabelFromConfig } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
@@ -73,7 +72,7 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
           [class]="iconActionLinkClass"
           aria-label="Nuevo pedido"
           title="Nuevo pedido">
-          <i-lucide name="clipboard-list" class="w-4 h-4"></i-lucide>
+          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
           <span class="hidden sm:inline">Nuevo pedido</span>
         </a>
       </app-module-page-header>
@@ -336,7 +335,6 @@ export class OrderListComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
 
   private orderService = inject(OrderService);
-  private clientService = inject(ClientService);
   private orderPrintService = inject(OrderPrintService);
   private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
@@ -605,14 +603,8 @@ export class OrderListComponent implements OnInit, OnDestroy {
       this.rebuildDisplayOrders();
     });
 
-    forkJoin({
-      clients: this.clientService.getClients(),
-      ordersPage: this.orderService.getOrdersPage(120),
-    }).subscribe({
-      next: ({ clients, ordersPage }) => {
-        this.clientsById = new Map(
-          clients.filter((client) => client.id).map((client) => [client.id!, client])
-        );
+    this.orderService.getOrdersPage(120).subscribe({
+      next: (ordersPage) => {
         this.orders = ordersPage.items;
         this.ordersHasMore = ordersPage.hasMore;
         this.ordersNextCursor = ordersPage.nextCursor;
@@ -673,7 +665,11 @@ export class OrderListComponent implements OnInit, OnDestroy {
   }
 
   getClientName(order: Order): string {
-    return this.clientsById.get(order.clienteId)?.nombre ?? 'Cliente sin nombre';
+    return (
+      order.clienteNombre?.trim() ||
+      this.clientsById.get(order.clienteId)?.nombre ||
+      'Cliente sin nombre'
+    );
   }
 
   getOrderNumber(order: Order): string {
@@ -687,14 +683,31 @@ export class OrderListComponent implements OnInit, OnDestroy {
   openEditOrder(order: Order) {
     if (!order.id || !this.auth.canViewOrder(order.estado)) return;
     const clientName = this.getClientName(order);
-    const orderPreview: Order = {
-      ...order,
-      clienteNombre:
-        order.clienteNombre?.trim() ||
-        (clientName !== 'Cliente sin nombre' ? clientName : undefined),
-    };
-    this.router.navigate(['/orders', order.id, 'edit'], {
-      state: { orderPreview },
+    const clienteNombre =
+      order.clienteNombre?.trim() ||
+      (clientName !== 'Cliente sin nombre' ? clientName : undefined);
+
+    this.orderService.getOrder(order.id).subscribe({
+      next: (fullOrder) => {
+        const orderPreview: Order = {
+          ...fullOrder,
+          clienteNombre: fullOrder.clienteNombre?.trim() || clienteNombre,
+        };
+        this.router.navigate(['/orders', order.id, 'edit'], {
+          state: { orderPreview },
+        });
+      },
+      error: () => {
+        this.router.navigate(['/orders', order.id, 'edit'], {
+          state: {
+            orderPreview: {
+              ...order,
+              clienteNombre,
+              items: [],
+            },
+          },
+        });
+      },
     });
   }
 

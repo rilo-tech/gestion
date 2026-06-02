@@ -126,4 +126,14 @@ export class PurchaseService {
       {}
     );
   }
+
+  updatePurchase(
+    compraId: string,
+    payload: CreatePurchasePayload
+  ): Observable<{ id: string; compraLabel: string }> {
+    return this.http.put<{ id: string; compraLabel: string }>(
+      `/api/purchases/${this.businessId}/${compraId}`,
+      payload
+    );
+  }
 }

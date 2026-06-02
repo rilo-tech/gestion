@@ -6,7 +6,6 @@ import { Supplier, SupplierService } from '../../core/services/supplier.service'
 import { DialogService } from '../../core/services/dialog.service';
 import {
   ICON_ACTION_LINK_CLASS,
-  IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
@@ -47,7 +46,6 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
     RouterLink,
     TransactionModalComponent,
     SupplierFormPanelComponent,
-    IconActionComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     CompactListRowComponent,
@@ -69,15 +67,12 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         <a
           headerActions
           routerLink="/suppliers/new"
-          [class]="iconActionLinkClass + ' hidden lg:inline-flex'"
+          [class]="iconActionLinkClass"
           aria-label="Nuevo proveedor"
           title="Nuevo proveedor">
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
           <span class="hidden sm:inline">Nuevo proveedor</span>
         </a>
-        <app-icon-action headerActions label="Nuevo proveedor" class="lg:hidden" (clicked)="openNewSupplier()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
       </app-module-page-header>
 
       <app-compact-data-list [showSearch]="true">

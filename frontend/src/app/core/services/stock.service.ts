@@ -1,9 +1,13 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, Subject, of } from 'rxjs';
+import { Observable, Subject, of, shareReplay, tap, map, catchError } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { StockShortageGroup, StockShortageRow } from './order.service';
 import { itemControlsStock as resolveItemControlsStock } from '../utils/stock-product';
+import {
+  filterStockSearchEntries,
+  type StockSearchEntry,
+} from '../../../../../shared/stock-search.ts';
 
 export interface StockItem {
   id?: string;
@@ -13,6 +17,7 @@ export interface StockItem {
   categoria?: string;
   talle?: string;
   color?: string;
+  codigo?: string;
   stockActual: number;
   stockMinimo?: number;
   stockReservado?: number;
@@ -25,17 +30,15 @@ export interface StockItem {
 }
 
 export function itemControlsStock(
-  item: Pick<StockItem, 'controlaStock' | 'categoria'> | undefined,
-  _categoriasSinStock: string[] = []
+  item: Pick<StockItem, 'controlaStock' | 'categoria'> | undefined
 ): boolean {
-  return resolveItemControlsStock(item, _categoriasSinStock);
+  return resolveItemControlsStock(item);
 }
 
 export function itemIsLowStock(
-  item: Pick<StockItem, 'stockActual' | 'stockMinimo' | 'stockReservado' | 'controlaStock' | 'categoria'> | undefined,
-  categoriasSinStock: string[] = []
+  item: Pick<StockItem, 'stockActual' | 'stockMinimo' | 'stockReservado' | 'controlaStock' | 'categoria'> | undefined
 ): boolean {
-  if (!itemControlsStock(item, categoriasSinStock)) return false;
+  if (!itemControlsStock(item)) return false;
   const disponible = getStockDisponible(item);
   return disponible <= (Number(item?.stockMinimo) || 0);
 }
@@ -123,23 +126,17 @@ function roundMoney(value: number): number {
 }
 
 /** Valor estimado de un producto (costo × depósito; stock 0 → 0). */
-export function computeItemValorEstimado(
-  item: StockItem,
-  categoriasSinStock: string[] = []
-): number {
-  if (!itemControlsStock(item, categoriasSinStock)) return 0;
+export function computeItemValorEstimado(item: StockItem): number {
+  if (!itemControlsStock(item)) return 0;
   const deposito = getStockEnDeposito(item);
   if (deposito <= 0) return 0;
   return roundMoney(deposito * (Number(item.costo) || 0));
 }
 
 /** Suma costo × unidades en depósito (misma regla que métricas persistidas). */
-export function computeValorDepositoEstimado(
-  items: StockItem[],
-  categoriasSinStock: string[] = []
-): number {
+export function computeValorDepositoEstimado(items: StockItem[]): number {
   const total = items.reduce(
-    (sum, item) => sum + computeItemValorEstimado(item, categoriasSinStock),
+    (sum, item) => sum + computeItemValorEstimado(item),
     0
   );
   return roundMoney(total);
@@ -156,12 +153,72 @@ export class StockService {
   /** Emite cuando el catálogo o el stock de un producto cambia (alta/baja, costo, etc.). */
   readonly stockCatalogChanged$ = this.catalogChanged.asObservable();
 
+  private searchIndexCache: StockSearchEntry[] | null = null;
+  private searchIndexBusinessId = '';
+  private searchIndexRequest: Observable<StockSearchEntry[]> | null = null;
+
   private get businessId(): string {
     return this.tenant.businessId;
   }
 
   notifyCatalogChanged(change?: StockCatalogChange): void {
+    this.invalidateSearchIndex();
     this.catalogChanged.next(change);
+  }
+
+  private invalidateSearchIndex(): void {
+    this.searchIndexCache = null;
+    this.searchIndexBusinessId = '';
+    this.searchIndexRequest = null;
+  }
+
+  /** Precarga el índice de búsqueda (una sola vez por sesión de catálogo). */
+  preloadSearchIndex(): void {
+    this.ensureSearchIndex().subscribe({ error: () => undefined });
+  }
+
+  isSearchIndexReady(): boolean {
+    return (
+      this.searchIndexCache !== null &&
+      this.searchIndexBusinessId === this.businessId
+    );
+  }
+
+  filterSearchIndex(query: string, limit = 20): StockItem[] {
+    if (!this.searchIndexCache) return [];
+    return filterStockSearchEntries(this.searchIndexCache, query, limit) as StockItem[];
+  }
+
+  private ensureSearchIndex(): Observable<StockSearchEntry[]> {
+    if (
+      this.searchIndexCache &&
+      this.searchIndexBusinessId === this.businessId
+    ) {
+      return of(this.searchIndexCache);
+    }
+
+    if (
+      this.searchIndexRequest &&
+      this.searchIndexBusinessId === this.businessId
+    ) {
+      return this.searchIndexRequest;
+    }
+
+    this.searchIndexBusinessId = this.businessId;
+    this.searchIndexRequest = this.http
+      .get<StockSearchEntry[]>(`/api/stock/${this.businessId}/search-index`)
+      .pipe(
+        tap((items) => {
+          this.searchIndexCache = items;
+        }),
+        catchError(() => {
+          this.invalidateSearchIndex();
+          return of([] as StockSearchEntry[]);
+        }),
+        shareReplay(1)
+      );
+
+    return this.searchIndexRequest;
   }
 
   getStock(): Observable<StockItem[]> {
@@ -185,11 +242,43 @@ export class StockService {
   }
 
   searchStock(query: string, limit = 20): Observable<StockItem[]> {
-    const params = new URLSearchParams({
-      q: query.trim(),
-      limit: String(limit),
-    });
-    return this.http.get<StockItem[]>(`/api/stock/${this.businessId}/search?${params}`);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      return of([]);
+    }
+
+    if (this.isSearchIndexReady()) {
+      return of(this.filterSearchIndex(trimmed, limit));
+    }
+
+    return this.ensureSearchIndex().pipe(
+      map((items) => filterStockSearchEntries(items, trimmed, limit) as StockItem[])
+    );
+  }
+
+  previewNextCode(categoria: string): Observable<{ codigo: string }> {
+    const params = new URLSearchParams({ categoria: categoria.trim() });
+    return this.http.get<{ codigo: string }>(
+      `/api/stock/${this.businessId}/next-code?${params}`
+    );
+  }
+
+  checkCodigoAvailability(
+    codigo: string,
+    options?: { excludeId?: string; categoria?: string }
+  ): Observable<{
+    available: boolean;
+    prefijoConflict: { categoria: string; prefijo: string } | null;
+  }> {
+    const params = new URLSearchParams({ codigo: codigo.trim() });
+    const excludeId = options?.excludeId?.trim();
+    const categoria = options?.categoria?.trim();
+    if (excludeId) params.set('excludeId', excludeId);
+    if (categoria) params.set('categoria', categoria);
+    return this.http.get<{
+      available: boolean;
+      prefijoConflict: { categoria: string; prefijo: string } | null;
+    }>(`/api/stock/${this.businessId}/codigo-check?${params}`);
   }
 
   getItem(itemId: string): Observable<StockItem> {

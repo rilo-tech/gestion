@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
+import { Subscription } from 'rxjs';
 import { StockItem, StockService } from '../../../core/services/stock.service';
 import { ListSearchFieldComponent } from '../list-search-field/list-search-field.component';
 
@@ -21,7 +22,7 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
   standalone: true,
   imports: [CommonModule, LucideAngularModule, ListSearchFieldComponent],
   template: `
-    <div class="relative">
+    <div class="relative z-30">
       <app-list-search-field
         #searchField
         mode="picker"
@@ -37,8 +38,11 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
       <div
         #searchMenu
         *ngIf="menuOpen && query.trim().length >= minChars"
-        class="product-search-menu absolute z-20 mt-1 w-full max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white text-gray-900 shadow-lg divide-y divide-gray-100"
-        (mousedown)="onMenuPointerDown($event)">
+        class="product-search-menu absolute z-50 mt-1 w-full max-h-56 sm:max-h-52 overflow-y-auto overscroll-y-contain touch-pan-y rounded-lg border border-gray-200 bg-white text-gray-900 shadow-lg divide-y divide-gray-100 dark:divide-gray-700"
+        (pointerdown)="onMenuPointerDown($event)"
+        (pointermove)="onMenuPointerMove($event)"
+        (pointerup)="onMenuPointerUp()"
+        (pointercancel)="onMenuPointerUp()">
         <p *ngIf="searching" class="px-2.5 py-2 sm:px-3 sm:py-3 text-xs sm:text-sm text-gray-400 text-center">Buscando...</p>
         <div
           *ngFor="let item of results; let i = index"
@@ -49,7 +53,7 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
           [class.hover:bg-teal-50]="!isAdded(item.id) && selectOnRowClick"
           [class.cursor-pointer]="!isAdded(item.id) && selectOnRowClick"
           [attr.data-product-search-active]="activeIndex === i ? 'true' : null"
-          (pointerdown)="onRowPointerDown(item, $event)">
+          (click)="onRowClick(item, $event)">
           <div class="min-w-0 flex-1">
             <p class="text-xs sm:text-sm font-medium text-gray-900 truncate">{{ item.nombre }}</p>
             <p class="text-[10px] sm:text-xs text-gray-500">
@@ -58,6 +62,10 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
                 <span *ngIf="isAdded(item.id)" class="text-teal-600 font-medium"> · {{ addedLabel }}</span>
               </ng-container>
               <ng-template #defaultMeta>
+                <ng-container *ngIf="item.codigo?.trim() as codigo">
+                  <span class="tabular-nums">{{ codigo }}</span>
+                  <span *ngIf="showBaseCost"> · </span>
+                </ng-container>
                 <ng-container *ngIf="showBaseCost">Costo base: {{ '$' + (item.costo || 0) }}</ng-container>
                 <span *ngIf="showBaseCost && isAdded(item.id)" class="text-teal-600 font-medium">
                   · {{ addedLabel }}
@@ -71,7 +79,7 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
           <button
             *ngIf="showAddButton"
             type="button"
-            (pointerdown)="onAddPointerDown(item, $event)"
+            (click)="onAddClick(item, $event)"
             [disabled]="isAdded(item.id)"
             [title]="isAdded(item.id) ? 'Ya está en la lista' : 'Agregar'"
             [attr.aria-label]="isAdded(item.id) ? 'Ya está en la lista' : 'Agregar ' + item.nombre"
@@ -101,10 +109,10 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
   @ViewChild('searchField') searchField?: ListSearchFieldComponent;
   @ViewChild('searchMenu') searchMenu?: ElementRef<HTMLDivElement>;
 
-  @Input() placeholder = 'Buscar producto por nombre...';
+  @Input() placeholder = 'Buscar por nombre o código...';
   @Input() inputName = 'transactionProductSearch';
   @Input() minChars = 2;
-  @Input() debounceMs = 300;
+  @Input() debounceMs = 80;
   @Input() disabled = false;
   @Input() addedProductIds: string[] = [];
   @Input() addedLabel = 'En la lista';
@@ -124,9 +132,14 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
 
   private suppressBlur = false;
   private blurTimeout?: ReturnType<typeof setTimeout>;
+  private refocusTimeout?: ReturnType<typeof setTimeout>;
   private searchTimeout?: ReturnType<typeof setTimeout>;
   private addedProductIdSet = new Set<string>();
   private addedProductIdsKey = '';
+  private menuPointerStartY: number | null = null;
+  private menuPointerMoved = false;
+  private readonly menuScrollSlopPx = 8;
+  private catalogSub?: Subscription;
 
   ngOnChanges(changes: SimpleChanges) {
     if (changes['addedProductIds']) {
@@ -136,11 +149,20 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
 
   ngOnInit() {
     this.syncAddedProductIds();
+    this.stockService.preloadSearchIndex();
+    this.catalogSub = this.stockService.stockCatalogChanged$.subscribe(() => {
+      this.stockService.preloadSearchIndex();
+      if (this.menuOpen && this.query.trim().length >= this.minChars) {
+        this.runSearch(this.query.trim());
+      }
+    });
   }
 
   ngOnDestroy() {
+    this.catalogSub?.unsubscribe();
     window.clearTimeout(this.searchTimeout);
     window.clearTimeout(this.blurTimeout);
+    window.clearTimeout(this.refocusTimeout);
   }
 
   isAdded(productId?: string): boolean {
@@ -155,13 +177,36 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
     this.addedProductIdSet = new Set(this.addedProductIds);
   }
 
-  onMenuPointerDown(event: Event) {
-    event.preventDefault();
+  onMenuPointerDown(event: PointerEvent) {
+    this.menuPointerStartY = event.clientY;
+    this.menuPointerMoved = false;
     this.suppressBlur = true;
+    if (event.pointerType === 'mouse') {
+      event.preventDefault();
+    }
+  }
+
+  onMenuPointerMove(event: PointerEvent) {
+    if (this.menuPointerStartY === null) return;
+    if (Math.abs(event.clientY - this.menuPointerStartY) > this.menuScrollSlopPx) {
+      this.menuPointerMoved = true;
+    }
+  }
+
+  onMenuPointerUp() {
+    this.menuPointerStartY = null;
+    window.setTimeout(() => {
+      if (!this.searchField?.isFocused()) {
+        this.suppressBlur = false;
+      }
+    }, 80);
   }
 
   onFocus() {
     this.menuOpen = true;
+    if (!this.stockService.isSearchIndexReady()) {
+      this.stockService.preloadSearchIndex();
+    }
     this.focused.emit();
   }
 
@@ -171,6 +216,7 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
   }
 
   onQueryChange() {
+    this.menuOpen = true;
     this.activeIndex = -1;
     window.clearTimeout(this.searchTimeout);
 
@@ -181,33 +227,48 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
       return;
     }
 
+    if (this.stockService.isSearchIndexReady()) {
+      this.runSearch(trimmed);
+      return;
+    }
+
     this.searching = true;
     this.searchTimeout = window.setTimeout(() => {
-      this.stockService.searchStock(trimmed).subscribe({
-        next: (items) => {
-          this.results = items;
-          this.searching = false;
-          this.activeIndex = items.length > 0 ? 0 : -1;
-        },
-        error: () => {
-          this.results = [];
-          this.searching = false;
-          this.activeIndex = -1;
-        },
-      });
+      this.runSearch(trimmed);
     }, this.debounceMs);
+  }
+
+  private runSearch(trimmed: string) {
+    if (this.stockService.isSearchIndexReady()) {
+      this.results = this.stockService.filterSearchIndex(trimmed);
+      this.searching = false;
+      this.activeIndex = this.results.length > 0 ? 0 : -1;
+      return;
+    }
+
+    this.searching = true;
+    this.stockService.searchStock(trimmed).subscribe({
+      next: (items) => {
+        this.results = items;
+        this.searching = false;
+        this.activeIndex = items.length > 0 ? 0 : -1;
+      },
+      error: () => {
+        this.results = [];
+        this.searching = false;
+        this.activeIndex = -1;
+      },
+    });
   }
 
   onBlur() {
     window.clearTimeout(this.blurTimeout);
     this.blurTimeout = window.setTimeout(() => {
-      if (this.suppressBlur) {
-        this.suppressBlur = false;
-        return;
-      }
+      if (this.suppressBlur) return;
+      if (this.searchField?.isFocused()) return;
       this.menuOpen = false;
       this.activeIndex = -1;
-    }, 150);
+    }, 200);
   }
 
   onKeydown(event: KeyboardEvent) {
@@ -246,14 +307,21 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
     }
   }
 
-  onAddPointerDown(item: StockItem, event: Event) {
-    event.preventDefault();
+  onAddClick(item: StockItem, event: Event) {
     event.stopPropagation();
+    if (this.menuPointerMoved) {
+      this.menuPointerMoved = false;
+      return;
+    }
     this.selectProduct(item);
   }
 
-  onRowPointerDown(item: StockItem, event: Event) {
+  onRowClick(item: StockItem, event: Event) {
     if (!this.selectOnRowClick || this.isAdded(item.id)) return;
+    if (this.menuPointerMoved) {
+      this.menuPointerMoved = false;
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     this.selectProduct(item);
@@ -275,12 +343,18 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
     this.results = [];
     this.activeIndex = -1;
     this.searching = false;
-    this.menuOpen = false;
+    this.menuOpen = true;
+    this.menuPointerMoved = false;
+    this.menuPointerStartY = null;
     window.clearTimeout(this.searchTimeout);
     window.clearTimeout(this.blurTimeout);
-    window.setTimeout(() => {
-      this.suppressBlur = false;
+    window.clearTimeout(this.refocusTimeout);
+
+    this.refocusTimeout = window.setTimeout(() => {
       this.searchField?.focus();
+      window.setTimeout(() => {
+        this.suppressBlur = false;
+      }, 280);
     }, 0);
   }
 
@@ -291,9 +365,11 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
     this.activeIndex = -1;
     this.searching = false;
     window.clearTimeout(this.searchTimeout);
+    window.clearTimeout(this.refocusTimeout);
   }
 
   focus() {
+    this.menuOpen = true;
     this.searchField?.focus();
   }
 

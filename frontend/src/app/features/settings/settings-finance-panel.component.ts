@@ -13,20 +13,30 @@ import {
   getCajaAmbitos,
   getMediosPagoConCuentaHija,
   isSystemCashAmbito,
+  BUSINESS_CASH_AMBITO_ID,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   syncMedioPagoFlags,
 } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { ConfigSettingCardComponent } from '../../shared/components/config-setting-card/config-setting-card.component';
-import { ConfigModuleHeaderComponent } from '../../shared/components/config-module-header/config-module-header.component';
 import {
   ConfigEditableListComponent,
   type ConfigEditableListItem,
 } from '../../shared/components/config-editable-list/config-editable-list.component';
-import { CONFIG_SETTINGS_GRID_CLASS } from '../../shared/components/config-editable-list/config-layout.constants';
+import { ConfigListRemoveButtonComponent } from '../../shared/components/config-editable-list/config-list-remove-button.component';
+import {
+  CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
+} from '../../shared/components/config-editable-list/config-editable-list.constants';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
+import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
+
+const TARJETA_AMBITO_AMBOS_ID = 'ambos';
+
+type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
 
 @Component({
   selector: 'app-settings-finance-panel',
@@ -35,28 +45,21 @@ import { Subscription } from 'rxjs';
     CommonModule,
     FormsModule,
     ConfigSettingCardComponent,
-    ConfigModuleHeaderComponent,
     ConfigEditableListComponent,
+    ConfigListRemoveButtonComponent,
     FormSaveFooterComponent,
+    LucideAngularModule,
   ],
   template: `
     <section [class]="sectionClass">
-      <app-config-module-header
-        title="Finanzas"
-        description="Medios de pago, cuentas vinculadas y categorías de gasto. Agregar y quitar guardan al instante; Guardar o el ícono de arriba sincronizan el resto."
-        [saving]="saving"
-        [saveDisabled]="false"
-        saveTitle="Guardar"
-        (saveClick)="saveConfiguration()">
-      </app-config-module-header>
-
-      <div [class]="gridClass">
+      <div [class]="sectionsListClass">
         <app-config-setting-card
           title="Medios de pago"
           description="Definí el nombre y si cada medio genera egreso de caja al instante, cuentas a pagar, o ambos según corresponda."
           [listCount]="config.finanzas.mediosPago.length"
-          [listExpanded]="isListExpanded('finanzas.medios', config.finanzas.mediosPago.length)"
-          (listExpandedChange)="setListExpanded('finanzas.medios', $event)"
+          [sectionCollapse]="true"
+          [listExpanded]="isFinanceSectionOpen('medios')"
+          (listExpandedChange)="onFinanceSectionToggle('medios', $event)"
           [cardClass]="cardClass">
           <div configList class="space-y-2">
             <div class="flex flex-col sm:flex-row gap-1.5">
@@ -76,57 +79,60 @@ import { Subscription } from 'rxjs';
               </button>
             </div>
 
-            <ul class="space-y-2 m-0 p-0 list-none max-h-96 overflow-y-auto">
+            <ul class="space-y-2 m-0 p-0 list-none">
               <li
                 *ngFor="let medio of config.finanzas.mediosPago; trackBy: trackMedioId"
-                class="rounded-lg border border-gray-100 dark:border-gray-700 p-2.5 space-y-2">
-                <div class="flex gap-2 items-start">
-                  <input
-                    [ngModel]="medio.label"
-                    (ngModelChange)="onMedioLabelChange(medio.id, $event)"
-                    (blur)="persist()"
-                    [name]="'medio_label_' + medio.id"
-                    [disabled]="saving"
-                    class="flex-1 min-w-0 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-950 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
-                  <button
-                    type="button"
-                    (click)="removeMedioById(medio.id)"
-                    [disabled]="saving"
-                    class="shrink-0 text-[11px] font-semibold text-red-600 hover:underline disabled:opacity-50">
-                    Quitar
-                  </button>
+                class="relative rounded-lg border border-gray-100 dark:border-gray-700 p-2.5 space-y-2">
+                <div class="relative w-full sm:flex sm:items-start sm:justify-between sm:gap-2">
+                  <div [class]="configRowBodyClass">
+                    <input
+                      [ngModel]="medio.label"
+                      (ngModelChange)="onMedioLabelChange(medio.id, $event)"
+                      (blur)="persist()"
+                      [name]="'medio_label_' + medio.id"
+                      [disabled]="saving"
+                      class="w-full min-w-0 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-950 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
+                  </div>
+                  <app-config-list-remove-button
+                    [disabled]="saving || (!!removalBusyId && removalBusyId !== medio.id)"
+                    [loading]="removalBusyId === medio.id"
+                    (clicked)="removeMedioById(medio.id)">
+                  </app-config-list-remove-button>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
-                  <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+                <div class="space-y-2 text-xs text-gray-700 dark:text-gray-300">
+                  <label class="flex items-start gap-2 cursor-pointer select-none min-w-0">
                     <input
                       type="checkbox"
                       [checked]="medio.generaEgresoCaja === true"
                       (change)="setMedioFlag(medio.id, 'generaEgresoCaja', $any($event.target).checked)"
                       [disabled]="saving"
-                      class="rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
-                    <span>Genera egreso de caja al confirmar</span>
+                      class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+                    <span class="leading-snug">Genera egreso de caja al confirmar</span>
                   </label>
-                  <label class="inline-flex items-center gap-2 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      [checked]="medio.generaCuentasPagar === true"
-                      (change)="setMedioFlag(medio.id, 'generaCuentasPagar', $any($event.target).checked)"
-                      [disabled]="saving"
-                      class="rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
-                    <span>Genera cuentas a pagar</span>
-                  </label>
-                  <label
-                    *ngIf="medio.generaCuentasPagar"
-                    class="inline-flex items-center gap-2 cursor-pointer select-none sm:col-span-2">
-                    <input
-                      type="checkbox"
-                      [checked]="medio.requiereCuentaHija === true"
-                      (change)="setMedioFlag(medio.id, 'requiereCuentaHija', $any($event.target).checked)"
-                      [disabled]="saving"
-                      class="rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
-                    <span>Requiere elegir cuenta (tarjeta, crédito, etc.)</span>
-                  </label>
+
+                  <div class="flex flex-wrap items-start gap-x-4 gap-y-2 sm:gap-x-6">
+                    <label class="flex items-start gap-2 cursor-pointer select-none min-w-0 shrink-0">
+                      <input
+                        type="checkbox"
+                        [checked]="medio.generaCuentasPagar === true"
+                        (change)="setMedioFlag(medio.id, 'generaCuentasPagar', $any($event.target).checked)"
+                        [disabled]="saving"
+                        class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+                      <span class="leading-snug">Genera cuentas a pagar</span>
+                    </label>
+                    <label
+                      *ngIf="medio.generaCuentasPagar"
+                      class="flex items-start gap-2 cursor-pointer select-none min-w-0 flex-1">
+                      <input
+                        type="checkbox"
+                        [checked]="medio.requiereCuentaHija === true"
+                        (change)="setMedioFlag(medio.id, 'requiereCuentaHija', $any($event.target).checked)"
+                        [disabled]="saving"
+                        class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+                      <span class="leading-snug">Requiere elegir cuenta (tarjeta, crédito, etc.)</span>
+                    </label>
+                  </div>
                 </div>
 
                 <p class="text-[10px] text-gray-400 leading-snug m-0">{{ getMedioResumen(medio) }}</p>
@@ -139,43 +145,139 @@ import { Subscription } from 'rxjs';
         </app-config-setting-card>
 
         <app-config-setting-card
-          title="Cuentas vinculadas"
-          description="Tarjetas, líneas de crédito u otras cuentas bajo un medio que genera cuentas a pagar. Pagá el resumen mensual de una sola vez."
+          title="Configurar cuentas"
+          description="Tarjetas y líneas que elegís al comprar (medio de pago de arriba). Definí el nombre y si el gasto va a caja personal, del negocio o a ambos."
           [listCount]="config.finanzas.tarjetas.length"
-          [listExpanded]="isListExpanded('finanzas.tarjetas', config.finanzas.tarjetas.length)"
-          (listExpandedChange)="setListExpanded('finanzas.tarjetas', $event)"
+          [sectionCollapse]="true"
+          [listExpanded]="isFinanceSectionOpen('tarjetas')"
+          (listExpandedChange)="onFinanceSectionToggle('tarjetas', $event)"
           [cardClass]="cardClass">
-          <app-config-editable-list
-            configList
-            [items]="tarjetaListItems"
-            labelMode="input"
-            addPlaceholder="Ej. Visa Galicia, Crédito proveedor X..."
-            emptyMessage="Agregá cuentas para medios que requieren elegir tarjeta o crédito."
-            [disabled]="saving"
-            inputName="tarjetaDraft"
-            (add)="addTarjetaFromList($event)"
-            (remove)="removeTarjetaById($event)"
-            (labelChange)="onTarjetaLabelChange($event)"
-            (selectChange)="onTarjetaMedioChange($event)"
-            (select2Change)="onTarjetaAmbitoChange($event)"
-            (labelBlur)="persist()">
-          </app-config-editable-list>
+          <div configList class="space-y-3">
+            <div
+              *ngIf="mediosConCuentaHija.length === 0"
+              class="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/40 px-3 py-2.5 text-xs text-amber-900 dark:text-amber-100 leading-snug">
+              Activá en <span class="font-semibold">Medios de pago</span> la opción «Genera cuentas a pagar» y «Requiere elegir cuenta» para poder cargar cuentas acá.
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-1.5">
+              <input
+                [(ngModel)]="tarjetaNombreDraft"
+                name="tarjetaNombreDraft"
+                placeholder="Ej. Visa Galicia, OCA Master..."
+                [disabled]="saving || mediosConCuentaHija.length === 0"
+                (keydown.enter)="addTarjetaFromDraft($event)"
+                class="flex-1 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-950 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
+              <button
+                type="button"
+                (click)="addTarjetaFromDraft()"
+                [disabled]="saving || !tarjetaNombreDraft.trim() || mediosConCuentaHija.length === 0"
+                class="inline-flex items-center justify-center px-3 py-1.5 rounded-md text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50">
+                Agregar cuenta
+              </button>
+            </div>
+
+            <ul class="space-y-3 m-0 p-0 list-none" *ngIf="config.finanzas.tarjetas.length > 0">
+              <li
+                *ngFor="let tarjeta of config.finanzas.tarjetas; trackBy: trackTarjetaId"
+                class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 overflow-hidden border-l-4"
+                [ngClass]="getTarjetaMedioAccentBorder(tarjeta.medioPagoId)">
+                <div
+                  class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 relative w-full sm:flex sm:items-center sm:justify-between sm:gap-2">
+                  <div [class]="configRowBodyClass">
+                    <div [class]="configRowChipsClass">
+                      <span
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide shrink-0"
+                        [ngClass]="getTarjetaMedioBadgeClass(tarjeta.medioPagoId)">
+                        <i-lucide name="credit-card" class="w-3 h-3"></i-lucide>
+                        {{ getTarjetaMedioLabel(tarjeta.medioPagoId) }}
+                      </span>
+                    </div>
+                    <input
+                      [ngModel]="tarjeta.label"
+                      (ngModelChange)="onTarjetaLabelChange({ id: tarjeta.id, label: $event })"
+                      (blur)="persist()"
+                      [name]="'tarjeta_label_' + tarjeta.id"
+                      [disabled]="saving"
+                      class="w-full min-w-0 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 text-sm font-semibold bg-white dark:bg-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
+                  </div>
+                  <app-config-list-remove-button
+                    [disabled]="saving || (!!removalBusyId && removalBusyId !== tarjeta.id)"
+                    [loading]="removalBusyId === tarjeta.id"
+                    (clicked)="removeTarjetaById(tarjeta.id)">
+                  </app-config-list-remove-button>
+                </div>
+
+                <div class="px-3 py-3 space-y-3 text-xs">
+                  <div *ngIf="mediosConCuentaHija.length > 1">
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                      Medio de pago al comprar
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        *ngFor="let medio of mediosConCuentaHija; trackBy: trackMedioId"
+                        (click)="setTarjetaMedio(tarjeta.id, medio.id)"
+                        [disabled]="saving"
+                        class="px-2.5 py-1 rounded-md border text-xs font-medium transition-colors disabled:opacity-50"
+                        [ngClass]="
+                          tarjeta.medioPagoId === medio.id
+                            ? getTarjetaMedioChipActiveClass(medio.id)
+                            : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                        ">
+                        {{ medio.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                      Impacto del gasto (ámbito por defecto)
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        *ngFor="let chip of tarjetaAmbitoChips"
+                        (click)="setTarjetaAmbito(tarjeta.id, chip.id)"
+                        [disabled]="saving"
+                        class="px-2.5 py-1 rounded-md border text-xs font-medium transition-colors disabled:opacity-50"
+                        [ngClass]="
+                          isTarjetaAmbitoSelected(tarjeta, chip.id)
+                            ? chip.activeClass
+                            : chip.idleClass
+                        ">
+                        {{ chip.label }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+
+            <p
+              *ngIf="config.finanzas.tarjetas.length === 0 && mediosConCuentaHija.length > 0"
+              class="text-xs text-gray-400 py-3 text-center border border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
+              Agregá la primera cuenta. Al registrar una compra, la elegís en el medio «{{ mediosConCuentaHija[0]?.label }}».
+            </p>
+          </div>
         </app-config-setting-card>
 
         <app-config-setting-card
           title="Categorías de gasto"
-          description="Para insumos, servicios y gastos resumidos en compras."
+          description="Compras, cuentas a pagar y egresos rápidos en Caja (envíos, gastos chicos)."
           [listCount]="config.finanzas.categoriasGasto.length"
-          [listExpanded]="isListExpanded('finanzas.categorias', config.finanzas.categoriasGasto.length)"
-          (listExpandedChange)="setListExpanded('finanzas.categorias', $event)"
+          [sectionCollapse]="true"
+          [listExpanded]="isFinanceSectionOpen('categorias')"
+          (listExpandedChange)="onFinanceSectionToggle('categorias', $event)"
           [cardClass]="cardClass">
           <app-config-editable-list
             configList
             [items]="categoriaGastoListItems"
             labelMode="input"
             addPlaceholder="Ej. Insumos sublimación"
-            [disabled]="saving"
+            [disabled]="saving || !!removalBusyId"
+            [busyRemoveId]="removalBusyId"
             inputName="categoriaGastoDraft"
+            listMaxHeightClass=""
             (add)="addCategoriaFromList($event)"
             (remove)="removeCategoriaById($event)"
             (labelChange)="onCategoriaGastoLabelChange($event)"
@@ -204,14 +306,20 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
   config: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   saving = false;
   saveSuccessMessage = '';
+  removalBusyId: string | null = null;
   medioDraft = '';
-  private listExpanded: Record<string, boolean> = {};
+  tarjetaNombreDraft = '';
+  expandedFinanceSection: FinanceSectionId | null = 'medios';
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
 
   readonly sectionClass = 'space-y-4 sm:space-y-6';
-  readonly gridClass = CONFIG_SETTINGS_GRID_CLASS;
+  readonly sectionsListClass = 'flex flex-col gap-2 w-full min-w-0';
   readonly cardClass =
-    'bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 flex flex-col min-w-0 h-full';
+    'bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4 flex flex-col min-w-0';
+
+  readonly configRowShellClass = CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS;
+  readonly configRowBodyClass = CONFIG_EDITABLE_LIST_ROW_BODY_CLASS;
+  readonly configRowChipsClass = CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS;
 
   get cajaAmbitos() {
     return getCajaAmbitos(this.config);
@@ -221,26 +329,29 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     return getMediosPagoConCuentaHija(this.config);
   }
 
-  get tarjetaListItems(): ConfigEditableListItem[] {
-    const medioOptions = this.mediosConCuentaHija.map((medio) => ({
-      value: medio.id,
-      label: medio.label,
-    }));
-
-    return this.config.finanzas.tarjetas.map((tarjeta) => ({
-      id: tarjeta.id,
-      label: tarjeta.label,
-      removable: true,
-      selectLabel: 'Medio de pago',
-      selectValue: tarjeta.medioPagoId,
-      selectOptions: medioOptions,
-      select2Label: 'Ámbito por defecto',
-      select2Value: tarjeta.ambitoDefault,
-      select2Options: this.cajaAmbitos.map((ambito) => ({
-        value: ambito.id,
+  get tarjetaAmbitoChips(): Array<{ id: string; label: string; idleClass: string; activeClass: string }> {
+    const chips = getCajaAmbitos(this.config).map((ambito) => {
+      const negocio = isSystemCashAmbito(ambito);
+      return {
+        id: ambito.id,
         label: ambito.label,
-      })),
-    }));
+        idleClass: negocio
+          ? 'border-teal-200 text-teal-800 bg-teal-50/50 dark:border-teal-800 dark:text-teal-200 dark:bg-teal-950/30'
+          : 'border-violet-200 text-violet-800 bg-violet-50/50 dark:border-violet-800 dark:text-violet-200 dark:bg-violet-950/30',
+        activeClass: negocio
+          ? 'border-teal-600 bg-teal-600 text-white dark:border-teal-500 dark:bg-teal-600'
+          : 'border-violet-600 bg-violet-600 text-white dark:border-violet-500 dark:bg-violet-600',
+      };
+    });
+    chips.push({
+      id: TARJETA_AMBITO_AMBOS_ID,
+      label: 'Ambos',
+      idleClass:
+        'border-amber-200 text-amber-900 bg-amber-50/60 dark:border-amber-800 dark:text-amber-100 dark:bg-amber-950/30',
+      activeClass:
+        'border-amber-500 bg-amber-500 text-white dark:border-amber-500 dark:bg-amber-500',
+    });
+    return chips;
   }
 
   get categoriaGastoListItems(): ConfigEditableListItem[] {
@@ -266,7 +377,14 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Guardado explícito (botón o ícono superior). Siempre ejecutable salvo mientras guarda. */
+  isFinanceSectionOpen(section: FinanceSectionId): boolean {
+    return this.expandedFinanceSection === section;
+  }
+
+  onFinanceSectionToggle(section: FinanceSectionId, expanded: boolean) {
+    this.expandedFinanceSection = expanded ? section : null;
+  }
+
   saveConfiguration() {
     this.persist();
   }
@@ -275,15 +393,46 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     return medio.id;
   }
 
-  isListExpanded(key: string, count: number): boolean {
-    if (Object.prototype.hasOwnProperty.call(this.listExpanded, key)) {
-      return this.listExpanded[key];
-    }
-    return count === 0;
+  trackTarjetaId(_index: number, tarjeta: { id: string }): string {
+    return tarjeta.id;
   }
 
-  setListExpanded(key: string, expanded: boolean) {
-    this.listExpanded[key] = expanded;
+  getTarjetaMedioLabel(medioPagoId: string): string {
+    return (
+      this.config.finanzas.mediosPago.find((medio) => medio.id === medioPagoId)?.label ??
+      medioPagoId
+    );
+  }
+
+  getTarjetaMedioAccentBorder(medioPagoId: string): string {
+    const accents: Record<string, string> = {
+      tarjeta_credito: 'border-l-teal-500',
+      cheque: 'border-l-violet-500',
+      cuenta_corriente: 'border-l-sky-500',
+    };
+    return accents[medioPagoId] ?? 'border-l-orange-400';
+  }
+
+  getTarjetaMedioBadgeClass(medioPagoId: string): string {
+    const badges: Record<string, string> = {
+      tarjeta_credito: 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-200',
+      cheque: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-200',
+      cuenta_corriente: 'bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200',
+    };
+    return badges[medioPagoId] ?? 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-200';
+  }
+
+  getTarjetaMedioChipActiveClass(medioPagoId: string): string {
+    const active: Record<string, string> = {
+      tarjeta_credito: 'border-teal-500 bg-teal-600 text-white',
+      cheque: 'border-violet-500 bg-violet-600 text-white',
+      cuenta_corriente: 'border-sky-500 bg-sky-600 text-white',
+    };
+    return active[medioPagoId] ?? 'border-orange-400 bg-orange-500 text-white';
+  }
+
+  isTarjetaAmbitoSelected(tarjeta: { ambitoDefault: string }, ambitoId: string): boolean {
+    return (tarjeta.ambitoDefault || BUSINESS_CASH_AMBITO_ID) === ambitoId;
   }
 
   getMedioResumen(medio: MedioPagoConfig): string {
@@ -356,13 +505,13 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     ].sort((a, b) => a.label.localeCompare(b.label, 'es'));
 
     this.medioDraft = '';
-    this.listExpanded['finanzas.medios'] = true;
+    this.expandedFinanceSection = 'medios';
     this.persist();
   }
 
   removeMedioById(id: string) {
     const medio = this.config.finanzas.mediosPago.find((item) => item.id === id);
-    if (!medio || this.saving) return;
+    if (!medio || this.saving || this.removalBusyId) return;
 
     this.confirmRemoval('finanzas.mediosPago', medio.label, id, () => {
       this.config.finanzas.mediosPago = this.config.finanzas.mediosPago.filter(
@@ -376,15 +525,18 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     if (row) row.label = event.label.trim();
   }
 
-  onTarjetaMedioChange(event: { id: string; value: string }) {
-    const row = this.config.finanzas.tarjetas.find((item) => item.id === event.id);
-    if (row) row.medioPagoId = event.value;
+  setTarjetaMedio(tarjetaId: string, medioPagoId: string) {
+    const row = this.config.finanzas.tarjetas.find((item) => item.id === tarjetaId);
+    if (!row || row.medioPagoId === medioPagoId) return;
+    row.medioPagoId = medioPagoId;
     this.persist();
   }
 
-  onTarjetaAmbitoChange(event: { id: string; value: string }) {
-    const row = this.config.finanzas.tarjetas.find((item) => item.id === event.id);
-    if (row) row.ambitoDefault = event.value;
+  setTarjetaAmbito(tarjetaId: string, ambitoId: string) {
+    const row = this.config.finanzas.tarjetas.find((item) => item.id === tarjetaId);
+    if (!row || row.ambitoDefault === ambitoId) return;
+    row.ambitoDefault = ambitoId;
+    this.persist();
   }
 
   onCategoriaGastoLabelChange(event: { id: string; label: string }) {
@@ -392,8 +544,9 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     if (row) row.label = event.label.trim();
   }
 
-  addTarjetaFromList(label: string) {
-    const trimmed = label.trim();
+  addTarjetaFromDraft(event?: Event) {
+    event?.preventDefault();
+    const trimmed = this.tarjetaNombreDraft.trim();
     if (!trimmed || this.saving) return;
 
     const defaultMedio =
@@ -428,13 +581,14 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
       },
     ].sort((a, b) => a.label.localeCompare(b.label, 'es'));
 
-    this.listExpanded['finanzas.tarjetas'] = true;
+    this.tarjetaNombreDraft = '';
+    this.expandedFinanceSection = 'tarjetas';
     this.persist();
   }
 
   removeTarjetaById(id: string) {
     const tarjeta = this.config.finanzas.tarjetas.find((item) => item.id === id);
-    if (!tarjeta || this.saving) return;
+    if (!tarjeta || this.saving || this.removalBusyId) return;
     this.confirmRemoval('finanzas.tarjetas', tarjeta.label, id, () => {
       this.config.finanzas.tarjetas = this.config.finanzas.tarjetas.filter((item) => item.id !== id);
     });
@@ -452,13 +606,14 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
       ...this.config.finanzas.categoriasGasto,
       { id, label: trimmed, ambitoDefault: 'negocio', afectaReporteNegocio: true },
     ].sort((a, b) => a.label.localeCompare(b.label, 'es'));
-    this.listExpanded['finanzas.categorias'] = true;
+    this.expandedFinanceSection = 'categorias';
     this.persist();
   }
 
   removeCategoriaById(id: string) {
     const cat = this.config.finanzas.categoriasGasto.find((item) => item.id === id);
-    if (!cat || this.saving) return;
+    if (!cat || this.saving || this.removalBusyId) return;
+
     this.confirmRemoval('finanzas.categoriasGasto', cat.label, id, () => {
       this.config.finanzas.categoriasGasto = this.config.finanzas.categoriasGasto.filter(
         (item) => item.id !== id
@@ -472,6 +627,9 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     checkValue: string,
     applyRemoval: () => void
   ) {
+    if (this.removalBusyId) return;
+    this.removalBusyId = checkValue;
+
     this.catalog.checkConfigUsage(kind, checkValue).subscribe({
       next: ({ usage }) => {
         const active = usage.filter((hit) => hit.count > 0);
@@ -481,6 +639,7 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
           return;
         }
 
+        this.removalBusyId = null;
         this.dialog
           .confirm({
             title: 'Opción en uso',
@@ -490,15 +649,27 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
           })
           .subscribe((confirmed) => {
             if (!confirmed) return;
+            this.removalBusyId = checkValue;
             applyRemoval();
             this.persist(true);
           });
       },
       error: () => {
-        this.dialog.alert({
-          title: 'Error',
-          message: 'No se pudo verificar si la opción está en uso.',
-        });
+        this.removalBusyId = null;
+        this.dialog
+          .confirm({
+            title: 'No se pudo verificar',
+            message:
+              'No se pudo comprobar si la opción está en uso. ¿Quitar de la configuración igual?',
+            confirmLabel: 'Quitar igual',
+            variant: 'danger',
+          })
+          .subscribe((confirmed) => {
+            if (!confirmed) return;
+            this.removalBusyId = checkValue;
+            applyRemoval();
+            this.persist(true);
+          });
       },
     });
   }
@@ -521,10 +692,12 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
       next: (saved) => {
         this.config = structuredClone(saved);
         this.saving = false;
+        this.removalBusyId = null;
         this.showSaveSuccess('Finanzas guardadas correctamente.');
       },
       error: (error) => {
         this.saving = false;
+        this.removalBusyId = null;
         this.handleSaveError(error, () => this.persist(true));
       },
     });

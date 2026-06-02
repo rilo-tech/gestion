@@ -1,6 +1,9 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { TRANSACTION_COMPACT_LABEL_CLASS } from './transaction-form.constants';
+import {
+  TRANSACTION_COMPACT_LABEL_INLINE_CLASS,
+  TRANSACTION_COMPACT_LABEL_ROW_CLASS,
+} from './transaction-form.constants';
 
 @Component({
   selector: 'app-transaction-party-field',
@@ -8,8 +11,8 @@ import { TRANSACTION_COMPACT_LABEL_CLASS } from './transaction-form.constants';
   imports: [CommonModule],
   template: `
     <div>
-      <div class="flex items-center justify-between gap-3 mb-0.5 sm:mb-1">
-        <label [class]="labelClass">{{ label }}</label>
+      <div [class]="labelRowClass + ' justify-between gap-3'">
+        <label [class]="headerLabelClass">{{ label }}</label>
         <button
           *ngIf="showCreateAction"
           type="button"
@@ -29,5 +32,6 @@ export class TransactionPartyFieldComponent {
 
   @Output() createClick = new EventEmitter<void>();
 
-  readonly labelClass = TRANSACTION_COMPACT_LABEL_CLASS;
+  readonly labelRowClass = TRANSACTION_COMPACT_LABEL_ROW_CLASS;
+  readonly headerLabelClass = TRANSACTION_COMPACT_LABEL_INLINE_CLASS;
 }

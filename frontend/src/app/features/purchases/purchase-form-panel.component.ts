@@ -20,7 +20,9 @@ import {
   getCategoriasGasto,
   getMedioPagoConfig,
   getMediosPagoActivos,
+  getTarjetasActivas,
   getTarjetasForMedio,
+  medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
   usesCashAmbitoSeparation,
@@ -47,14 +49,20 @@ import {
 import { TransactionTableFieldChange, TransactionTableLine } from '../../shared/components/transaction-lines-table/transaction-lines-table.types';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import { LucideAngularModule } from 'lucide-angular';
-import { Subscription } from 'rxjs';
+import { Subscription, finalize } from 'rxjs';
 import { prefersInlineFormPage } from '../../core/utils/responsive-form';
 import {
   TransactionPartyFieldComponent,
   TransactionNotesFieldComponent,
+  TransactionDateFieldComponent,
   TransactionPaymentSimpleComponent,
   TransactionPaymentMedioOption,
 } from '../../shared/components/transaction-form';
+import {
+  TRANSACTION_COMPACT_FIELD_CLASS,
+  TRANSACTION_COMPACT_LABEL_CLASS,
+} from '../../shared/components/transaction-form/transaction-form.constants';
+import { todayDateInputValue, toDateInputValue } from '../../core/utils/transaction-date';
 
 interface PurchaseDraftLine {
   id: string;
@@ -85,32 +93,48 @@ interface PurchaseDraftLine {
     TransactionProductSearchComponent,
     TransactionPartyFieldComponent,
     TransactionNotesFieldComponent,
+    TransactionDateFieldComponent,
     TransactionPaymentSimpleComponent,
   ],
   template: `
     <form (submit)="submitPurchase(); $event.preventDefault()" class="space-y-4">
       <fieldset [disabled]="readOnly || !!completedPurchaseId" class="space-y-4 border-0 p-0 m-0 min-w-0">
-      <app-transaction-party-field
-        label="Proveedor"
-        [showCreateAction]="!readOnly"
-        createActionLabel="+ Nuevo proveedor"
-        (createClick)="openNewSupplierModal()">
-        <app-searchable-select
-          [(ngModel)]="purchaseProveedorId"
-          name="purchaseProveedorId"
-          [labeledOptions]="supplierOptions"
-          [fallbackLabel]="readOnly ? (initialPurchase?.proveedor?.trim() || '—') : ''"
-          [creatable]="!readOnly"
-          [disabled]="readOnly"
-          createLabelPrefix="Crear proveedor"
-          (createRequested)="quickCreateSupplier($event)"
-          (searchChange)="pendingSupplierName = $event"
-          placeholder="Buscar proveedor..."
-          plainPlaceholder="Opcional"
-          emptyOptionsMessage="No hay proveedores cargados. Escribí el nombre para crearlo."
-          listHint="Opcional. Elegí un proveedor o creá uno nuevo.">
-        </app-searchable-select>
-      </app-transaction-party-field>
+      <div class="grid grid-cols-[minmax(0,1fr)_8.5rem] sm:grid-cols-[minmax(0,1fr)_10.5rem] gap-2 sm:gap-4 items-start">
+        <div class="min-w-0">
+          <app-transaction-party-field
+            label="Proveedor"
+            [showCreateAction]="!readOnly"
+            createActionLabel="+ Nuevo proveedor"
+            (createClick)="openNewSupplierModal()">
+            <app-searchable-select
+              [compact]="true"
+              [(ngModel)]="purchaseProveedorId"
+              name="purchaseProveedorId"
+              [labeledOptions]="supplierOptions"
+              [fallbackLabel]="readOnly ? (initialPurchase?.proveedor?.trim() || '—') : ''"
+              [creatable]="!readOnly"
+              [disabled]="readOnly"
+              createLabelPrefix="Crear proveedor"
+              (createRequested)="quickCreateSupplier($event)"
+              (searchChange)="pendingSupplierName = $event"
+              placeholder="Buscar proveedor..."
+              plainPlaceholder="Opcional"
+              emptyOptionsMessage="No hay proveedores cargados. Escribí el nombre para crearlo."
+              listHint="Opcional. Elegí un proveedor o creá uno nuevo.">
+            </app-searchable-select>
+          </app-transaction-party-field>
+        </div>
+
+        <div class="min-w-0">
+          <app-transaction-date-field
+            [date]="purchaseFecha"
+            (dateChange)="purchaseFecha = $event"
+            fieldName="purchaseFecha"
+            label="Fecha"
+            [disabled]="readOnly">
+          </app-transaction-date-field>
+        </div>
+      </div>
 
       <app-transaction-lines-section
         title="Productos"
@@ -118,8 +142,7 @@ interface PurchaseDraftLine {
         [lineCount]="stockLineCount"
         [searchVisible]="!readOnly"
         searchTitle="Agregar productos"
-        searchHint="Buscá y hacé clic en un producto para agregarlo a la lista."
-        emptyMessage="Buscá productos arriba y hacé clic en uno para agregarlo acá.">
+        searchHint="Buscá y hacé clic en un producto para agregarlo a la lista.">
         <app-transaction-product-search
           search
           *ngIf="!readOnly"
@@ -132,11 +155,11 @@ interface PurchaseDraftLine {
         </app-transaction-product-search>
 
         <app-transaction-lines-table
+          [hideWhenEmpty]="true"
           [lines]="purchaseStockTableLines"
           [columns]="purchaseStockTableColumns"
           [readOnly]="readOnly"
           fieldNamePrefix="purchaseStock"
-          emptyMessage="Buscá productos arriba y hacé clic en uno para agregarlo acá."
           (fieldChange)="onPurchaseStockFieldChange($event)"
           (removeLine)="onPurchaseStockRemove($event)">
           <ng-template #metaRow let-line let-index="index">
@@ -164,8 +187,7 @@ interface PurchaseDraftLine {
         title="Gastos y servicios"
         icon="receipt"
         [lineCount]="expenseLineCount"
-        [searchVisible]="false"
-        emptyMessage="Opcional. Sumá insumos o servicios que no mueven stock.">
+        [searchVisible]="false">
         <button
           headerAction
           *ngIf="!readOnly"
@@ -254,7 +276,6 @@ interface PurchaseDraftLine {
       </app-transaction-lines-section>
 
       <app-transaction-payment-simple
-        title="Pago"
         [showAmount]="false"
         [method]="pagoMedioId"
         (methodChange)="onPagoMedioChange($event)"
@@ -262,39 +283,44 @@ interface PurchaseDraftLine {
         [methodDisabled]="readOnly"
         methodFieldName="pagoMedioId">
         <ng-container extraFields>
-          <div *ngIf="pagoRequiereCuenta">
-            <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">{{ pagoCuentaLabel }}</label>
+          <div *ngIf="pagoRequiereCuenta" class="min-w-0">
+            <label [class]="paymentLabelClass">{{ pagoCuentaLabel }}</label>
             <select
               [(ngModel)]="pagoTarjetaId"
               name="pagoTarjetaId"
-              [class]="lineInputClass + ' bg-white'">
+              [class]="paymentFieldClass + ' bg-white dark:bg-gray-900'">
               <option value="">Seleccionar...</option>
               <option *ngFor="let cuenta of cuentasPago" [ngValue]="cuenta.id">{{ cuenta.label }}</option>
             </select>
-            <p *ngIf="cuentasPago.length === 0" class="text-[10px] sm:text-[11px] text-amber-600 mt-0.5 sm:mt-1 leading-snug">
-              Agregá cuentas en Finanzas → Cuentas vinculadas (medio «{{ pagoMedioConfig?.label }}»).
+            <p *ngIf="cuentasPago.length === 0" class="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 sm:mt-1 leading-snug">
+              Agregá cuentas en Finanzas → Configurar cuentas (medio «{{ pagoMedioConfig?.label }}»).
             </p>
           </div>
-          <div *ngIf="pagoGeneraCuotas">
-            <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Cuotas</label>
+          <div *ngIf="pagoGeneraCuotas" class="min-w-0">
+            <label [class]="paymentLabelClass">Cuotas</label>
             <input
               type="number"
               [(ngModel)]="pagoCuotas"
               name="pagoCuotas"
               min="1"
               max="120"
-              [class]="lineInputClass">
+              [class]="paymentFieldClass">
           </div>
-          <div *ngIf="pagoGeneraCuotas">
-            <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Primer vencimiento</label>
+          <div *ngIf="pagoGeneraCuotas" class="min-w-0">
+            <label [class]="paymentLabelClass">Primer vencimiento</label>
             <input
               type="date"
               [(ngModel)]="pagoFechaPrimerVencimiento"
               name="pagoFechaPrimerVencimiento"
-              [class]="lineInputClass">
+              [class]="paymentFieldClass">
           </div>
         </ng-container>
-        <p footer class="text-[11px] text-gray-500 leading-snug">{{ pagoResumenHint }}</p>
+        <p
+          *ngIf="pagoResumenHint"
+          footer
+          class="text-[11px] text-gray-500 dark:text-gray-400 leading-snug">
+          {{ pagoResumenHint }}
+        </p>
       </app-transaction-payment-simple>
 
       <app-transaction-notes-field
@@ -360,6 +386,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   @Input() initialProveedorId = '';
   @Input() initialPurchase: Purchase | null = null;
   @Input() editingDraftId: string | null = null;
+  @Input() editingConfirmedId: string | null = null;
   @Output() saved = new EventEmitter<TransactionFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
@@ -385,6 +412,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   savingDraft = false;
   purchaseProveedorId = '';
   purchaseNotas = '';
+  purchaseFecha = todayDateInputValue();
   draftLines: PurchaseDraftLine[] = [];
   private addedStockProductIdsCache: string[] = [];
   private addedStockProductIdsKey = '';
@@ -433,7 +461,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   get pagoRequiereCuenta(): boolean {
-    return medioPagoRequiereCuentaHija(this.pagoMedioConfig);
+    const medio = this.pagoMedioConfig;
+    if (!medioPagoRequiereCuentaHija(medio)) return false;
+    if (medioPagoGeneratesImmediateCash(medio) && !medioPagoGeneratesPayables(medio)) {
+      return false;
+    }
+    return true;
   }
 
   get pagoCuentaLabel(): string {
@@ -446,6 +479,9 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   readonly lineInputClass =
     'w-full px-2 py-1 sm:px-3 sm:py-2 rounded-lg border border-gray-200 text-[11px] sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
+  readonly paymentFieldClass = TRANSACTION_COMPACT_FIELD_CLASS;
+  readonly paymentLabelClass = TRANSACTION_COMPACT_LABEL_CLASS;
+
   readonly lineAmbitoBtnClass =
     'inline-flex items-center justify-center rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[34px] sm:min-h-[40px] truncate bg-white touch-manipulation select-none';
 
@@ -454,7 +490,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   get pagoGeneraCuotas(): boolean {
-    return medioPagoGeneratesPayables(this.pagoMedioConfig);
+    const medio = this.pagoMedioConfig;
+    if (!medioPagoGeneratesPayables(medio)) return false;
+    if (medioPagoGeneratesImmediateCash(medio) && !medioPagoRequiereCuentaHija(medio)) {
+      return false;
+    }
+    return true;
   }
 
   get defaultAmbito(): string {
@@ -538,7 +579,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     if (this.pagoGeneraEgresoCaja) {
       return 'Al confirmar se registra el egreso en caja.';
     }
-    return 'Este medio no genera movimientos automáticos al confirmar.';
+    return '';
   }
 
   get selectedMedioPagoLabel(): string {
@@ -549,12 +590,18 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return !!this.editingDraftId || this.initialPurchase?.estado === 'borrador';
   }
 
+  get isEditingConfirmed(): boolean {
+    return !!this.editingConfirmedId && !this.isDraftMode;
+  }
+
   get primarySaveLabel(): string {
+    if (this.isEditingConfirmed) return 'Guardar cambios';
     return this.isDraftMode ? 'Confirmar compra' : 'Registrar compra';
   }
 
   get draftSecondaryLabel(): string {
-    return this.readOnly || this.completedPurchaseId ? '' : 'Guardar borrador';
+    if (this.readOnly || this.completedPurchaseId || this.isEditingConfirmed) return '';
+    return 'Guardar borrador';
   }
 
   private syncSupplierOptions(): void {
@@ -630,8 +677,8 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       : (this.mediosPago[0]?.id ?? 'efectivo');
     if (nextMedioId !== this.pagoMedioId) {
       this.pagoMedioId = nextMedioId;
-      this.onMedioPagoChange();
     }
+    this.syncPagoCuentaWithConfig();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -661,6 +708,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   private resetForm() {
     this.purchaseProveedorId = this.initialProveedorId.trim();
     this.purchaseNotas = '';
+    this.purchaseFecha = todayDateInputValue();
     this.pendingSupplierName = '';
     this.draftLines = [];
     this.pagoMedioId = this.mediosPago[0]?.id ?? 'efectivo';
@@ -676,11 +724,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.purchaseProveedorId = purchase.proveedorId?.trim() ?? '';
     this.pendingSupplierName = purchase.proveedor?.trim() ?? '';
     this.purchaseNotas = purchase.notas?.trim() ?? '';
-    this.pagoMedioId = purchase.pago?.medioPagoId ?? this.mediosPago[0]?.id ?? 'efectivo';
-    this.pagoTarjetaId = purchase.pago?.tarjetaId ?? '';
+    this.purchaseFecha = toDateInputValue(purchase.fecha);
     this.pagoCuotas = purchase.pago?.cuotas ?? 1;
     this.pagoFechaPrimerVencimiento = purchase.pago?.fechaPrimerVencimiento?.slice(0, 10) ?? '';
-    this.onMedioPagoChange();
+    this.pagoTarjetaId = purchase.pago?.tarjetaId?.trim() ?? '';
+    this.pagoMedioId = purchase.pago?.medioPagoId ?? this.mediosPago[0]?.id ?? 'efectivo';
+    this.syncPagoCuentaWithConfig();
 
     this.draftLines = (purchase.items ?? []).map((line, index) => {
       const tipoLinea = this.resolvePurchaseLineTipo(line);
@@ -745,17 +794,31 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   onPagoMedioChange(medioId: string) {
-    if (medioId === this.pagoMedioId) return;
     this.pagoMedioId = medioId;
     this.onMedioPagoChange();
   }
 
   onMedioPagoChange() {
+    this.syncPagoCuentaWithConfig();
+  }
+
+  /** Alinea medio + cuenta con la configuración actual (p. ej. tras editar tarjetas en Finanzas). */
+  private syncPagoCuentaWithConfig() {
     if (!this.pagoRequiereCuenta) {
       if (this.pagoTarjetaId !== '') {
         this.pagoTarjetaId = '';
       }
     } else {
+      const tarjetaId = this.pagoTarjetaId.trim();
+      if (tarjetaId) {
+        const tarjeta = getTarjetasActivas(this.appConfig).find((t) => t.id === tarjetaId);
+        if (tarjeta && this.mediosPago.some((m) => m.id === tarjeta.medioPagoId)) {
+          if (this.pagoMedioId !== tarjeta.medioPagoId) {
+            this.pagoMedioId = tarjeta.medioPagoId;
+          }
+        }
+      }
+
       const cuentas = this.cuentasPago;
       const nextTarjetaId = cuentas.some((cuenta) => cuenta.id === this.pagoTarjetaId)
         ? this.pagoTarjetaId
@@ -764,6 +827,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         this.pagoTarjetaId = nextTarjetaId;
       }
     }
+
     if (!this.pagoGeneraCuotas) {
       if (this.pagoCuotas !== 1) {
         this.pagoCuotas = 1;
@@ -856,6 +920,11 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       return;
     }
 
+    if (this.isEditingConfirmed && this.editingConfirmedId) {
+      this.confirmUpdateConfirmed();
+      return;
+    }
+
     const payload = this.buildPurchasePayload(true);
     if (!payload) return;
 
@@ -911,6 +980,50 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         });
       },
     });
+  }
+
+  private confirmUpdateConfirmed() {
+    if (!this.editingConfirmedId) return;
+
+    const payload = this.buildPurchasePayload(true);
+    if (!payload) return;
+
+    const label =
+      this.initialPurchase?.compraLabel ||
+      (this.initialPurchase?.numeroCompra
+        ? String(this.initialPurchase.numeroCompra).padStart(5, '0')
+        : this.editingConfirmedId.slice(-6).toUpperCase());
+
+    this.dialogService
+      .confirm({
+        title: 'Guardar cambios en la compra',
+        message: `¿Guardar los cambios en la compra #${label}?\n\nSe ajustarán el stock del depósito, los movimientos de caja y las cuentas a pagar vinculadas a esta compra (según el medio de pago). Si ya pagaste cuotas de tarjeta de esta compra, no podrás editarla.`,
+        confirmLabel: 'Guardar cambios',
+      })
+      .subscribe((confirmed) => {
+        if (!confirmed) return;
+
+        this.setSavingPurchase(true);
+        this.purchaseService
+          .updatePurchase(this.editingConfirmedId!, payload)
+          .pipe(finalize(() => this.setSavingPurchase(false)))
+          .subscribe({
+            next: (result) => {
+              this.completedPurchaseId = result.id;
+              this.showSaveSuccess('Compra actualizada');
+              this.saved.emit({ id: result.id, label: result.compraLabel });
+            },
+            error: (err) => {
+              this.dialogService.alert({
+                title: 'Error',
+                message:
+                  typeof err.error?.error === 'string'
+                    ? err.error.error
+                    : 'No se pudo guardar los cambios de la compra.',
+              });
+            },
+          });
+      });
   }
 
   private confirmDraft() {
@@ -1012,6 +1125,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return {
       proveedorId: this.purchaseProveedorId.trim() || undefined,
       notas: this.purchaseNotas.trim(),
+      fecha: this.purchaseFecha,
       items,
       pago: {
         medioPagoId: this.pagoMedioId,

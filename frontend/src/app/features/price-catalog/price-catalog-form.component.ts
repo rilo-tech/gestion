@@ -23,7 +23,7 @@ import { FormPageHeaderComponent } from '../../shared/components/form-shell';
       </app-form-page-header>
 
       <div class="max-w-6xl">
-        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 lg:p-6">
+        <div class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm p-4 sm:p-5 lg:p-6">
           <app-price-catalog-form-panel
             [entryId]="entryId"
             (saved)="onSaved($event)"
@@ -53,6 +53,12 @@ export class PriceCatalogFormComponent implements OnInit {
   }
 
   onSaved(event: PriceCatalogFormSaveEvent) {
+    if (event.wasNew) {
+      this.router.navigate(['/price-catalog'], {
+        queryParams: { saved: '1' },
+      });
+      return;
+    }
     if (!this.entryId) {
       this.entryId = event.id;
       this.router.navigate(['/price-catalog', event.id, 'edit'], { replaceUrl: true });

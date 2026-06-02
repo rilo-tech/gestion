@@ -14,7 +14,10 @@ import {
   CatalogConfigService,
   CajaConcepto,
   CajaConceptoTipo,
-  CategoriaStockRegla,
+  getPrefijoForCategoria,
+  findCategoriaByPrefijo,
+  validateUniquePrefijos,
+  normalizeProductosCodigo,
   getCajaConceptoTipoLabel,
   slugifyOrigenGrupo,
   DEFAULT_STOCK_TIPOS,
@@ -38,7 +41,6 @@ import {
   slugifyOrderEstadoValue,
 } from '../../core/constants/order-config';
 import { normalizeStockTipos } from '../../core/constants/stock-movimientos';
-import { normalizeCategoriasStock } from '../../core/utils/stock-product';
 import { DialogService } from '../../core/services/dialog.service';
 import { SettingsUsersPanelComponent } from './settings-users-panel.component';
 import { SettingsFinancePanelComponent } from './settings-finance-panel.component';
@@ -48,16 +50,18 @@ import {
   ConfigEditableListComponent,
   type ConfigEditableListItem,
 } from '../../shared/components/config-editable-list/config-editable-list.component';
+import { ConfigListRemoveButtonComponent } from '../../shared/components/config-editable-list/config-list-remove-button.component';
 import {
   CONFIG_EDITABLE_LIST_ADD_INPUT_CLASS,
+  CONFIG_EDITABLE_LIST_CHECK_LABEL_CLASS,
   CONFIG_EDITABLE_LIST_ITEM_CLASS,
-  CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
 } from '../../shared/components/config-editable-list/config-editable-list.constants';
-import {
-  CONFIG_SETTINGS_GRID_CLASS,
-} from '../../shared/components/config-editable-list/config-layout.constants';
 import { ConfigSettingCardComponent } from '../../shared/components/config-setting-card/config-setting-card.component';
-import { ConfigModuleHeaderComponent } from '../../shared/components/config-module-header/config-module-header.component';
+import { FormBackButtonComponent } from '../../shared/components/form-shell/form-back-button.component';
+import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 interface ConfigSection {
@@ -88,12 +92,6 @@ interface PedidoStockRuleRow {
 const SAVE_BUTTON_COOLDOWN_MS = 1800;
 const SAVE_SUCCESS_DISPLAY_MS = 3500;
 
-const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
-  configurado: false,
-  controlaStock: true,
-  permitirStockNegativo: true,
-};
-
 @Component({
   selector: 'app-settings',
   standalone: true,
@@ -106,51 +104,81 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
     FormSaveFooterComponent,
     ConfigStringListComponent,
     ConfigEditableListComponent,
+    ConfigListRemoveButtonComponent,
     ConfigSettingCardComponent,
-    ConfigModuleHeaderComponent,
+    FormBackButtonComponent,
   ],
   template: `
-    <div class="p-4 sm:p-6 lg:p-8 w-full min-w-0">
-      <div class="mb-6 sm:mb-8">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Configuración</h1>
-        <p [class]="configDescClass">
-          Agregar y Quitar guardan al instante. Guardar confirma el resto de la configuración.
-        </p>
+    <div [class]="pageShellClass">
+      <div [class]="settingsShellClass">
+      <div [class]="activeModuleId ? 'mb-4' : 'mb-6 sm:mb-8'">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">
+              <ng-container *ngIf="!activeModuleId">Configuración</ng-container>
+              <ng-container *ngIf="activeModule">Configuración de {{ activeModule.title }}</ng-container>
+            </h1>
+            <p *ngIf="!activeModuleId" [class]="configDescClass">
+              Elegí una sección para editar listas, reglas y opciones del sistema.
+            </p>
+            <p *ngIf="activeModule" [class]="activeModuleDescClass">{{ activeModule.description }}</p>
+          </div>
+          <div class="flex items-center gap-1 shrink-0 mt-0.5">
+            <button
+              *ngIf="showActiveModuleSave"
+              type="button"
+              (click)="saveActiveModule()"
+              [disabled]="isActiveModuleSaving()"
+              title="Guardar"
+              aria-label="Guardar configuración"
+              class="p-1.5 rounded-lg text-teal-700 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-950/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <i-lucide
+                [name]="isActiveModuleSaving() ? 'loader-circle' : 'save'"
+                class="w-5 h-5"
+                [class.animate-spin]="isActiveModuleSaving()">
+              </i-lucide>
+            </button>
+            <app-form-back-button
+              *ngIf="activeModuleId"
+              label="Volver"
+              shortLabel="Volver"
+              ariaLabel="Volver al listado de configuración"
+              (clicked)="backToModuleList()">
+            </app-form-back-button>
+          </div>
+        </div>
       </div>
 
-      <div class="flex flex-wrap gap-2 mb-6 sm:mb-8">
+      <nav
+        *ngIf="!activeModuleId"
+        class="space-y-2 mb-6"
+        aria-label="Secciones de configuración">
         <button
           type="button"
           *ngFor="let module of visibleModules"
           (click)="selectModule(module.id)"
-          class="px-4 py-2 rounded-lg border text-sm font-medium transition-colors"
-          [class.bg-primary]="activeModuleId === module.id"
-          [class.text-white]="activeModuleId === module.id"
-          [class.border-primary]="activeModuleId === module.id"
-          [class.bg-white]="activeModuleId !== module.id"
-          [class.text-gray-700]="activeModuleId !== module.id"
-          [class.border-gray-200]="activeModuleId !== module.id"
-          [class.hover:bg-gray-50]="activeModuleId !== module.id">
-          {{ module.title }}
+          class="w-full flex items-center gap-3 sm:gap-4 p-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm text-left transition-colors hover:border-teal-200 hover:bg-teal-50/50 dark:hover:border-teal-800 dark:hover:bg-teal-950/30">
+          <span
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300">
+            <i-lucide [name]="getModuleIcon(module.id)" class="w-5 h-5"></i-lucide>
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ module.title }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">{{ module.description }}</span>
+          </span>
+          <i-lucide name="chevron-right" class="w-5 h-5 shrink-0 text-gray-400 dark:text-gray-500"></i-lucide>
         </button>
-      </div>
+      </nav>
 
       <section *ngIf="activeModuleId === 'pedidos'" [class]="configSectionClass">
-        <app-config-module-header
-          title="Pedidos"
-          description="Estados del flujo (en ese orden), stock, impresión y costos de personalización."
-          [saving]="savingPedidos"
-          saveTitle="Guardar pedidos"
-          (saveClick)="saveActiveModule()">
-        </app-config-module-header>
-
-        <div [class]="configGridPairClass">
+        <div [class]="configSectionsListClass">
             <app-config-setting-card
               title="Estados del pedido"
               description="Orden del flujo. Los primeros cinco nombres se muestran como tarjetas en Pedidos. Borrador y Cancelado no se pueden quitar."
               [listCount]="config.pedidos.estados.length"
-              [listExpanded]="isConfigListExpanded('pedidos.estados', config.pedidos.estados.length)"
-              (listExpandedChange)="onConfigListExpandedChange('pedidos.estados', $event)"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.estados')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.estados', $event)"
               [cardClass]="configCardClass">
               <app-config-editable-list
                 configList
@@ -158,7 +186,7 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
                 labelMode="input"
                 [showIndex]="true"
                 addPlaceholder="Nuevo estado"
-                listMaxHeightClass="max-h-64"
+                listMaxHeightClass=""
                 [disabled]="savingPedidos"
                 inputName="pedidoEstadoDraft"
                 [footer]="'Las tarjetas del listado usan los estados 1 a ' + orderStatusCardPreviewCount + ' en este orden.'"
@@ -173,8 +201,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
               title="Stock · modo"
               description="Desde qué estado baja el depósito."
               [listCount]="null"
-              [listExpanded]="isConfigListExpanded('pedidos.stockModo', 1)"
-              (listExpandedChange)="onConfigListExpandedChange('pedidos.stockModo', $event)"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.stockModo')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.stockModo', $event)"
               [cardClass]="configCardClass">
               <div configList>
             <div class="grid grid-cols-1 gap-1.5 mb-2">
@@ -221,8 +250,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
               title="Al cambiar estado"
               description="Opciones al pasar de un estado a otro con stock reservado."
               [listCount]="null"
-              [listExpanded]="isConfigListExpanded('pedidos.stockAlCambiar', 1)"
-              (listExpandedChange)="onConfigListExpandedChange('pedidos.stockAlCambiar', $event)"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.stockAlCambiar')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.stockAlCambiar', $event)"
               [cardClass]="configCardClass">
               <div configList>
                 <label class="flex items-start gap-2 cursor-pointer">
@@ -247,8 +277,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
               title="Impresión"
               description="Formato de la hoja del pedido."
               [listCount]="null"
-              [listExpanded]="isConfigListExpanded('pedidos.impresion', 1)"
-              (listExpandedChange)="onConfigListExpandedChange('pedidos.impresion', $event)"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.impresion')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.impresion', $event)"
               [cardClass]="configCardClass">
               <div configList class="space-y-2">
                 <label class="flex items-center gap-2 cursor-pointer">
@@ -295,8 +326,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
               title="Costos extra"
               description="Conceptos precargados al personalizar productos."
               [listCount]="config.pedidos.costosExtraPredeterminados?.length ?? 0"
-              [listExpanded]="isConfigListExpanded('pedidos.costos', config.pedidos.costosExtraPredeterminados?.length ?? 0)"
-              (listExpandedChange)="onConfigListExpandedChange('pedidos.costos', $event)"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.costos')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.costos', $event)"
               [cardClass]="configCardClass">
               <div configList>
               <label class="flex items-center gap-1.5 cursor-pointer shrink-0 mb-2">
@@ -369,17 +401,16 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
               </ng-template>
               </div>
             </app-config-setting-card>
-        </div>
 
-        <app-config-setting-card
+            <app-config-setting-card
           *ngIf="config.pedidos.modoStock === 'reservado'"
           [cardClass]="configCardClass"
           title="Reglas de stock por estado"
           description="Al pasar a cada estado: cuánto se descuenta del depósito (solo reservado o todo el pedido) y si exige tener el stock completo antes del cambio."
           [listCount]="pedidoStockRuleRows.length"
-          [listExpanded]="pedidosStockRulesExpanded"
-          (listExpandedChange)="pedidosStockRulesExpanded = $event"
-          [collapsibleList]="true">
+          [sectionCollapse]="true"
+          [listExpanded]="isConfigSectionOpen('pedidos.stockReglas')"
+          (listExpandedChange)="onConfigSectionOpenChange('pedidos.stockReglas', $event)">
           <div configList class="rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden divide-y divide-gray-100 dark:divide-gray-700">
             <div
               *ngFor="let row of pedidoStockRuleRows; trackBy: trackPedidoStockRuleRow"
@@ -418,23 +449,18 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
             </div>
           </div>
         </app-config-setting-card>
+        </div>
       </section>
 
       <section *ngIf="activeModuleId === 'caja'" [class]="configSectionClass">
-        <app-config-module-header
-          title="Caja"
-          description="Conceptos, orígenes y opciones de la grilla de caja."
-          [saving]="isActiveModuleSaving()"
-          (saveClick)="saveActiveModule()">
-        </app-config-module-header>
-
-        <div [class]="configGridCajaClass">
+        <div [class]="configSectionsListClass">
         <app-config-setting-card
           title="Etiquetas de caja"
           description="Caja principal del negocio (pedidos, ventas y cobros automáticos). Podés renombrarla y agregar pestañas para movimientos manuales."
           [listCount]="config.caja.ambitos.length"
-          [listExpanded]="isConfigListExpanded('caja.ambitos', config.caja.ambitos.length)"
-          (listExpandedChange)="onConfigListExpandedChange('caja.ambitos', $event)"
+          [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('caja.ambitos')"
+          (listExpandedChange)="onConfigSectionOpenChange('caja.ambitos', $event)"
           [cardClass]="configCardClass">
           <app-config-editable-list
             configList
@@ -454,8 +480,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
           title="Orígenes"
           description="Etiquetas del combobox de filtro. Por defecto: Ventas, Pedidos y Compra."
           [listCount]="config.caja.origenes.length"
-          [listExpanded]="isConfigListExpanded('caja.origenes', config.caja.origenes.length)"
-          (listExpandedChange)="onConfigListExpandedChange('caja.origenes', $event)"
+          [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('caja.origenes')"
+          (listExpandedChange)="onConfigSectionOpenChange('caja.origenes', $event)"
           [cardClass]="configCardClass">
           <app-config-editable-list
             configList
@@ -473,10 +500,11 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
 
         <app-config-setting-card
           title="Conceptos"
-          description="Ej. Venta mostrador (ingreso), Compra insumos (egreso), Diferencia (ambos)."
+          description="Ingresos y egresos puntuales. Los gastos frecuentes se configuran en Finanzas → Categorías de gasto."
           [listCount]="config.caja.conceptos.length"
-          [listExpanded]="isConfigListExpanded('caja.conceptos', config.caja.conceptos.length)"
-          (listExpandedChange)="onConfigListExpandedChange('caja.conceptos', $event)"
+          [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('caja.conceptos')"
+          (listExpandedChange)="onConfigSectionOpenChange('caja.conceptos', $event)"
           [cardClass]="configCardClass">
           <app-config-editable-list
             configList
@@ -486,7 +514,16 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
             [useCustomAdd]="true"
             [disabled]="isSavingCajaConceptos"
             (remove)="removeCajaConceptoById($event)">
-            <div configListAdd class="flex flex-col gap-1.5">
+            <div configListAdd class="flex flex-col gap-2">
+              <select
+                [(ngModel)]="cajaConceptoTipoDraft"
+                name="cajaConceptoTipoDraft"
+                [disabled]="isSavingCajaConceptos"
+                class="w-full min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50 bg-white dark:bg-gray-950 dark:text-gray-100 dark:border-gray-600">
+                <option value="ingreso">Ingreso</option>
+                <option value="egreso">Egreso</option>
+                <option value="ambos">Ambos</option>
+              </select>
               <input
                 [(ngModel)]="cajaConceptoDraft"
                 name="cajaConceptoDraft"
@@ -494,24 +531,13 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
                 [disabled]="isSavingCajaConceptos"
                 (keyup.enter)="addCajaConcepto()"
                 [class]="configInputClass">
-              <div class="flex flex-col gap-2">
-                <select
-                  [(ngModel)]="cajaConceptoTipoDraft"
-                  name="cajaConceptoTipoDraft"
-                  [disabled]="isSavingCajaConceptos"
-                  class="w-full min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50 bg-white">
-                  <option value="ingreso">Ingreso</option>
-                  <option value="egreso">Egreso</option>
-                  <option value="ambos">Ambos</option>
-                </select>
-                <button
-                  type="button"
-                  (click)="addCajaConcepto()"
-                  [disabled]="isSavingCajaConceptos || !cajaConceptoDraft.trim()"
-                  [class]="configAddButtonClass + ' w-full sm:w-auto'">
-                  Agregar
-                </button>
-              </div>
+              <button
+                type="button"
+                (click)="addCajaConcepto()"
+                [disabled]="isSavingCajaConceptos || !cajaConceptoDraft.trim()"
+                [class]="configAddButtonClass + ' w-full sm:w-auto'">
+                Agregar
+              </button>
             </div>
           </app-config-editable-list>
         </app-config-setting-card>
@@ -519,20 +545,14 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
       </section>
 
       <section *ngIf="activeModuleId === 'stock'" [class]="configSectionClass">
-        <app-config-module-header
-          title="Stock"
-          description="Etiquetas de tipos y orígenes en la grilla de movimientos de inventario."
-          [saving]="isActiveModuleSaving()"
-          (saveClick)="saveActiveModule()">
-        </app-config-module-header>
-
-        <div [class]="configGridPairClass">
+        <div [class]="configSectionsListClass">
           <app-config-setting-card
             title="Tipos"
             description="Entrada y salida son fijos; podés cambiar solo el nombre visible."
             [listCount]="config.stock.tipos.length"
-            [listExpanded]="isConfigListExpanded('stock.tipos', config.stock.tipos.length)"
-            (listExpandedChange)="onConfigListExpandedChange('stock.tipos', $event)"
+            [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('stock.tipos')"
+            (listExpandedChange)="onConfigSectionOpenChange('stock.tipos', $event)"
             [cardClass]="configCardClass">
             <app-config-editable-list
               configList
@@ -549,8 +569,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
             title="Orígenes"
             description="Etiquetas del combobox de filtro. Por defecto: Compras, Pedidos/ventas, Carga inicial y Ajuste."
             [listCount]="config.stock.origenes.length"
-            [listExpanded]="isConfigListExpanded('stock.origenes', config.stock.origenes.length)"
-            (listExpandedChange)="onConfigListExpandedChange('stock.origenes', $event)"
+            [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('stock.origenes')"
+            (listExpandedChange)="onConfigSectionOpenChange('stock.origenes', $event)"
             [cardClass]="configCardClass">
             <app-config-editable-list
               configList
@@ -573,93 +594,136 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
       <app-settings-finance-panel *ngIf="activeModuleId === 'finanzas'"></app-settings-finance-panel>
 
       <section *ngIf="activeModuleId === 'productos'" [class]="configSectionClass">
-        <app-config-module-header
-          title="Productos"
-          description="Categorías con reglas de stock opcionales (se heredan a productos nuevos). Talles y colores en listas desplegables."
-          [saving]="isActiveModuleSaving()"
-          (saveClick)="saveActiveModule()">
-        </app-config-module-header>
-
-        <div [class]="configGridProductosClass">
+        <div [class]="configSectionsListClass">
         <app-config-setting-card
-          title="Categoría"
-          description="Podés definir stock por categoría. Si no configurás reglas, cada producto se define solo."
+          title="Categorías y códigos"
+          description="Por categoría podés activar códigos automáticos con un prefijo único (10, 20…). Sin prefijo, el código queda manual al crear productos."
           [cardClass]="configCardClass"
           [listCount]="config.productos.categorias.length"
-          [listExpanded]="isConfigListExpanded('productos.categorias', config.productos.categorias.length)"
-          (listExpandedChange)="onConfigListExpandedChange('productos.categorias', $event)">
-          <div configAdd class="flex flex-col sm:flex-row gap-1.5">
-            <input
-              [(ngModel)]="categoriaDraft"
-              name="productoCategoriaNew"
-              placeholder="Ej. Personalización"
-              [disabled]="savingCategoriasStock"
-              (keyup.enter)="addCategoria()"
-              [class]="configInputClass + ' flex-1'">
-            <button type="button" (click)="addCategoria()" [disabled]="savingCategoriasStock || !categoriaDraft.trim()" [class]="configAddButtonClass">
-              Agregar
-            </button>
-          </div>
-
-          <ul configList [class]="configOptionListClass + ' max-h-48'">
-            <li
-              *ngFor="let categoria of config.productos.categorias"
-              [class]="configListItemClass + ' flex-col items-stretch !min-h-0'">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex flex-wrap items-center gap-2 min-w-0">
-                  <span [class]="configOptionTextClass">{{ categoria }}</span>
-                  <span [ngClass]="categoriaReglaBadgeClass(isCategoriaStockConfigurada(categoria))">
-                    {{ isCategoriaStockConfigurada(categoria) ? 'Con reglas' : 'Sin reglas' }}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  (click)="removeCategoria(categoria)"
-                  [disabled]="savingCategoriasStock"
-                  [class]="configRemoveButtonClass">
-                  Quitar
-                </button>
-              </div>
-              <label class="flex items-center gap-2 cursor-pointer rounded-md px-1 py-0.5 hover:bg-gray-50/80">
+          [sectionCollapse]="true"
+          [listExpanded]="isConfigSectionOpen('productos.categorias')"
+          (listExpandedChange)="onConfigSectionOpenChange('productos.categorias', $event)"
+          [hasConfigAdd]="true">
+          <div configList class="space-y-3">
+            <div
+              configAdd
+              class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-2.5 space-y-2">
+              <input
+                [(ngModel)]="categoriaDraft"
+                name="productoCategoriaNew"
+                placeholder="Nombre de categoría, ej. Personalización"
+                [disabled]="savingCategorias"
+                (keyup.enter)="addCategoria()"
+                [class]="configInputClass + ' w-full'">
+              <label [class]="configCheckLabelClass + ' py-0'">
                 <input
                   type="checkbox"
-                  [checked]="isCategoriaStockConfigurada(categoria)"
-                  [disabled]="savingCategoriasStock"
-                  (change)="toggleCategoriaStockConfigurada(categoria, $any($event.target).checked)"
-                  class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary">
-                <span class="text-xs text-gray-700">Configurar stock de la categoría</span>
+                  [(ngModel)]="categoriaDraftUsesAuto"
+                  (ngModelChange)="onCategoriaDraftUsesAutoChange()"
+                  name="productoCategoriaAutoNew"
+                  [disabled]="savingCategorias"
+                  class="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
+                <span class="leading-snug text-xs">Usar código automático en esta categoría</span>
               </label>
               <div
-                *ngIf="isCategoriaStockConfigurada(categoria)"
-                class="flex flex-col gap-1.5 pl-5 ml-1 border-l-2 border-primary/25 pt-1">
-                <label class="flex items-center gap-2 cursor-pointer text-xs text-gray-700 rounded-md px-1 py-0.5 hover:bg-gray-50/80">
-                  <input
-                    type="checkbox"
-                    [checked]="getCategoriaRegla(categoria).controlaStock"
-                    [disabled]="savingCategoriasStock"
-                    (change)="setCategoriaReglaField(categoria, 'controlaStock', $any($event.target).checked)"
-                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary">
-                  Controla stock
-                </label>
-                <label
-                  *ngIf="getCategoriaRegla(categoria).controlaStock"
-                  class="flex items-center gap-2 cursor-pointer text-xs text-gray-700 rounded-md px-1 py-0.5 hover:bg-gray-50/80">
-                  <input
-                    type="checkbox"
-                    [checked]="getCategoriaRegla(categoria).permitirStockNegativo"
-                    [disabled]="savingCategoriasStock"
-                    (change)="setCategoriaReglaField(categoria, 'permitirStockNegativo', $any($event.target).checked)"
-                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary">
-                  Permitir stock negativo
-                </label>
+                *ngIf="categoriaDraftUsesAuto"
+                class="flex flex-wrap items-center gap-2 pt-1 border-t border-dashed border-teal-100 dark:border-teal-900/50">
+                <span class="inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-teal-200 text-teal-800 bg-teal-50/70 dark:border-teal-800 dark:text-teal-200 dark:bg-teal-950/40">
+                  Prefijo
+                </span>
+                <input
+                  [(ngModel)]="categoriaPrefijoDraft"
+                  (ngModelChange)="onAddPrefijoInput()"
+                  name="productoCategoriaPrefijoNew"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="4"
+                  placeholder="Ej. 10"
+                  [disabled]="savingCategorias"
+                  (keyup.enter)="addCategoria()"
+                  [class]="configInputClass + ' w-24 tabular-nums text-center border-teal-200 focus:ring-teal-500 dark:border-teal-700'">
+                <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                  Ej. {{ getPrefijoEjemploFromDraft() }}
+                </span>
               </div>
-            </li>
-            <li
-              *ngIf="config.productos.categorias.length === 0"
-              class="text-xs text-gray-400 px-1 py-4 text-center border border-dashed border-gray-200 rounded-lg">
-              Todavía no hay categorías cargadas.
-            </li>
-          </ul>
+              <p
+                *ngIf="categoriaDraftUsesAuto && categoriaAddPrefijoError"
+                class="text-[11px] text-amber-700 dark:text-amber-300 leading-snug m-0">
+                {{ categoriaAddPrefijoError }}
+              </p>
+              <button
+                type="button"
+                (click)="addCategoria()"
+                [disabled]="!canAddCategoria"
+                [class]="configAddButtonClass + ' w-full sm:w-auto'">
+                Agregar categoría
+              </button>
+            </div>
+
+            <ul class="space-y-2 m-0 p-0 list-none">
+              <li
+                *ngFor="let categoria of config.productos.categorias; let i = index; trackBy: trackCategoria"
+                class="relative rounded-lg border border-gray-100 dark:border-gray-700 p-2.5 space-y-2">
+                <div class="relative w-full sm:flex sm:items-start sm:justify-between sm:gap-2">
+                  <div [class]="configRowBodyClass">
+                    <input
+                      type="text"
+                      [ngModel]="getCategoriaDisplayName(categoria)"
+                      (ngModelChange)="onCategoriaNameInput(categoria, $event)"
+                      (blur)="onCategoriaNameBlur(categoria)"
+                      [name]="'categoria-nombre-' + categoria"
+                      [disabled]="savingCategorias"
+                      [class]="configInputClass + ' w-full min-w-0'">
+                  </div>
+                  <app-config-list-remove-button
+                    [disabled]="savingCategorias"
+                    (clicked)="removeCategoria(categoria)">
+                  </app-config-list-remove-button>
+                </div>
+
+                <label [class]="configCheckLabelClass + ' py-0 text-xs text-gray-700 dark:text-gray-300'">
+                  <input
+                    type="checkbox"
+                    [checked]="categoriaUsesAutoCodigo(categoria)"
+                    (change)="setCategoriaUsesAutoCodigo(categoria, $any($event.target).checked)"
+                    [disabled]="savingCategorias"
+                    class="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
+                  <span class="leading-snug">Código automático</span>
+                </label>
+
+                <div
+                  *ngIf="categoriaUsesAutoCodigo(categoria)"
+                  class="flex flex-wrap items-center gap-2 pt-1 border-t border-dashed"
+                  [ngClass]="getCategoriaPrefijoTone(i).panelBorder">
+                  <span [ngClass]="getCategoriaPrefijoTone(i).chip">Prefijo</span>
+                  <input
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="4"
+                    [ngModel]="getCategoriaPrefijoDisplay(categoria)"
+                    (ngModelChange)="onCategoriaPrefijoInput(categoria, $event)"
+                    (blur)="onCategoriaPrefijoBlur(categoria)"
+                    [name]="'prefijo-' + categoria"
+                    placeholder="Ej. 10"
+                    [disabled]="savingCategorias"
+                    [class]="configInputClass + ' w-24 tabular-nums text-center ' + getCategoriaPrefijoTone(i).input">
+                  <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                    Ej. {{ getCategoriaPrefijoEjemplo(categoria, i) }}
+                  </span>
+                </div>
+                <p
+                  *ngIf="categoriaUsesAutoCodigo(categoria) && getCategoriaPrefijoConflict(categoria)"
+                  class="text-[11px] text-amber-700 dark:text-amber-300 leading-snug m-0">
+                  {{ getCategoriaPrefijoConflict(categoria) }}
+                </p>
+              </li>
+              <li
+                *ngIf="config.productos.categorias.length === 0"
+                class="text-xs text-gray-400 dark:text-gray-500 px-1 py-4 text-center border border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
+                Todavía no hay categorías cargadas.
+              </li>
+            </ul>
+          </div>
         </app-config-setting-card>
 
           <app-config-setting-card
@@ -667,8 +731,9 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
             [title]="section.title"
             [description]="section.description"
             [listCount]="getList(section.key).length"
-            [listExpanded]="isConfigListExpanded(section.key, getList(section.key).length)"
-            (listExpandedChange)="onConfigListExpandedChange(section.key, $event)"
+            [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen(section.key)"
+            (listExpandedChange)="onConfigSectionOpenChange(section.key, $event)"
             [cardClass]="configCardClass">
             <app-config-editable-list
               configList
@@ -684,21 +749,15 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
       </section>
 
       <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'stock' && activeModuleId !== 'usuarios' && activeModuleId !== 'productos' && activeModuleId !== 'finanzas'" [class]="configSectionClass">
-        <app-config-module-header
-          [title]="activeModule!.title"
-          [description]="activeModule!.description"
-          [saving]="isActiveModuleSaving()"
-          (saveClick)="saveActiveModule()">
-        </app-config-module-header>
-
-        <div [class]="configGridMultiClass">
+        <div [class]="configSectionsListClass">
           <app-config-setting-card
             *ngFor="let section of activeModule!.sections"
             [title]="section.title"
             [description]="section.description"
             [listCount]="getList(section.key).length"
-            [listExpanded]="isConfigListExpanded(section.key, getList(section.key).length)"
-            (listExpandedChange)="onConfigListExpandedChange(section.key, $event)"
+            [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen(section.key)"
+            (listExpandedChange)="onConfigSectionOpenChange(section.key, $event)"
             [cardClass]="configCardClass">
             <app-config-editable-list
               configList
@@ -713,13 +772,16 @@ const DEFAULT_CATEGORIA_STOCK_REGLA: CategoriaStockRegla = {
         </div>
       </section>
 
-      <div *ngIf="activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas'" class="mt-6 sm:mt-8">
+      <div
+        *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas'"
+        class="mt-6 sm:mt-8">
         <app-form-save-footer
           [saving]="saving"
           [successMessage]="saveSuccessMessage"
           [centerOnLarge]="true"
           (saveClick)="saveConfig()">
         </app-form-save-footer>
+      </div>
       </div>
     </div>
   `,
@@ -735,7 +797,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
 
   config: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
-  activeModuleId: ConfigModule['id'] = 'productos';
+  activeModuleId: ConfigModule['id'] | null = null;
   saving = false;
   savingPedidos = false;
   saveSuccessMessage = '';
@@ -746,8 +808,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
   savingCajaAmbito = false;
   savingStockTipos = false;
   savingStockOrigenes = false;
-  savingCategoriasStock = false;
+  savingCategorias = false;
   categoriaDraft = '';
+  categoriaPrefijoDraft = '';
+  categoriaDraftUsesAuto = false;
+  categoriaAddPrefijoError = '';
+  private categoriaAutoEnabled: Record<string, boolean> = {};
+  private prefijoConflictByCategoria: Record<string, string> = {};
+  private categoriaEditDrafts: Record<string, string> = {};
+  private prefijoEditDrafts: Record<string, string> = {};
+  private savedPrefijosSnapshot: Record<string, string> = {};
 
   cajaConceptoDraft = '';
   cajaOrigenDraft = '';
@@ -771,33 +841,41 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return this.config.caja.ambitos.filter((item) => !isSystemCashAmbito(item)).length;
   }
 
-  /** Columna centrada en pantallas grandes (no ocupa todo el ancho). */
+  readonly pageShellClass = PAGE_SHELL_CLASS;
+  /** Columna centrada en pantallas grandes (como antes). */
   readonly settingsShellClass = 'w-full max-w-4xl mx-auto min-w-0';
-  readonly configSectionClass = 'space-y-3';
+  readonly configSectionClass = 'space-y-4 sm:space-y-6';
   readonly configDescClass = 'block text-xs text-gray-500 mt-0.5 desc-lg-only leading-snug';
+  readonly activeModuleDescClass =
+    'block text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug';
   readonly configCodeClass = 'mt-1 text-[11px] text-primary/80 desc-lg-only';
   readonly configCardClass =
-    'bg-white rounded-xl border border-gray-100 shadow-sm p-3 flex flex-col min-w-0';
+    'bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4 flex flex-col min-w-0';
   readonly configToggleCardClass =
     'bg-white rounded-xl border border-gray-100 shadow-sm p-3 w-full';
-  readonly configGridClass = CONFIG_SETTINGS_GRID_CLASS;
-  readonly configGridPairClass = CONFIG_SETTINGS_GRID_CLASS;
-  readonly configGridTripleClass = CONFIG_SETTINGS_GRID_CLASS;
-  readonly configGridProductosClass = CONFIG_SETTINGS_GRID_CLASS;
-  readonly configGridMultiClass = CONFIG_SETTINGS_GRID_CLASS;
-  readonly configGridCajaClass = CONFIG_SETTINGS_GRID_CLASS;
+  readonly configSectionsListClass = 'flex flex-col gap-2 w-full min-w-0';
 
-  private configListExpanded: Record<string, boolean> = {};
-  pedidosStockRulesExpanded = false;
+  private expandedConfigSectionKey: string | null = null;
+  private readonly defaultConfigSectionByModule: Partial<Record<ConfigModule['id'], string>> = {
+    productos: 'productos.categorias',
+    pedidos: 'pedidos.estados',
+    caja: 'caja.ambitos',
+    stock: 'stock.tipos',
+    clientes: 'clientes.etiquetas',
+    proveedores: 'proveedores.etiquetas',
+  };
   readonly configInputClass = CONFIG_EDITABLE_LIST_ADD_INPUT_CLASS;
   readonly configAddButtonClass =
     'w-full sm:w-auto shrink-0 px-3 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-700 dark:disabled:text-gray-500 whitespace-nowrap';
-  readonly configOptionListClass = 'space-y-1 max-h-52 overflow-y-auto';
+  readonly configOptionListClass = 'space-y-2 m-0 p-0 list-none';
   readonly configOptionListItemClass =
     'flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-gray-200';
   readonly configOptionTextClass = 'text-xs font-medium text-gray-900 break-words min-w-0 leading-tight';
   readonly configListItemClass = CONFIG_EDITABLE_LIST_ITEM_CLASS;
-  readonly configRemoveButtonClass = CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS;
+  readonly configRowShellClass = CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS;
+  readonly configRowBodyClass = CONFIG_EDITABLE_LIST_ROW_BODY_CLASS;
+  readonly configRowChipsClass = CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS;
+  readonly configCheckLabelClass = CONFIG_EDITABLE_LIST_CHECK_LABEL_CLASS;
 
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
   private saveCooldownTimeout?: ReturnType<typeof setTimeout>;
@@ -806,7 +884,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'productos',
       title: 'Productos',
-      description: 'Talles y colores al cargar productos. El stock se define por categoría (opcional) o por producto.',
+      description:
+        'Categorías con prefijos de código, talles y colores para el catálogo de productos.',
       sections: [
         {
           key: 'productos.talles',
@@ -851,19 +930,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'caja',
       title: 'Caja',
-      description: 'Conceptos manuales y orígenes del filtro.',
+      description: 'Conceptos, orígenes y etiquetas de ámbito en la grilla de caja.',
       sections: [],
     },
     {
       id: 'finanzas',
       title: 'Finanzas',
-      description: 'Medios de pago, tarjetas y categorías de gasto.',
+      description:
+        'Medios de pago, cuentas vinculadas y categorías de gasto. Agregar y quitar guardan al instante; Guardar sincroniza el resto.',
       sections: [],
     },
     {
       id: 'stock',
       title: 'Stock',
-      description: 'Tipos y orígenes de los movimientos de inventario.',
+      description: 'Etiquetas de tipos y orígenes en la grilla de movimientos de inventario.',
       sections: [],
     },
     {
@@ -875,7 +955,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'usuarios',
       title: 'Usuarios',
-      description: 'Permisos por usuario.',
+      description:
+        'Creá operadores y asigná permisos. El plan y la suscripción los gestiona la plataforma RILO.',
       sections: [],
       supervisorOnly: true,
     },
@@ -883,6 +964,95 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   trackPedidosEstadoOption(_index: number, option: OrderEstadoConfig): string {
     return option.value;
+  }
+
+  trackCategoria(_index: number, categoria: string): string {
+    return categoria;
+  }
+
+  private readonly categoriaPrefijoTones = [
+    {
+      chip: 'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-teal-200 text-teal-800 bg-teal-50/70 dark:border-teal-800 dark:text-teal-200 dark:bg-teal-950/40',
+      input: 'border-teal-200 focus:ring-teal-500 dark:border-teal-700',
+      panelBorder: 'border-teal-100 dark:border-teal-900/50',
+    },
+    {
+      chip: 'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-violet-200 text-violet-800 bg-violet-50/70 dark:border-violet-800 dark:text-violet-200 dark:bg-violet-950/40',
+      input: 'border-violet-200 focus:ring-violet-500 dark:border-violet-700',
+      panelBorder: 'border-violet-100 dark:border-violet-900/50',
+    },
+    {
+      chip: 'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-amber-200 text-amber-900 bg-amber-50/70 dark:border-amber-800 dark:text-amber-100 dark:bg-amber-950/40',
+      input: 'border-amber-200 focus:ring-amber-500 dark:border-amber-700',
+      panelBorder: 'border-amber-100 dark:border-amber-900/50',
+    },
+    {
+      chip: 'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-sky-200 text-sky-800 bg-sky-50/70 dark:border-sky-800 dark:text-sky-200 dark:bg-sky-950/40',
+      input: 'border-sky-200 focus:ring-sky-500 dark:border-sky-700',
+      panelBorder: 'border-sky-100 dark:border-sky-900/50',
+    },
+  ] as const;
+
+  getCategoriaPrefijoTone(index: number) {
+    return this.categoriaPrefijoTones[index % this.categoriaPrefijoTones.length];
+  }
+
+  getCategoriaPrefijoEjemplo(categoria: string, index: number): string {
+    const prefijo = this.getCategoriaPrefijoDisplay(categoria).trim();
+    if (prefijo) return `${prefijo}01`;
+    return `${String((index + 1) * 10).padStart(2, '0')}01`;
+  }
+
+  getPrefijoEjemploFromDraft(): string {
+    const prefijo = this.normalizePrefijoInput(this.categoriaPrefijoDraft);
+    return prefijo ? `${prefijo}01` : '1001';
+  }
+
+  get canAddCategoria(): boolean {
+    if (!this.categoriaDraft.trim() || this.savingCategorias) return false;
+    if (!this.categoriaDraftUsesAuto) return true;
+    const prefijo = this.normalizePrefijoInput(this.categoriaPrefijoDraft);
+    return Boolean(prefijo) && !this.categoriaAddPrefijoError;
+  }
+
+  categoriaUsesAutoCodigo(categoria: string): boolean {
+    if (this.categoriaAutoEnabled[categoria] !== undefined) {
+      return this.categoriaAutoEnabled[categoria];
+    }
+    return Boolean(this.getCategoriaPrefijo(categoria));
+  }
+
+  getCategoriaPrefijoConflict(categoria: string): string {
+    return this.prefijoConflictByCategoria[categoria] ?? '';
+  }
+
+  onCategoriaDraftUsesAutoChange() {
+    if (!this.categoriaDraftUsesAuto) {
+      this.categoriaPrefijoDraft = '';
+      this.categoriaAddPrefijoError = '';
+      return;
+    }
+    this.onAddPrefijoInput();
+  }
+
+  onAddPrefijoInput() {
+    this.categoriaAddPrefijoError = this.validatePrefijoDraft(
+      this.categoriaPrefijoDraft
+    );
+  }
+
+  setCategoriaUsesAutoCodigo(categoria: string, enabled: boolean) {
+    this.categoriaAutoEnabled[categoria] = enabled;
+    delete this.prefijoConflictByCategoria[categoria];
+
+    if (!enabled) {
+      delete this.prefijoEditDrafts[categoria];
+      if (this.getCategoriaPrefijo(categoria)) {
+        this.applyPrefijoToConfig(categoria, '');
+        this.syncProductosAutomaticoFlag();
+        this.persistProductosCodigoConfig();
+      }
+    }
   }
 
   trackPedidosEstadoRow(_index: number, estado: OrderEstadoConfig): string {
@@ -1257,6 +1427,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return this.modules.find((module) => module.id === this.activeModuleId);
   }
 
+  get showActiveModuleSave(): boolean {
+    return (
+      !!this.activeModuleId &&
+      this.activeModuleId !== 'usuarios'
+    );
+  }
+
   get productosCatalogSections(): ConfigSection[] {
     return this.modules.find((module) => module.id === 'productos')?.sections ?? [];
   }
@@ -1282,12 +1459,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
       ? 'text-[11px] rounded-md px-2 py-0.5 border border-primary/35 bg-primary/15 text-primary font-medium'
       : 'text-[11px] rounded-md px-2 py-0.5 border border-gray-500/50 bg-gray-800/40 text-gray-200 font-medium';
     return `${tone} desc-lg-only`;
-  }
-
-  categoriaReglaBadgeClass(configurada: boolean): string {
-    return configurada
-      ? 'text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-md border border-primary/40 bg-primary/20 text-primary shrink-0'
-      : 'text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-md border border-gray-500/60 bg-gray-800/60 text-gray-200 shrink-0';
   }
 
   getCajaConceptosHint(): string {
@@ -1642,22 +1813,27 @@ export class SettingsComponent implements OnInit, OnDestroy {
         return;
       }
 
-      if (
-        tab === 'caja' ||
-        tab === 'stock' ||
-        tab === 'clientes' ||
-        tab === 'proveedores' ||
-        tab === 'productos' ||
-        tab === 'pedidos' ||
-        tab === 'usuarios' ||
-        tab === 'finanzas'
-      ) {
-        if (this.activeModuleId !== tab) {
-          this.cancelPedidosPersist();
-          this.clearSaveFeedback();
-        }
-        this.activeModuleId = tab;
+      const knownTabs: ConfigModule['id'][] = [
+        'caja',
+        'stock',
+        'clientes',
+        'proveedores',
+        'productos',
+        'pedidos',
+        'usuarios',
+        'finanzas',
+      ];
+      let nextModuleId: ConfigModule['id'] | null =
+        tab && knownTabs.includes(tab as ConfigModule['id']) ? (tab as ConfigModule['id']) : null;
+      if (nextModuleId === 'usuarios' && !this.auth.canManageUsers) {
+        nextModuleId = null;
       }
+      if (this.activeModuleId !== nextModuleId) {
+        this.cancelPedidosPersist();
+        this.clearSaveFeedback();
+        this.resetConfigSectionAccordion();
+      }
+      this.activeModuleId = nextModuleId;
     });
 
     this.catalogConfigService.getAppConfig().subscribe({
@@ -1675,14 +1851,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
         const pedidosNormalized = normalizeOrderPedidosConfig(this.config.pedidos);
         this.config.pedidos = { ...this.config.pedidos, ...pedidosNormalized };
         this.refreshPedidosViewState();
-        if (!this.config.productos.categoriasSinStock) {
-          this.config.productos.categoriasSinStock = [];
-        }
-        this.config.productos.categoriasStock = normalizeCategoriasStock(
-          this.config.productos.categoriasStock,
-          this.config.productos.categorias,
-          this.config.productos.categoriasSinStock
-        );
+        this.ensureProductosCodigo();
+        this.syncPrefijosSnapshot();
         this.syncAllFieldModes();
         this.syncCajaConceptosMode();
         this.config.caja.ambitos = normalizeCajaAmbitos(this.config.caja);
@@ -1745,15 +1915,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return 'Sin opciones · texto libre';
   }
 
-  isConfigListExpanded(key: string, count: number): boolean {
-    if (Object.prototype.hasOwnProperty.call(this.configListExpanded, key)) {
-      return this.configListExpanded[key];
-    }
-    return count === 0;
+  isConfigSectionOpen(sectionKey: string): boolean {
+    if (this.expandedConfigSectionKey === sectionKey) return true;
+    if (this.expandedConfigSectionKey !== null) return false;
+    const moduleId = this.activeModuleId;
+    if (!moduleId) return false;
+    return this.defaultConfigSectionByModule[moduleId] === sectionKey;
   }
 
-  onConfigListExpandedChange(key: string, expanded: boolean) {
-    this.configListExpanded[key] = expanded;
+  onConfigSectionOpenChange(sectionKey: string, expanded: boolean) {
+    this.expandedConfigSectionKey = expanded ? sectionKey : null;
+  }
+
+  private resetConfigSectionAccordion() {
+    this.expandedConfigSectionKey = null;
   }
 
   saveActiveModule() {
@@ -1778,91 +1953,302 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   saveCategoriasSection() {
-    this.ensureCategoriasStockMap();
     this.saveConfig();
   }
 
-  private ensureCategoriasStockMap() {
-    this.config.productos.categoriasStock = normalizeCategoriasStock(
-      this.config.productos.categoriasStock,
-      this.config.productos.categorias,
-      this.config.productos.categoriasSinStock
+  private ensureProductosCodigo() {
+    this.config.productos.codigo = normalizeProductosCodigo(this.config.productos.codigo);
+  }
+
+  private syncProductosAutomaticoFlag() {
+    this.ensureProductosCodigo();
+    const hasPrefijos = Object.values(this.config.productos.codigo.prefijosPorCategoria).some(
+      (value) => this.normalizePrefijoInput(String(value ?? ''))
+    );
+    this.config.productos.codigo.automatico = hasPrefijos;
+  }
+
+  private normalizePrefijoInput(value: string): string {
+    return String(value ?? '')
+      .replace(/\D/g, '')
+      .slice(0, 4);
+  }
+
+  private validatePrefijoDraft(prefijo: string, excludeCategoria?: string): string {
+    const normalized = this.normalizePrefijoInput(prefijo);
+    if (!normalized) {
+      return 'Ingresá el prefijo numérico (ej. 10, 20).';
+    }
+    const owner = findCategoriaByPrefijo(
+      this.config.productos.codigo,
+      normalized,
+      excludeCategoria
+    );
+    if (owner) {
+      return `El prefijo «${normalized}» ya lo usa «${owner}». Elegí otro.`;
+    }
+    return '';
+  }
+
+  private getPrefijoConflictMessage(prefijo: string, excludeCategoria?: string): string {
+    const normalized = this.normalizePrefijoInput(prefijo);
+    if (!normalized) return '';
+    const owner = findCategoriaByPrefijo(
+      this.config.productos.codigo,
+      normalized,
+      excludeCategoria
+    );
+    return owner ? `El prefijo «${normalized}» ya lo usa «${owner}».` : '';
+  }
+
+  getCategoriaPrefijo(categoria: string): string {
+    return getPrefijoForCategoria(this.config.productos.codigo, categoria) ?? '';
+  }
+
+  getCategoriaPrefijoDisplay(categoria: string): string {
+    if (this.prefijoEditDrafts[categoria] !== undefined) {
+      return this.prefijoEditDrafts[categoria];
+    }
+    return this.getCategoriaPrefijo(categoria);
+  }
+
+  onCategoriaPrefijoInput(categoria: string, value: string) {
+    this.prefijoEditDrafts[categoria] = value;
+    this.prefijoConflictByCategoria[categoria] = this.getPrefijoConflictMessage(
+      value,
+      categoria
     );
   }
 
-  getCategoriaRegla(categoria: string): CategoriaStockRegla {
-    return this.config.productos.categoriasStock?.[categoria] ?? DEFAULT_CATEGORIA_STOCK_REGLA;
+  onCategoriaPrefijoBlur(categoria: string) {
+    const previous = this.getSavedPrefijo(categoria);
+    const raw = (this.prefijoEditDrafts[categoria] ?? previous).trim();
+    delete this.prefijoEditDrafts[categoria];
+    const next = this.normalizePrefijoInput(raw);
+
+    if (next === previous) {
+      delete this.prefijoConflictByCategoria[categoria];
+      return;
+    }
+
+    if (next) {
+      const conflict = this.getPrefijoConflictMessage(next, categoria);
+      if (conflict) {
+        this.prefijoConflictByCategoria[categoria] = conflict;
+        this.dialogService.alert({
+          title: 'Prefijo duplicado',
+          message: conflict,
+        });
+        return;
+      }
+    }
+
+    delete this.prefijoConflictByCategoria[categoria];
+    this.applyPrefijoToConfig(categoria, next);
+    this.syncProductosAutomaticoFlag();
+
+    if (!next) {
+      this.categoriaAutoEnabled[categoria] = false;
+      this.persistProductosCodigoConfig();
+      return;
+    }
+
+    this.categoriaAutoEnabled[categoria] = true;
+
+    if (!previous) {
+      this.dialogService
+        .confirm({
+          title: 'Generar códigos',
+          message: `Asignaste el prefijo ${next} a «${categoria}». ¿Generar códigos para los productos existentes de esa categoría?`,
+          confirmLabel: 'Generar códigos',
+          cancelLabel: 'Solo guardar prefijo',
+        })
+        .subscribe((confirmed) => {
+          this.persistProductosCodigoConfig(confirmed ? categoria : undefined);
+        });
+      return;
+    }
+
+    this.dialogService
+      .confirm({
+        title: 'Regenerar códigos',
+        message: `Cambiaste el prefijo de «${categoria}» de ${previous} a ${next}. ¿Regenerar los códigos de los productos de esa categoría?`,
+        confirmLabel: 'Regenerar códigos',
+        cancelLabel: 'Solo guardar prefijo',
+      })
+      .subscribe((confirmed) => {
+        this.persistProductosCodigoConfig(confirmed ? categoria : undefined);
+      });
   }
 
-  isCategoriaStockConfigurada(categoria: string): boolean {
-    return this.getCategoriaRegla(categoria).configurado;
+  private getSavedPrefijo(categoria: string): string {
+    return (
+      this.savedPrefijosSnapshot[categoria] ??
+      getPrefijoForCategoria(this.config.productos.codigo, categoria) ??
+      ''
+    );
+  }
+
+  private applyPrefijoToConfig(categoria: string, prefijo: string) {
+    this.ensureProductosCodigo();
+    if (!prefijo) {
+      delete this.config.productos.codigo.prefijosPorCategoria[categoria];
+      return;
+    }
+    this.config.productos.codigo.prefijosPorCategoria[categoria] = prefijo;
+  }
+
+  private syncPrefijosSnapshot() {
+    this.ensureProductosCodigo();
+    this.savedPrefijosSnapshot = {
+      ...this.config.productos.codigo.prefijosPorCategoria,
+    };
+  }
+
+  private persistProductosCodigoConfig(regenerateCodigosCategoria?: string) {
+    this.savingCategorias = true;
+    this.ensureProductosCodigo();
+    this.syncProductosAutomaticoFlag();
+
+    const duplicatePrefijoError = validateUniquePrefijos(
+      this.config.productos.codigo.prefijosPorCategoria
+    );
+    if (duplicatePrefijoError) {
+      this.savingCategorias = false;
+      this.dialogService.alert({
+        title: 'Prefijos duplicados',
+        message: duplicatePrefijoError,
+      });
+      return;
+    }
+
+    this.catalogConfigService
+      .updateAppConfig(this.config, { regenerateCodigosCategoria })
+      .subscribe({
+        next: (config) => {
+          this.config = config;
+          this.ensureProductosCodigo();
+          this.syncPrefijosSnapshot();
+          this.savingCategorias = false;
+        },
+        error: (err: HttpErrorResponse) => {
+          this.savingCategorias = false;
+          this.handleConfigSaveError(err, () =>
+            this.persistProductosCodigoConfig(regenerateCodigosCategoria)
+          );
+        },
+      });
+  }
+
+  setCategoriaPrefijo(categoria: string, value: string) {
+    this.applyPrefijoToConfig(
+      categoria,
+      String(value ?? '')
+        .replace(/\D/g, '')
+        .slice(0, 4)
+    );
+  }
+
+  getCategoriaDisplayName(categoria: string): string {
+    return this.categoriaEditDrafts[categoria] ?? categoria;
+  }
+
+  onCategoriaNameInput(currentKey: string, value: string) {
+    this.categoriaEditDrafts[currentKey] = value;
+  }
+
+  onCategoriaNameBlur(currentKey: string) {
+    const draft = (this.categoriaEditDrafts[currentKey] ?? currentKey).trim();
+    delete this.categoriaEditDrafts[currentKey];
+    if (!draft || draft === currentKey) return;
+
+    const duplicate = this.config.productos.categorias.some(
+      (item) => item.trim().toLowerCase() === draft.toLowerCase() && item !== currentKey
+    );
+    if (duplicate) {
+      this.dialogService.alert({
+        title: 'Nombre duplicado',
+        message: `Ya existe la categoría «${draft}».`,
+      });
+      return;
+    }
+
+    this.renameCategoria(currentKey, draft);
+    this.persistCategorias(undefined, false, { from: currentKey, to: draft });
+  }
+
+  private renameCategoria(from: string, to: string) {
+    this.ensureProductosCodigo();
+
+    const idx = this.config.productos.categorias.indexOf(from);
+    if (idx < 0) return;
+
+    const categorias = [...this.config.productos.categorias];
+    categorias[idx] = to;
+    this.config.productos.categorias = categorias.sort((a, b) => a.localeCompare(b, 'es'));
+
+    this.migrateCategoriaConfigKey(this.config.productos.codigo.prefijosPorCategoria, from, to);
+    this.migrateCategoriaConfigKey(this.categoriaAutoEnabled, from, to);
+    this.syncPrefijosSnapshot();
+  }
+
+  private migrateCategoriaConfigKey<T>(
+    map: Record<string, T>,
+    from: string,
+    to: string
+  ): void {
+    const key = Object.keys(map).find(
+      (item) => item.trim().toLowerCase() === from.trim().toLowerCase()
+    );
+    if (!key) return;
+    map[to] = map[key];
+    delete map[key];
   }
 
   addCategoria() {
     const value = this.categoriaDraft.trim();
-    if (!value || this.savingCategoriasStock) return;
+    if (!value || this.savingCategorias || !this.canAddCategoria) return;
 
     const current = [...this.config.productos.categorias];
     if (current.some((item) => item.toLowerCase() === value.toLowerCase())) {
       this.categoriaDraft = '';
+      this.categoriaPrefijoDraft = '';
+      this.categoriaDraftUsesAuto = false;
+      this.categoriaAddPrefijoError = '';
       return;
+    }
+
+    if (this.categoriaDraftUsesAuto) {
+      const prefijoDraft = this.normalizePrefijoInput(this.categoriaPrefijoDraft);
+      const conflict = this.validatePrefijoDraft(prefijoDraft);
+      if (conflict) {
+        this.categoriaAddPrefijoError = conflict;
+        this.dialogService.alert({
+          title: 'Prefijo duplicado',
+          message: conflict,
+        });
+        return;
+      }
+      this.applyPrefijoToConfig(value, prefijoDraft);
+      this.categoriaAutoEnabled[value] = true;
     }
 
     this.config.productos.categorias = [...current, value].sort((a, b) =>
       a.localeCompare(b, 'es')
     );
-    this.ensureCategoriasStockMap();
-    this.config.productos.categoriasStock[value] = {
-      configurado: false,
-      controlaStock: true,
-      permitirStockNegativo: false,
-    };
     this.syncFieldMode('productos.categorias');
-    this.configListExpanded['productos.categorias'] = true;
+    this.syncProductosAutomaticoFlag();
+    this.expandedConfigSectionKey = 'productos.categorias';
 
     this.categoriaDraft = '';
-    this.persistCategoriasStock();
-  }
-
-  toggleCategoriaStockConfigurada(categoria: string, configurado: boolean) {
-    if (this.savingCategoriasStock) return;
-    if (this.isCategoriaStockConfigurada(categoria) === configurado) return;
-    this.ensureCategoriasStockMap();
-    const current = this.getCategoriaRegla(categoria);
-    this.config.productos.categoriasStock[categoria] = {
-      ...current,
-      configurado,
-      permitirStockNegativo: configurado && current.controlaStock ? current.permitirStockNegativo : false,
-    };
-    this.persistCategoriasStock(configurado ? categoria : undefined);
-  }
-
-  setCategoriaReglaField(
-    categoria: string,
-    field: 'controlaStock' | 'permitirStockNegativo',
-    value: boolean
-  ) {
-    if (this.savingCategoriasStock) return;
-    this.ensureCategoriasStockMap();
-    const current = this.config.productos.categoriasStock[categoria] ?? {
-      ...DEFAULT_CATEGORIA_STOCK_REGLA,
-      configurado: true,
-    };
-    if (current[field] === value) return;
-    const next: CategoriaStockRegla = {
-      ...current,
-      configurado: true,
-      [field]: value,
-    } as CategoriaStockRegla;
-    if (field === 'controlaStock' && !value) {
-      next.permitirStockNegativo = false;
-    }
-    this.config.productos.categoriasStock[categoria] = next;
-    this.persistCategoriasStock(categoria);
+    this.categoriaPrefijoDraft = '';
+    this.categoriaDraftUsesAuto = false;
+    this.categoriaAddPrefijoError = '';
+    this.persistCategorias();
   }
 
   removeCategoria(categoria: string) {
-    if (this.savingCategoriasStock) return;
+    if (this.savingCategorias) return;
 
     this.confirmConfigRemoval(
       'productos.categorias',
@@ -1871,54 +2257,41 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.config.productos.categorias = this.config.productos.categorias.filter(
           (item) => item !== categoria
         );
-        this.ensureCategoriasStockMap();
-        delete this.config.productos.categoriasStock[categoria];
-        this.config.productos.categoriasSinStock = (
-          this.config.productos.categoriasSinStock ?? []
-        ).filter((item) => item.trim().toLowerCase() !== categoria.trim().toLowerCase());
+        delete this.config.productos.codigo.prefijosPorCategoria[categoria];
+        delete this.categoriaAutoEnabled[categoria];
+        delete this.prefijoConflictByCategoria[categoria];
+        this.syncProductosAutomaticoFlag();
         this.syncFieldMode('productos.categorias');
       },
-      (confirm) => this.persistCategoriasStock(undefined, confirm)
+      (confirm) => this.persistCategorias(undefined, confirm)
     );
   }
 
-  private persistCategoriasStock(syncCategoria?: string, confirmConfigRemovals = false) {
-    this.savingCategoriasStock = true;
-    this.ensureCategoriasStockMap();
+  private persistCategorias(
+    _unused?: undefined,
+    confirmConfigRemovals = false,
+    renameCategoria?: { from: string; to: string },
+    regenerateCodigosCategoria?: string
+  ) {
+    this.savingCategorias = true;
 
-    const save = (sync?: string) => {
-      this.catalogConfigService
-        .updateAppConfig(this.config, {
-          confirmConfigRemovals,
-          syncCategoriaStock: sync,
-        })
-        .subscribe({
-          next: (config) => {
-            this.config = config;
-            this.ensureCategoriasStockMap();
-            this.savingCategoriasStock = false;
-          },
-          error: (err: HttpErrorResponse) => {
-            this.savingCategoriasStock = false;
-            this.handleConfigSaveError(err, () => this.persistCategoriasStock(syncCategoria, true));
-          },
-        });
-    };
-
-    if (!syncCategoria) {
-      save();
-      return;
-    }
-
-    this.dialogService
-      .confirm({
-        title: 'Aplicar a productos existentes',
-        message: `¿Actualizar todos los productos de «${syncCategoria}» con estas reglas de stock? Podés seguir ajustando productos individuales después.`,
-        confirmLabel: 'Aplicar a productos',
-        cancelLabel: 'Solo guardar reglas',
+    this.catalogConfigService
+      .updateAppConfig(this.config, {
+        confirmConfigRemovals,
+        renameCategoria,
+        regenerateCodigosCategoria,
       })
-      .subscribe((confirmed) => {
-        save(confirmed ? syncCategoria : undefined);
+      .subscribe({
+        next: (config) => {
+          this.config = config;
+          this.ensureProductosCodigo();
+          this.syncPrefijosSnapshot();
+          this.savingCategorias = false;
+        },
+        error: (err: HttpErrorResponse) => {
+          this.savingCategorias = false;
+          this.handleConfigSaveError(err, () => this.persistCategorias(undefined, true));
+        },
       });
   }
 
@@ -1949,7 +2322,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (current.some((item) => item.toLowerCase() === trimmed.toLowerCase())) return;
 
     this.setList(key, [...current, trimmed].sort((a, b) => a.localeCompare(b, 'es')));
-    this.configListExpanded[key] = true;
+    this.expandedConfigSectionKey = key;
     this.syncFieldMode(key);
     this.persistField(key);
   }
@@ -1990,6 +2363,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (this.activeModuleId === moduleId) return;
     this.cancelPedidosPersist();
     this.clearSaveFeedback();
+    this.resetConfigSectionAccordion();
     this.activeModuleId = moduleId;
     void this.router.navigate([], {
       relativeTo: this.route,
@@ -1999,8 +2373,49 @@ export class SettingsComponent implements OnInit, OnDestroy {
     });
   }
 
+  backToModuleList() {
+    if (!this.activeModuleId) return;
+    this.cancelPedidosPersist();
+    this.clearSaveFeedback();
+    this.resetConfigSectionAccordion();
+    this.activeModuleId = null;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { tab: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  getModuleIcon(moduleId: ConfigModule['id']): string {
+    const icons: Record<ConfigModule['id'], string> = {
+      productos: 'package',
+      clientes: 'users',
+      proveedores: 'building-2',
+      caja: 'wallet',
+      finanzas: 'receipt',
+      stock: 'boxes',
+      pedidos: 'clipboard-list',
+      usuarios: 'user-cog',
+    };
+    return icons[moduleId] ?? 'settings';
+  }
+
   saveConfig() {
+    this.applyPendingPrefijoDraftsToConfig();
     this.persistConfig(true);
+  }
+
+  private applyPendingPrefijoDraftsToConfig() {
+    if (Object.keys(this.prefijoEditDrafts).length === 0) return;
+    for (const [categoria, draft] of Object.entries(this.prefijoEditDrafts)) {
+      const previous = this.getSavedPrefijo(categoria);
+      const next = String(draft).replace(/\D/g, '').slice(0, 4);
+      if (next !== previous) {
+        this.applyPrefijoToConfig(categoria, next);
+      }
+    }
+    this.prefijoEditDrafts = {};
   }
 
   onPedidosModoStockChange() {
@@ -2146,7 +2561,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
       next: (config) => {
         this.config = config;
-        this.ensureCategoriasStockMap();
         if (pedidosOnly || this.activeModuleId === 'pedidos') {
           this.refreshPedidosViewState();
         }

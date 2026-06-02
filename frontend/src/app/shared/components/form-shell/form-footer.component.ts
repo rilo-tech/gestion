@@ -61,7 +61,7 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
           [class.sm:ml-auto]="mode === 'inline'">
           <p
             *ngIf="successMessage && mode === 'inline'"
-            class="text-sm font-medium text-teal-700 dark:text-teal-400 text-right"
+            class="text-sm font-semibold text-teal-800 dark:text-teal-200 text-right"
             role="status"
             aria-live="polite">
             {{ successMessage }}
@@ -91,7 +91,7 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
             </button>
             <button
               *ngIf="showSave"
-              [type]="mode === 'inline' ? 'submit' : 'button'"
+              [attr.type]="saveAsSubmit ? 'submit' : 'button'"
               [disabled]="saving || saveDisabled"
               [class]="resolvedSaveButtonClass"
               (click)="onSaveButtonClick($event)">
@@ -115,6 +115,8 @@ export class FormFooterComponent {
   @Input() saveDisabled = false;
   @Input() showSave = true;
   @Input() showCancel = true;
+  /** Dentro de `<form (submit)=...>`: el botón principal dispara el submit nativo. */
+  @Input() saveAsSubmit = false;
   /** Clases extra del contenedor (modal suele usar mt-6 pt-2). */
   @Input() footerClass = '';
   /** Override del botón principal (ej. ingreso/egreso en caja). */
@@ -181,9 +183,9 @@ export class FormFooterComponent {
   }
 
   onSaveButtonClick(event: MouseEvent) {
-    if (this.mode === 'modal' || this.mode === 'sidebar') {
-      event.preventDefault();
-      this.saveClick.emit();
-    }
+    if (this.saveAsSubmit) return;
+    event.preventDefault();
+    if (this.saving || this.saveDisabled) return;
+    this.saveClick.emit();
   }
 }

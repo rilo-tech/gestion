@@ -9,7 +9,7 @@ import {
 } from './order-config.ts';
 import { resolveOrderLabel } from './order-number.ts';
 import { formatOrderStockMotivo } from './stock-movimientos.ts';
-import { loadCategoriasSinStock, productControlsStock, productPermitsNegativeStock } from './stock-product.ts';
+import { productControlsStock, productPermitsNegativeStock } from './stock-product.ts';
 import { scheduleStockMetricsRefresh } from './stock-metrics.ts';
 
 export type OrderStockItemStatus = 'sin_preparar' | 'completo' | 'parcial' | 'faltante';
@@ -72,7 +72,6 @@ async function adjustGlobalStockReservation(params: {
   stockItemId: string;
   delta: number;
   productName: string;
-  categoriasSinStock?: string[];
   allowNegativeReservation?: boolean;
 }): Promise<void> {
   const delta = Number(params.delta) || 0;
@@ -581,7 +580,6 @@ export async function autoReserveIncomingStockForProduct(
       stockItemId: normalizedStockItemId,
       delta: reservedTotal,
       productName: String(stockData.nombre ?? 'Producto'),
-      categoriasSinStock: await loadCategoriasSinStock(businessId),
     });
   }
 
@@ -609,7 +607,6 @@ export async function buildStockPreparationView(
   order: OrderStockRecord
 ): Promise<StockPreparationLine[]> {
   const lines: StockPreparationLine[] = [];
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
 
   for (let lineIndex = 0; lineIndex < (order.items ?? []).length; lineIndex++) {
     const rawLine = order.items![lineIndex];
@@ -696,7 +693,6 @@ export async function applyOrderStockPreparation(
   const items = [...(order.items ?? [])].map((line) => ({ ...line }));
   const orderLabel = resolveOrderLabel(order);
   const clientName = await resolveClientName(businessId, order.clienteId);
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
   const allocationMap = new Map<number, { reservar?: number; faltante?: number }>();
 
   for (const alloc of allocations) {
@@ -751,7 +747,6 @@ export async function applyOrderStockPreparation(
         stockItemId,
         delta,
         productName: String(line.nombre ?? 'Producto'),
-        categoriasSinStock,
         allowNegativeReservation: true,
       });
 
@@ -891,7 +886,6 @@ async function consumeOrderStockInternal(
 
   const items = normalizedItems.map((line) => ({ ...line }));
   const orderLabel = resolveOrderLabel(order);
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
   let consumedAny = false;
 
   for (let lineIndex = 0; lineIndex < items.length; lineIndex++) {
@@ -981,8 +975,6 @@ export async function consumeOrderReservedStockManual(
   const normalizedItems = normalizeOrderItemsStock(order.items ?? []);
   const items = normalizedItems.map((line) => ({ ...line }));
   const orderLabel = resolveOrderLabel(order);
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
-
   const requested = new Map<number, number>();
   for (const entry of lines) {
     const idx = Number(entry.lineIndex);
@@ -1111,8 +1103,6 @@ async function ensureOrderStockReservedForProduction(
 ): Promise<OrderLineStock[]> {
   const orderLabel = resolveOrderLabel(order);
   const clientName = await resolveClientName(businessId, order.clienteId);
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
-
   for (let lineIndex = 0; lineIndex < items.length; lineIndex++) {
     const line = items[lineIndex];
     const stockItemId = String(line.stockItemId ?? '').trim();
@@ -1149,7 +1139,6 @@ async function ensureOrderStockReservedForProduction(
         stockItemId,
         delta,
         productName: String(line.nombre ?? data.nombre ?? 'Producto'),
-        categoriasSinStock,
       });
 
       if (delta > 0) {
@@ -1216,8 +1205,6 @@ export async function consumeOrderStockForProduction(
 
   const purchaseWarnings: string[] = [];
   const insufficientLines: string[] = [];
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
-
   for (const line of items) {
     const stockItemId = String(line.stockItemId ?? '').trim();
     const toConsume = resolveLinePhysicalToConsume(line, scope);
@@ -1635,8 +1622,7 @@ const ACTIVE_SHORTAGE_STATUSES = new Set(['pendiente', 'en_produccion', 'listo']
 async function loadStockLineContext(
   businessId: string,
   stockItemId: string,
-  cache: Map<string, { disponible: number; controlaStock: boolean; nombre: string }>,
-  categoriasSinStock: string[]
+  cache: Map<string, { disponible: number; controlaStock: boolean; nombre: string }>
 ) {
   const cached = cache.get(stockItemId);
   if (cached) return cached;
@@ -1659,8 +1645,6 @@ export async function listStockShortages(businessId: string): Promise<{
   const snapshot = await db.collection(`negocios/${businessId}/pedidos`).get();
   const rows: StockShortageRow[] = [];
   const stockCache = new Map<string, { disponible: number; controlaStock: boolean; nombre: string }>();
-  const categoriasSinStock = await loadCategoriasSinStock(businessId);
-
   for (const doc of snapshot.docs) {
     const order = doc.data() as OrderStockRecord & { estado?: string };
     const estado = String(order.estado ?? '').toLowerCase();
@@ -1697,7 +1681,7 @@ export async function listStockShortages(businessId: string): Promise<{
         continue;
       }
 
-      const stockInfo = await loadStockLineContext(businessId, stockItemId, stockCache, categoriasSinStock);
+      const stockInfo = await loadStockLineContext(businessId, stockItemId, stockCache);
       if (!stockInfo.controlaStock) continue;
 
       const faltanteEstimado = Math.max(0, pendiente - stockInfo.disponible);

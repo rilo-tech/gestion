@@ -2,7 +2,7 @@ import express from 'express';
 import { db } from '../firebase.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
 import { resolveSaleLabel } from '../utils/sale-number.ts';
-import { computeClientBalanceMap } from '../utils/client-balance.ts';
+import { computeClientBalanceMap, computeClientBalanceForIds } from '../utils/client-balance.ts';
 import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData } from '../utils/client-collections.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
@@ -127,7 +127,10 @@ router.get('/:businessId', async (req, res) => {
       const hasMore = snapshot.docs.length > limit;
       const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
 
-      const balanceMap = await computeClientBalanceMap(businessId);
+      const balanceMap = await computeClientBalanceForIds(
+        businessId,
+        docs.map((doc) => doc.id)
+      );
       const items = docs.map((doc) => {
         const saldoPendiente = balanceMap.get(doc.id) ?? 0;
         return {

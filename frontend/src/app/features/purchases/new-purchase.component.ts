@@ -33,7 +33,7 @@ import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar
       backAriaLabel="Volver a compras"
       [hasHeaderActions]="true"
       (backClick)="goBack()">
-      <div headerActions>
+      <div headerActions class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-icon-toolbar-button
           *ngIf="!purchaseCompleted"
           class="sm:hidden"

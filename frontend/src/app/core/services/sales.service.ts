@@ -95,6 +95,7 @@ export interface CreateSalePayload {
   montoCobrado?: number;
   medioPago?: string;
   notas?: string;
+  fecha?: string;
   compromisoPago?: CompromisoPagoPayload;
   draft?: boolean;
   ventaId?: string;
@@ -114,6 +115,7 @@ export interface UpdateSalePayload {
   montoCobrado?: number;
   medioPago?: string;
   notas?: string;
+  fecha?: string;
 }
 
 export interface PaginatedSales {
@@ -141,6 +143,26 @@ export class SalesService {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
     return this.http.get<PaginatedSales>(`/api/sales/${this.businessId}`, { params });
+  }
+
+  getMonthlySummary(mes: number, anio: number): Observable<{
+    mes: number;
+    anio: number;
+    count: number;
+    totalFacturado: number;
+    totalGanancia: number;
+  }> {
+    const params = new URLSearchParams({
+      mes: String(mes),
+      anio: String(anio),
+    });
+    return this.http.get<{
+      mes: number;
+      anio: number;
+      count: number;
+      totalFacturado: number;
+      totalGanancia: number;
+    }>(`/api/sales/${this.businessId}/monthly-summary?${params}`);
   }
 
   getSale(ventaId: string): Observable<Sale> {

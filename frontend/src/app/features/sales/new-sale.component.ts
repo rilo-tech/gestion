@@ -36,7 +36,7 @@ import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar
       backAriaLabel="Volver a ventas"
       [hasHeaderActions]="true"
       (backClick)="goBack()">
-      <div headerActions>
+      <div headerActions class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-icon-toolbar-button
           class="sm:hidden"
           icon="save"

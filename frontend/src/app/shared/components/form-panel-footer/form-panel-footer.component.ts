@@ -15,7 +15,9 @@ import { FormFooterComponent } from '../form-shell/form-footer.component';
       [saving]="saving"
       [saveDisabled]="saveDisabled"
       [showSave]="showSave"
+      [successMessage]="successMessage"
       (cancelClick)="cancelClick.emit()"
+      (saveClick)="saveClick.emit()"
       (deleteClick)="deleteClick.emit()">
     </app-form-footer>
   `,
@@ -27,6 +29,8 @@ export class FormPanelFooterComponent {
   @Input() saving = false;
   @Input() saveDisabled = false;
   @Input() showSave = true;
+  @Input() successMessage = '';
   @Output() cancelClick = new EventEmitter<void>();
+  @Output() saveClick = new EventEmitter<void>();
   @Output() deleteClick = new EventEmitter<void>();
 }

@@ -18,6 +18,7 @@ import {
   CreateSalePayload,
   SalesService,
   UpdateSalePayload,
+  SaleLine,
   SaleLineExtraCost,
 } from '../../core/services/sales.service';
 import { Client, ClientService } from '../../core/services/client.service';
@@ -66,8 +67,14 @@ import {
   TransactionPartyFieldComponent,
   TransactionPaymentSimpleComponent,
   TransactionNotesFieldComponent,
+  TransactionDateFieldComponent,
 } from '../../shared/components/transaction-form';
 import { TransactionFormSaveEvent } from '../../shared/components/transaction-form/transaction-form.types';
+import {
+  dateInputToIso,
+  todayDateInputValue,
+  toDateInputValue,
+} from '../../core/utils/transaction-date';
 
 interface SaleDraftLine {
   stockItemId: string;
@@ -98,6 +105,7 @@ interface SaleDraftLine {
     TransactionPartyFieldComponent,
     TransactionPaymentSimpleComponent,
     TransactionNotesFieldComponent,
+    TransactionDateFieldComponent,
   ],
   template: `
     <div *ngIf="isEditing && editingSaleLoading" class="py-8 text-center text-xs sm:text-sm text-gray-400">
@@ -123,14 +131,20 @@ interface SaleDraftLine {
         </app-searchable-select>
       </app-transaction-party-field>
 
+      <app-transaction-date-field
+        [date]="saleFecha"
+        (dateChange)="saleFecha = $event"
+        fieldName="saleFecha"
+        label="Fecha">
+      </app-transaction-date-field>
+
       <app-transaction-lines-section
         title="Productos"
         icon="package"
         [lineCount]="draftLines.length"
         [searchVisible]="true"
         searchTitle="Agregar productos"
-        searchHint="Buscá y hacé clic en un producto para agregarlo a la lista."
-        emptyMessage="Buscá productos arriba y hacé clic en uno para agregarlo acá.">
+        searchHint="Buscá y hacé clic en un producto para agregarlo a la lista.">
         <app-transaction-product-search
           search
           [selectOnRowClick]="true"
@@ -145,10 +159,10 @@ interface SaleDraftLine {
 
         <app-transaction-lines-table
           #saleLinesTable
+          [hideWhenEmpty]="true"
           [lines]="saleTableLines"
           [columns]="saleTableColumns"
           fieldNamePrefix="saleLine"
-          emptyMessage="Buscá productos arriba y hacé clic en uno para agregarlo acá."
           (fieldChange)="onSaleTableFieldChange($event)"
           (removeLine)="removeLine($event)"
           (metaAction)="onSaleTableMetaAction($event)">
@@ -315,6 +329,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   montoCobrado: number | null = null;
   medioPago = 'efectivo';
   saleNotas = '';
+  saleFecha = todayDateInputValue();
 
   extraCostsModalIndex: number | null = null;
 
@@ -388,7 +403,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     return this.draftLines.reduce((acc, line) => {
       const qty = Number(line.cantidad) || 0;
       const base = qty * (Number(line.costoUnitario) || 0);
-      return acc + base + this.getLineExtraCostTotal(line);
+      return acc + base + this.getLinePersTotal(line);
     }, 0);
   }
 
@@ -681,7 +696,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       productName: this.getDraftLineName(line),
       quantity: line.cantidad,
       unitSale: line.precioUnitario,
-      personalization: this.getLineExtraCostTotal(line),
+      personalization: this.getLinePersTotal(line),
       subtotal: this.getLineSubtotal(line),
       extrasSummary: this.formatDraftLineExtrasSummary(line),
       metaItems: this.buildSaleLineMetaItems(line),
@@ -758,8 +773,12 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     return item?.nombre ?? 'Producto';
   }
 
-  getLineExtraCostTotal(line: SaleDraftLine): number {
-    return line.costosExtra.reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
+  getLineCustomizationTotal(line: SaleDraftLine): number {
+    return (line.costosExtra ?? []).reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
+  }
+
+  getLinePersTotal(line: SaleDraftLine): number {
+    return (Number(line.cantidad) || 0) * this.getLineCustomizationTotal(line);
   }
 
   openExtraCostsModal(lineIndex: number) {
@@ -922,6 +941,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       montoCobrado: Number.isFinite(monto) && monto >= 0 ? monto : 0,
       medioPago: this.medioPago,
       notas: this.saleNotas.trim(),
+      fecha: dateInputToIso(this.saleFecha),
     };
   }
 
@@ -1005,6 +1025,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       items,
       notas: this.saleNotas.trim(),
       medioPago: this.medioPago,
+      fecha: dateInputToIso(this.saleFecha),
     };
 
     if (!this.editHasExtraCobros) {
@@ -1038,10 +1059,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         const costosExtra = (line.costosExtra ?? []).filter(
           (extra) => extra.nombre?.trim() || extra.costo
         );
-        const costoPersonalizacion = costosExtra.reduce(
-          (acc, extra) => acc + (Number(extra.costo) || 0),
-          0
-        );
+        const costoPersonalizacion = this.getLinePersTotal(line);
         return {
           stockItemId: line.stockItemId,
           nombre: line.nombre ?? item?.nombre ?? '',
@@ -1058,6 +1076,44 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       .filter((line) => line.stockItemId && line.cantidad > 0);
   }
 
+  private normalizeSaleDraftLine(line: SaleLine, stockItems: StockItem[]): SaleDraftLine {
+    const stockItem = stockItems.find((entry) => entry.id === line.stockItemId);
+    const costosExtraRaw = Array.isArray(line.costosExtra) ? line.costosExtra : [];
+    const costosExtra = costosExtraRaw.map((extra) => ({
+      nombre: String(extra?.nombre ?? '').trim() || 'Extra',
+      costo: Number(extra?.costo) || 0,
+    }));
+
+    if (costosExtra.length > 0) {
+      return {
+        stockItemId: line.stockItemId,
+        nombre: line.nombre,
+        cantidad: line.cantidad,
+        precioUnitario: line.precioUnitario,
+        costoUnitario: Number(line.costoUnitario) || 0,
+        costosExtra,
+        stockDisponible: stockItem ? getStockDisponible(stockItem) : undefined,
+        controlaStock: stockItem?.controlaStock !== false,
+      };
+    }
+
+    const legacyTotal = Number(line.costoPersonalizacion) || 0;
+    const qty = Math.max(1, Number(line.cantidad) || 1);
+    const legacyUnit = legacyTotal > 0 ? legacyTotal / qty : 0;
+
+    return {
+      stockItemId: line.stockItemId,
+      nombre: line.nombre,
+      cantidad: line.cantidad,
+      precioUnitario: line.precioUnitario,
+      costoUnitario: Number(line.costoUnitario) || 0,
+      costosExtra:
+        legacyTotal > 0 ? [{ nombre: 'Personalización', costo: legacyUnit }] : [],
+      stockDisponible: stockItem ? getStockDisponible(stockItem) : undefined,
+      controlaStock: stockItem?.controlaStock !== false,
+    };
+  }
+
   private loadEditingSale(saleId: string) {
     this.editingSaleLoading = true;
     this.salesService.getSale(saleId).subscribe({
@@ -1071,24 +1127,12 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         this.ensureSaleClient(fullSale.clienteId, fullSale.clienteNombre);
         this.medioPago = fullSale.medioPago || 'efectivo';
         this.saleNotas = fullSale.notas || '';
+        this.saleFecha = toDateInputValue(fullSale.fecha);
         this.montoCobrado = Number(fullSale.montoCobrado) || 0;
         this.editHasExtraCobros = this.saleHasExtraCobros(fullSale);
-        this.draftLines = (fullSale.items ?? []).map((line) => {
-          const stockItem = this.stockItems.find((entry) => entry.id === line.stockItemId);
-          return {
-            stockItemId: line.stockItemId,
-            nombre: line.nombre,
-            cantidad: line.cantidad,
-            precioUnitario: line.precioUnitario,
-            costoUnitario: Number(line.costoUnitario) || 0,
-            costosExtra: (line.costosExtra ?? []).map((extra) => ({
-              nombre: extra.nombre,
-              costo: Number(extra.costo) || 0,
-            })),
-            stockDisponible: stockItem ? getStockDisponible(stockItem) : undefined,
-            controlaStock: stockItem?.controlaStock !== false,
-          };
-        });
+        this.draftLines = (fullSale.items ?? []).map((line) =>
+          this.normalizeSaleDraftLine(line, this.stockItems)
+        );
         this.syncAddedSaleProductIds();
         this.rebuildSaleTableLines();
         this.editingSaleLoading = false;
@@ -1117,6 +1161,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.rebuildSaleTableLines();
     this.medioPago = 'efectivo';
     this.saleNotas = '';
+    this.saleFecha = todayDateInputValue();
     this.montoCobrado = null;
     this.onDraftLineChange();
   }

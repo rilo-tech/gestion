@@ -717,6 +717,14 @@ function sanitizePrintFilename(value: string): string {
     .slice(0, 120);
 }
 
+function resolveOrderClientName(order: Order, clientsById: Map<string, Client>): string {
+  return (
+    order.clienteNombre?.trim() ||
+    clientsById.get(order.clienteId)?.nombre?.trim() ||
+    'Cliente sin nombre'
+  );
+}
+
 function buildOrdersPrintTitle(
   orders: Order[],
   clientsById: Map<string, Client>,
@@ -724,13 +732,13 @@ function buildOrdersPrintTitle(
 ): string {
   if (orders.length === 1) {
     const order = orders[0];
-    const clientName = clientsById.get(order.clienteId)?.nombre?.trim() || 'Cliente sin nombre';
+    const clientName = resolveOrderClientName(order, clientsById);
     const orderNumber = formatOrderNumber(order) || 'Pedido';
     return sanitizePrintFilename(`${orderNumber} - ${clientName}`);
   }
 
   const parts = orders.slice(0, 5).map((order) => {
-    const clientName = clientsById.get(order.clienteId)?.nombre?.trim() || 'Cliente';
+    const clientName = resolveOrderClientName(order, clientsById);
     return `${formatOrderNumber(order) || 'Pedido'} - ${clientName}`;
   });
   const suffix = orders.length > 5 ? ` (+${orders.length - 5})` : '';
@@ -745,7 +753,7 @@ export function buildOrdersPrintDocument(
   const sheets = orders
     .map((order) => {
       const client = clientsById.get(order.clienteId) ?? null;
-      const clientName = client?.nombre ?? 'Cliente sin nombre';
+      const clientName = resolveOrderClientName(order, clientsById);
       return renderOrderPage(order, client, clientName, options);
     })
     .join('');

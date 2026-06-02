@@ -1,4 +1,4 @@
-import { Component, Input } from '@angular/core';
+import { Component, Input, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TABLE_SCROLL_CLASS } from '../icon-action/icon-action.component';
 import {
@@ -20,7 +20,7 @@ import {
         <ng-content select="[listMobile]"></ng-content>
       </div>
 
-      <div class="hidden sm:block" [class]="desktopScrollClass">
+      <div [class]="desktopWrapClass">
         <ng-content select="[listDesktop]"></ng-content>
       </div>
 
@@ -28,10 +28,20 @@ import {
     </div>
   `,
 })
-export class CompactDataListComponent {
+export class CompactDataListComponent implements OnChanges {
   @Input() showSearch = true;
+  /** Si false, la grilla desktop también se muestra en celular (con scroll horizontal). */
+  @Input() desktopOnly = true;
 
   readonly searchWrapClass = COMPACT_LIST_SEARCH_WRAP_CLASS;
   readonly mobileListClass = `sm:hidden ${NATIVE_COMPACT_LIST_CLASS}`;
   readonly desktopScrollClass = TABLE_SCROLL_CLASS;
+
+  desktopWrapClass = this.desktopScrollClass;
+
+  ngOnChanges(): void {
+    this.desktopWrapClass = this.desktopOnly
+      ? `hidden sm:block ${this.desktopScrollClass}`
+      : this.desktopScrollClass;
+  }
 }

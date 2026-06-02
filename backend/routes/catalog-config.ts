@@ -17,10 +17,13 @@ import {
 import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
 import { normalizeFinanzasConfig } from '../utils/finance-config.ts';
 import {
-  normalizeCategoriasSinStock,
-  normalizeCategoriasStock,
-  syncStockItemsWithCategoryDefaults,
+  renameProductCategory,
 } from '../utils/stock-product.ts';
+import {
+  DEFAULT_PRODUCTOS_CODIGO_CONFIG,
+  normalizeProductosCodigo,
+} from '../../shared/product-code-config.ts';
+import { regenerateProductCodesForCategory } from '../utils/product-code.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import { requireSettingsAccess } from '../auth/middleware.ts';
 
@@ -38,11 +41,6 @@ const DEFAULT_APP_CONFIG = {
   productos: {
     tipos: [] as string[],
     categorias: [] as string[],
-    categoriasSinStock: [] as string[],
-    categoriasStock: {} as Record<
-      string,
-      { configurado: boolean; controlaStock: boolean; permitirStockNegativo: boolean }
-    >,
     talles: [] as string[],
     colores: [] as string[],
     modo: {
@@ -51,6 +49,7 @@ const DEFAULT_APP_CONFIG = {
       talles: 'texto' as FieldInputMode,
       colores: 'texto' as FieldInputMode,
     },
+    codigo: { ...DEFAULT_PRODUCTOS_CODIGO_CONFIG },
   },
   clientes: {
     etiquetas: [] as string[],
@@ -169,14 +168,8 @@ function normalizeProductos(raw: Record<string, unknown> = {}) {
   const modo = (raw.modo as Record<string, unknown>) ?? {};
   let tipos = normalizeList(raw.tipos);
   let categorias = normalizeList(raw.categorias);
-  let categoriasSinStock = normalizeList(raw.categoriasSinStock);
   let talles = normalizeList(raw.talles);
   let colores = normalizeList(raw.colores);
-  const categoriasStock = normalizeCategoriasStock(
-    raw.categoriasStock,
-    categorias,
-    categoriasSinStock
-  );
 
   if (Array.isArray(raw.campos)) {
     for (const item of raw.campos as Record<string, unknown>[]) {
@@ -192,10 +185,9 @@ function normalizeProductos(raw: Record<string, unknown> = {}) {
   return {
     tipos,
     categorias,
-    categoriasSinStock,
-    categoriasStock,
     talles,
     colores,
+    codigo: normalizeProductosCodigo(raw.codigo),
     modo: {
       tipos: normalizeMode(modo.tipos, tipos.length > 0 ? 'lista' : 'texto'),
       categorias: normalizeMode(modo.categorias, categorias.length > 0 ? 'lista' : 'texto'),
@@ -312,8 +304,23 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
     const confirmConfigRemovals = body.confirmConfigRemovals === true;
     delete body.confirmConfigRemovals;
 
-    const syncCategoriaStock = String(body.syncCategoriaStock ?? '').trim();
-    delete body.syncCategoriaStock;
+    const renameRaw = body.renameCategoria;
+    delete body.renameCategoria;
+    const renameFrom =
+      renameRaw &&
+      typeof renameRaw === 'object' &&
+      !Array.isArray(renameRaw)
+        ? String((renameRaw as Record<string, unknown>).from ?? '').trim()
+        : '';
+    const renameTo =
+      renameRaw &&
+      typeof renameRaw === 'object' &&
+      !Array.isArray(renameRaw)
+        ? String((renameRaw as Record<string, unknown>).to ?? '').trim()
+        : '';
+
+    const regenerateCodigosCategoria = String(body.regenerateCodigosCategoria ?? '').trim();
+    delete body.regenerateCodigosCategoria;
 
     const current = await loadAppConfig(businessId);
     const next = normalizeAppConfig(body);
@@ -335,10 +342,26 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    await db.doc(`negocios/${businessId}/config/app`).set(payload);
-    if (syncCategoriaStock) {
-      await syncStockItemsWithCategoryDefaults(businessId, syncCategoriaStock);
+    if (renameFrom && renameTo && renameFrom.toLowerCase() !== renameTo.toLowerCase()) {
+      await renameProductCategory(businessId, renameFrom, renameTo);
     }
+
+    await db.doc(`negocios/${businessId}/config/app`).set(payload);
+
+    let regenCategoria = regenerateCodigosCategoria;
+    if (
+      regenCategoria &&
+      renameFrom &&
+      renameTo &&
+      regenCategoria.toLowerCase() === renameFrom.toLowerCase()
+    ) {
+      regenCategoria = renameTo;
+    }
+
+    if (regenCategoria) {
+      await regenerateProductCodesForCategory(businessId, regenCategoria);
+    }
+
     res.json(payload);
   } catch (error) {
     console.error('Error updating app config:', error);

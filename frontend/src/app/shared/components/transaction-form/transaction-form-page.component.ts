@@ -27,7 +27,7 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
             (clicked)="backClick.emit()">
           </app-form-back-button>
         </div>
-        <div *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2">
+        <div *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
           <ng-content select="[headerActions]"></ng-content>
         </div>
       </div>

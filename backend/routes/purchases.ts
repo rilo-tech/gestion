@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { createCompanyRouter } from './create-company-router.ts';
-import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { requirePermission, type AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   parsePurchaseInput,
@@ -9,7 +9,10 @@ import {
   persistPurchaseDraft,
   updatePurchaseDraft,
   confirmPurchaseDraft,
+  updateConfirmedPurchase,
+  repairPurchasePayables,
 } from '../utils/purchase-finance.ts';
+import { loadFinanzasConfig } from '../utils/finance-config.ts';
 import { allocatePurchaseNumber, resolvePurchaseLabel } from '../utils/purchase-number.ts';
 import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
 import { autoReserveIncomingStockForProduct } from '../utils/order-stock-reservations.ts';
@@ -194,6 +197,87 @@ router.get('/:businessId/:compraId', async (req, res) => {
     res.status(500).json({ error: 'Error fetching purchase' });
   }
 });
+
+router.post(
+  '/:businessId/:compraId/repair-payables',
+  requirePermission('records.edit'),
+  async (req, res) => {
+    try {
+      const { businessId, compraId } = req.params;
+      const result = await repairPurchasePayables(businessId, compraId);
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message === 'PURCHASE_NOT_FOUND') {
+        return res.status(404).json({ error: 'Compra no encontrada.' });
+      }
+      if (message === 'NOT_CONFIRMED') {
+        return res.status(400).json({ error: 'La compra debe estar confirmada.' });
+      }
+      if (message) {
+        return res.status(400).json({ error: message });
+      }
+      console.error('Error repairing purchase payables:', err);
+      res.status(500).json({ error: 'No se pudieron generar las cuotas.' });
+    }
+  }
+);
+
+router.put(
+  '/:businessId/:compraId',
+  requirePermission('records.edit'),
+  async (req, res) => {
+    try {
+      const { businessId, compraId } = req.params;
+      const finanzas = await loadFinanzasConfig(businessId);
+      const parsed = await parsePurchaseInput(businessId, req.body as Record<string, unknown>, {
+        finanzas,
+      });
+      if (parsed.error || !parsed.input) {
+        return res.status(400).json({ error: parsed.error ?? 'Datos de compra inválidos.' });
+      }
+
+      let result;
+      try {
+        result = await updateConfirmedPurchase(businessId, compraId, parsed.input);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '';
+        if (message === 'PURCHASE_NOT_FOUND') {
+          return res.status(404).json({ error: 'Compra no encontrada.' });
+        }
+        if (message === 'NOT_CONFIRMED') {
+          return res.status(400).json({ error: 'Solo se pueden editar compras ya registradas (no borradores).' });
+        }
+        if (message.startsWith('PRODUCT_NOT_FOUND')) {
+          return res.status(400).json({ error: 'Uno de los productos seleccionados no existe.' });
+        }
+        if (message === 'PAID_INSTALLMENTS') {
+          return res.status(400).json({
+            error: 'No se puede editar: hay cuotas de esta compra ya pagadas en Cuentas a pagar.',
+          });
+        }
+        if (message) {
+          return res.status(400).json({ error: message });
+        }
+        throw err;
+      }
+
+      res.json(result);
+
+      void logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'purchases',
+        action: 'update',
+        entityType: 'compra',
+        entityId: result.id,
+        entityLabel: result.compraLabel,
+        summary: `Editó compra #${result.compraLabel}`,
+      }).catch((err) => console.error('Error logging purchase update activity:', err));
+    } catch (error) {
+      console.error('Error updating purchase:', error);
+      res.status(500).json({ error: 'Error updating purchase' });
+    }
+  }
+);
 
 router.post('/:businessId/:compraId/confirm', async (req, res) => {
   try {

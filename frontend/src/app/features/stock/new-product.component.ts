@@ -4,16 +4,14 @@ import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import {
-  applyCategoriaStockReglaToForm,
-  getCategoriaStockRegla,
-  normalizeCategoriasStock,
-} from '../../core/utils/stock-product';
-import {
   AppConfig,
   DEFAULT_APP_CONFIG,
   CatalogConfigService,
   buildProductDisplayName,
+  findPrefijoOwnerForCodigo,
+  getPrefijoForCategoria,
   inferNombreBase,
+  shouldAutoAssignProductCode,
 } from '../../core/services/catalog-config.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { DialogService } from '../../core/services/dialog.service';
@@ -74,27 +72,56 @@ import {
               Datos del item
             </h2>
             <div class="space-y-3">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-0.5">Nombre</label>
-                <input [(ngModel)]="nombreBase" name="nombreBase" required
-                       placeholder="Ej. Remera básica"
-                       [class]="formControlClass">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
+                <div class="sm:col-span-2 lg:col-span-5 min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Nombre</label>
+                  <input [(ngModel)]="nombreBase" name="nombreBase" required
+                         placeholder="Ej. Remera básica"
+                         [class]="formControlClass">
+                </div>
+
+                <div class="lg:col-span-4 min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Categoría</label>
+                  <app-searchable-select
+                    [(ngModel)]="item.categoria"
+                    (ngModelChange)="onCategoriaChange($event)"
+                    name="categoria"
+                    [options]="categoriaOptions"
+                    placeholder="Buscar categoría..."
+                    plainPlaceholder="Ej. Indumentaria">
+                  </app-searchable-select>
+                </div>
+
+                <div class="lg:col-span-3 min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">
+                    Código
+                    <span *ngIf="!item.categoria?.trim()" class="text-xs font-normal text-gray-400"> (opcional)</span>
+                  </label>
+                  <input
+                    [(ngModel)]="codigo"
+                    name="codigo"
+                    placeholder="Opcional, ej. 1001"
+                    (ngModelChange)="onCodigoInput()"
+                    (blur)="onCodigoBlur()"
+                    [readonly]="!usesCodigoEditable"
+                    [disabled]="formReadOnly"
+                    [class]="formControlClass + ' tabular-nums' + (!usesCodigoEditable ? ' bg-gray-50 text-gray-700' : '')">
+                </div>
+              </div>
+              <div *ngIf="codigoFieldHint || codigoPrefijoWarning || codigoDuplicadoWarning" class="-mt-1 space-y-0.5">
+                <p *ngIf="codigoFieldHint" class="text-[11px] text-gray-500 leading-snug">
+                  {{ codigoFieldHint }}
+                </p>
+                <p *ngIf="codigoPrefijoWarning" class="text-[11px] text-amber-700 leading-snug">
+                  {{ codigoPrefijoWarning }}
+                </p>
+                <p *ngIf="codigoDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug">
+                  {{ codigoDuplicadoWarning }}
+                </p>
               </div>
 
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-0.5">Categoría</label>
-                <app-searchable-select
-                  [(ngModel)]="item.categoria"
-                  (ngModelChange)="onCategoriaChange($event)"
-                  name="categoria"
-                  [options]="categoriaOptions"
-                  placeholder="Buscar categoría..."
-                  plainPlaceholder="Ej. Indumentaria">
-                </app-searchable-select>
-              </div>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
+                <div class="lg:col-span-4 min-w-0">
                   <label class="block text-sm font-medium text-gray-700 mb-0.5">Color</label>
                   <app-searchable-select
                     [(ngModel)]="item.color"
@@ -104,7 +131,7 @@ import {
                     plainPlaceholder="Ej. Negro">
                   </app-searchable-select>
                 </div>
-                <div>
+                <div class="lg:col-span-4 min-w-0">
                   <label class="block text-sm font-medium text-gray-700 mb-0.5">Talle</label>
                   <app-searchable-select
                     [(ngModel)]="item.talle"
@@ -238,11 +265,6 @@ import {
               </p>
               <p class="text-[11px] text-gray-400 leading-snug">
                 Costo base del producto al cargarlo en un pedido.
-              </p>
-              <p
-                *ngIf="categoriaStockHint"
-                class="text-xs text-teal-700 p-3 rounded-lg border border-teal-100 bg-teal-50/50">
-                {{ categoriaStockHint }}
               </p>
               <div class="space-y-3">
                 <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50 cursor-pointer">
@@ -382,6 +404,14 @@ export class NewProductComponent implements OnInit, OnDestroy {
   adjustingStock = false;
   /** Stock persistido en servidor; define si el campo queda bloqueado (> 0). */
   private persistedStockActual = 0;
+  codigo = '';
+  savedCodigo = '';
+  savedCategoria = '';
+  nextCodePreview = '';
+  codigoPrefijoWarning = '';
+  codigoDuplicadoWarning = '';
+  private previewSub?: Subscription;
+  private codigoCheckSub?: Subscription;
   item = {
     tipo: '',
     categoria: '',
@@ -404,9 +434,6 @@ export class NewProductComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
-      if (!this.appConfig.productos.categoriasStock) {
-        this.appConfig.productos.categoriasStock = {};
-      }
       this.refreshFieldOptions();
     });
     this.catalogConfigServiceLoad();
@@ -437,6 +464,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   private resetForm() {
     this.nombreBase = '';
+    this.codigo = '';
+    this.savedCodigo = '';
+    this.savedCategoria = '';
+    this.nextCodePreview = '';
     this.controlaStock = true;
     this.permitirStockNegativo = true;
     this.persistedStockActual = 0;
@@ -465,7 +496,151 @@ export class NewProductComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.routeSub?.unsubscribe();
+    this.previewSub?.unsubscribe();
+    this.codigoCheckSub?.unsubscribe();
     if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
+  }
+
+  get usesCodigoAutomatico(): boolean {
+    return this.appConfig.productos?.codigo?.automatico === true;
+  }
+
+  get canAutoAssignCodigo(): boolean {
+    if (!this.item.categoria?.trim()) return false;
+    return shouldAutoAssignProductCode(
+      this.appConfig.productos.codigo,
+      this.item.categoria
+    );
+  }
+
+  get usesCodigoEditable(): boolean {
+    if (!this.item.categoria?.trim()) return true;
+    return !this.canAutoAssignCodigo;
+  }
+
+  get categoriaChanged(): boolean {
+    const current = (this.item.categoria ?? '').trim().toLowerCase();
+    const saved = this.savedCategoria.trim().toLowerCase();
+    return current !== saved;
+  }
+
+  /** Al editar, pide confirmación antes de asignar código automático. */
+  get needsAutoCodigoConfirmOnSave(): boolean {
+    if (!this.item.categoria?.trim()) return false;
+    if (!this.isEditing || !this.canAutoAssignCodigo) {
+      return false;
+    }
+    if (this.categoriaChanged) return true;
+    return !this.savedCodigo.trim();
+  }
+
+  get oldCategoriaHadAutoPrefijo(): boolean {
+    const oldCat = this.savedCategoria.trim();
+    if (!oldCat || !this.categoriaChanged) return false;
+    return Boolean(getPrefijoForCategoria(this.appConfig.productos.codigo, oldCat));
+  }
+
+  get codigoFieldHint(): string {
+    if (this.canAutoAssignCodigo) {
+      if (this.isEditing && this.categoriaChanged) {
+        const categoria = this.item.categoria?.trim() ?? '';
+        if (!this.savedCategoria.trim()) {
+          return this.nextCodePreview
+            ? `Al guardar se asignará ${this.nextCodePreview} en «${categoria}».`
+            : `Al guardar se generará un código automático en «${categoria}».`;
+        }
+        return this.nextCodePreview
+          ? `Al guardar se reasignará a ${this.nextCodePreview}.`
+          : 'Al guardar se reasignará el código automáticamente.';
+      }
+      if (this.isEditing && this.codigo.trim()) {
+        return 'El código se actualiza solo si cambiás la categoría.';
+      }
+      if (this.nextCodePreview) {
+        return `Se asignará al guardar (próximo: ${this.nextCodePreview}).`;
+      }
+      return 'Se asignará automáticamente al guardar.';
+    }
+    if (!this.item.categoria?.trim()) {
+      return 'Sin categoría: podés dejar el código vacío o ingresarlo a mano.';
+    }
+    return 'Esta categoría no tiene prefijo: el código es opcional.';
+  }
+
+  private refreshCodigoPrefijoWarning() {
+    if (!this.usesCodigoEditable) {
+      this.codigoPrefijoWarning = '';
+      return;
+    }
+    const codigo = this.codigo.trim();
+    if (!codigo) {
+      this.codigoPrefijoWarning = '';
+      return;
+    }
+    const conflict = findPrefijoOwnerForCodigo(
+      this.appConfig.productos.codigo,
+      codigo,
+      this.item.categoria?.trim() || undefined
+    );
+    this.codigoPrefijoWarning = conflict
+      ? `El prefijo «${conflict.prefijo}» está asignado a «${conflict.categoria}». Podés usarlo igual.`
+      : '';
+  }
+
+  private refreshCodigoAvailability() {
+    this.codigoCheckSub?.unsubscribe();
+    const codigo = this.codigo.trim();
+    if (!codigo || !this.usesCodigoEditable) {
+      this.codigoDuplicadoWarning = '';
+      return;
+    }
+    if (this.isEditing && codigo === this.savedCodigo) {
+      this.codigoDuplicadoWarning = '';
+      return;
+    }
+
+    this.codigoCheckSub = this.stockService
+      .checkCodigoAvailability(codigo, {
+        excludeId: this.editingItemId ?? undefined,
+        categoria: this.item.categoria?.trim() || undefined,
+      })
+      .subscribe({
+        next: (result) => {
+          this.codigoDuplicadoWarning = result.available
+            ? ''
+            : `El código «${codigo}» ya existe. Podés guardar sin código o elegir otro.`;
+          if (result.prefijoConflict) {
+            this.codigoPrefijoWarning = `El prefijo «${result.prefijoConflict.prefijo}» está asignado a «${result.prefijoConflict.categoria}». Podés usarlo igual.`;
+          }
+        },
+        error: () => {
+          this.codigoDuplicadoWarning = '';
+        },
+      });
+  }
+
+  private refreshCodigoPreview() {
+    this.previewSub?.unsubscribe();
+    this.nextCodePreview = '';
+
+    if (!this.usesCodigoAutomatico) return;
+    if (!this.canAutoAssignCodigo) return;
+    if (this.isEditing && this.codigo.trim() && !this.categoriaChanged) return;
+
+    const categoria = this.item.categoria?.trim();
+    if (!categoria) return;
+
+    this.previewSub = this.stockService.previewNextCode(categoria).subscribe({
+      next: (result) => {
+        this.nextCodePreview = result.codigo;
+        if (this.canAutoAssignCodigo && !this.usesCodigoEditable) {
+          this.codigo = result.codigo;
+        }
+      },
+      error: () => {
+        this.nextCodePreview = '';
+      },
+    });
   }
 
   get displayName(): string {
@@ -492,55 +667,27 @@ export class NewProductComponent implements OnInit, OnDestroy {
     return this.isEditing && this.persistedStockActual <= 0;
   }
 
-  get categoriaStockHint(): string {
-    const regla = getCategoriaStockRegla(
-      this.appConfig.productos?.categoriasStock,
-      this.item.categoria
-    );
-    if (!regla) {
-      return this.item.categoria?.trim()
-        ? 'Esta categoría no tiene reglas de stock: configurá este producto manualmente.'
-        : '';
+  onCategoriaChange(categoria: string) {
+    this.codigoDuplicadoWarning = '';
+    if (!categoria?.trim() && !this.isEditing) {
+      this.codigo = '';
     }
-    return 'Esta categoría tiene reglas de stock. Los valores de abajo se sugieren al elegirla; podés cambiarlos solo para este producto.';
+    this.refreshCodigoPrefijoWarning();
+    this.refreshCodigoPreview();
   }
 
-  onCategoriaChange(categoria: string) {
-    const regla = getCategoriaStockRegla(
-      normalizeCategoriasStock(
-        this.appConfig.productos?.categoriasStock,
-        this.appConfig.productos?.categorias ?? [],
-        this.appConfig.productos?.categoriasSinStock ?? []
-      ),
-      categoria
-    );
-    if (!regla) return;
+  onCodigoInput() {
+    this.codigoDuplicadoWarning = '';
+    this.refreshCodigoPrefijoWarning();
+  }
 
-    const apply = () => {
-      const next = applyCategoriaStockReglaToForm(regla);
-      this.controlaStock = next.controlaStock;
-      this.permitirStockNegativo = next.permitirStockNegativo;
-      if (!next.controlaStock) {
-        this.item.stockActual = 0;
-        this.item.stockMinimo = 0;
-      }
-    };
+  onCodigoBlur() {
+    this.refreshCodigoAvailability();
+  }
 
-    if (!this.isEditing) {
-      apply();
-      return;
-    }
-
-    this.dialogService
-      .confirm({
-        title: 'Aplicar reglas de la categoría',
-        message: `¿Usar las reglas de stock de «${categoria.trim()}» en este producto?`,
-        confirmLabel: 'Aplicar',
-        cancelLabel: 'Mantener actual',
-      })
-      .subscribe((confirmed) => {
-        if (confirmed) apply();
-      });
+  private shouldSendManualCodigo(): boolean {
+    if (!this.item.categoria?.trim()) return true;
+    return !this.canAutoAssignCodigo;
   }
 
   onControlaStockChange() {
@@ -631,6 +778,79 @@ export class NewProductComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const manualCodigo = this.getManualCodigoForSave();
+    if (manualCodigo && this.codigoDuplicadoWarning) {
+      this.confirmSaveWithoutCodigo(manualCodigo, () => this.executeSave(true));
+      return;
+    }
+
+    if (this.needsAutoCodigoConfirmOnSave) {
+      this.confirmAutoCodigoAssignment(() => this.executeSave(false));
+      return;
+    }
+
+    this.executeSave(false);
+  }
+
+  private confirmAutoCodigoAssignment(onConfirm: () => void) {
+    const categoria = this.item.categoria?.trim() ?? '';
+    const preview = this.nextCodePreview || '…';
+    const parts: string[] = [];
+
+    if (this.categoriaChanged && !this.savedCategoria.trim()) {
+      parts.push(
+        `El producto pasará a la categoría «${categoria}» con código ${preview}.`
+      );
+    } else if (this.categoriaChanged) {
+      parts.push(
+        `Se reasignará el código a ${preview} en la categoría «${categoria}».`
+      );
+    } else {
+      parts.push(`Se asignará el código ${preview} de la categoría «${categoria}».`);
+    }
+
+    if (this.savedCodigo.trim() && this.categoriaChanged) {
+      parts.push(`Reemplazará el código actual «${this.savedCodigo}».`);
+    }
+
+    if (this.oldCategoriaHadAutoPrefijo) {
+      parts.push(
+        `Los demás productos de «${this.savedCategoria.trim()}» se renumerarán para cerrar la secuencia.`
+      );
+    }
+
+    parts.push('¿Continuar?');
+
+    this.dialogService
+      .confirm({
+        title: 'Asignar código automático',
+        message: parts.join(' '),
+        confirmLabel: 'Asignar código',
+        cancelLabel: 'Cancelar',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) onConfirm();
+      });
+  }
+
+  private getManualCodigoForSave(): string {
+    return this.shouldSendManualCodigo() ? this.codigo.trim() : '';
+  }
+
+  private confirmSaveWithoutCodigo(codigo: string, onConfirm: () => void) {
+    this.dialogService
+      .confirm({
+        title: 'Código en uso',
+        message: `El código «${codigo}» ya existe en el catálogo. ¿Guardar el producto sin código?`,
+        confirmLabel: 'Guardar sin código',
+        cancelLabel: 'Volver',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) onConfirm();
+      });
+  }
+
+  private executeSave(omitCodigo: boolean) {
     const controlsStock = this.controlaStock;
     const stockActual = controlsStock ? Number(this.item.stockActual) || 0 : 0;
 
@@ -663,9 +883,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
       precioSugerido: Number(this.item.precioSugerido) || 0,
     };
 
+    if (this.shouldSendManualCodigo() && !omitCodigo) {
+      payload.codigo = this.codigo.trim() || undefined;
+    }
+
     if (this.formReadOnly) return;
 
+    const manualCodigoSent = Boolean(payload.codigo);
     this.saving = true;
+    const autoCodigoAssigned = this.canAutoAssignCodigo && !omitCodigo;
     const request = this.editingItemId
       ? this.stockService.updateItem(this.editingItemId, payload)
       : this.stockService.createItem(payload);
@@ -673,28 +899,65 @@ export class NewProductComponent implements OnInit, OnDestroy {
     request.subscribe({
       next: (result) => {
         this.saving = false;
+        if (omitCodigo) {
+          this.codigo = '';
+          this.savedCodigo = '';
+          this.codigoDuplicadoWarning = '';
+        }
         if (this.editingItemId) {
-          this.persistedStockActual = stockActual;
-          this.stockService.notifyCatalogChanged({
-            item: { id: this.editingItemId, ...payload },
-          });
-          this.showSaveSuccess('Cambios guardados.');
+          const finishEdit = () => {
+            this.persistedStockActual = stockActual;
+            this.savedCategoria = this.item.categoria?.trim() ?? '';
+            this.stockService.notifyCatalogChanged({
+              item: { id: this.editingItemId, ...payload },
+            });
+            this.showSaveSuccess(
+              omitCodigo ? 'Cambios guardados (sin código).' : 'Cambios guardados.'
+            );
+          };
+
+          if (autoCodigoAssigned) {
+            this.stockService.getItem(this.editingItemId).subscribe({
+              next: (product) => {
+                this.applyProductFields(product);
+                finishEdit();
+              },
+              error: () => finishEdit(),
+            });
+            return;
+          }
+
+          finishEdit();
           return;
         }
 
         this.stockService.notifyCatalogChanged();
-        this.showSaveSuccess('Producto guardado.');
+        this.showSaveSuccess(
+          omitCodigo ? 'Producto guardado (sin código).' : 'Producto guardado.'
+        );
         this.router.navigate(['/stock', result.id, 'edit'], { replaceUrl: true });
       },
       error: (err: HttpErrorResponse) => {
         this.saving = false;
+        const message =
+          (err.error as { error?: string })?.error ??
+          (this.isEditing
+            ? 'No se pudo actualizar el producto. Reiniciá el dev server si cambiaste la API.'
+            : 'No se pudo guardar el producto. Reiniciá el dev server si cambiaste la API.');
+
+        if (
+          err.status === 409 &&
+          manualCodigoSent &&
+          !omitCodigo &&
+          /c[oó]digo/i.test(message)
+        ) {
+          this.confirmSaveWithoutCodigo(this.codigo.trim(), () => this.executeSave(true));
+          return;
+        }
+
         this.dialogService.alert({
-          title: err.status === 409 ? 'Producto duplicado' : 'Error',
-          message:
-            (err.error as { error?: string })?.error ??
-            (this.isEditing
-              ? 'No se pudo actualizar el producto. Reiniciá el dev server si cambiaste la API.'
-              : 'No se pudo guardar el producto. Reiniciá el dev server si cambiaste la API.'),
+          title: err.status === 409 ? 'Conflicto' : 'Error',
+          message,
         });
       },
     });
@@ -742,7 +1005,11 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   private loadProductForDuplicate(sourceId: string) {
     this.stockService.getItem(sourceId).subscribe({
-      next: (product) => this.applyProductFields(product),
+      next: (product) => {
+        this.applyProductFields(product);
+        this.codigo = '';
+        this.refreshCodigoPreview();
+      },
       error: () => {
         this.dialogService.alert({
           title: 'Error',
@@ -775,6 +1042,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
     }
 
     this.nombreBase = nombreBase;
+    this.codigo = product.codigo?.trim() ?? '';
+    this.savedCodigo = this.codigo;
+    this.savedCategoria = product.categoria?.trim() ?? '';
     this.item = {
       tipo: product.tipo ?? '',
       categoria: product.categoria ?? '',
@@ -791,5 +1061,6 @@ export class NewProductComponent implements OnInit, OnDestroy {
     if (!this.controlaStock) {
       this.permitirStockNegativo = false;
     }
+    this.refreshCodigoPreview();
   }
 }

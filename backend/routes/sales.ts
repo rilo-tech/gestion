@@ -7,6 +7,13 @@ import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { isPrivilegedRole } from '../auth/constants.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
+import {
+  calculateSaleCostFromItems,
+  isSaleProfitRecognizedInMonth,
+  resolveSaleCostoReal,
+  resolveSaleGananciaEstimada,
+} from '../utils/sale-profit-recognition.ts';
 import {
   getBusinessCashAmbitoId,
   resolveCashReversalAmbito,
@@ -195,22 +202,21 @@ function normalizeSaleLineExtraCosts(
 function sumLinePersonalizationCost(line: {
   costosExtra?: SaleLineExtraCost[];
   costoPersonalizacion?: number;
+  cantidad?: number;
 }): number {
   const fromList = (line.costosExtra ?? []).reduce(
     (acc, extra) => acc + (Number(extra.costo) || 0),
     0
   );
-  if (fromList > 0) return fromList;
+  if (fromList > 0) {
+    const qty = Math.max(0, Number(line.cantidad) || 0);
+    return qty * fromList;
+  }
   return Number(line.costoPersonalizacion) || 0;
 }
 
 function calculateSaleCost(items: SaleLine[]): number {
-  return items.reduce((acc, line) => {
-    const cantidad = Number(line.cantidad) || 0;
-    const base = cantidad * (Number(line.costoUnitario) || 0);
-    const personalizacion = sumLinePersonalizationCost(line);
-    return acc + base + personalizacion;
-  }, 0);
+  return calculateSaleCostFromItems(items);
 }
 
 function buildSaleLineFromOrderLine(line: OrderLine): SaleLine {
@@ -220,6 +226,7 @@ function buildSaleLineFromOrderLine(line: OrderLine): SaleLine {
   const costoPersonalizacion = sumLinePersonalizationCost({
     costosExtra,
     costoPersonalizacion: line.costoPersonalizacion,
+    cantidad,
   });
 
   return {
@@ -235,8 +242,9 @@ function buildSaleLineFromOrderLine(line: OrderLine): SaleLine {
 }
 
 function buildSaleEconomics(items: SaleLine[], total: number, fallbackCostoReal?: number) {
-  const costoReal =
-    Number(fallbackCostoReal) > 0 ? Number(fallbackCostoReal) : calculateSaleCost(items);
+  const calculated = calculateSaleCost(items);
+  const fallback = Number(fallbackCostoReal) || 0;
+  const costoReal = Math.max(calculated, fallback);
   const gananciaEstimada = Math.round((total - costoReal) * 100) / 100;
   return { costoReal, gananciaEstimada };
 }
@@ -712,6 +720,7 @@ async function buildMostradorItemsFromBody(
     const costoPersonalizacion = sumLinePersonalizationCost({
       costosExtra,
       costoPersonalizacion: line.costoPersonalizacion,
+      cantidad: line.cantidad,
     });
 
     items.push({
@@ -784,6 +793,74 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
     };
   });
 }
+
+router.get('/:businessId/monthly-summary', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const mes = Number(req.query.mes);
+    const anio = Number(req.query.anio);
+    if (!Number.isFinite(mes) || !Number.isFinite(anio) || mes < 1 || mes > 12) {
+      return res.status(400).json({ error: 'Indicá mes y año válidos.' });
+    }
+
+    const monthStart = `${anio}-${String(mes).padStart(2, '0')}-01`;
+    const lastDay = new Date(anio, mes, 0).getDate();
+    const monthEnd = `${anio}-${String(mes).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    const [monthSnapshot, allSalesSnapshot, ordersSnapshot] = await Promise.all([
+      db
+        .collection(`negocios/${businessId}/ventas`)
+        .where('fecha', '>=', `${monthStart}T00:00:00.000Z`)
+        .where('fecha', '<=', `${monthEnd}T23:59:59.999Z`)
+        .get(),
+      db.collection(`negocios/${businessId}/ventas`).get(),
+      db.collection(`negocios/${businessId}/pedidos`).get(),
+    ]);
+
+    const ordersById = new Map<string, Record<string, unknown>>();
+    for (const doc of ordersSnapshot.docs) {
+      ordersById.set(doc.id, doc.data());
+    }
+
+    let totalFacturado = 0;
+    let totalCosto = 0;
+    let count = 0;
+
+    for (const doc of monthSnapshot.docs) {
+      const data = doc.data();
+      if (String(data.estado ?? '') === 'borrador') continue;
+      count += 1;
+      const total = Number(data.total) || 0;
+      const items = (Array.isArray(data.items) ? data.items : []) as SaleLine[];
+      totalFacturado += total;
+      totalCosto += resolveSaleCostoReal(data, items);
+    }
+
+    let totalGanancia = 0;
+    for (const doc of allSalesSnapshot.docs) {
+      const data = doc.data();
+      if (String(data.estado ?? '') === 'borrador') continue;
+
+      const pedidoId = String(data.pedidoId ?? '').trim();
+      const order = pedidoId ? ordersById.get(pedidoId) ?? null : null;
+      if (!isSaleProfitRecognizedInMonth(data, mes, anio, order)) continue;
+
+      totalGanancia += resolveSaleGananciaEstimada(data);
+    }
+
+    res.json({
+      mes,
+      anio,
+      count,
+      totalFacturado: Math.round(totalFacturado),
+      totalCosto: Math.round(totalCosto),
+      totalGanancia: Math.round(totalGanancia),
+    });
+  } catch (error) {
+    console.error('Error fetching monthly sales summary:', error);
+    res.status(500).json({ error: 'Error fetching monthly sales summary' });
+  }
+});
 
 router.get('/:businessId/eligible-orders', async (req, res) => {
   try {
@@ -958,7 +1035,7 @@ router.post('/:businessId', async (req, res) => {
     const medioPago = String(req.body.medioPago ?? 'efectivo').trim() || 'efectivo';
     const notas = String(req.body.notas ?? '').trim();
     const montoCobradoInput = Number(req.body.montoCobrado);
-    const timestamp = new Date().toISOString();
+    const timestamp = normalizeTransactionDateToIso(req.body.fecha);
 
     if (origen === 'pedido') {
       if (!pedidoId) {
@@ -1489,7 +1566,10 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
           montoCobrado: Math.min(montoCobrado, total),
           medioPago: String(req.body.medioPago ?? venta.medioPago ?? 'efectivo').trim() || 'efectivo',
           notas: String(req.body.notas ?? venta.notas ?? '').trim(),
-          timestamp: new Date().toISOString(),
+          timestamp: normalizeTransactionDateToIso(
+            req.body.fecha,
+            new Date(String(venta.fecha ?? Date.now()))
+          ),
           businessId,
         })
       );
@@ -1611,6 +1691,10 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
       saldoPendiente,
       medioPago,
       notas,
+      fecha: normalizeTransactionDateToIso(
+        req.body.fecha,
+        new Date(String(venta.fecha ?? Date.now()))
+      ),
       movimientoCajaId: movimientoCajaId ?? null,
       updatedAt: new Date().toISOString(),
     });

@@ -17,6 +17,7 @@ import {
   FormsModule,
   NG_VALUE_ACCESSOR,
 } from '@angular/forms';
+import { FORM_COMPACT_FIELD_CLASS } from '../form-shell/form-field.constants';
 
 export interface SearchableSelectOption {
   value: string;
@@ -47,9 +48,7 @@ export interface SearchableSelectOption {
           (keydown)="onInputKeydown($event)"
           [disabled]="disabled"
           [placeholder]="placeholder"
-          [class]="embedded
-            ? 'w-full min-w-[9rem] border-0 bg-transparent px-1 py-1 text-sm text-gray-900 outline-none focus:ring-0 disabled:text-gray-400'
-            : 'form-control searchable-select-input w-full text-gray-900 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50'">
+          [class]="embedded ? embeddedInputClass : resolvedInputClass">
 
         <div
           *ngIf="open && (visibleDropdownItems.length || showCreateOption)"
@@ -88,7 +87,7 @@ export interface SearchableSelectOption {
         [disabled]="disabled"
         [placeholder]="plainPlaceholder"
         (focus)="onPlainFocus($event)"
-        class="form-control searchable-select-input w-full text-gray-900 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+        [class]="resolvedInputClass">
       <p *ngIf="plainHint" class="mt-1 text-xs text-gray-400">{{ plainHint }}</p>
     </ng-template>
   `,
@@ -115,6 +114,9 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   @Input() allowCustomValue = false;
   @Input() createLabelPrefix = 'Crear';
   @Input() embedded = false;
+  /** Misma altura que `app-transaction-date-field` y demás campos compactos del formulario. */
+  @Input() compact = false;
+  @Input() inputClass = '';
 
   @Output() createRequested = new EventEmitter<string>();
   @Output() searchChange = new EventEmitter<string>();
@@ -134,6 +136,20 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   private onTouched: () => void = () => {};
 
   readonly trackByValue = (_index: number, option: SearchableSelectOption) => option.value;
+
+  readonly embeddedInputClass =
+    'w-full min-w-[9rem] border-0 bg-transparent px-1 py-1 text-sm text-gray-900 outline-none focus:ring-0 disabled:text-gray-400';
+
+  readonly defaultInputClass =
+    'form-control searchable-select-input w-full text-gray-900 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50';
+
+  readonly compactInputClass =
+    FORM_COMPACT_FIELD_CLASS + ' searchable-select-input text-gray-900 disabled:text-gray-400';
+
+  get resolvedInputClass(): string {
+    if (this.inputClass.trim()) return this.inputClass.trim();
+    return this.compact ? this.compactInputClass : this.defaultInputClass;
+  }
 
   get useEntityMode(): boolean {
     return this.labeledOptions !== undefined;

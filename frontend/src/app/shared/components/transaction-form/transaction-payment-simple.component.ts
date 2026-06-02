@@ -88,7 +88,6 @@ export class TransactionPaymentSimpleComponent {
   }
 
   onMethodChange(value: string): void {
-    if (value === this.method) return;
     this.methodChange.emit(value);
   }
 }

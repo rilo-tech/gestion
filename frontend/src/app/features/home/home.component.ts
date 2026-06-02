@@ -1,11 +1,11 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { OrderService, Order } from '../../core/services/order.service';
-import { StockService, itemIsLowStock } from '../../core/services/stock.service';
+import { StockService } from '../../core/services/stock.service';
 import { SalesService } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
-import { getCalendarMonthRange, isIsoDateInRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
+import { getCalendarMonthRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS, MODULE_SUMMARY_KPIS_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
@@ -51,9 +51,8 @@ import { Router, RouterLink } from '@angular/router';
         </a>
 
         <a
-          *ngIf="auth.canViewEconomics && auth.canAccessCash"
-          routerLink="/cash"
-          [queryParams]="cashMonthQueryParams"
+          *ngIf="auth.canViewEconomics && auth.canAccessSales"
+          routerLink="/sales"
           class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
           <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
             <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
@@ -62,13 +61,13 @@ import { Router, RouterLink } from '@angular/router';
             <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
             <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
             <p class="text-xs font-semibold text-teal-600 mt-0.5">
-              Gan. estimada {{ '$' + formatMoney(monthlyProfit) }}
+              Gan. cobrada {{ '$' + formatMoney(monthlyProfit) }}
             </p>
           </div>
         </a>
 
         <div
-          *ngIf="auth.canViewEconomics && !auth.canAccessCash"
+          *ngIf="auth.canViewEconomics && !auth.canAccessSales"
           class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
           <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
             <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
@@ -77,7 +76,7 @@ import { Router, RouterLink } from '@angular/router';
             <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
             <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
             <p class="text-xs font-semibold text-teal-600 mt-0.5">
-              Gan. estimada {{ '$' + formatMoney(monthlyProfit) }}
+              Gan. cobrada {{ '$' + formatMoney(monthlyProfit) }}
             </p>
           </div>
         </div>
@@ -190,7 +189,6 @@ export class HomeComponent implements OnInit {
   monthlySalesIncome = 0;
   monthlyProfit = 0;
   currentMonthLabel = '';
-  cashMonthQueryParams: { mes: number; anio: number } = { mes: 1, anio: new Date().getFullYear() };
   recentOrders: Order[] = [];
   totalRecentOrders = 0;
 
@@ -199,8 +197,8 @@ export class HomeComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.orderService.getOrders().subscribe((orders) => {
-      const visible = orders
+    this.orderService.getOrdersPage(120).subscribe((page) => {
+      const visible = page.items
         .filter((order) => this.auth.canViewOrder(order.estado))
         .sort((a, b) => {
           const dateA = Date.parse(String(a.createdAt ?? a.fechaEntrega ?? '')) || 0;
@@ -212,30 +210,19 @@ export class HomeComponent implements OnInit {
       this.pendingOrders = visible.filter((order) => isOrderPendingDelivery(order)).length;
     });
 
-    this.stockService.getStock().subscribe((items) => {
-      this.lowStockItems = items.filter((i) => itemIsLowStock(i)).length;
+    this.stockService.getStockMetrics().subscribe((metrics) => {
+      this.lowStockItems = metrics.lowStockCount;
     });
 
     if (!this.auth.canViewEconomics) return;
 
     const monthRange = getCalendarMonthRange();
     this.currentMonthLabel = formatMonthYearLabel(monthRange.label);
-    this.cashMonthQueryParams = monthYearQueryParams(monthRange);
 
-    this.salesService.getSales().subscribe((sales) => {
-      const salesInMonth = sales.filter((sale) =>
-        isIsoDateInRange(sale.fecha, monthRange.start, monthRange.end)
-      );
-
-      this.monthlySalesIncome = salesInMonth.reduce(
-        (acc, sale) => acc + (Number(sale.total) || 0),
-        0
-      );
-
-      this.monthlyProfit = salesInMonth.reduce(
-        (acc, sale) => acc + (Number(sale.gananciaEstimada) || 0),
-        0
-      );
+    const { mes, anio } = monthYearQueryParams(monthRange);
+    this.salesService.getMonthlySummary(mes, anio).subscribe((summary) => {
+      this.monthlySalesIncome = summary.totalFacturado;
+      this.monthlyProfit = summary.totalGanancia;
     });
   }
 
@@ -246,8 +233,17 @@ export class HomeComponent implements OnInit {
   openRecentOrder(order: Order, event: MouseEvent) {
     if (!order.id) return;
     event.preventDefault();
-    this.router.navigate(['/orders', order.id, 'edit'], {
-      state: { orderPreview: order },
+    this.orderService.getOrder(order.id).subscribe({
+      next: (fullOrder) => {
+        this.router.navigate(['/orders', order.id, 'edit'], {
+          state: { orderPreview: fullOrder },
+        });
+      },
+      error: () => {
+        this.router.navigate(['/orders', order.id, 'edit'], {
+          state: { orderPreview: { ...order, items: [] } },
+        });
+      },
     });
   }
 }

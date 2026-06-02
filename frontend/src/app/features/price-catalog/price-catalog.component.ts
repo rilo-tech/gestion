@@ -1,7 +1,7 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import {
   PriceCatalogEntry,
@@ -56,6 +56,19 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
         </app-icon-action>
       </app-module-page-header>
+
+      <div
+        *ngIf="savedNotice"
+        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-300 dark:border-teal-600 bg-teal-100 dark:bg-teal-950/60 px-4 py-3 text-sm font-semibold text-teal-900 dark:text-teal-100"
+        role="status">
+        <span>{{ savedNotice }}</span>
+        <button
+          type="button"
+          (click)="dismissSavedNotice()"
+          class="text-xs font-semibold text-teal-800 dark:text-teal-200 underline hover:no-underline">
+          Cerrar
+        </button>
+      </div>
 
       <app-compact-data-list class="block mb-6" [showSearch]="true">
         <div listSearch [class]="desktopListSearchWrapClass">
@@ -143,6 +156,7 @@ export class PriceCatalogComponent implements OnInit {
   readonly getSummary = buildPriceSummary;
   readonly router = inject(Router);
 
+  private route = inject(ActivatedRoute);
   private priceCatalogService = inject(PriceCatalogService);
   private dialogService = inject(DialogService);
 
@@ -150,6 +164,7 @@ export class PriceCatalogComponent implements OnInit {
   loading = true;
   searchQuery = '';
   catalogPage = 1;
+  savedNotice = '';
 
   get filteredEntries(): PriceCatalogEntry[] {
     const query = this.searchQuery.trim().toLowerCase();
@@ -177,7 +192,22 @@ export class PriceCatalogComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.route.queryParamMap.subscribe((params) => {
+      if (params.get('saved') === '1') {
+        this.savedNotice = 'Referencia guardada correctamente.';
+      }
+    });
     this.loadEntries();
+  }
+
+  dismissSavedNotice() {
+    this.savedNotice = '';
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { saved: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   openEntry(entry: PriceCatalogEntry) {

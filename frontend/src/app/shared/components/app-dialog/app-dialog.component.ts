@@ -30,7 +30,7 @@ import { DialogRequest, DialogService } from '../../../core/services/dialog.serv
           </div>
           <div class="min-w-0 pt-0.5">
             <h2 class="text-lg font-bold text-gray-900">{{ title }}</h2>
-            <p class="mt-2 text-sm leading-relaxed text-gray-600">{{ request.options.message }}</p>
+            <p class="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ request.options.message }}</p>
           </div>
         </div>
 

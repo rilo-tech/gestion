@@ -170,12 +170,13 @@ function defaultToDate(): string {
 function lineCost(line: SaleLine): number {
   const qty = Number(line.cantidad ?? 0);
   const unit = Number(line.costoUnitario ?? 0);
-  const personalization = Number(line.costoPersonalizacion ?? 0);
-  const extras = (line.costosExtra ?? []).reduce(
+  const fromList = (line.costosExtra ?? []).reduce(
     (sum, extra) => sum + Number(extra.costo ?? 0),
     0
   );
-  return unit * qty + personalization + extras;
+  const personalization =
+    fromList > 0 ? qty * fromList : Number(line.costoPersonalizacion ?? 0);
+  return unit * qty + personalization;
 }
 
 function lineFacturado(line: SaleLine): number {

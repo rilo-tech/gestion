@@ -12,11 +12,15 @@ import {
   CONFIG_EDITABLE_LIST_ITEM_CLASS,
   CONFIG_EDITABLE_LIST_LABEL_EMPHASIS_CLASS,
   CONFIG_EDITABLE_LIST_LABEL_TEXT_CLASS,
-  CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS,
   CONFIG_EDITABLE_LIST_ROW_INPUT_CLASS,
   CONFIG_EDITABLE_LIST_SELECT_CLASS,
   CONFIG_EDITABLE_LIST_SELECT_ROW_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_FIELD_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
 } from './config-editable-list.constants';
+import { ConfigListRemoveButtonComponent } from './config-list-remove-button.component';
 
 export interface ConfigEditableListSelectOption {
   value: string;
@@ -42,7 +46,7 @@ export interface ConfigEditableListItem {
 @Component({
   selector: 'app-config-editable-list',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ConfigListRemoveButtonComponent],
   template: `
     <div class="space-y-2">
       <ng-content select="[configListAdd]"></ng-content>
@@ -66,7 +70,8 @@ export interface ConfigEditableListItem {
 
       <ul
         *ngIf="showList"
-        class="space-y-1 m-0 p-0 list-none overflow-y-auto"
+        class="space-y-2 m-0 p-0 list-none"
+        [class.overflow-y-auto]="!!listMaxHeightClass"
         [ngClass]="listMaxHeightClass">
         <li
           *ngFor="let item of items; let i = index; trackBy: trackItem"
@@ -79,36 +84,37 @@ export interface ConfigEditableListItem {
           </span>
 
           <div class="min-w-0 flex-1 flex flex-col gap-2">
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 flex-1">
-                <ng-container *ngIf="labelMode === 'input'; else labelText">
-                  <input
-                    [ngModel]="item.label"
-                    (ngModelChange)="onLabelChange(item, $event)"
-                    (blur)="onLabelBlur(item)"
-                    [name]="inputNamePrefix + '_' + item.id"
-                    [disabled]="disabled"
-                    [class]="rowInputClass" />
-                </ng-container>
-                <ng-template #labelText>
-                  <div class="flex flex-wrap items-center gap-1 min-w-0">
+            <div
+              [class]="rowShellClass + ' sm:flex sm:items-start sm:justify-between sm:gap-2'">
+              <div [class]="rowBodyClass">
+                <div *ngIf="item.badge" [class]="rowChipsClass">
+                  <span [class]="badgeClass">{{ item.badge }}</span>
+                </div>
+                <div [class]="rowFieldClass">
+                  <ng-container *ngIf="labelMode === 'input'; else labelText">
+                    <input
+                      [ngModel]="item.label"
+                      (ngModelChange)="onLabelChange(item, $event)"
+                      (blur)="onLabelBlur(item)"
+                      [name]="inputNamePrefix + '_' + item.id"
+                      [disabled]="disabled"
+                      [class]="rowInputClass" />
+                  </ng-container>
+                  <ng-template #labelText>
                     <span [class]="labelEmphasis ? labelEmphasisClass : labelTextClass">
                       {{ item.label }}
                     </span>
-                    <span *ngIf="item.badge" [class]="badgeClass">{{ item.badge }}</span>
-                  </div>
-                </ng-template>
-                <p *ngIf="item.hint" [class]="hintClass">{{ item.hint }}</p>
+                  </ng-template>
+                  <p *ngIf="item.hint" [class]="hintClass">{{ item.hint }}</p>
+                </div>
               </div>
 
-              <button
+              <app-config-list-remove-button
                 *ngIf="item.removable !== false"
-                type="button"
-                (click)="remove.emit(item.id)"
-                [disabled]="disabled"
-                [class]="removeButtonClass">
-                Quitar
-              </button>
+                [disabled]="disabled || (!!busyRemoveId && busyRemoveId !== item.id)"
+                [loading]="busyRemoveId === item.id"
+                (clicked)="remove.emit(item.id)">
+              </app-config-list-remove-button>
             </div>
 
             <div *ngIf="item.selectOptions?.length" [class]="selectRowClass">
@@ -170,9 +176,11 @@ export class ConfigEditableListComponent {
   @Input() emptyMessage = 'Todavía no hay opciones cargadas.';
   @Input() footer: string | null = null;
   @Input() disabled = false;
+  /** ID del ítem cuya eliminación se está comprobando o guardando. */
+  @Input() busyRemoveId: string | null = null;
   @Input() inputName = 'configListDraft';
   @Input() inputNamePrefix = 'configList';
-  @Input() listMaxHeightClass = 'max-h-48';
+  @Input() listMaxHeightClass = '';
   /** Si hay contenido proyectado en [configListAdd], el padre debe poner useCustomAdd en true. */
   @Input() useCustomAdd = false;
 
@@ -188,7 +196,10 @@ export class ConfigEditableListComponent {
   readonly itemClass = CONFIG_EDITABLE_LIST_ITEM_CLASS;
   readonly rowInputClass = CONFIG_EDITABLE_LIST_ROW_INPUT_CLASS;
   readonly indexClass = CONFIG_EDITABLE_LIST_INDEX_CLASS;
-  readonly removeButtonClass = CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS;
+  readonly rowShellClass = CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS;
+  readonly rowBodyClass = CONFIG_EDITABLE_LIST_ROW_BODY_CLASS;
+  readonly rowChipsClass = CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS;
+  readonly rowFieldClass = CONFIG_EDITABLE_LIST_ROW_FIELD_CLASS;
   readonly emptyClass = CONFIG_EDITABLE_LIST_EMPTY_CLASS;
   readonly hintClass = CONFIG_EDITABLE_LIST_HINT_CLASS;
   readonly footerClass = CONFIG_EDITABLE_LIST_FOOTER_CLASS;

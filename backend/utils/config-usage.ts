@@ -139,18 +139,19 @@ export async function getConfigItemUsage(
     }
     case 'finanzas.categoriasGasto': {
       const id = trimmed.toLowerCase();
-      const [obligSnap, comprasSnap] = await Promise.all([
+      const [obligSnap, comprasSnap, cajaSnap] = await Promise.all([
         loadCollection(businessId, 'cuentas_pagar_obligaciones'),
         loadCollection(businessId, 'compras'),
+        loadCollection(businessId, 'movimientos_caja'),
       ]);
       const hits: ConfigUsageHit[] = [];
       const obligCount = countFieldEquals(obligSnap.docs, 'categoriaId', id);
+      const cajaCount = countFieldEquals(cajaSnap.docs, 'categoriaId', id);
       const comprasCount = comprasSnap.docs.filter((doc) => {
         const data = doc.data();
         if (norm(String(data.categoriaId ?? '')) === id) return true;
-        const lineas = data.lineas;
-        if (!Array.isArray(lineas)) return false;
-        return lineas.some((line) => {
+        const items = Array.isArray(data.items) ? data.items : [];
+        return items.some((line) => {
           if (!line || typeof line !== 'object') return false;
           return norm(String((line as Record<string, unknown>).categoriaId ?? '')) === id;
         });
@@ -160,6 +161,9 @@ export async function getConfigItemUsage(
       }
       if (comprasCount > 0) {
         hits.push({ module: 'purchases', label: 'Compras', count: comprasCount });
+      }
+      if (cajaCount > 0) {
+        hits.push({ module: 'cash', label: 'Caja', count: cajaCount });
       }
       return hits;
     }

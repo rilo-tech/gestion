@@ -20,6 +20,17 @@ import {
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
+import {
+  applyCashMovementToPeriod,
+  classifyMovementPeriod,
+  createCashPeriodAccumulator,
+  createCashPeriodAccumulatorMap,
+  getCalendarMonthBounds,
+  parseMovementLocalDate,
+  resolveSummaryPeriodMonthYear,
+  toCashPeriodDisplay,
+} from '../utils/cash-period-summary.ts';
 
 const router = createCompanyRouter();
 const ORIGENES_CACHE_TTL_MS = 60_000;
@@ -187,9 +198,18 @@ router.get('/:businessId/summary', async (req, res) => {
     const caja = await loadCajaConfig(businessId);
     const ambitos = normalizeCajaAmbitos(caja);
     const ambitoTotals: Record<string, { ingreso: number; egreso: number }> = {};
+    const ambitoIds = ambitos.map((ambito) => ambito.id);
     for (const ambito of ambitos) {
       ambitoTotals[ambito.id] = { ingreso: 0, egreso: 0 };
     }
+
+    const { month, year } = resolveSummaryPeriodMonthYear(
+      req.query.mes,
+      req.query.anio
+    );
+    const { start: periodStart, end: periodEnd } = getCalendarMonthBounds(month, year);
+    const periodGlobal = createCashPeriodAccumulator();
+    const periodByAmbito = createCashPeriodAccumulatorMap(ambitoIds);
 
     const snapshot = await db
       .collection(`negocios/${businessId}/movimientos_caja`)
@@ -203,6 +223,17 @@ router.get('/:businessId/summary', async (req, res) => {
       if (monto <= 0) continue;
       const tipo = data.tipo === 'egreso' ? 'egreso' : 'ingreso';
       const ambito = normalizeAmbito(data.ambito, caja);
+      const bucket = classifyMovementPeriod(
+        parseMovementLocalDate(String(data.fecha ?? '')),
+        periodStart,
+        periodEnd
+      );
+
+      applyCashMovementToPeriod(periodGlobal, tipo, monto, bucket);
+      if (periodByAmbito[ambito]) {
+        applyCashMovementToPeriod(periodByAmbito[ambito], tipo, monto, bucket);
+      }
+
       if (tipo === 'egreso') {
         egreso += monto;
         if (ambitoTotals[ambito]) ambitoTotals[ambito].egreso += monto;
@@ -212,15 +243,30 @@ router.get('/:businessId/summary', async (req, res) => {
       }
     }
 
+    const periodoDisplay = toCashPeriodDisplay(periodGlobal);
     const ambitosSummary: Record<
       string,
-      { ingreso: number; egreso: number; saldo: number }
+      {
+        ingreso: number;
+        egreso: number;
+        saldo: number;
+        periodo: { mes: number; anio: number; ingreso: number; egreso: number };
+      }
     > = {};
     for (const [ambitoId, totals] of Object.entries(ambitoTotals)) {
+      const ambitoPeriodo = toCashPeriodDisplay(
+        periodByAmbito[ambitoId] ?? createCashPeriodAccumulator()
+      );
       ambitosSummary[ambitoId] = {
         ingreso: totals.ingreso,
         egreso: totals.egreso,
         saldo: totals.ingreso - totals.egreso,
+        periodo: {
+          mes: month,
+          anio: year,
+          ingreso: ambitoPeriodo.ingreso,
+          egreso: ambitoPeriodo.egreso,
+        },
       };
     }
 
@@ -228,6 +274,12 @@ router.get('/:businessId/summary', async (req, res) => {
       ingreso,
       egreso,
       saldo: ingreso - egreso,
+      periodo: {
+        mes: month,
+        anio: year,
+        ingreso: periodoDisplay.ingreso,
+        egreso: periodoDisplay.egreso,
+      },
       ambitos: ambitosSummary,
     });
   } catch (error) {
@@ -284,6 +336,11 @@ router.get('/:businessId', async (req, res) => {
   }
 });
 
+function normalizeMovementDescripcion(raw: unknown): string | null {
+  const value = String(raw ?? '').trim();
+  return value || null;
+}
+
 router.post('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
@@ -303,13 +360,19 @@ router.post('/:businessId', async (req, res) => {
     const caja = await loadCajaConfig(businessId);
     const ambito = normalizeAmbito(req.body.ambito, caja);
 
+    const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
+    const descripcion = normalizeMovementDescripcion(req.body.descripcion);
+    const fecha = normalizeTransactionDateToIso(req.body.fecha);
+
     const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
       tipo,
       monto,
       medio,
       concepto,
+      categoriaId,
+      descripcion,
       ambito,
-      fecha: new Date().toISOString(),
+      fecha,
       origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
       origenGrupo: 'manual',
       origenId: null,
@@ -368,12 +431,22 @@ router.put('/:businessId/:movementId', async (req, res) => {
       });
     }
 
+    const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
+    const descripcion = normalizeMovementDescripcion(req.body.descripcion);
+    const fecha = normalizeTransactionDateToIso(
+      req.body.fecha,
+      new Date(String(existing?.fecha ?? Date.now()))
+    );
+
     await movementRef.update({
       tipo,
       monto,
       medio,
       concepto,
+      categoriaId,
+      descripcion,
       ambito,
+      fecha,
       origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
       origenGrupo: 'manual',
       updatedAt: new Date().toISOString(),
