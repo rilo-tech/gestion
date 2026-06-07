@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { COMPACT_LIST_ROW_CLASS } from './compact-list.constants';
+import { COMPACT_LIST_ROW_CLASS, COMPACT_LIST_TRAILING_ROW_CLASS } from './compact-list.constants';
 
 @Component({
   selector: 'app-compact-list-row',
@@ -16,7 +16,7 @@ import { COMPACT_LIST_ROW_CLASS } from './compact-list.constants';
         <ng-content select="[compactTitle]"></ng-content>
         <ng-content select="[compactSubtitle]"></ng-content>
       </div>
-      <div class="shrink-0 pl-2 self-center">
+      <div [class]="trailingClass">
         <ng-content select="[compactTrailing]"></ng-content>
       </div>
     </button>
@@ -25,5 +25,6 @@ import { COMPACT_LIST_ROW_CLASS } from './compact-list.constants';
 export class CompactListRowComponent {
   @Input() disabled = false;
   @Input() rowClass = COMPACT_LIST_ROW_CLASS;
+  @Input() trailingClass = COMPACT_LIST_TRAILING_ROW_CLASS;
   @Output() activate = new EventEmitter<Event>();
 }

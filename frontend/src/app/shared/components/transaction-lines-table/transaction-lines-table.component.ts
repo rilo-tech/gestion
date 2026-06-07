@@ -23,10 +23,6 @@ import {
   PURCHASE_DETAIL_TABLE_COLUMNS,
   COLUMN_DEFAULTS,
 } from './transaction-lines-table.types';
-import {
-  TRANSACTION_COMPACT_MOBILE_NUMERIC_INPUT_CLASS,
-  TRANSACTION_COMPACT_MOBILE_NUMERIC_VALUE_CLASS,
-} from '../transaction-form/transaction-form.constants';
 
 const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
   'quantity',
@@ -104,22 +100,23 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
             </button>
           </div>
 
-          <div *ngIf="mobileNumericColumns.length" class="mt-1.5">
-            <div class="grid gap-x-2" [ngClass]="mobileNumericGridClass">
-              <span
-                *ngFor="let column of mobileNumericColumns"
-                class="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 leading-none truncate"
-                [class.text-center]="mobileColumnAlign(column) === 'center'"
-                [class.text-right]="mobileColumnAlign(column) === 'right'">
-                {{ mobileColumnLabel(column) }}
-              </span>
-            </div>
-            <div class="grid gap-x-2 mt-0.5" [ngClass]="mobileNumericGridClass">
+          <div
+            *ngIf="mobileNumericColumns.length"
+            class="mt-2 grid gap-x-1.5 gap-y-0"
+            [ngClass]="mobileNumericGridClass">
+            <div
+              *ngFor="let column of mobileNumericColumns"
+              class="min-w-0">
               <div
-                *ngFor="let column of mobileNumericColumns"
-                class="min-w-0 h-4 flex items-center"
-                [class.justify-center]="mobileColumnAlign(column) === 'center'"
-                [class.justify-end]="mobileColumnAlign(column) === 'right'">
+                class="txn-mobile-num-cell rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 overflow-hidden">
+                <div
+                  class="txn-mobile-num-label bg-gray-50 dark:bg-gray-800/80 border-b border-gray-100 dark:border-gray-700/80">
+                  <span
+                    class="block w-full text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 leading-none truncate text-center">
+                    {{ mobileColumnLabel(column) }}
+                  </span>
+                </div>
+                <div class="txn-mobile-num-body min-w-0 w-full">
                 <ng-container [ngSwitch]="column.id">
                   <ng-container *ngSwitchCase="'quantity'">
                     <input
@@ -131,9 +128,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                       [name]="fieldName('quantity', i)"
                       (focus)="onNumericFocus('quantity', i, line.quantity, $event)"
                       (blur)="onNumericBlur('quantity', i, line.quantity)"
-                      [class]="mobileNumericInputClass + ' text-center'">
+                      [class]="mobileLineNumericInputClass">
                     <ng-template #mobileQuantityReadonly>
-                      <span [class]="mobileNumericValueClass + ' text-center'">
+                      <span [class]="mobileLineNumericValueClass">
                         {{ formatReadonlyNumber(line.quantity) }}
                       </span>
                     </ng-template>
@@ -149,9 +146,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                       [name]="fieldName('unitCost', i)"
                       (focus)="onNumericFocus('unitCost', i, line.unitCost, $event)"
                       (blur)="onNumericBlur('unitCost', i, line.unitCost)"
-                      [class]="mobileNumericInputClass + ' text-right'">
+                      [class]="mobileLineNumericInputClass">
                     <ng-template #mobileUnitCostReadonly>
-                      <span [class]="mobileNumericValueClass + ' text-right text-gray-600 dark:text-gray-300'">
+                      <span [class]="mobileLineNumericValueClass + ' text-gray-600 dark:text-gray-300'">
                         {{ formatReadonlyNumber(line.unitCost) }}
                       </span>
                     </ng-template>
@@ -167,9 +164,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                       [name]="fieldName('personalization', i)"
                       (focus)="onNumericFocus('personalization', i, line.personalization, $event)"
                       (blur)="onNumericBlur('personalization', i, line.personalization)"
-                      [class]="mobileNumericInputClass + ' text-right'">
+                      [class]="mobileLineNumericInputClass">
                     <ng-template #mobilePersonalizationReadonly>
-                      <span [class]="mobileNumericValueClass + ' text-right text-gray-600 dark:text-gray-300'">
+                      <span [class]="mobileLineNumericValueClass + ' text-gray-600 dark:text-gray-300'">
                         {{ formatReadonlyNumber(line.personalization) }}
                       </span>
                     </ng-template>
@@ -185,20 +182,21 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                       [name]="fieldName('unitSale', i)"
                       (focus)="onNumericFocus('unitSale', i, line.unitSale, $event)"
                       (blur)="onNumericBlur('unitSale', i, line.unitSale)"
-                      [class]="mobileNumericInputClass + ' text-right'">
+                      [class]="mobileLineNumericInputClass">
                     <ng-template #mobileUnitSaleReadonly>
-                      <span [class]="mobileNumericValueClass + ' text-right'">
+                      <span [class]="mobileLineNumericValueClass">
                         {{ formatReadonlyCurrency(line.unitSale) }}
                       </span>
                     </ng-template>
                   </ng-container>
 
                   <ng-container *ngSwitchCase="'subtotal'">
-                    <span [class]="mobileNumericValueClass + ' font-semibold text-right'">
+                    <span [class]="mobileLineNumericValueClass + ' font-semibold justify-center truncate'">
                       {{ formatReadonlyCurrency(line.subtotal) }}
                     </span>
                   </ng-container>
                 </ng-container>
+                </div>
               </div>
             </div>
           </div>
@@ -289,7 +287,7 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     (blur)="onNumericBlur('quantity', i, line.quantity)"
                     [class]="numericInputClass + ' text-center'">
                   <ng-template #quantityReadonly>
-                    <span class="tabular-nums text-sm">{{ formatReadonlyNumber(line.quantity) }}</span>
+                    <span class="block tabular-nums text-sm text-center">{{ formatReadonlyNumber(line.quantity) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -303,9 +301,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('unitCost', i)"
                     (focus)="onNumericFocus('unitCost', i, line.unitCost, $event)"
                     (blur)="onNumericBlur('unitCost', i, line.unitCost)"
-                    [class]="numericInputClass + ' text-right'">
+                    [class]="numericInputClass + ' text-center'">
                   <ng-template #unitCostReadonly>
-                    <span class="tabular-nums text-sm text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.unitCost) }}</span>
+                    <span class="block tabular-nums text-sm text-center text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.unitCost) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -319,9 +317,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('personalization', i)"
                     (focus)="onNumericFocus('personalization', i, line.personalization, $event)"
                     (blur)="onNumericBlur('personalization', i, line.personalization)"
-                    [class]="numericInputClass + ' text-right'">
+                    [class]="numericInputClass + ' text-center'">
                   <ng-template #personalizationReadonly>
-                    <span class="tabular-nums text-sm text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.personalization) }}</span>
+                    <span class="block tabular-nums text-sm text-center text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.personalization) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -335,9 +333,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('unitSale', i)"
                     (focus)="onNumericFocus('unitSale', i, line.unitSale, $event)"
                     (blur)="onNumericBlur('unitSale', i, line.unitSale)"
-                    [class]="numericInputClass + ' text-right'">
+                    [class]="numericInputClass + ' text-center'">
                   <ng-template #unitSaleReadonly>
-                    <span class="tabular-nums text-sm">{{ formatReadonlyCurrency(line.unitSale) }}</span>
+                    <span class="block tabular-nums text-sm text-center">{{ formatReadonlyCurrency(line.unitSale) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -375,8 +373,11 @@ export class TransactionLinesTableComponent {
   readonly numericInputClass =
     'w-full min-w-0 px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm leading-tight tabular-nums outline-none focus:ring-2 focus:ring-teal-500';
 
-  readonly mobileNumericInputClass = TRANSACTION_COMPACT_MOBILE_NUMERIC_INPUT_CLASS;
-  readonly mobileNumericValueClass = TRANSACTION_COMPACT_MOBILE_NUMERIC_VALUE_CLASS;
+  readonly mobileLineNumericInputClass =
+    'txn-mobile-num-input w-full min-w-0 m-0 border-0 rounded-none bg-transparent text-xs text-center tabular-nums outline-none focus:ring-0 focus:bg-teal-50/40 dark:focus:bg-teal-950/30 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+
+  readonly mobileLineNumericValueClass =
+    'flex w-full h-full min-h-0 items-center justify-center px-1 text-xs text-center leading-none tabular-nums text-gray-900 dark:text-gray-100';
 
   @Input() lines: TransactionTableLine[] = [];
   @Input() columns: TransactionTableColumn[] = buildTransactionTableColumns(['product', 'quantity', 'unitSale']);
@@ -423,11 +424,11 @@ export class TransactionLinesTableComponent {
       return cols;
     }
 
-    const editableCount = cols.filter((column) => column.id !== 'subtotal').length;
+    const hasQty = cols.some((column) => column.id === 'quantity');
     const hasPriceColumn = cols.some(
       (column) => column.id === 'unitSale' || column.id === 'unitCost'
     );
-    if (hasPriceColumn && editableCount <= 3) {
+    if (hasQty && hasPriceColumn) {
       return [...cols, { ...COLUMN_DEFAULTS.subtotal, visible: true }];
     }
 
@@ -435,11 +436,20 @@ export class TransactionLinesTableComponent {
   }
 
   get mobileNumericGridClass(): string {
-    const count = this.mobileNumericColumns.length;
-    if (count <= 1) return 'grid-cols-1';
-    if (count === 2) return 'grid-cols-2';
-    if (count === 4) return 'grid-cols-2 sm:grid-cols-4';
-    return 'grid-cols-3';
+    switch (this.mobileNumericColumns.length) {
+      case 1:
+        return 'grid-cols-1';
+      case 2:
+        return 'grid-cols-2';
+      case 3:
+        return 'grid-cols-3';
+      case 4:
+        return 'grid-cols-4';
+      case 5:
+        return 'grid-cols-5';
+      default:
+        return 'grid-cols-4';
+    }
   }
 
   trackByIndex(index: number): number {

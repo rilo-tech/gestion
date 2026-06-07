@@ -14,6 +14,7 @@ export interface Client {
     instagram?: string;
   };
   etiquetas?: string[];
+  activo?: boolean;
   saldoPendiente?: number;
   debe?: boolean;
 }
@@ -159,9 +160,14 @@ export class ClientService {
     return this.http.get<Client[]>(`/api/clients/${this.businessId}`);
   }
 
-  getClientsPage(limit = 120, cursor?: string): Observable<PaginatedClients> {
+  getClientsPage(
+    limit = 120,
+    cursor?: string,
+    options?: { soloActivos?: boolean }
+  ): Observable<PaginatedClients> {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
+    if (options?.soloActivos) params.soloActivos = '1';
     return this.http.get<PaginatedClients>(`/api/clients/${this.businessId}`, { params });
   }
 
@@ -209,5 +215,11 @@ export class ClientService {
     return this.http.delete<{ id: string }>(
       `/api/clients/${this.businessId}/${clientId}`
     );
+  }
+
+  setClientActive(clientId: string, activo: boolean): Observable<{ id: string }> {
+    return this.http.patch<{ id: string }>(`/api/clients/${this.businessId}/${clientId}`, {
+      activo,
+    });
   }
 }

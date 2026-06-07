@@ -5,6 +5,7 @@ import { TenantService } from './tenant.service';
 import type { StockShortageGroup, StockShortageRow } from './order.service';
 import { itemControlsStock as resolveItemControlsStock } from '../utils/stock-product';
 import {
+  filterStockListSearchEntries,
   filterStockSearchEntries,
   type StockSearchEntry,
 } from '../../../../../shared/stock-search.ts';
@@ -157,13 +158,49 @@ export class StockService {
   private searchIndexBusinessId = '';
   private searchIndexRequest: Observable<StockSearchEntry[]> | null = null;
 
+  /** Cache de items por negocio para abrir el formulario sin esperar la red. */
+  private readonly itemCache = new Map<string, StockItem>();
+  private itemCacheBusinessId = '';
+
   private get businessId(): string {
     return this.tenant.businessId;
+  }
+
+  private ensureItemCacheTenant(): void {
+    if (this.itemCacheBusinessId !== this.businessId) {
+      this.itemCache.clear();
+      this.itemCacheBusinessId = this.businessId;
+    }
+  }
+
+  private cacheItem(item: StockItem | undefined | null): void {
+    if (!item?.id) return;
+    this.ensureItemCacheTenant();
+    this.itemCache.set(item.id, item);
+  }
+
+  private cacheItems(items: StockItem[] | undefined | null): void {
+    if (!items?.length) return;
+    this.ensureItemCacheTenant();
+    for (const item of items) {
+      if (item?.id) this.itemCache.set(item.id, item);
+    }
+  }
+
+  /** Item ya conocido (lista/detalle previos), sin tocar la red. */
+  peekItem(itemId: string): StockItem | null {
+    this.ensureItemCacheTenant();
+    return this.itemCache.get(itemId) ?? null;
   }
 
   notifyCatalogChanged(change?: StockCatalogChange): void {
     this.invalidateSearchIndex();
     this.catalogChanged.next(change);
+  }
+
+  /** Fuerza recarga del índice de búsqueda en el próximo listado. */
+  clearListCaches(): void {
+    this.invalidateSearchIndex();
   }
 
   private invalidateSearchIndex(): void {
@@ -222,7 +259,9 @@ export class StockService {
   }
 
   getStock(): Observable<StockItem[]> {
-    return this.http.get<StockItem[]>(`/api/stock/${this.businessId}`);
+    return this.http
+      .get<StockItem[]>(`/api/stock/${this.businessId}`)
+      .pipe(tap((items) => this.cacheItems(items)));
   }
 
   getStockMetrics(options?: { refresh?: boolean }): Observable<StockMetrics> {
@@ -234,7 +273,9 @@ export class StockService {
   getStockPage(limit = 120, cursor?: string): Observable<PaginatedStockItems> {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
-    return this.http.get<PaginatedStockItems>(`/api/stock/${this.businessId}`, { params });
+    return this.http
+      .get<PaginatedStockItems>(`/api/stock/${this.businessId}`, { params })
+      .pipe(tap((page) => this.cacheItems(page?.items)));
   }
 
   getMovements(): Observable<StockMovement[]> {
@@ -254,6 +295,27 @@ export class StockService {
     return this.ensureSearchIndex().pipe(
       map((items) => filterStockSearchEntries(items, trimmed, limit) as StockItem[])
     );
+  }
+
+  /** Búsqueda del listado de productos: todo el catálogo, solo nombre y código. */
+  searchStockForList(query: string): Observable<StockItem[]> {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      return of([]);
+    }
+
+    if (this.isSearchIndexReady()) {
+      return of(this.filterSearchIndexForList(trimmed));
+    }
+
+    return this.ensureSearchIndex().pipe(
+      map((items) => filterStockListSearchEntries(items, trimmed) as StockItem[])
+    );
+  }
+
+  filterSearchIndexForList(query: string): StockItem[] {
+    if (!this.searchIndexCache) return [];
+    return filterStockListSearchEntries(this.searchIndexCache, query) as StockItem[];
   }
 
   previewNextCode(categoria: string): Observable<{ codigo: string }> {
@@ -282,14 +344,18 @@ export class StockService {
   }
 
   getItem(itemId: string): Observable<StockItem> {
-    return this.http.get<StockItem>(`/api/stock/${this.businessId}/${itemId}`);
+    return this.http
+      .get<StockItem>(`/api/stock/${this.businessId}/${itemId}`)
+      .pipe(tap((item) => this.cacheItem(item)));
   }
 
   getItemsByIds(itemIds: string[]): Observable<StockItem[]> {
     const ids = [...new Set(itemIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
     if (ids.length === 0) return of([]);
     const params = new URLSearchParams({ ids: ids.join(',') });
-    return this.http.get<StockItem[]>(`/api/stock/${this.businessId}/by-ids?${params}`);
+    return this.http
+      .get<StockItem[]>(`/api/stock/${this.businessId}/by-ids?${params}`)
+      .pipe(tap((items) => this.cacheItems(items)));
   }
 
   createItem(item: StockItem): Observable<{ id: string }> {
@@ -301,7 +367,12 @@ export class StockService {
   }
 
   deleteItem(itemId: string): Observable<{ id: string }> {
-    return this.http.delete<{ id: string }>(`/api/stock/${this.businessId}/${itemId}`);
+    return this.http.delete<{ id: string }>(`/api/stock/${this.businessId}/${itemId}`).pipe(
+      tap(() => {
+        this.ensureItemCacheTenant();
+        this.itemCache.delete(itemId);
+      })
+    );
   }
 
   deleteMovement(movementId: string): Observable<{ id: string }> {

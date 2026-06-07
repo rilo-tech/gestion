@@ -6,12 +6,7 @@ import { TenantService } from './tenant.service';
 export type CollaboratorModalidad = 'por_hora' | 'fijo' | 'mixto';
 export type CollaboratorPeriodoReferencia = 'semana' | 'quincena' | 'mes';
 export type CollaboratorMovementTipo = 'horas' | 'extra' | 'pago';
-export type CollaboratorExtraTipo =
-  | 'reparto'
-  | 'premio'
-  | 'aguinaldo'
-  | 'bonificacion'
-  | 'otro';
+export type CollaboratorExtraTipo = string;
 
 export interface Collaborator {
   id?: string;
@@ -35,6 +30,8 @@ export interface CollaboratorMovement {
   tipo: CollaboratorMovementTipo;
   fecha: string;
   horas?: number;
+  horaDesde?: string;
+  horaHasta?: string;
   valorHora?: number;
   extraTipo?: CollaboratorExtraTipo;
   concepto?: string;
@@ -44,6 +41,7 @@ export interface CollaboratorMovement {
   notas?: string;
   medioPagoId?: string;
   movimientoCajaId?: string;
+  liquidacionMovimientoId?: string;
   createdAt?: string;
 }
 
@@ -92,29 +90,45 @@ export const MOVEMENT_TIPO_LABELS: Record<CollaboratorMovementTipo, string> = {
   pago: 'Pago',
 };
 
-export const EXTRA_TIPO_LABELS: Record<CollaboratorExtraTipo, string> = {
-  reparto: 'Reparto',
-  premio: 'Premio',
-  aguinaldo: 'Aguinaldo',
-  bonificacion: 'Bonificación',
-  otro: 'Otro',
-};
+function formatLocalDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
+/** Lunes de la semana calendario actual (hora local). */
 export function weekStartDate(): string {
   const date = new Date();
   const day = date.getDay();
   const diff = day === 0 ? 6 : day - 1;
   date.setDate(date.getDate() - diff);
-  return date.toISOString().slice(0, 10);
+  return formatLocalDateInput(date);
 }
 
+/** Domingo de la semana calendario actual (hora local). */
+export function weekEndDate(): string {
+  const date = new Date();
+  const day = date.getDay();
+  const diff = day === 0 ? 0 : 7 - day;
+  date.setDate(date.getDate() + diff);
+  return formatLocalDateInput(date);
+}
+
+/** Primer día del mes actual (hora local). */
 export function monthStartDate(): string {
   const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+  return formatLocalDateInput(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+/** Último día del mes actual (hora local). */
+export function monthEndDate(): string {
+  const date = new Date();
+  return formatLocalDateInput(new Date(date.getFullYear(), date.getMonth() + 1, 0));
 }
 
 export function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDateInput(new Date());
 }
 
 @Injectable({ providedIn: 'root' })

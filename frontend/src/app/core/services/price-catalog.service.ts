@@ -31,6 +31,23 @@ export interface PriceSummaryRow {
   cells: Array<{ label: string; precio: number }>;
 }
 
+export interface PriceCatalogListDetailRow {
+  detalle: string;
+  peakUnitPrice: number;
+  ranges: Array<{ label: string; precio: number }>;
+}
+
+export interface PriceCatalogListRow {
+  key: string;
+  entryId: string;
+  entryNombre: string;
+  entryActivo: boolean;
+  entryNotas?: string;
+  /** Mayor precio unitario entre todos los detalles. */
+  peakUnitPrice: number;
+  detalles: PriceCatalogListDetailRow[];
+}
+
 export function formatQuantityRangeLabel(range: PriceCatalogQuantityRange): string {
   if (range.cantidadMax == null) {
     return `${range.cantidadMin}+ u.`;
@@ -64,18 +81,24 @@ export function buildVariantPriceCells(
   variant: PriceCatalogVariant
 ): Array<{ label: string; precio: number }> {
   const cells: Array<{ label: string; precio: number }> = [];
+  const ranges = [...(variant.rangosCantidad ?? [])].sort(
+    (a, b) => a.cantidadMin - b.cantidadMin
+  );
 
-  for (const range of variant.rangosCantidad ?? []) {
-    if (range.precioUnitario > 0) {
-      cells.push({
-        label: formatQuantityRangeLabel(range),
-        precio: range.precioUnitario,
-      });
-    }
-  }
+  ranges.forEach((range, index) => {
+    if (range.precioUnitario <= 0) return;
+    const label =
+      index === 0 && range.cantidadMin === 1 && range.cantidadMax == null
+        ? 'Desde 1 u.'
+        : formatQuantityRangeLabel(range);
+    cells.push({
+      label,
+      precio: range.precioUnitario,
+    });
+  });
 
   if (!cells.length && (variant.precioReferencia ?? 0) > 0) {
-    cells.push({ label: '1 u.', precio: Number(variant.precioReferencia) });
+    cells.push({ label: 'Desde 1 u.', precio: Number(variant.precioReferencia) });
   }
 
   return cells;
@@ -89,6 +112,49 @@ export function buildPriceSummary(entry: Pick<PriceCatalogEntry, 'variantes'>): 
       cells: buildVariantPriceCells(variant),
     }))
     .filter((row) => row.cells.length > 0);
+}
+
+export function getVariantPeakUnitPrice(variant: PriceCatalogVariant): number {
+  const cells = buildVariantPriceCells(variant);
+  if (!cells.length) return 0;
+  return Math.max(...cells.map((cell) => cell.precio));
+}
+
+export function buildPriceCatalogListRows(entries: PriceCatalogEntry[]): PriceCatalogListRow[] {
+  const rows: PriceCatalogListRow[] = [];
+
+  for (const entry of entries) {
+    if (!entry.id) continue;
+
+    const detalles = (entry.variantes ?? [])
+      .map((variant) => normalizePriceCatalogVariant(variant))
+      .filter((variant) => variant.nombre.trim())
+      .map((variant) => {
+        const ranges = buildVariantPriceCells(variant);
+        if (!ranges.length) return null;
+
+        return {
+          detalle: variant.nombre.trim(),
+          peakUnitPrice: getVariantPeakUnitPrice(variant),
+          ranges,
+        };
+      })
+      .filter((detail): detail is PriceCatalogListDetailRow => detail != null);
+
+    if (!detalles.length) continue;
+
+    rows.push({
+      key: entry.id,
+      entryId: entry.id,
+      entryNombre: entry.nombre.trim(),
+      entryActivo: entry.activo !== false,
+      entryNotas: entry.notas?.trim() || undefined,
+      peakUnitPrice: Math.max(...detalles.map((detail) => detail.peakUnitPrice)),
+      detalles,
+    });
+  }
+
+  return rows;
 }
 
 export function matchCatalogEntry(
@@ -130,8 +196,45 @@ export function createEmptyVariant(nombre = ''): PriceCatalogVariant {
   return {
     nombre,
     precioReferencia: 0,
-    rangosCantidad: [],
+    rangosCantidad: [{ cantidadMin: 1, cantidadMax: null, precioUnitario: 0 }],
   };
+}
+
+/** Asegura rango base 1 u. y migra precioReferencia legacy. */
+export function ensureVariantQuantityRanges(variant: PriceCatalogVariant): PriceCatalogVariant {
+  const ref = Number(variant.precioReferencia) || 0;
+  let ranges = [...(variant.rangosCantidad ?? [])];
+
+  if (!ranges.length && ref > 0) {
+    ranges = [{ cantidadMin: 1, cantidadMax: null, precioUnitario: ref }];
+  }
+
+  if (!ranges.length) {
+    ranges = [{ cantidadMin: 1, cantidadMax: null, precioUnitario: 0 }];
+  }
+
+  ranges = [...ranges].sort((a, b) => a.cantidadMin - b.cantidadMin);
+  if (ranges[0].cantidadMin !== 1) {
+    ranges.unshift({
+      cantidadMin: 1,
+      cantidadMax: null,
+      precioUnitario: ref || ranges[0].precioUnitario || 0,
+    });
+  }
+
+  return {
+    ...variant,
+    rangosCantidad: ranges,
+    precioReferencia: ref || ranges[0]?.precioUnitario || 0,
+  };
+}
+
+export function getVariantBaseRange(variant: PriceCatalogVariant): PriceCatalogQuantityRange {
+  return ensureVariantQuantityRanges(variant).rangosCantidad[0];
+}
+
+export function getVariantExtraRanges(variant: PriceCatalogVariant): PriceCatalogQuantityRange[] {
+  return ensureVariantQuantityRanges(variant).rangosCantidad.slice(1);
 }
 
 export function createEmptyPriceCatalogEntry(): PriceCatalogEntry {
@@ -143,20 +246,34 @@ export function createEmptyPriceCatalogEntry(): PriceCatalogEntry {
 }
 
 export function normalizePriceCatalogVariant(variant: PriceCatalogVariant): PriceCatalogVariant {
+  const prepared = ensureVariantQuantityRanges(variant);
+  const base = prepared.rangosCantidad[0];
+  const extras = prepared.rangosCantidad.slice(1);
+
+  const normalizeRange = (row: PriceCatalogQuantityRange) => ({
+    cantidadMin: Math.max(1, Number(row.cantidadMin) || 1),
+    cantidadMax:
+      row.cantidadMax == null || row.cantidadMax === ('' as unknown as number)
+        ? null
+        : Math.max(Number(row.cantidadMin) || 1, Number(row.cantidadMax) || 1),
+    precioUnitario: Number(row.precioUnitario) || 0,
+  });
+
+  const baseRange = normalizeRange({ ...base, cantidadMin: 1 });
+  const extraRanges = extras
+    .map(normalizeRange)
+    .filter((row) => row.precioUnitario > 0)
+    .sort((a, b) => a.cantidadMin - b.cantidadMin);
+
+  const rangosCantidad =
+    baseRange.precioUnitario > 0 ? [baseRange, ...extraRanges] : extraRanges;
+
+  const basePrice = baseRange.precioUnitario || Number(prepared.precioReferencia) || 0;
+
   return {
     nombre: variant.nombre.trim(),
-    precioReferencia: Number(variant.precioReferencia) || 0,
-    rangosCantidad: (variant.rangosCantidad ?? [])
-      .map((row) => ({
-        cantidadMin: Math.max(1, Number(row.cantidadMin) || 1),
-        cantidadMax:
-          row.cantidadMax == null || row.cantidadMax === ('' as unknown as number)
-            ? null
-            : Math.max(Number(row.cantidadMin) || 1, Number(row.cantidadMax) || 1),
-        precioUnitario: Number(row.precioUnitario) || 0,
-      }))
-      .filter((row) => row.precioUnitario > 0)
-      .sort((a, b) => a.cantidadMin - b.cantidadMin),
+    precioReferencia: basePrice > 0 ? basePrice : 0,
+    rangosCantidad,
   };
 }
 

@@ -11,11 +11,12 @@ import {
   confirmPurchaseDraft,
   updateConfirmedPurchase,
   repairPurchasePayables,
+  deletePurchase,
 } from '../utils/purchase-finance.ts';
 import { loadFinanzasConfig } from '../utils/finance-config.ts';
 import { allocatePurchaseNumber, resolvePurchaseLabel } from '../utils/purchase-number.ts';
 import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
-import { autoReserveIncomingStockForProduct } from '../utils/order-stock-reservations.ts';
+import { syncPendingOrdersAfterStockChange } from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
 
@@ -100,6 +101,7 @@ async function createLegacyPurchase(businessId: string, body: Record<string, unk
       tipoLinea: 'stock',
       ambito: 'negocio',
       afectaStock: true,
+      enOferta: line.enOferta === true,
       descripcion: String(line.productoNombre ?? '').trim(),
       importe: (Number(line.cantidad) || 0) * (Number(line.costoUnitario) || 0),
     }))
@@ -159,7 +161,7 @@ async function createLegacyPurchase(businessId: string, body: Record<string, unk
     const currentStock = Number(itemSnap.data()?.stockActual) || 0;
     await itemRef.update({
       stockActual: currentStock + line.cantidad,
-      ...(line.costoUnitario > 0 ? { costo: line.costoUnitario } : {}),
+      ...(line.costoUnitario > 0 && !line.enOferta ? { costo: line.costoUnitario } : {}),
       updatedAt: timestamp,
     });
 
@@ -177,8 +179,12 @@ async function createLegacyPurchase(businessId: string, body: Record<string, unk
       negocioId: businessId,
     });
 
-    await autoReserveIncomingStockForProduct(businessId, line.productoId);
   }
+
+  await syncPendingOrdersAfterStockChange(
+    businessId,
+    normalizedItems.map((line) => line.productoId)
+  );
 
   scheduleStockMetricsRefresh(businessId);
   return { id: docRef.id, compraLabel, total, proveedor, numeroCompra };
@@ -397,5 +403,48 @@ router.post('/:businessId', async (req, res) => {
     res.status(500).json({ error: 'Error creating purchase' });
   }
 });
+
+router.delete(
+  '/:businessId/:compraId',
+  requirePermission('records.delete'),
+  async (req, res) => {
+    try {
+      const { businessId, compraId } = req.params;
+
+      let result;
+      try {
+        result = await deletePurchase(businessId, compraId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '';
+        if (message === 'PURCHASE_NOT_FOUND') {
+          return res.status(404).json({ error: 'Compra no encontrada.' });
+        }
+        if (message === 'PAID_INSTALLMENTS') {
+          return res.status(400).json({
+            error: 'No se puede eliminar: hay cuotas de esta compra ya pagadas en Cuentas a pagar.',
+          });
+        }
+        if (message) {
+          return res.status(400).json({ error: message });
+        }
+        throw err;
+      }
+
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'purchases',
+        action: 'delete',
+        entityType: 'compra',
+        entityId: result.id,
+        entityLabel: result.compraLabel,
+        summary: `Eliminó compra #${result.compraLabel}`,
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error('Error deleting purchase:', error);
+      res.status(500).json({ error: 'No se pudo eliminar la compra.' });
+    }
+  }
+);
 
 export default router;

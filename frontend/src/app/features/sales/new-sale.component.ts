@@ -11,8 +11,10 @@ import {
   TransactionSummaryRowComponent,
   TRANSACTION_FORM_CARD_CLASS,
   TransactionFormSaveEvent,
+  buildTransactionSaveHeaderState,
 } from '../../shared/components/transaction-form';
-import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
+import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 @Component({
   selector: 'app-new-sale',
@@ -23,7 +25,7 @@ import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar
     TransactionFormPageComponent,
     TransactionSummaryPanelComponent,
     TransactionSummaryRowComponent,
-    IconToolbarButtonComponent,
+    RecordActionToolbarComponent,
   ],
   template: `
     <app-transaction-form-page
@@ -37,15 +39,13 @@ import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar
       [hasHeaderActions]="true"
       (backClick)="goBack()">
       <div headerActions class="flex flex-wrap items-center gap-2.5 sm:gap-3">
-        <app-icon-toolbar-button
-          class="sm:hidden"
-          icon="save"
-          [label]="saleSaveLabel"
-          variant="primary"
-          [disabled]="saleSaving"
-          [loading]="saleSaving"
-          (clicked)="saleForm?.submitSale()">
-        </app-icon-toolbar-button>
+        <app-record-action-toolbar
+          [showSave]="true"
+          [saveLabel]="saleHeaderSave.label"
+          [saveDisabled]="saleHeaderSave.disabled"
+          [saveLoading]="saleHeaderSave.loading"
+          (saveClick)="saleForm?.submitSale()">
+        </app-record-action-toolbar>
       </div>
       <section main [class]="formCardClass">
         <app-sale-counter-form-panel
@@ -59,7 +59,7 @@ import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar
         </app-sale-counter-form-panel>
       </section>
 
-      <app-transaction-summary-panel aside *ngIf="saleForm">
+      <app-transaction-summary-panel aside variant="light" *ngIf="saleForm">
         <div class="space-y-2 sm:space-y-3">
           <app-transaction-summary-row label="Total venta" [value]="'$' + saleForm.draftTotal"></app-transaction-summary-row>
           <app-transaction-summary-row
@@ -97,6 +97,7 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
   private router = inject(Router);
   private dialogService = inject(DialogService);
   private stockService = inject(StockService);
+  private navigationBack = inject(NavigationBackService);
 
   editingSaleId: string | null = null;
   saleSaving = false;
@@ -109,6 +110,15 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
 
   get saleSaveLabel(): string {
     return this.isEditing ? 'Guardar cambios' : 'Registrar venta';
+  }
+
+  get saleHeaderSave() {
+    return buildTransactionSaveHeaderState({
+      saving: this.saleSaving,
+      successMessage: this.saleForm?.saveSuccessMessage ?? '',
+      idleLabel: this.saleSaveLabel,
+      savingLabel: this.isEditing ? 'Guardando...' : 'Registrando...',
+    });
   }
 
   ngOnInit() {
@@ -156,14 +166,16 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
   }
 
   onSaved(event: TransactionFormSaveEvent) {
-    if (!this.editingSaleId && event?.id) {
+    this.saleSaving = false;
+    if (!event?.id) return;
+
+    if (!this.editingSaleId) {
       this.editingSaleId = event.id;
       this.router.navigate(['/sales', event.id, 'edit'], { replaceUrl: true });
     }
-    this.saleSaving = false;
   }
 
   goBack() {
-    this.router.navigate(['/sales']);
+    this.navigationBack.back(['/sales']);
   }
 }

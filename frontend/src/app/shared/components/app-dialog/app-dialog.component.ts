@@ -34,7 +34,9 @@ import { DialogRequest, DialogService } from '../../../core/services/dialog.serv
           </div>
         </div>
 
-        <div class="flex justify-end gap-3">
+        <div
+          *ngIf="request.type !== 'choice'"
+          class="flex justify-end gap-3">
           <button
             *ngIf="request.type === 'confirm'"
             type="button"
@@ -48,6 +50,27 @@ import { DialogRequest, DialogService } from '../../../core/services/dialog.serv
             class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
             [ngClass]="confirmButtonClass">
             {{ confirmLabel }}
+          </button>
+        </div>
+
+        <div
+          *ngIf="request.type === 'choice'"
+          class="flex flex-col gap-2.5">
+          <button
+            *ngFor="let opt of request.options.options"
+            type="button"
+            (click)="onChoice(opt.id)"
+            class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+            [ngClass]="opt.variant === 'danger'
+              ? 'bg-red-600 text-white hover:bg-red-700'
+              : 'bg-primary text-white hover:bg-teal-700'">
+            {{ opt.label }}
+          </button>
+          <button
+            type="button"
+            (click)="onCancel()"
+            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
+            {{ choiceCancelLabel }}
           </button>
         </div>
       </div>
@@ -78,7 +101,15 @@ export class AppDialogComponent implements OnInit, OnDestroy {
 
   get title(): string {
     if (!this.request) return '';
-    return this.request.options.title ?? (this.request.type === 'confirm' ? 'Confirmar acción' : 'Aviso');
+    if (this.request.options.title) return this.request.options.title;
+    if (this.request.type === 'confirm') return 'Confirmar acción';
+    if (this.request.type === 'choice') return 'Elegí una opción';
+    return 'Aviso';
+  }
+
+  get choiceCancelLabel(): string {
+    if (!this.request || this.request.type !== 'choice') return 'Cancelar';
+    return this.request.options.cancelLabel ?? 'Cancelar';
   }
 
   get confirmLabel(): string {
@@ -125,11 +156,18 @@ export class AppDialogComponent implements OnInit, OnDestroy {
     if (this.request.type === 'confirm') {
       this.request.result.next(true);
       this.request.result.complete();
-    } else {
+    } else if (this.request.type === 'alert') {
       this.request.result.next();
       this.request.result.complete();
     }
 
+    this.dialogService.dismiss();
+  }
+
+  onChoice(id: string) {
+    if (!this.request || this.request.type !== 'choice') return;
+    this.request.result.next(id);
+    this.request.result.complete();
     this.dialogService.dismiss();
   }
 
@@ -138,6 +176,9 @@ export class AppDialogComponent implements OnInit, OnDestroy {
 
     if (this.request.type === 'confirm') {
       this.request.result.next(false);
+      this.request.result.complete();
+    } else if (this.request.type === 'choice') {
+      this.request.result.next(null);
       this.request.result.complete();
     }
 

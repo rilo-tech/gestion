@@ -7,7 +7,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
 import { getCalendarMonthRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
 import { LucideAngularModule } from 'lucide-angular';
-import { PAGE_SHELL_CLASS, MODULE_SUMMARY_KPIS_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
 
 @Component({
@@ -21,11 +21,109 @@ import { Router, RouterLink } from '@angular/router';
         <p class="text-sm sm:text-base text-gray-500 desc-lg-only">Aquí tienes un resumen de tu negocio hoy.</p>
       </div>
 
-      <div [class]="summaryKpisClass + ' grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10'">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10">
+        <a
+          *ngIf="auth.canViewEconomics && auth.canAccessSales"
+          routerLink="/sales"
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
+          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
+            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
+
+            <div class="hidden sm:block">
+              <p class="text-xl font-bold text-gray-900 tabular-nums">{{ formatMoney(monthlySalesIncome, true) }}</p>
+              <p class="text-xs font-semibold text-teal-600 mt-0.5 tabular-nums">
+                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
+              </p>
+              <p
+                *ngIf="monthlyOfferBonus > 0"
+                class="text-xs font-semibold text-amber-600 mt-0.5 tabular-nums">
+                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+            </div>
+
+            <div class="sm:hidden space-y-1">
+              <p class="text-xs font-semibold text-teal-600 tabular-nums">
+                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
+              </p>
+              <p
+                *ngIf="monthlyOfferBonus > 0"
+                class="text-xs font-semibold text-amber-600 tabular-nums">
+                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+              <button
+                type="button"
+                class="w-full text-left rounded-lg -mx-1 px-1 py-0.5 select-none"
+                (click)="toggleMobileSalesKpiReveal($event)"
+                [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar total de ventas' : 'Mostrar total de ventas'"
+                [attr.aria-pressed]="mobileSalesKpiRevealed">
+                <p class="text-[10px] font-bold text-gray-400 uppercase">Facturado</p>
+                <p class="text-lg font-bold text-gray-900 tabular-nums">
+                  {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
+                </p>
+                <p class="text-[10px] text-gray-400 mt-0.5">
+                  {{ mobileSalesKpiRevealed ? 'Tocá para ocultar ventas' : 'Tocá para ver ventas del mes' }}
+                </p>
+              </button>
+            </div>
+          </div>
+        </a>
+
+        <div
+          *ngIf="auth.canViewEconomics && !auth.canAccessSales"
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
+          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
+            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
+
+            <div class="hidden sm:block">
+              <p class="text-xl font-bold text-gray-900 tabular-nums">{{ formatMoney(monthlySalesIncome, true) }}</p>
+              <p class="text-xs font-semibold text-teal-600 mt-0.5 tabular-nums">
+                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
+              </p>
+              <p
+                *ngIf="monthlyOfferBonus > 0"
+                class="text-xs font-semibold text-amber-600 mt-0.5 tabular-nums">
+                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+            </div>
+
+            <div class="sm:hidden space-y-1">
+              <p class="text-xs font-semibold text-teal-600 tabular-nums">
+                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
+              </p>
+              <p
+                *ngIf="monthlyOfferBonus > 0"
+                class="text-xs font-semibold text-amber-600 tabular-nums">
+                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+              <button
+                type="button"
+                class="w-full text-left rounded-lg -mx-1 px-1 py-0.5 select-none"
+                (click)="toggleMobileSalesKpiReveal($event)"
+                [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar total de ventas' : 'Mostrar total de ventas'"
+                [attr.aria-pressed]="mobileSalesKpiRevealed">
+                <p class="text-[10px] font-bold text-gray-400 uppercase">Facturado</p>
+                <p class="text-lg font-bold text-gray-900 tabular-nums">
+                  {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
+                </p>
+                <p class="text-[10px] text-gray-400 mt-0.5">
+                  {{ mobileSalesKpiRevealed ? 'Tocá para ocultar ventas' : 'Tocá para ver ventas del mes' }}
+                </p>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <a
           routerLink="/orders"
           [queryParams]="{ filter: 'pendientes-entrega' }"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 transition-colors hover:border-blue-200 hover:bg-blue-50/30">
+          [ngClass]="adminKpiLinkClass"
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 items-center gap-4 transition-colors hover:border-blue-200 hover:bg-blue-50/30">
           <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0">
             <i-lucide name="clipboard-list" class="w-6 h-6"></i-lucide>
           </div>
@@ -39,7 +137,8 @@ import { Router, RouterLink } from '@angular/router';
         <a
           routerLink="/stock"
           [queryParams]="{ filter: 'stock-bajo' }"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 transition-colors hover:border-orange-200 hover:bg-orange-50/30">
+          [ngClass]="adminKpiLinkClass"
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 items-center gap-4 transition-colors hover:border-orange-200 hover:bg-orange-50/30">
           <div class="w-12 h-12 bg-orange-50 text-orange-600 rounded-xl flex items-center justify-center shrink-0">
             <i-lucide name="package" class="w-6 h-6"></i-lucide>
           </div>
@@ -49,37 +148,6 @@ import { Router, RouterLink } from '@angular/router';
             <p class="text-[11px] text-gray-400 mt-0.5 truncate">Ver productos a reponer</p>
           </div>
         </a>
-
-        <a
-          *ngIf="auth.canViewEconomics && auth.canAccessSales"
-          routerLink="/sales"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
-          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
-            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
-          </div>
-          <div class="min-w-0">
-            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
-            <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
-            <p class="text-xs font-semibold text-teal-600 mt-0.5">
-              Gan. cobrada {{ '$' + formatMoney(monthlyProfit) }}
-            </p>
-          </div>
-        </a>
-
-        <div
-          *ngIf="auth.canViewEconomics && !auth.canAccessSales"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
-          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
-            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
-          </div>
-          <div class="min-w-0">
-            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
-            <p class="text-xl font-bold text-gray-900">{{ '$' + formatMoney(monthlySalesIncome) }}</p>
-            <p class="text-xs font-semibold text-teal-600 mt-0.5">
-              Gan. cobrada {{ '$' + formatMoney(monthlyProfit) }}
-            </p>
-          </div>
-        </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -155,7 +223,7 @@ import { Router, RouterLink } from '@angular/router';
                 </div>
               </div>
               <span *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold shrink-0 tabular-nums">{{
-                '$' + formatMoney(order.total || 0)
+                formatMoney(order.total || 0, true)
               }}</span>
             </a>
             <p *ngIf="recentOrders.length === 0" class="text-sm text-gray-400 py-6 text-center">
@@ -170,8 +238,19 @@ import { Router, RouterLink } from '@angular/router';
 })
 export class HomeComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
-  readonly summaryKpisClass = MODULE_SUMMARY_KPIS_CLASS + ' grid';
+  readonly maskedMoneyLabel = '$ ••••••';
   readonly auth = inject(AuthService);
+
+  mobileSalesKpiRevealed = false;
+
+  /** En celular ocultamos pedidos/stock si hay tarjeta de ganancia, para priorizarla. */
+  get adminKpiLinkClass(): Record<string, boolean> {
+    return {
+      flex: !this.auth.canViewEconomics,
+      hidden: this.auth.canViewEconomics,
+      'sm:flex': this.auth.canViewEconomics,
+    };
+  }
 
   get hasQuickAccess(): boolean {
     return this.auth.canEditRecords || this.auth.canAccessSales || this.auth.canAccessCash;
@@ -188,6 +267,7 @@ export class HomeComponent implements OnInit {
   lowStockItems = 0;
   monthlySalesIncome = 0;
   monthlyProfit = 0;
+  monthlyOfferBonus = 0;
   currentMonthLabel = '';
   recentOrders: Order[] = [];
   totalRecentOrders = 0;
@@ -223,27 +303,31 @@ export class HomeComponent implements OnInit {
     this.salesService.getMonthlySummary(mes, anio).subscribe((summary) => {
       this.monthlySalesIncome = summary.totalFacturado;
       this.monthlyProfit = summary.totalGanancia;
+      this.monthlyOfferBonus = summary.bonificacionOfertas ?? 0;
     });
   }
 
-  formatMoney(value: number): string {
-    return Math.round(value).toLocaleString('es-AR');
+  formatMoney(value: number, withSymbol = false): string {
+    const formatted = Number(value ?? 0).toLocaleString('es-AR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return withSymbol ? `$${formatted}` : formatted;
+  }
+
+  toggleMobileSalesKpiReveal(event: Event) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.mobileSalesKpiRevealed = !this.mobileSalesKpiRevealed;
   }
 
   openRecentOrder(order: Order, event: MouseEvent) {
     if (!order.id) return;
     event.preventDefault();
-    this.orderService.getOrder(order.id).subscribe({
-      next: (fullOrder) => {
-        this.router.navigate(['/orders', order.id, 'edit'], {
-          state: { orderPreview: fullOrder },
-        });
-      },
-      error: () => {
-        this.router.navigate(['/orders', order.id, 'edit'], {
-          state: { orderPreview: { ...order, items: [] } },
-        });
-      },
+    // Navegamos al instante con el pedido que ya mostramos en el dashboard; el
+    // formulario revalida con getOrder en segundo plano (sin espera previa).
+    this.router.navigate(['/orders', order.id, 'edit'], {
+      state: { orderPreview: order },
     });
   }
 }

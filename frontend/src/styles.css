@@ -476,7 +476,8 @@ html.dark .disabled\:text-gray-500:disabled {
   }
 
   app-transaction-modal .form-actions,
-  app-transaction-form-page .form-actions {
+  app-transaction-form-page .form-actions,
+  app-account .form-actions {
     position: static;
     margin-left: 0;
     margin-right: 0;
@@ -489,9 +490,16 @@ html.dark .disabled\:text-gray-500:disabled {
   }
 
   html.dark app-transaction-modal .form-actions,
-  html.dark app-transaction-form-page .form-actions {
+  html.dark app-transaction-form-page .form-actions,
+  html.dark app-account .form-actions {
     background: transparent;
     border-top: none;
+  }
+
+  app-account .form-actions button[type='submit'],
+  app-account .form-actions .form-btn-primary {
+    width: 100%;
+    min-height: 2.75rem;
   }
 
   app-transaction-modal .form-actions .form-btn-secondary,
@@ -542,6 +550,12 @@ html.dark .disabled\:text-gray-500:disabled {
       background: none;
       border-top: none;
       padding-bottom: 0;
+    }
+
+    app-account .form-actions button[type='submit'],
+    app-account .form-actions .form-btn-primary {
+      width: auto;
+      min-height: auto;
     }
   }
 }
@@ -750,15 +764,52 @@ html.dark .form-label {
 }
 
 @media (max-width: 639px) {
-  .txn-mobile-num-input {
+  /* Cant./venta en líneas de venta: no usar el estilo grande de main form */
+  main form .txn-mobile-num-input,
+  app-transaction-modal .txn-mobile-num-input {
     appearance: none;
     -webkit-appearance: none;
+    box-sizing: border-box;
+    min-height: 2rem !important;
+    max-height: 2rem !important;
+    height: 2rem !important;
+    font-size: 0.75rem !important;
+    line-height: 2rem !important;
+    border-radius: 0 !important;
+    border: 0 !important;
+    padding: 0 0.25rem !important;
     box-shadow: none !important;
+    background-color: transparent !important;
   }
 
-  html.dark .txn-mobile-num-input {
+  html.dark main form .txn-mobile-num-input,
+  html.dark app-transaction-modal .txn-mobile-num-input {
     background-color: transparent !important;
     border-radius: 0 !important;
+    border: 0 !important;
+  }
+
+  .txn-mobile-num-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .txn-mobile-num-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.125rem;
+    padding: 0.125rem 0.25rem;
+    text-align: center;
+  }
+
+  .txn-mobile-num-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    height: 2rem;
   }
 }
 

@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import {
   TRANSACTION_COMPACT_LABEL_INLINE_CLASS,
   TRANSACTION_COMPACT_LABEL_ROW_CLASS,
+  TRANSACTION_PICKER_OVERLAY_HOST_CLASS,
 } from './transaction-form.constants';
 
 @Component({
@@ -10,7 +11,7 @@ import {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div>
+    <div [class]="pickerHostClass">
       <div [class]="labelRowClass + ' justify-between gap-3'">
         <label [class]="headerLabelClass">{{ label }}</label>
         <button
@@ -34,4 +35,5 @@ export class TransactionPartyFieldComponent {
 
   readonly labelRowClass = TRANSACTION_COMPACT_LABEL_ROW_CLASS;
   readonly headerLabelClass = TRANSACTION_COMPACT_LABEL_INLINE_CLASS;
+  readonly pickerHostClass = TRANSACTION_PICKER_OVERLAY_HOST_CLASS;
 }

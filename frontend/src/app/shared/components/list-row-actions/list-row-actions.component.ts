@@ -43,6 +43,17 @@ import { IconToolbarButtonComponent } from '../icon-toolbar/icon-toolbar-button.
       </app-icon-toolbar-button>
 
       <app-icon-toolbar-button
+        *ngIf="showDelete"
+        icon="trash-2"
+        [label]="deleteLabel"
+        variant="ghost-red"
+        size="row"
+        [loading]="deleteLoading"
+        [disabled]="deleteDisabled"
+        (clicked)="onDelete($event)">
+      </app-icon-toolbar-button>
+
+      <app-icon-toolbar-button
         *ngIf="showRegisterSale"
         icon="truck"
         [label]="registerSaleLabel"
@@ -50,16 +61,6 @@ import { IconToolbarButtonComponent } from '../icon-toolbar/icon-toolbar-button.
         size="row"
         [disabled]="registerSaleDisabled"
         (clicked)="onRegisterSale($event)">
-      </app-icon-toolbar-button>
-
-      <app-icon-toolbar-button
-        *ngIf="showDelete"
-        icon="trash-2"
-        [label]="deleteLabel"
-        variant="ghost-red"
-        size="row"
-        [disabled]="deleteDisabled"
-        (clicked)="onDelete($event)">
       </app-icon-toolbar-button>
 
       <ng-content></ng-content>
@@ -80,6 +81,7 @@ export class ListRowActionsComponent {
   @Input() registerSaleLabel = 'Registrar venta / entrega';
   @Input() editDisabled = false;
   @Input() deleteDisabled = false;
+  @Input() deleteLoading = false;
   @Input() duplicateDisabled = false;
   @Input() printDisabled = false;
   @Input() printLoading = false;

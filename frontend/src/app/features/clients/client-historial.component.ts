@@ -25,6 +25,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 type CollectTarget =
   | { kind: 'pedido'; item: ClientAccountOrder }
@@ -53,7 +54,8 @@ type CollectMode = 'client' | 'item';
         subtitle="Cuenta corriente, compras y cobros registrados en caja."
         backLabel="Volver a clientes"
         backShortLabel="Volver"
-        backRouterLink="/clients"
+        backAriaLabel="Volver a clientes"
+        (backClick)="goBack()"
         [hasHeaderActions]="true">
         <div headerActions [class]="listToolbarRowClass + ' w-full sm:w-auto'">
           <app-list-search-field
@@ -371,6 +373,7 @@ export class ClientHistorialComponent implements OnInit {
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private navigationBack = inject(NavigationBackService);
 
   clientId = '';
   clientName = 'Cliente';
@@ -494,6 +497,10 @@ export class ClientHistorialComponent implements OnInit {
       this.clientId = id;
       this.loadAccount();
     });
+  }
+
+  goBack(): void {
+    this.navigationBack.back(['/clients']);
   }
 
   loadAccount() {

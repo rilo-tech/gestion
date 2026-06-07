@@ -13,15 +13,21 @@ function isSubscriptionAccessError(message: string): boolean {
   );
 }
 
+function isPublicAuthRoute(url: string): boolean {
+  return (
+    url.includes('/api/auth/login') ||
+    url.includes('/api/auth/google') ||
+    url.includes('/api/auth/logout')
+  );
+}
+
+let redirectingForExpiredSession = false;
+
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const auth = inject(AuthService);
   const router = inject(Router);
   const token = auth.authToken;
-  if (
-    !token ||
-    req.url.includes('/api/auth/login') ||
-    req.url.includes('/api/auth/google')
-  ) {
+  if (!token || isPublicAuthRoute(req.url)) {
     return next(req);
   }
 
@@ -33,6 +39,19 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     })
   ).pipe(
     catchError((error: HttpErrorResponse) => {
+      if (error.status === 401 && !isPublicAuthRoute(req.url)) {
+        if (!redirectingForExpiredSession) {
+          redirectingForExpiredSession = true;
+          auth.logout();
+          void router
+            .navigate(['/login'], { queryParams: { session: 'expired' } })
+            .finally(() => {
+              redirectingForExpiredSession = false;
+            });
+        }
+        return throwError(() => error);
+      }
+
       if (
         error.status === 403 &&
         !auth.isPlatformAdmin &&

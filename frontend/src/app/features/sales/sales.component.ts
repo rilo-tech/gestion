@@ -1,4 +1,4 @@
-import { Component, ViewChild, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, ViewChild, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -65,12 +65,13 @@ import {
   TransactionSummaryPanelComponent,
   TransactionSummaryRowComponent,
   TransactionFormSaveEvent,
+  buildTransactionSaveHeaderState,
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
-import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
@@ -102,7 +103,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     IconToolbarButtonComponent,
     ModulePageHeaderComponent,
     CompactDataListComponent,
-    ListLoadMoreComponent,
     ListSearchFieldComponent,
   ],
   template: `
@@ -114,7 +114,10 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="salesPage = 1"
         searchFieldName="salesSearchQueryMobile"
-        activityModule="sales">
+        activityModule="sales"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="loadSales()">
         <app-icon-action
           headerActions
           *ngIf="auth.canCreateSales"
@@ -175,6 +178,9 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             <div compactSubtitle class="compact-list-subtitle truncate">
               <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
               <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
+              <ng-container *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0">
+                · Gan. {{ '$' + (sale.gananciaEstimada || 0) }}
+              </ng-container>
             </div>
             <span
               *ngIf="auth.canViewOrderSalePrice"
@@ -303,13 +309,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           [totalItems]="filteredSales.length"
           (pageChange)="salesPage = $event">
         </app-list-pagination>
-        <app-list-load-more
-          listFooter
-          [hasMore]="salesHasMore"
-          [loading]="loadingMoreSales"
-          label="Cargar más ventas"
-          (loadMoreClick)="loadMoreSales()">
-        </app-list-load-more>
       </app-compact-data-list>
     </div>
 
@@ -323,11 +322,11 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           *ngIf="saleModalMode === 'mostrador' || saleModalMode === 'edit'"
           headerActions
           class="sm:hidden"
-          icon="save"
-          [label]="saleModalSaveLabel"
-          variant="primary"
-          [disabled]="saleModalSaving"
-          [loading]="saleModalSaving"
+          [icon]="saleModalHeaderSave.icon"
+          [label]="saleModalHeaderSave.label"
+          [variant]="saleModalHeaderSave.variant"
+          [disabled]="saleModalHeaderSave.disabled"
+          [loading]="saleModalHeaderSave.loading"
           (clicked)="saleCounterPanel?.submitSale()">
         </app-icon-toolbar-button>
         <app-icon-toolbar-button
@@ -629,11 +628,10 @@ export class SalesComponent implements OnInit {
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   sales: Sale[] = [];
-  salesHasMore = false;
-  salesCursor: string | null = null;
-  loadingMoreSales = false;
   searchQuery = '';
   salesPage = 1;
   eligibleOrders: EligibleOrderForSale[] = [];
@@ -691,6 +689,15 @@ export class SalesComponent implements OnInit {
     return this.saleModalMode === 'edit' ? 'Guardar cambios' : 'Registrar venta';
   }
 
+  get saleModalHeaderSave() {
+    return buildTransactionSaveHeaderState({
+      saving: this.saleModalSaving,
+      successMessage: this.saleCounterPanel?.saveSuccessMessage ?? '',
+      idleLabel: this.saleModalSaveLabel,
+      savingLabel: this.saleModalMode === 'edit' ? 'Guardando...' : 'Registrando...',
+    });
+  }
+
   get filteredSales(): Sale[] {
     const query = this.searchQuery.trim().toLowerCase();
     if (!query) return this.sales;
@@ -728,8 +735,8 @@ export class SalesComponent implements OnInit {
   }
 
   get detailModalSubtitle(): string {
-    if (!this.detailSale) return 'Productos, cobros y saldo de la venta.';
-    return this.detailSale.clienteNombre?.trim() || 'Detalle completo de la venta.';
+    // El cliente ya se muestra en la metadata de abajo, no lo repetimos acá.
+    return 'Productos, cobros y saldo de la venta.';
   }
 
   get clientOptions() {
@@ -805,13 +812,21 @@ export class SalesComponent implements OnInit {
   }
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/sales',
+      reload: () => this.loadSales(),
+      reset: () => this.resetListView(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     if (this.auth.canViewSalesHistory) {
       this.loadSales();
     } else {
       this.loading = false;
     }
 
-    this.clientService.getClientsPage(120).subscribe((page) => {
+    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
       this.clients = page.items;
     });
     // Pedidos elegibles: solo al abrir el modal «venta desde pedido».
@@ -913,6 +928,12 @@ export class SalesComponent implements OnInit {
     this.detailModalOpen = false;
     this.detailSale = null;
     this.detailLoading = false;
+  }
+
+  private resetListView() {
+    this.closeDetailModal();
+    this.closeSaleModal();
+    this.closeCollectModal();
   }
 
   editFromDetail() {
@@ -1074,7 +1095,7 @@ export class SalesComponent implements OnInit {
 
     if (draft.saleModalMode === 'pedido') {
       clearSalesFormDraft();
-      this.clientService.getClientsPage(120).subscribe((page) => {
+      this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
         this.clients = page.items;
       });
 
@@ -1215,7 +1236,9 @@ export class SalesComponent implements OnInit {
   }
 
   canDuplicateDetailSale(sale: Sale): boolean {
-    return this.auth.canCreateSales && sale.origen === 'mostrador';
+    // Permitimos duplicar cualquier venta con productos (incluso las que vienen
+    // de un pedido): la copia se crea como venta de mostrador, sin vincularse al pedido.
+    return this.auth.canCreateSales && (sale.items?.length ?? 0) > 0;
   }
 
   getSaleCollectableSaldo(sale: Sale): number {
@@ -1448,7 +1471,7 @@ export class SalesComponent implements OnInit {
     });
   }
 
-  private loadSales() {
+  loadSales() {
     if (!this.auth.canViewSalesHistory) {
       this.loading = false;
       return;
@@ -1456,11 +1479,11 @@ export class SalesComponent implements OnInit {
 
     this.loading = true;
     this.salesPage = 1;
-    this.salesService.getSalesPage(this.listPageSize).subscribe({
-      next: (page) => {
-        this.sales = page.items;
-        this.salesHasMore = page.hasMore;
-        this.salesCursor = page.nextCursor;
+    // Traemos todas las ventas para que el buscador y las flechas de paginado
+    // recorran todo el historial, no solo la primera página cargada.
+    this.salesService.getSales().subscribe({
+      next: (sales) => {
+        this.sales = sales;
         this.loading = false;
       },
       error: () => {
@@ -1469,22 +1492,6 @@ export class SalesComponent implements OnInit {
           title: 'Error',
           message: 'No se pudieron cargar las ventas.',
         });
-      },
-    });
-  }
-
-  loadMoreSales() {
-    if (!this.salesHasMore || this.loadingMoreSales) return;
-    this.loadingMoreSales = true;
-    this.salesService.getSalesPage(this.listPageSize, this.salesCursor ?? undefined).subscribe({
-      next: (page) => {
-        this.sales = [...this.sales, ...page.items];
-        this.salesHasMore = page.hasMore;
-        this.salesCursor = page.nextCursor;
-        this.loadingMoreSales = false;
-      },
-      error: () => {
-        this.loadingMoreSales = false;
       },
     });
   }

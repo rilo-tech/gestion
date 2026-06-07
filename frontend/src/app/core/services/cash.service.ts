@@ -18,6 +18,8 @@ export interface CashMovement {
   /** Categoría de gasto (Finanzas) cuando el egreso manual eligió una categoría. */
   categoriaId?: string | null;
   fecha: string;
+  /** Momento de alta en el sistema; desempata cuando varios movimientos comparten fecha. */
+  createdAt?: string;
   ambito?: CashAmbito;
   origenId?: string;
   origenTipo?: string;

@@ -1,4 +1,4 @@
-import { Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -47,6 +47,7 @@ import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
+  totalListPages,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
@@ -63,15 +64,15 @@ import { getOrderStatusLabel } from '../../core/constants/order-status';
 import { OrderService, ReservationTargetOrder } from '../../core/services/order.service';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
-import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 type StockTab = 'productos' | 'movimientos' | 'reservas';
 
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConceptRefLinksComponent, HasPermissionDirective, ListPaginationComponent, ListRowActionsComponent, CompactListRowComponent, CompactInlineStatsComponent, ModulePageHeaderComponent, CompactDataListComponent, ListLoadMoreComponent, ListSearchFieldComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConceptRefLinksComponent, HasPermissionDirective, ListPaginationComponent, ListRowActionsComponent, CompactListRowComponent, CompactInlineStatsComponent, ModulePageHeaderComponent, CompactDataListComponent, ListSearchFieldComponent],
   template: `
     <div [class]="pageShellClass">
       <app-module-page-header
@@ -80,7 +81,10 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         [searchQuery]="headerSearchQuery"
         (searchQueryChange)="onHeaderSearchChange($event)"
         [searchFieldName]="headerSearchFieldName"
-        activityModule="stock">
+        activityModule="stock"
+        [showRefresh]="true"
+        [refreshing]="loadingItems || loadingMoreProducts"
+        (refreshClick)="reloadList()">
         <p headerExtra class="mt-2">
           <a routerLink="/stock/faltantes" class="text-sm font-semibold text-orange-700 hover:text-orange-900 hover:underline">
             Ver faltantes para comprar
@@ -216,11 +220,13 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               Servicio
             </span>
           </app-compact-list-row>
-          <p *ngIf="loadingItems" [class]="compactListEmptyClass">Cargando productos...</p>
-          <p *ngIf="!loadingItems && items.length === 0" [class]="compactListEmptyClass">
+          <p *ngIf="loadingItems || loadingProductSearch" [class]="compactListEmptyClass">
+            {{ loadingProductSearch ? 'Buscando productos...' : 'Cargando productos...' }}
+          </p>
+          <p *ngIf="!loadingItems && !loadingProductSearch && items.length === 0 && !productSearchActive" [class]="compactListEmptyClass">
             No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
           </p>
-          <p *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0" [class]="compactListEmptyClass">
+          <p *ngIf="!loadingItems && !loadingProductSearch && filteredItems.length === 0 && (productSearchActive || items.length > 0)" [class]="compactListEmptyClass">
             <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">No hay productos con stock bajo.</ng-container>
             <ng-container *ngIf="!lowStockOnly || searchQuery.trim()">
               No se encontraron productos para "{{ searchQuery }}".
@@ -319,15 +325,17 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 </app-list-row-actions>
               </td>
             </tr>
-            <tr *ngIf="loadingItems">
-              <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">Cargando productos...</td>
+            <tr *ngIf="loadingItems || loadingProductSearch">
+              <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
+                {{ loadingProductSearch ? 'Buscando productos...' : 'Cargando productos...' }}
+              </td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length === 0">
+            <tr *ngIf="!loadingItems && !loadingProductSearch && items.length === 0 && !productSearchActive">
               <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 No hay productos cargados. Usá <span class="font-semibold">Nuevo producto</span> para empezar.
               </td>
             </tr>
-            <tr *ngIf="!loadingItems && items.length > 0 && filteredItems.length === 0">
+            <tr *ngIf="!loadingItems && !loadingProductSearch && filteredItems.length === 0 && (productSearchActive || items.length > 0)">
               <td [attr.colspan]="productTableDesktopColspan" class="px-6 py-12 text-center text-gray-400">
                 <ng-container *ngIf="lowStockOnly && !searchQuery.trim()">
                   No hay productos con stock bajo.
@@ -345,16 +353,11 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           [page]="productsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredItems.length"
-          (pageChange)="productsPage = $event">
+          [canFetchMore]="productsHasMore && !searchQuery.trim()"
+          [loadingMore]="loadingMoreProducts"
+          (pageChange)="productsPage = $event"
+          (fetchMore)="loadMoreProducts()">
         </app-list-pagination>
-        <app-list-load-more
-          listFooter
-          [hasMore]="productsHasMore"
-          [loading]="loadingMoreProducts || loadingItems"
-          label="Cargar más productos"
-          loadingLabel="Cargando más..."
-          (loadMoreClick)="loadMoreProducts()">
-        </app-list-load-more>
       </app-compact-data-list>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -743,6 +746,8 @@ export class StockComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
   private configSub?: Subscription;
   private catalogSub?: Subscription;
 
@@ -769,9 +774,14 @@ export class StockComponent implements OnInit, OnDestroy {
   movementsPage = 1;
   reservationsPage = 1;
   loadingItems = true;
+  loadingProductSearch = false;
+  searchResultItems: StockItem[] = [];
+  private productSearchTimeout?: ReturnType<typeof setTimeout>;
   loadingMoreProducts = false;
   productsHasMore = false;
   productsNextCursor: string | null = null;
+  private productsLoadMorePageBefore = 0;
+  private productsLoadMoreTotalPagesBefore = 0;
   loadingMovements = false;
   loadingReservations = false;
   private movementsLoaded = false;
@@ -784,6 +794,13 @@ export class StockComponent implements OnInit, OnDestroy {
   transferringReservation = false;
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/stock',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
     });
@@ -814,11 +831,17 @@ export class StockComponent implements OnInit, OnDestroy {
 
     this.loadStockMetrics(false);
     this.loadStock(false);
+    this.stockService.preloadSearchIndex();
   }
 
   ngOnDestroy() {
+    window.clearTimeout(this.productSearchTimeout);
     this.configSub?.unsubscribe();
     this.catalogSub?.unsubscribe();
+  }
+
+  get productSearchActive(): boolean {
+    return this.searchQuery.trim().length >= 2;
   }
 
   get stockOrigenes() {
@@ -877,6 +900,84 @@ export class StockComponent implements OnInit, OnDestroy {
 
   onProductsSearchChange() {
     this.productsPage = 1;
+    window.clearTimeout(this.productSearchTimeout);
+
+    const query = this.searchQuery.trim();
+    if (query.length < 2) {
+      this.loadingProductSearch = false;
+      this.searchResultItems = [];
+      return;
+    }
+
+    this.loadingProductSearch = true;
+    this.productSearchTimeout = window.setTimeout(() => {
+      this.runProductSearch(query);
+    }, 200);
+  }
+
+  private runProductSearch(query: string) {
+    this.stockService.searchStockForList(query).subscribe({
+      next: (hits) => {
+        this.searchResultItems = this.enrichSearchHits(hits);
+        this.loadingProductSearch = false;
+      },
+      error: () => {
+        this.searchResultItems = [];
+        this.loadingProductSearch = false;
+      },
+    });
+  }
+
+  private enrichSearchHits(hits: StockItem[]): StockItem[] {
+    const loadedById = new Map(
+      this.items
+        .filter((item) => item.id)
+        .map((item) => [String(item.id), item] as const)
+    );
+
+    return hits.map((hit) => {
+      const id = String(hit.id ?? '').trim();
+      const loaded = id ? loadedById.get(id) : undefined;
+      if (!loaded) return this.normalizeSearchHit(hit);
+      return { ...loaded, ...hit, nombre: hit.nombre || loaded.nombre };
+    });
+  }
+
+  private normalizeSearchHit(hit: StockItem): StockItem {
+    return {
+      ...hit,
+      tipo: hit.tipo || 'producto',
+      stockActual: Number(hit.stockActual) || 0,
+      stockReservado: Number(hit.stockReservado) || 0,
+      stockMinimo: Number(hit.stockMinimo) || 0,
+    };
+  }
+
+  private itemMatchesNameOrCode(item: StockItem, query: string): boolean {
+    const normalized = query
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    if (!normalized) return true;
+
+    const compactQuery = normalized.replace(/\s+/g, '');
+    const name = [item.nombre, item.nombreBase]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const codigo = String(item.codigo ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
+
+    if (codigo && (codigo.includes(compactQuery) || compactQuery.includes(codigo))) {
+      return true;
+    }
+
+    return name.includes(normalized);
   }
 
   onMovementsSearchChange() {
@@ -958,21 +1059,16 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   get filteredItems(): StockItem[] {
-    let list = this.items;
+    const query = this.searchQuery.trim();
+    let list =
+      query.length >= 2 ? this.searchResultItems : this.items;
+
+    if (query.length > 0 && query.length < 2) {
+      list = list.filter((item) => this.itemMatchesNameOrCode(item, query));
+    }
 
     if (this.lowStockOnly) {
       list = list.filter((item) => this.isLowStock(item));
-    }
-
-    const query = this.searchQuery.trim().toLowerCase();
-    if (query) {
-      list = list.filter((item) => {
-        const searchable = [item.nombre, item.nombreBase, item.categoria, item.talle, item.color, item.codigo]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return searchable.includes(query);
-      });
     }
 
     return this.sortItemsByName(list);
@@ -1203,7 +1299,7 @@ export class StockComponent implements OnInit, OnDestroy {
       return;
     }
     if (movement.compraId) {
-      this.router.navigate(['/purchases'], { queryParams: { detail: movement.compraId } });
+      this.router.navigate(['/purchases', movement.compraId]);
       return;
     }
     if (movement.productoId) {
@@ -1289,6 +1385,23 @@ export class StockComponent implements OnInit, OnDestroy {
       });
   }
 
+  reloadList() {
+    this.stockService.clearListCaches();
+    this.productsPage = 1;
+    this.movementsPage = 1;
+    this.reservationsPage = 1;
+    this.movementsLoaded = false;
+    this.reservationsLoaded = false;
+    this.loadStock(true);
+    this.stockService.preloadSearchIndex();
+    if (this.activeTab === 'movimientos') {
+      this.loadMovements();
+    } else if (this.activeTab === 'reservas') {
+      this.loadReservations(this.reservationProductFilter || undefined);
+    }
+    this.loadStockMetrics(false);
+  }
+
   private refreshStockData() {
     this.loadStock(true);
   }
@@ -1297,6 +1410,9 @@ export class StockComponent implements OnInit, OnDestroy {
     if (!this.productsHasMore || !this.productsNextCursor || this.loadingMoreProducts || this.loadingItems) {
       return;
     }
+    if (this.searchQuery.trim()) return;
+    this.productsLoadMorePageBefore = this.productsPage;
+    this.productsLoadMoreTotalPagesBefore = totalListPages(this.filteredItems.length, this.listPageSize);
     this.loadStock(false, true);
   }
 
@@ -1311,6 +1427,10 @@ export class StockComponent implements OnInit, OnDestroy {
     }
     this.loadStockMetrics(true);
     this.applyMetricsFromLoadedItems();
+    const query = this.searchQuery.trim();
+    if (query.length >= 2) {
+      this.runProductSearch(query);
+    }
   }
 
   private loadStockMetrics(refresh = false) {
@@ -1374,6 +1494,16 @@ export class StockComponent implements OnInit, OnDestroy {
           this.items = merged;
           this.productsHasMore = page.hasMore;
           this.productsNextCursor = page.nextCursor;
+          if (append && this.productsLoadMoreTotalPagesBefore > 0) {
+            if (this.productsLoadMorePageBefore >= this.productsLoadMoreTotalPagesBefore) {
+              this.productsPage = Math.min(
+                this.productsLoadMorePageBefore + 1,
+                totalListPages(this.filteredItems.length, this.listPageSize)
+              );
+            }
+            this.productsLoadMorePageBefore = 0;
+            this.productsLoadMoreTotalPagesBefore = 0;
+          }
           this.loadingItems = false;
           this.loadingMoreProducts = false;
           if (refreshMetrics) {
@@ -1385,6 +1515,8 @@ export class StockComponent implements OnInit, OnDestroy {
         error: () => {
           this.loadingItems = false;
           this.loadingMoreProducts = false;
+          this.productsLoadMorePageBefore = 0;
+          this.productsLoadMoreTotalPagesBefore = 0;
           this.dialogService.alert({
             title: 'Error',
             message: 'No se pudieron cargar los productos.',

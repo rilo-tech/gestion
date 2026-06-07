@@ -19,7 +19,8 @@ export type ConfigRemovalKind =
   | 'stock.origenes'
   | 'finanzas.categoriasGasto'
   | 'finanzas.mediosPago'
-  | 'finanzas.tarjetas';
+  | 'finanzas.tarjetas'
+  | 'colaboradores.tiposExtra';
 
 export interface ConfigRemovalItem {
   kind: ConfigRemovalKind;
@@ -196,6 +197,14 @@ export async function getConfigItemUsage(
       }
       return hits;
     }
+    case 'colaboradores.tiposExtra': {
+      const id = trimmed.toLowerCase();
+      const snap = await loadCollection(businessId, 'colaboradores_movimientos');
+      const count = countFieldEquals(snap.docs, 'extraTipo', id);
+      return count > 0
+        ? [{ module: 'collaborators', label: 'Extras de colaboradores', count }]
+        : [];
+    }
     case 'finanzas.tarjetas': {
       const id = trimmed.toLowerCase();
       const [cuotasSnap, comprasSnap] = await Promise.all([
@@ -260,6 +269,9 @@ type NormalizedConfig = {
   finanzas: {
     categoriasGasto: { id: string; label: string }[];
     tarjetas: { id: string; label: string }[];
+  };
+  colaboradores: {
+    tiposExtra: { id: string; nombre: string }[];
   };
 };
 
@@ -339,6 +351,19 @@ export function diffConfigRemovals(prev: NormalizedConfig, next: NormalizedConfi
         kind: 'finanzas.tarjetas',
         value: tarjeta.id,
         display: tarjeta.label,
+      });
+    }
+  }
+
+  const nextTiposExtra = new Set(
+    next.colaboradores.tiposExtra.map((item) => norm(item.id))
+  );
+  for (const tipo of prev.colaboradores.tiposExtra) {
+    if (!nextTiposExtra.has(norm(tipo.id))) {
+      removals.push({
+        kind: 'colaboradores.tiposExtra',
+        value: tipo.id,
+        display: tipo.nombre,
       });
     }
   }

@@ -92,6 +92,30 @@ function migrateLegacyVariantes(data: Record<string, unknown>): PriceCatalogVari
   return variantes.filter((variant) => variant.nombre);
 }
 
+function variantToFirestore(variant: PriceCatalogVariant): Record<string, unknown> {
+  const stored: Record<string, unknown> = {
+    nombre: variant.nombre,
+    rangosCantidad: (variant.rangosCantidad ?? []).map((range) => ({
+      cantidadMin: range.cantidadMin,
+      cantidadMax: range.cantidadMax ?? null,
+      precioUnitario: range.precioUnitario,
+    })),
+  };
+  if (variant.precioReferencia != null && variant.precioReferencia > 0) {
+    stored.precioReferencia = variant.precioReferencia;
+  }
+  return stored;
+}
+
+function entryToFirestore(entry: ReturnType<typeof normalizeEntry>): Record<string, unknown> {
+  return {
+    nombre: entry.nombre,
+    variantes: entry.variantes.map(variantToFirestore),
+    notas: entry.notas ?? null,
+    activo: entry.activo,
+  };
+}
+
 function normalizeEntry(data: Record<string, unknown>, id: string) {
   let variantes = normalizeVariantes(data.variantes);
   if (!variantes.length) {
@@ -148,10 +172,7 @@ router.post('/:businessId', async (req, res) => {
     }
 
     const docRef = await db.collection(`negocios/${businessId}/catalogo_precios`).add({
-      nombre: entry.nombre,
-      variantes: entry.variantes,
-      notas: entry.notas ?? null,
-      activo: entry.activo,
+      ...entryToFirestore(entry),
       createdAt: new Date().toISOString(),
     });
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -179,10 +200,7 @@ router.patch('/:businessId/:entryId', async (req, res) => {
     }
 
     await db.collection(`negocios/${businessId}/catalogo_precios`).doc(entryId).update({
-      nombre: entry.nombre,
-      variantes: entry.variantes,
-      notas: entry.notas ?? null,
-      activo: entry.activo,
+      ...entryToFirestore(entry),
       updatedAt: new Date().toISOString(),
     });
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {

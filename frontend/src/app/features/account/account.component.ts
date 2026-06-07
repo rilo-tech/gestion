@@ -3,11 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { FormFooterComponent } from '../../shared/components/form-shell/form-footer.component';
 
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, FormFooterComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 w-full max-w-2xl mx-auto">
       <div class="mb-6 sm:mb-8">
@@ -77,14 +78,13 @@ import { AuthService } from '../../core/services/auth.service';
           <p *ngIf="profileErrorMessage" class="text-sm text-red-600">{{ profileErrorMessage }}</p>
           <p *ngIf="profileSuccessMessage" class="text-sm text-teal-700">{{ profileSuccessMessage }}</p>
 
-          <div class="form-actions pt-2">
-            <button
-              type="submit"
-              [disabled]="savingProfile"
-              class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-              {{ savingProfile ? 'Guardando...' : 'Guardar perfil' }}
-            </button>
-          </div>
+          <app-form-footer
+            mode="inline"
+            [showCancel]="false"
+            saveLabel="Guardar perfil"
+            [saving]="savingProfile"
+            [saveAsSubmit]="true">
+          </app-form-footer>
         </form>
       </article>
 
@@ -132,14 +132,13 @@ import { AuthService } from '../../core/services/auth.service';
           <p *ngIf="passwordErrorMessage" class="text-sm text-red-600">{{ passwordErrorMessage }}</p>
           <p *ngIf="passwordSuccessMessage" class="text-sm text-teal-700">{{ passwordSuccessMessage }}</p>
 
-          <div class="form-actions pt-2">
-            <button
-              type="submit"
-              [disabled]="savingPassword"
-              class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-              {{ savingPassword ? 'Guardando...' : 'Actualizar contraseña' }}
-            </button>
-          </div>
+          <app-form-footer
+            mode="inline"
+            [showCancel]="false"
+            saveLabel="Actualizar contraseña"
+            [saving]="savingPassword"
+            [saveAsSubmit]="true">
+          </app-form-footer>
         </form>
       </article>
 

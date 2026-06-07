@@ -10,6 +10,7 @@ import {
   listCollaborators,
   movementsCollection,
   parseCollaboratorInput,
+  movementToFirestore,
   parseMovementInput,
   syncCollaboratorPaymentCash,
   collaboratorsCollection,
@@ -156,7 +157,7 @@ router.post('/:businessId/movimientos', async (req, res) => {
     const collaborator = await getCollaborator(req.params.businessId, input.colaboradorId);
     const createdAt = new Date().toISOString();
     const docRef = await movementsCollection(req.params.businessId).add({
-      ...input,
+      ...movementToFirestore(input),
       colaboradorNombre: collaborator?.nombre ?? '',
       movimientoCajaId: null,
       createdAt,
@@ -224,12 +225,17 @@ router.patch('/:businessId/movimientos/:movimientoId', async (req, res) => {
       existingData.movimientoCajaId ? String(existingData.movimientoCajaId) : undefined
     );
 
-    await ref.update({
-      ...input,
+    const patch = {
+      ...movementToFirestore(input),
       colaboradorNombre,
       movimientoCajaId: movimientoCajaId ?? null,
-      medioPagoId: input.tipo === 'pago' ? input.medioPagoId ?? 'efectivo' : null,
-    });
+    };
+    if (input.tipo === 'pago') {
+      patch.medioPagoId = input.medioPagoId ?? 'efectivo';
+    } else {
+      patch.medioPagoId = null;
+    }
+    await ref.update(patch);
 
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'collaborators',

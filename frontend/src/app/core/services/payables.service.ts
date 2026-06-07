@@ -5,6 +5,7 @@ import { TenantService } from './tenant.service';
 
 export type PayableTipo = 'unico' | 'mensual';
 export type PayableDisplayEstado = 'pendiente' | 'pagada' | 'vencida';
+export type PayableOrigenTipo = 'manual' | 'compra' | 'tarjeta' | 'prestamo';
 
 export interface PayableObligation {
   id: string;
@@ -16,7 +17,10 @@ export interface PayableObligation {
   activo: boolean;
   ambito?: string;
   notas?: string;
+  categoriaId?: string;
+  medioPagoId?: string;
   createdAt?: string;
+  origenTipo?: PayableOrigenTipo;
   compraId?: string;
   compraLabel?: string;
   tarjetaId?: string;
@@ -35,12 +39,15 @@ export interface PayableInstallment {
   tipo: PayableTipo;
   ambito?: string;
   displayEstado: PayableDisplayEstado;
+  origenTipo?: PayableOrigenTipo;
   compraId?: string;
   compraLabel?: string;
   tarjetaId?: string;
   tarjetaLabel?: string;
   descripcion?: string;
   cuotaTotal?: number;
+  movimientoCajaId?: string;
+  medioPagoId?: string;
 }
 
 export interface CardStatementSummary {
@@ -61,12 +68,27 @@ export interface PayCardStatementPayload {
   medioPagoId: string;
   ambito?: string;
   notas?: string;
+  montoPago?: number;
 }
 
 export interface CreatePayableObligationPayload {
   beneficiario: string;
   monto: number;
   tipo: PayableTipo;
+  cantidadCuotas: number;
+  fechaPrimerVencimiento: string;
+  ambito?: string;
+  notas?: string;
+  categoriaId?: string;
+  origenTipo?: PayableOrigenTipo;
+  medioPagoId?: string;
+  tarjetaId?: string;
+  tarjetaLabel?: string;
+}
+
+export interface CreatePayableLoanPayload {
+  beneficiario: string;
+  montoCuota: number;
   cantidadCuotas: number;
   fechaPrimerVencimiento: string;
   ambito?: string;
@@ -97,6 +119,12 @@ export class PayablesService {
     );
   }
 
+  getObligation(obligacionId: string): Observable<PayableObligation> {
+    return this.http.get<PayableObligation>(
+      `/api/payables/${this.businessId}/obligations/${obligacionId}`
+    );
+  }
+
   getCardStatements(mes?: string): Observable<CardStatementSummary[]> {
     const params: Record<string, string> = {};
     if (mes) params.mes = mes;
@@ -108,7 +136,9 @@ export class PayablesService {
 
   payCardStatement(payload: PayCardStatementPayload): Observable<{
     cuotasPagadas: number;
+    cuotasParciales: number;
     total: number;
+    saldoPendiente: number;
     movimientoCajaIds: string[];
   }> {
     return this.http.post(`/api/payables/${this.businessId}/card-statements/pay`, payload);
@@ -121,14 +151,50 @@ export class PayablesService {
     return this.http.post(`/api/payables/${this.businessId}/obligations`, payload);
   }
 
+  updateObligation(
+    obligacionId: string,
+    payload: CreatePayableObligationPayload
+  ): Observable<{
+    obligation: PayableObligation;
+    cuotasCreated: number;
+  }> {
+    return this.http.put(
+      `/api/payables/${this.businessId}/obligations/${obligacionId}`,
+      payload
+    );
+  }
+
+  createLoan(payload: CreatePayableLoanPayload): Observable<{
+    obligation: PayableObligation;
+    cuotasCreated: number;
+  }> {
+    return this.createObligation({
+      beneficiario: payload.beneficiario,
+      monto: payload.montoCuota,
+      tipo: 'unico',
+      cantidadCuotas: payload.cantidadCuotas,
+      fechaPrimerVencimiento: payload.fechaPrimerVencimiento,
+      ambito: payload.ambito,
+      notas: payload.notas,
+      categoriaId: payload.categoriaId,
+      origenTipo: 'prestamo',
+    });
+  }
+
   setInstallmentPaid(
     cuotaId: string,
     paid: boolean,
-    medioPagoId?: string
+    medioPagoId?: string,
+    options?: { montoPago?: number; concepto?: string }
   ): Observable<PayableInstallment> {
     return this.http.patch<PayableInstallment>(
       `/api/payables/${this.businessId}/installments/${cuotaId}/paid`,
-      { paid, ...(medioPagoId ? { medioPagoId } : {}) }
+      {
+        paid,
+        ...(medioPagoId ? { medioPagoId } : {}),
+        ...(options?.montoPago != null ? { montoPago: options.montoPago } : {}),
+        ...(options?.concepto != null ? { concepto: options.concepto } : {}),
+      }
     );
   }
 

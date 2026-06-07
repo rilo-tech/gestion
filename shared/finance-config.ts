@@ -2,7 +2,7 @@ export type MedioPagoComportamiento = 'caja_inmediata' | 'cuotas' | 'proveedor';
 
 export type PurchaseLineTipo = 'stock' | 'insumo' | 'servicio' | 'personal';
 
-export type PayableOrigenTipo = 'manual' | 'compra' | 'tarjeta';
+export type PayableOrigenTipo = 'manual' | 'compra' | 'tarjeta' | 'prestamo';
 
 export interface MedioPagoConfig {
   id: string;

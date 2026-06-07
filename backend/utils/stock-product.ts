@@ -72,6 +72,37 @@ export async function renameProductCategory(
   return { stockUpdated };
 }
 
+/** Renombra un valor de talle o color en todos los productos que lo usan. */
+export async function renameProductField(
+  businessId: string,
+  field: 'talle' | 'color',
+  from: string,
+  to: string
+): Promise<{ stockUpdated: number }> {
+  const fromKey = from.trim().toLowerCase();
+  const toName = to.trim();
+  if (!fromKey || !toName || fromKey === toName.toLowerCase()) {
+    return { stockUpdated: 0 };
+  }
+
+  const stockSnap = await db.collection(`negocios/${businessId}/stock`).get();
+  let stockUpdated = 0;
+
+  for (const doc of stockSnap.docs) {
+    const value = String(doc.data()[field] ?? '')
+      .trim()
+      .toLowerCase();
+    if (value !== fromKey) continue;
+    await doc.ref.update({
+      [field]: toName,
+      updatedAt: new Date().toISOString(),
+    });
+    stockUpdated += 1;
+  }
+
+  return { stockUpdated };
+}
+
 export async function countStockItemsInCategoria(
   businessId: string,
   categoria: string

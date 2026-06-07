@@ -22,7 +22,8 @@ import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
         *ngIf="showSave"
         icon="save"
         [label]="saveLabel"
-        [variant]="saveSuccess ? 'success' : 'primary'"
+        variant="outline"
+        [loading]="saveLoading"
         [disabled]="saveDisabled"
         (clicked)="saveClick.emit($event)">
       </app-icon-toolbar-button>
@@ -85,6 +86,8 @@ export class RecordActionToolbarComponent {
   @Input() showSave = false;
   @Input() saveLabel = 'Guardar';
   @Input() saveDisabled = false;
+  @Input() saveLoading = false;
+  /** @deprecated El éxito se muestra en el banner del formulario, no en el botón. */
   @Input() saveSuccess = false;
 
   @Input() showPrint = false;

@@ -12,6 +12,12 @@ export function getOrderStockStatusLabel(value?: string): string {
   return ORDER_STOCK_STATUS_OPTIONS.find((option) => option.value === normalized)?.label ?? 'Sin preparar';
 }
 
+/** Etiqueta compacta para grillas (sin el prefijo «Stock »). */
+export function getOrderStockStatusShortLabel(value?: string): string {
+  const full = getOrderStockStatusLabel(value);
+  return full.replace(/^Stock\s+/i, '');
+}
+
 export function getOrderStockStatusBadgeClass(value?: string): string {
   switch (value as OrderStockStatus) {
     case 'completo':

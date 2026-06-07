@@ -9,3 +9,5 @@ export * from './transaction-notes-field.component';
 export * from './transaction-date-field.component';
 export * from './transaction-detail-metadata.component';
 export * from './transaction-detail-page.component';
+export * from './transaction-save-feedback';
+export * from './transaction-save-banner.component';

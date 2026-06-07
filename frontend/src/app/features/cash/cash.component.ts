@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject, OnDestroy, OnInit } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, ViewChild, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -71,15 +71,23 @@ import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-li
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
-import { TransactionDateFieldComponent } from '../../shared/components/transaction-form';
+import {
+  TransactionDateFieldComponent,
+  TransactionSaveBannerComponent,
+  TransactionSaveFeedback,
+} from '../../shared/components/transaction-form';
 import {
   combineDateAndTimeToIso,
   currentTimeInputValue,
   todayDateInputValue,
   toDateInputValue,
   toTimeInputValue,
+  formatDisplayDate,
+  formatIsoDatesInText,
 } from '../../core/utils/transaction-date';
-import { Subscription } from 'rxjs';
+import { Subscription, finalize } from 'rxjs';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-sort.ts';
 
 @Component({
   selector: 'app-cash',
@@ -102,18 +110,21 @@ import { Subscription } from 'rxjs';
     ListLoadMoreComponent,
     ListSearchFieldComponent,
     TransactionDateFieldComponent,
+    TransactionSaveBannerComponent,
   ],
   template: `
     <div [class]="pageShellClass">
       <app-module-page-header
         title="Caja"
         description="Ingresos y egresos del negocio. Pedidos y ventas se registran solos; usá Ingreso o Egreso para movimientos manuales. Ing. y Egr. son del mes; Saldo es acumulado."
-        [hideDescriptionOnMobile]="false"
         [showMobileSearch]="true"
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="movementsPage = 1"
         searchFieldName="cashSearchQueryMobile"
-        activityModule="cash">
+        activityModule="cash"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <ng-container headerActions *ngIf="auth.canEditRecords">
           <app-icon-action label="Ingreso" (clicked)="openMovementModal('ingreso')">
             <i-lucide name="arrow-up" class="w-4 h-4"></i-lucide>
@@ -162,8 +173,17 @@ import { Subscription } from 'rxjs';
               <span class="text-base font-bold tabular-nums text-teal-900">{{ '$' + totalNetoSaldo }}</span>
             </div>
           </div>
-          <div class="px-3 py-1.5 border-t border-gray-100 dark:border-gray-800">
+          <div class="px-2 py-1 sm:px-3 sm:py-1.5 border-t border-gray-100 dark:border-gray-800">
             <app-compact-inline-stats
+              class="block sm:hidden"
+              variant="strip"
+              density="compact"
+              [items]="activeAmbitoKpiItems"
+              [centerCaption]="kpiPeriodMonthLabel"
+              ariaLabel="Indicadores del mes y saldo acumulado">
+            </app-compact-inline-stats>
+            <app-compact-inline-stats
+              class="hidden sm:block"
               variant="strip"
               [items]="activeAmbitoKpiItems"
               [centerCaption]="kpiPeriodMonthLabel"
@@ -175,8 +195,17 @@ import { Subscription } from 'rxjs';
 
       <div
         *ngIf="!usesAmbitoSeparation"
-        class="mb-3 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 shadow-sm">
+        class="mb-2 sm:mb-3 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-2 py-1 sm:px-3 sm:py-2 shadow-sm">
         <app-compact-inline-stats
+          class="block sm:hidden"
+          variant="strip"
+          density="compact"
+          [items]="cashKpiItems"
+          [centerCaption]="kpiPeriodMonthLabel"
+          ariaLabel="Indicadores del mes y saldo acumulado">
+        </app-compact-inline-stats>
+        <app-compact-inline-stats
+          class="hidden sm:block"
           variant="strip"
           [items]="cashKpiItems"
           [centerCaption]="kpiPeriodMonthLabel"
@@ -202,8 +231,8 @@ import { Subscription } from 'rxjs';
               [(ngModel)]="origenFilter"
               (ngModelChange)="movementsPage = 1"
               name="origenFilter"
-              [class]="'hidden sm:block shrink-0 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
-              <option value="all">Orígenes</option>
+              [class]="'hidden sm:block shrink-0 min-w-[10rem] w-44 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
+              <option value="all">Todos</option>
               <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
                 {{ origen.nombre }}
               </option>
@@ -211,42 +240,23 @@ import { Subscription } from 'rxjs';
           </div>
         </div>
         <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
-          <div
+          <app-compact-list-row
             *ngFor="let movement of paginatedFilteredMovements"
-            [class]="compactListRowClass + ' cursor-default hover:bg-gray-50 active:bg-gray-100'">
-            <button
-              type="button"
-              class="min-w-0 flex-1 overflow-hidden text-left border-0 bg-transparent p-0 cursor-pointer"
-              (click)="onMovementRowClick(movement)">
-              <div class="compact-list-title truncate">
-                <app-concept-ref-links
-                  [text]="movement.concepto"
-                  [pedidoId]="movement.pedidoId"
-                  [ventaId]="movement.ventaId"
-                  [numeroPedidoLabel]="getOrderNumberLabel(movement)"
-                  [ventaLabel]="movement.ventaLabel">
-                </app-concept-ref-links>
-              </div>
-              <div class="compact-list-subtitle truncate">
-                {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
-              </div>
-            </button>
+            (activate)="onMovementRowClick(movement)">
+            <div compactTitle class="compact-list-title truncate">
+              {{ getMovementMobileTitle(movement) }}
+            </div>
+            <div compactSubtitle class="compact-list-subtitle truncate">
+              {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+            </div>
             <span
-              class="text-[11px] font-bold tabular-nums shrink-0 pl-1"
+              compactTrailing
+              class="text-[11px] font-bold tabular-nums"
               [class.text-teal-600]="movement.tipo === 'ingreso'"
               [class.text-red-500]="movement.tipo === 'egreso'">
               {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
             </span>
-            <app-list-row-actions
-              *ngIf="showMovementRowActions"
-              [showDuplicate]="auth.canEditRecords"
-              [showEdit]="auth.canEditRecords"
-              [showDelete]="canDeleteCashAsAdmin"
-              (duplicateClick)="duplicateMovement(movement, $event)"
-              (editClick)="openEditMovement(movement)"
-              (deleteClick)="confirmDeleteMovement(movement)">
-            </app-list-row-actions>
-          </div>
+          </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
           <p *ngIf="!loading && movements.length === 0" [class]="compactListEmptyClass">
             Todavía no hay movimientos. Se registran al confirmar pedidos o manualmente desde arriba.
@@ -278,7 +288,7 @@ import { Subscription } from 'rxjs';
               <td class="px-4 sm:px-6 py-3 sm:py-4">
                 <div class="font-medium text-gray-900 text-sm">
                   <app-concept-ref-links
-                    [text]="movement.concepto"
+                    [text]="getMovementConceptoDisplay(movement)"
                     [pedidoId]="movement.pedidoId"
                     [ventaId]="movement.ventaId"
                     [numeroPedidoLabel]="getOrderNumberLabel(movement)"
@@ -307,7 +317,7 @@ import { Subscription } from 'rxjs';
               </td>
               <td class="hidden sm:table-cell px-4 py-3 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
                 <app-list-row-actions
-                  *ngIf="showMovementRowActions"
+                  *ngIf="showDesktopMovementRowActions"
                   [showDuplicate]="auth.canEditRecords"
                   (duplicateClick)="duplicateMovement(movement, $event)"
                   [showEdit]="auth.canEditRecords"
@@ -361,6 +371,7 @@ import { Subscription } from 'rxjs';
       (closed)="closeMovementModal()">
 
         <div class="space-y-2.5 sm:space-y-3">
+          <app-transaction-save-banner [message]="movementSaveFeedback.successMessage"></app-transaction-save-banner>
           <p
             *ngIf="movementSaveHint"
             class="text-[11px] sm:text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-2"
@@ -380,6 +391,7 @@ import { Subscription } from 'rxjs';
                 name="movementConcepto"
                 [options]="conceptOptions"
                 [allowCustomValue]="true"
+                [disabled]="movementFormDisabled"
                 [placeholder]="movementConceptPickerPlaceholder"
                 [plainPlaceholder]="movementConceptPlainPlaceholder">
               </app-searchable-select>
@@ -389,7 +401,8 @@ import { Subscription } from 'rxjs';
                 [(ngModel)]="movementConcepto"
                 name="movementConceptoText"
                 placeholder="Ej. Venta mostrador"
-                class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+                [disabled]="movementFormDisabled"
+                class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
             </div>
             <div>
               <label class="block text-xs font-medium text-gray-700 mb-0.5">Monto</label>
@@ -401,7 +414,7 @@ import { Subscription } from 'rxjs';
                 min="1"
                 step="1"
                 placeholder="0"
-                [disabled]="savingMovement"
+                [disabled]="movementFormDisabled"
                 class="w-full px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-gray-200 text-sm tabular-nums text-center sm:text-left outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
             </div>
           </div>
@@ -416,7 +429,7 @@ import { Subscription } from 'rxjs';
             label="Fecha"
             timeLabel="Hora"
             [showTime]="true"
-            [disabled]="savingMovement">
+            [disabled]="movementFormDisabled">
           </app-transaction-date-field>
 
           <div
@@ -428,9 +441,10 @@ import { Subscription } from 'rxjs';
                 <button
                   type="button"
                   (click)="setMovementTipo('ingreso')"
+                  [disabled]="movementFormDisabled"
                   title="Ingreso"
                   aria-label="Ingreso"
-                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0"
+                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0 disabled:opacity-70 disabled:cursor-default"
                   [class.bg-teal-600]="movementTipo === 'ingreso'"
                   [class.text-white]="movementTipo === 'ingreso'"
                   [class.shadow-sm]="movementTipo === 'ingreso'"
@@ -442,9 +456,10 @@ import { Subscription } from 'rxjs';
                 <button
                   type="button"
                   (click)="setMovementTipo('egreso')"
+                  [disabled]="movementFormDisabled"
                   title="Egreso"
                   aria-label="Egreso"
-                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0"
+                  class="inline-flex items-center justify-center gap-1 rounded-md sm:rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 text-sm font-semibold transition-colors min-h-[36px] sm:min-h-0 disabled:opacity-70 disabled:cursor-default"
                   [class.bg-red-500]="movementTipo === 'egreso'"
                   [class.text-white]="movementTipo === 'egreso'"
                   [class.shadow-sm]="movementTipo === 'egreso'"
@@ -464,13 +479,14 @@ import { Subscription } from 'rxjs';
                   *ngFor="let ambito of cajaAmbitos; trackBy: trackCajaAmbitoId"
                   type="button"
                   (click)="selectMovementAmbito(ambito.id, $event)"
+                  [disabled]="movementFormDisabled"
                   [title]="ambito.label"
                   [attr.aria-pressed]="isMovementAmbitoSelected(ambito.id)"
-                  class="inline-flex items-center justify-center rounded-md sm:rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[36px] sm:min-h-0 truncate bg-white touch-manipulation select-none"
+                  class="inline-flex items-center justify-center rounded-md sm:rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[36px] sm:min-h-0 truncate touch-manipulation select-none transition-colors disabled:opacity-70 disabled:cursor-default"
                   [ngClass]="
                     isMovementAmbitoSelected(ambito.id)
-                      ? 'border-teal-500 bg-teal-50 text-teal-800 font-semibold'
-                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      ? 'border-teal-600 bg-teal-600 text-white font-semibold shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
                   ">
                   {{ ambito.label }}
                 </button>
@@ -486,7 +502,8 @@ import { Subscription } from 'rxjs';
             <select
               [(ngModel)]="movementMedio"
               name="movementMedio"
-              class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary">
+              [disabled]="movementFormDisabled"
+              class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
               <option value="tarjeta">Tarjeta</option>
@@ -500,7 +517,7 @@ import { Subscription } from 'rxjs';
               name="movementDescripcion"
               rows="2"
               placeholder="Detalle adicional del movimiento..."
-              [disabled]="savingMovement"
+              [disabled]="movementFormDisabled"
               class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 resize-y min-h-[2.5rem]"></textarea>
           </div>
         </div>
@@ -511,6 +528,10 @@ import { Subscription } from 'rxjs';
           </p>
           <div class="flex items-center gap-2">
             <app-record-action-toolbar
+              [showEdit]="canEditFromDetail"
+              editLabel="Editar"
+              [editDisabled]="savingMovement"
+              (editClick)="enableMovementEditFromDetail()"
               [showDuplicate]="canDuplicateInModal"
               duplicateLabel="Duplicar"
               [duplicateDisabled]="savingMovement"
@@ -521,21 +542,25 @@ import { Subscription } from 'rxjs';
               (deleteClick)="confirmDeleteEditingMovement()">
             </app-record-action-toolbar>
             <div class="flex-1 min-w-0"></div>
-            <button type="button" (click)="closeMovementModal()" [class]="formCancelClass + ' hidden sm:inline-flex'">
+            <button type="button" (click)="closeMovementModal()" [class]="formCancelClass + ' sm:inline-flex'">
               Cerrar
             </button>
             <button
+              *ngIf="!movementViewOnly"
               type="button"
               [disabled]="savingMovement"
-              [class]="movementModalPrimaryButtonClass + ' min-h-[42px] min-w-[42px] sm:min-w-0 px-2.5 sm:px-5'"
-              [attr.title]="movementModalPrimaryLabelLong"
-              [attr.aria-label]="movementModalPrimaryLabelLong"
+              [class]="movementModalSaveButtonClass + ' min-h-[42px] min-w-[42px] sm:min-w-0 px-2.5 sm:px-5'"
+              [attr.title]="movementModalSaveButtonLabel"
+              [attr.aria-label]="movementModalSaveButtonLabel"
               (click)="submitMovement()">
               <span *ngIf="savingMovement" class="hidden sm:inline">Guardando...</span>
-              <i-lucide *ngIf="savingMovement" name="clock" class="w-5 h-5 sm:hidden animate-pulse"></i-lucide>
+              <i-lucide
+                *ngIf="savingMovement"
+                name="clock"
+                class="w-5 h-5 sm:hidden animate-pulse"></i-lucide>
               <ng-container *ngIf="!savingMovement">
                 <i-lucide name="check" class="w-5 h-5 sm:hidden"></i-lucide>
-                <span class="hidden sm:inline">{{ movementModalPrimaryLabelLong }}</span>
+                <span class="hidden sm:inline">{{ movementModalSaveButtonLabel }}</span>
               </ng-container>
             </button>
           </div>
@@ -568,6 +593,8 @@ export class CashComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
   private configSub?: Subscription;
   private routeSub?: Subscription;
 
@@ -582,6 +609,7 @@ export class CashComponent implements OnInit, OnDestroy {
   loading = true;
 
   movementModalOpen = false;
+  movementViewOnly = false;
   editingMovementId: string | null = null;
   movementTipo: 'ingreso' | 'egreso' = 'ingreso';
   movementConcepto = '';
@@ -591,7 +619,12 @@ export class CashComponent implements OnInit, OnDestroy {
   movementMonto: number | null = null;
   movementMedio = 'efectivo';
   movementAmbito = '';
-  savingMovement = false;
+  readonly movementSaveFeedback = new TransactionSaveFeedback();
+
+  get savingMovement(): boolean {
+    return this.movementSaveFeedback.saving;
+  }
+
   movementSaveHint: string | null = null;
   private movementSessionSavedCount = 0;
   hasMoreMovements = false;
@@ -599,6 +632,14 @@ export class CashComponent implements OnInit, OnDestroy {
   loadingMoreMovements = false;
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/cash',
+      reload: () => this.reloadList(),
+      reset: () => this.closeMovementModal(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
       this.syncActiveAmbitoTab();
@@ -619,6 +660,7 @@ export class CashComponent implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.routeSub?.unsubscribe();
+    this.movementSaveFeedback.destroy();
   }
 
   get monthFilterLabel(): string {
@@ -748,8 +790,29 @@ export class CashComponent implements OnInit, OnDestroy {
       : 'Guardar ingreso y continuar';
   }
 
+  get movementFormDisabled(): boolean {
+    return this.movementViewOnly || this.savingMovement;
+  }
+
   get canDuplicateInModal(): boolean {
-    return this.auth.canEditRecords && this.movementModalOpen;
+    return (
+      this.auth.canEditRecords &&
+      this.movementModalOpen &&
+      !this.movementViewOnly &&
+      !!this.editingMovementId &&
+      !!this.editingMovement &&
+      this.isManualMovement(this.editingMovement)
+    );
+  }
+
+  get canEditFromDetail(): boolean {
+    const movement = this.editingMovement;
+    return (
+      this.movementViewOnly &&
+      !!movement &&
+      this.auth.canEditRecords &&
+      this.isManualMovement(movement)
+    );
   }
 
   get editingMovement(): CashMovement | undefined {
@@ -761,7 +824,7 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.auth.isPrivileged;
   }
 
-  get showMovementRowActions(): boolean {
+  get showDesktopMovementRowActions(): boolean {
     return this.auth.canEditRecords || this.canDeleteCashAsAdmin;
   }
 
@@ -777,6 +840,15 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.movementTipo === 'egreso'
       ? `${base} bg-red-500 hover:bg-red-600`
       : `${base} bg-teal-600 hover:bg-teal-700`;
+  }
+
+  get movementModalSaveButtonLabel(): string {
+    if (this.savingMovement) return 'Guardando...';
+    return this.movementModalPrimaryLabelLong;
+  }
+
+  get movementModalSaveButtonClass(): string {
+    return this.movementModalPrimaryButtonClass;
   }
 
   get totalIngresos(): number {
@@ -811,11 +883,19 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   get movementModalTitle(): string {
+    if (this.movementViewOnly) return 'Detalle';
     if (this.editingMovementId) return 'Editar';
     return 'Movimiento';
   }
 
   get movementModalSubtitle(): string {
+    if (this.movementViewOnly) {
+      const movement = this.editingMovement;
+      if (movement && !this.isManualMovement(movement)) {
+        return 'Movimiento automático. Para cambiarlo, usá el enlace del pedido o venta en el concepto.';
+      }
+      return 'Tocá Editar para modificar o Eliminá si corresponde.';
+    }
     if (this.editingMovementId) {
       return 'Modificá el movimiento o duplicá como nuevo para cargar varios seguidos.';
     }
@@ -846,10 +926,40 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   formatDate(value?: string): string {
-    if (!value) return '—';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '—';
-    return date.toLocaleDateString('es-AR');
+    return formatDisplayDate(value);
+  }
+
+  /** Concepto acortado: el origen ya indica el tipo (colaborador, cuenta a pagar, etc.). */
+  getMovementConceptoDisplay(movement: CashMovement): string {
+    const concepto = String(movement.concepto ?? '').trim();
+    if (!concepto) return '—';
+
+    const tipo = String(movement.origenTipo ?? '');
+    let display = concepto;
+    if (tipo === 'colaborador_pago') {
+      display = concepto.replace(/^Pago colaborador · /i, '').trim() || concepto;
+    } else if (tipo === 'cuenta_pagar' && movement.origenGrupo !== 'compra') {
+      if (!/^Préstamo ·/i.test(concepto) && !/^Cuota \d/i.test(concepto)) {
+        const first = concepto.split(' · ')[0]?.trim();
+        if (first) display = first;
+      }
+    }
+
+    return formatIsoDatesInText(display);
+  }
+
+  /** Título corto en celular: «Pago Despues» sin categoría ni cuota. */
+  getMovementMobileTitle(movement: CashMovement): string {
+    const concepto = String(movement.concepto ?? '').trim();
+    const tipo = String(movement.origenTipo ?? '');
+    if (tipo === 'cuenta_pagar' && concepto.includes(' · ')) {
+      const first = concepto.split(' · ')[0]?.trim();
+      if (first) return first;
+    }
+    if (tipo === 'colaborador_pago') {
+      return concepto.replace(/^Pago colaborador · /i, '').split(' · ')[0]?.trim() || concepto;
+    }
+    return this.getMovementConceptoDisplay(movement);
   }
 
   getOrigenLabel(movement: CashMovement): string {
@@ -964,6 +1074,7 @@ export class CashComponent implements OnInit, OnDestroy {
       return;
     }
     this.editingMovementId = null;
+    this.movementViewOnly = false;
     this.movementTipo = tipo;
     this.movementConcepto = '';
     this.movementDescripcion = '';
@@ -1089,12 +1200,12 @@ export class CashComponent implements OnInit, OnDestroy {
   selectMovementAmbito(ambitoId: string, event?: Event) {
     event?.preventDefault();
     event?.stopPropagation();
-    if (this.movementAmbito === ambitoId) return;
+    if (this.movementFormDisabled || this.movementAmbito === ambitoId) return;
     this.movementAmbito = ambitoId;
   }
 
   setMovementTipo(tipo: 'ingreso' | 'egreso') {
-    if (this.movementTipo === tipo) return;
+    if (this.movementFormDisabled || this.movementTipo === tipo) return;
     this.movementTipo = tipo;
     if (this.movementConcepto.trim()) {
       const stillValid = this.conceptOptions.some(
@@ -1118,6 +1229,7 @@ export class CashComponent implements OnInit, OnDestroy {
 
   private openMovementFromTemplate(movement: CashMovement) {
     this.editingMovementId = null;
+    this.movementViewOnly = false;
     this.movementTipo = movement.tipo;
     this.movementConcepto = movement.concepto ?? '';
     this.movementDescripcion = movement.descripcion ?? '';
@@ -1146,6 +1258,7 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private prepareNextMovementEntry() {
+    this.movementSaveFeedback.clearSuccess();
     this.movementConcepto = '';
     this.movementDescripcion = '';
     this.movementFecha = todayDateInputValue();
@@ -1159,22 +1272,34 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   onMovementRowClick(movement: CashMovement) {
-    if (!this.auth.canEditRecords) return;
-    this.openEditMovement(movement);
+    if (!movement.id) return;
+    this.openMovementDetail(movement);
   }
 
   openEditMovement(movement: CashMovement) {
     if (!movement.id) return;
+    this.populateMovementForm(movement);
+    this.movementViewOnly = false;
+    this.movementSaveHint = null;
+    this.movementModalOpen = true;
+  }
 
-    if (!this.isManualMovement(movement)) {
-      this.dialogService.alert({
-        title: 'Movimiento automático',
-        message: 'Este movimiento se generó desde un pedido o venta. Para modificarlo, usá el enlace del pedido en el concepto.',
-      });
-      return;
-    }
+  openMovementDetail(movement: CashMovement) {
+    if (!movement.id) return;
+    this.populateMovementForm(movement);
+    this.movementViewOnly = true;
+    this.movementSaveHint = null;
+    this.movementModalOpen = true;
+  }
 
-    this.editingMovementId = movement.id;
+  enableMovementEditFromDetail() {
+    if (!this.canEditFromDetail) return;
+    this.movementViewOnly = false;
+    this.movementSaveHint = null;
+  }
+
+  private populateMovementForm(movement: CashMovement) {
+    this.editingMovementId = movement.id ?? null;
     this.movementTipo = movement.tipo;
     this.movementConcepto = movement.concepto ?? '';
     this.movementDescripcion = movement.descripcion ?? '';
@@ -1183,15 +1308,16 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementMonto = Number(movement.monto) || null;
     this.movementMedio = movement.medio || 'efectivo';
     this.movementAmbito = resolveCashAmbito(movement, this.appConfig);
-    this.movementSaveHint = null;
-    this.movementModalOpen = true;
   }
 
   closeMovementModal() {
     this.movementModalOpen = false;
+    this.movementViewOnly = false;
     this.editingMovementId = null;
     this.movementSaveHint = null;
     this.movementSessionSavedCount = 0;
+    this.movementSaveFeedback.clearSuccess();
+    this.movementSaveFeedback.endSave();
   }
 
   confirmDeleteEditingMovement(): void {
@@ -1313,11 +1439,13 @@ export class CashComponent implements OnInit, OnDestroy {
       this.showEditPermissionAlert();
       return;
     }
+    if (!this.movementSaveFeedback.tryBeginSave()) return;
 
     const monto = Number(this.movementMonto);
     const concepto = this.movementConcepto.trim();
 
     if (!concepto) {
+      this.movementSaveFeedback.endSave();
       this.dialogService.alert({
         title: 'Campo requerido',
         message: 'Ingresá un concepto.',
@@ -1326,6 +1454,7 @@ export class CashComponent implements OnInit, OnDestroy {
     }
 
     if (!monto || monto <= 0) {
+      this.movementSaveFeedback.endSave();
       this.dialogService.alert({
         title: 'Campo requerido',
         message: 'Ingresá un monto válido.',
@@ -1350,7 +1479,6 @@ export class CashComponent implements OnInit, OnDestroy {
       ...(this.usesAmbitoSeparation ? { ambito: this.movementAmbito } : {}),
     };
 
-    this.savingMovement = true;
     const request = this.editingMovementId
       ? this.cashService.updateMovement(this.editingMovementId, payload)
       : this.cashService.createMovement(payload);
@@ -1363,10 +1491,8 @@ export class CashComponent implements OnInit, OnDestroy {
       ? this.movementAmbito
       : getDefaultCashAmbitoId(this.appConfig);
 
-    request.subscribe({
+    request.pipe(finalize(() => this.movementSaveFeedback.endSave())).subscribe({
       next: (result) => {
-        this.savingMovement = false;
-
         if (previousMovement) {
           this.applySummaryMovement(
             previousMovement.tipo,
@@ -1377,10 +1503,14 @@ export class CashComponent implements OnInit, OnDestroy {
         }
 
         const movementId = editingId ?? result.id;
-        const localMovement = this.buildLocalMovement(movementId, {
-          ...payload,
-          ambito: ambitoForPayload,
-        });
+        const localMovement = this.buildLocalMovement(
+          movementId,
+          {
+            ...payload,
+            ambito: ambitoForPayload,
+          },
+          previousMovement?.createdAt
+        );
         this.upsertLocalMovement(localMovement);
         this.applySummaryMovement(
           payload.tipo,
@@ -1393,14 +1523,18 @@ export class CashComponent implements OnInit, OnDestroy {
         this.loadCashSummary();
 
         if (editingId) {
-          this.closeMovementModal();
+          this.editingMovementId = movementId;
+          this.movementSaveFeedback.showSuccess('Movimiento actualizado');
           return;
         }
+
+        this.movementSaveFeedback.showSuccess(
+          payload.tipo === 'egreso' ? 'Egreso registrado' : 'Ingreso registrado'
+        );
         this.movementSessionSavedCount += 1;
         this.prepareNextMovementEntry();
       },
       error: (err) => {
-        this.savingMovement = false;
         this.dialogService.alert({
           title: 'Error',
           message:
@@ -1412,6 +1546,15 @@ export class CashComponent implements OnInit, OnDestroy {
         });
       },
     });
+  }
+
+  reloadList() {
+    this.movementsPage = 1;
+    this.nextMovementsCursor = null;
+    this.hasMoreMovements = false;
+    this.loadingMoreMovements = false;
+    this.reloadMovements();
+    this.loadCashSummary();
   }
 
   private loadCashSummary() {
@@ -1441,7 +1584,7 @@ export class CashComponent implements OnInit, OnDestroy {
     this.nextMovementsCursor = null;
     this.cashService.getMovements().subscribe({
       next: (items) => {
-        this.movements = items;
+        this.movements = sortCashMovementsByRecency(items);
         if (showLoading) this.loading = false;
       },
       error: () => {
@@ -1460,7 +1603,7 @@ export class CashComponent implements OnInit, OnDestroy {
     if (showLoading) this.loading = true;
     this.cashService.getMovementsPage(120).subscribe({
       next: (page) => {
-        this.movements = page.items;
+        this.movements = sortCashMovementsByRecency(page.items);
         this.hasMoreMovements = page.hasMore;
         this.nextMovementsCursor = page.nextCursor;
         if (showLoading) this.loading = false;
@@ -1492,7 +1635,8 @@ export class CashComponent implements OnInit, OnDestroy {
       fecha?: string;
       ambito?: string;
       categoriaId?: string | null;
-    }
+    },
+    createdAt?: string
   ): CashMovement {
     const ambito = payload.ambito ?? getDefaultCashAmbitoId(this.appConfig);
     const descripcion = payload.descripcion?.trim() || undefined;
@@ -1506,6 +1650,7 @@ export class CashComponent implements OnInit, OnDestroy {
       ...(descripcion ? { descripcion } : {}),
       categoriaId: payload.categoriaId ?? null,
       fecha: fechaIso,
+      createdAt: createdAt ?? new Date().toISOString(),
       ambito,
       origenGrupo: 'manual',
       origenTipo: payload.tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
@@ -1515,7 +1660,7 @@ export class CashComponent implements OnInit, OnDestroy {
   private upsertLocalMovement(movement: CashMovement) {
     if (!movement.id) return;
     const without = this.movements.filter((item) => item.id !== movement.id);
-    this.movements = [movement, ...without];
+    this.movements = sortCashMovementsByRecency([movement, ...without]);
     this.movementsPage = 1;
   }
 
@@ -1561,7 +1706,10 @@ export class CashComponent implements OnInit, OnDestroy {
     this.loadingMoreMovements = true;
     this.cashService.getMovementsPage(120, this.nextMovementsCursor).subscribe({
       next: (page) => {
-        this.movements = [...this.movements, ...page.items];
+        this.movements = sortCashMovementsByRecency([
+          ...this.movements,
+          ...page.items,
+        ]);
         this.hasMoreMovements = page.hasMore;
         this.nextMovementsCursor = page.nextCursor;
         this.loadingMoreMovements = false;

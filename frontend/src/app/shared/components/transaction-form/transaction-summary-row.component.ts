@@ -31,7 +31,7 @@ export class TransactionSummaryRowComponent {
   @Input() bold = false;
   @Input() divider = false;
   @Input() size: 'sm' | 'md' = 'sm';
-  @Input() darkContext = true;
+  @Input() darkContext = false;
   @Input() valueTone: 'default' | 'teal' | 'orange' | 'green' = 'default';
 
   get labelClass(): string {

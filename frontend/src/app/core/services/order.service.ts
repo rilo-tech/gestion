@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 import { TenantService } from './tenant.service';
 
 export interface OrderExtraCost {
@@ -264,22 +264,53 @@ export class OrderService {
   private http = inject(HttpClient);
   private tenant = inject(TenantService);
 
+  /**
+   * Caché en memoria de pedidos ya vistos (listados o abiertos). Permite que el
+   * formulario muestre los datos al instante mientras revalida contra el backend,
+   * evitando que los campos queden en blanco unos segundos al entrar al pedido.
+   */
+  private orderCache = new Map<string, Order>();
+
   private get businessId(): string {
     return this.tenant.businessId;
   }
 
+  private cacheKey(orderId: string): string {
+    return `${this.businessId}/${orderId}`;
+  }
+
+  private cacheOrder(order: Order | null | undefined): void {
+    if (!order?.id) return;
+    this.orderCache.set(this.cacheKey(order.id), order);
+  }
+
+  private cacheOrders(orders: Array<Order | null | undefined>): void {
+    for (const order of orders) this.cacheOrder(order);
+  }
+
+  /** Devuelve el último pedido conocido (sin pegarle al backend), o null. */
+  getCachedOrder(orderId: string): Order | null {
+    return this.orderCache.get(this.cacheKey(orderId)) ?? null;
+  }
+
   getOrders(): Observable<Order[]> {
-    return this.http.get<Order[]>(`/api/orders/${this.businessId}`);
+    return this.http
+      .get<Order[]>(`/api/orders/${this.businessId}`)
+      .pipe(tap((orders) => this.cacheOrders(orders)));
   }
 
   getOrdersPage(limit = 120, cursor?: string): Observable<PaginatedResponse<Order>> {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
-    return this.http.get<PaginatedResponse<Order>>(`/api/orders/${this.businessId}`, { params });
+    return this.http
+      .get<PaginatedResponse<Order>>(`/api/orders/${this.businessId}`, { params })
+      .pipe(tap((page) => this.cacheOrders(page?.items ?? [])));
   }
 
   getOrder(orderId: string): Observable<Order> {
-    return this.http.get<Order>(`/api/orders/${this.businessId}/${orderId}`);
+    return this.http
+      .get<Order>(`/api/orders/${this.businessId}/${orderId}`)
+      .pipe(tap((order) => this.cacheOrder(order)));
   }
 
   createOrder(order: Order): Observable<{ id: string }> {
@@ -314,9 +345,9 @@ export class OrderService {
   }
 
   deleteOrder(orderId: string): Observable<{ id: string; estado: string }> {
-    return this.http.delete<{ id: string; estado: string }>(
-      `/api/orders/${this.businessId}/${orderId}`
-    );
+    return this.http
+      .delete<{ id: string; estado: string }>(`/api/orders/${this.businessId}/${orderId}`)
+      .pipe(tap(() => this.orderCache.delete(this.cacheKey(orderId))));
   }
 
   addOrderPayment(

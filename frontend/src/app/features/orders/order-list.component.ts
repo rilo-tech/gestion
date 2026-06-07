@@ -1,4 +1,4 @@
-import { Component, inject, OnDestroy, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnDestroy, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { OrderService, Order, formatOrderNumber, resolveOrderBalance } from '../../core/services/order.service';
@@ -23,6 +23,7 @@ import type { OrderEstadoConfig } from '../../core/constants/order-config';
 import {
   getOrderStockStatusBadgeClass,
   getOrderStockStatusLabel,
+  getOrderStockStatusShortLabel,
 } from '../../core/constants/order-stock-status';
 import {
   ICON_ACTION_LINK_CLASS,
@@ -49,8 +50,14 @@ import { CompactDataListComponent } from '../../shared/components/compact-list/c
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
+
+/** Página chica para el primer render (carga percibida rápida). */
+const ORDER_LIST_FIRST_PAGE_SIZE = 40;
+/** Páginas grandes para completar el resto en segundo plano (menos round-trips). */
+const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
 
 @Component({
   selector: 'app-orders',
@@ -65,7 +72,10 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
         [searchQuery]="searchQuery"
         (searchQueryChange)="onSearchQueryChange($event)"
         searchFieldName="ordersSearchQueryMobile"
-        activityModule="orders">
+        activityModule="orders"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <a
           headerActions
           routerLink="/orders/new"
@@ -239,17 +249,19 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
                 {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div class="flex flex-wrap items-center gap-1.5">
+                <div class="flex items-center gap-1 flex-nowrap">
                   <span
-                    class="inline-flex px-2.5 py-1 rounded-lg text-xs font-semibold"
+                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold"
+                    [title]="getOrderStatusLabelFor(order.estado)"
                     [ngClass]="getOrderStatusBadgeClass(order.estado)">
-                    {{ getOrderStatusLabelFor(order.estado) }}
+                    {{ getOrderStatusListLabel(order.estado) }}
                   </span>
                   <span
                     *ngIf="order.stockPreparado || order.estadoStock"
-                    class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold border"
+                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold border"
+                    [title]="getOrderStockStatusLabel(order.estadoStock)"
                     [ngClass]="getOrderStockStatusBadgeClass(order.estadoStock)">
-                    {{ getOrderStockStatusLabel(order.estadoStock) }}
+                    {{ getOrderStockStatusShortLabel(order.estadoStock) }}
                   </span>
                 </div>
               </td>
@@ -273,11 +285,13 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
                   [showPrint]="auth.canPrintOrders"
                   [printLoading]="printingOrderId === order.id"
                   (printClick)="printOrder(order)"
-                  [showRegisterSale]="auth.canCreateSales && canRegisterSale(order)"
-                  (registerSaleClick)="registerSaleFromOrder(order)"
-                  [showDelete]="!isCancelledOrder(order) && auth.canEditRecords"
+                  [showDelete]="auth.canEditRecords"
+                  [deleteDisabled]="isCancelledOrder(order)"
                   deleteLabel="Cancelar pedido"
-                  (deleteClick)="confirmCancelOrder(order)">
+                  (deleteClick)="confirmCancelOrder(order)"
+                  [showRegisterSale]="auth.canCreateSales"
+                  [registerSaleDisabled]="!canRegisterSale(order)"
+                  (registerSaleClick)="registerSaleFromOrder(order)">
                 </app-list-row-actions>
               </td>
             </tr>
@@ -341,12 +355,21 @@ export class OrderListComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private cdr = inject(ChangeDetectorRef);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
 
   readonly getOrderStatusBadgeClass = getOrderStatusBadgeClass;
   getOrderStatusLabelFor(estado?: string): string {
     return getOrderStatusLabel(estado, this.appConfig.pedidos);
+  }
+  /** Etiqueta compacta para la grilla (evita que los badges salten de línea). */
+  getOrderStatusListLabel(estado?: string): string {
+    const normalized = normalizeOrderStatus(estado, this.appConfig.pedidos);
+    if (normalized === 'entregado') return 'Entregado';
+    if (normalized === 'entregado_con_saldo') return 'Entr. c/saldo';
+    return this.getOrderStatusLabelFor(estado);
   }
   getOrderEstadoCardLabel(value: string): string {
     return getOrderStatusLabelFromConfig(value, this.appConfig.pedidos);
@@ -357,6 +380,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
   readonly getOrderStatusCardValueClass = getOrderStatusCardValueClass;
   readonly canRegisterSale = canRegisterSaleFromOrder;
   readonly getOrderStockStatusLabel = getOrderStockStatusLabel;
+  readonly getOrderStockStatusShortLabel = getOrderStockStatusShortLabel;
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
 
   orders: Order[] = [];
@@ -377,6 +401,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
   statusCounts: Record<string, number> = {};
 
   private searchDebounce?: ReturnType<typeof setTimeout>;
+  private backgroundLoadToken = 0;
 
   get statusCardEstados(): OrderEstadoConfig[] {
     return getOrderStatusCardEstados(this.appConfig.pedidos).filter((card) =>
@@ -590,6 +615,13 @@ export class OrderListComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/orders',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.catalogConfigService.getAppConfig().subscribe((config) => {
       this.appConfig = config;
       this.rebuildDisplayOrders();
@@ -603,40 +635,47 @@ export class OrderListComponent implements OnInit, OnDestroy {
       this.rebuildDisplayOrders();
     });
 
-    this.orderService.getOrdersPage(120).subscribe({
-      next: (ordersPage) => {
-        this.orders = ordersPage.items;
-        this.ordersHasMore = ordersPage.hasMore;
-        this.ordersNextCursor = ordersPage.nextCursor;
-        this.loading = false;
-        this.rebuildDisplayOrders();
-      },
-      error: () => {
-        this.orders = [];
-        this.ordersHasMore = false;
-        this.ordersNextCursor = null;
-        this.loading = false;
-        this.rebuildDisplayOrders();
-      },
-    });
+    this.fetchOrders();
   }
 
   ngOnDestroy() {
     clearTimeout(this.searchDebounce);
   }
 
+  reloadList() {
+    this.ordersPage = 1;
+    this.ordersNextCursor = null;
+    this.ordersHasMore = false;
+    this.loadingMore = false;
+    this.loadOrders();
+  }
+
   loadOrders() {
+    this.fetchOrders();
+  }
+
+  /**
+   * Primer pintado rápido con una página chica y luego completa el resto en
+   * segundo plano para que el buscador y los contadores cubran todo el historial.
+   */
+  private fetchOrders() {
     this.loading = true;
+    this.backgroundLoadToken += 1;
+    const token = this.backgroundLoadToken;
     this.cdr.markForCheck();
-    this.orderService.getOrdersPage(120).subscribe({
+
+    this.orderService.getOrdersPage(ORDER_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
+        if (token !== this.backgroundLoadToken) return;
         this.orders = page.items;
         this.ordersHasMore = page.hasMore;
         this.ordersNextCursor = page.nextCursor;
         this.loading = false;
         this.rebuildDisplayOrders();
+        this.loadRemainingOrdersInBackground(token);
       },
       error: () => {
+        if (token !== this.backgroundLoadToken) return;
         this.orders = [];
         this.ordersHasMore = false;
         this.ordersNextCursor = null;
@@ -646,22 +685,45 @@ export class OrderListComponent implements OnInit, OnDestroy {
     });
   }
 
+  private loadRemainingOrdersInBackground(token: number) {
+    if (token !== this.backgroundLoadToken) return;
+    if (!this.ordersHasMore || !this.ordersNextCursor) return;
+
+    this.orderService
+      .getOrdersPage(ORDER_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
+      .subscribe({
+        next: (page) => {
+          if (token !== this.backgroundLoadToken) return;
+          this.orders = [...this.orders, ...page.items];
+          this.ordersHasMore = page.hasMore;
+          this.ordersNextCursor = page.nextCursor;
+          this.rebuildDisplayOrders();
+          this.loadRemainingOrdersInBackground(token);
+        },
+        error: () => {
+          // Mantenemos lo cargado; el botón «cargar más» queda como respaldo.
+        },
+      });
+  }
+
   loadMoreOrders() {
     if (!this.ordersHasMore || !this.ordersNextCursor || this.loadingMore || this.loading) return;
     this.loadingMore = true;
-    this.orderService.getOrdersPage(120, this.ordersNextCursor).subscribe({
-      next: (page) => {
-        this.orders = [...this.orders, ...page.items];
-        this.ordersHasMore = page.hasMore;
-        this.ordersNextCursor = page.nextCursor;
-        this.loadingMore = false;
-        this.rebuildDisplayOrders();
-      },
-      error: () => {
-        this.loadingMore = false;
-        this.cdr.markForCheck();
-      },
-    });
+    this.orderService
+      .getOrdersPage(ORDER_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
+      .subscribe({
+        next: (page) => {
+          this.orders = [...this.orders, ...page.items];
+          this.ordersHasMore = page.hasMore;
+          this.ordersNextCursor = page.nextCursor;
+          this.loadingMore = false;
+          this.rebuildDisplayOrders();
+        },
+        error: () => {
+          this.loadingMore = false;
+          this.cdr.markForCheck();
+        },
+      });
   }
 
   getClientName(order: Order): string {
@@ -687,26 +749,15 @@ export class OrderListComponent implements OnInit, OnDestroy {
       order.clienteNombre?.trim() ||
       (clientName !== 'Cliente sin nombre' ? clientName : undefined);
 
-    this.orderService.getOrder(order.id).subscribe({
-      next: (fullOrder) => {
-        const orderPreview: Order = {
-          ...fullOrder,
-          clienteNombre: fullOrder.clienteNombre?.trim() || clienteNombre,
-        };
-        this.router.navigate(['/orders', order.id, 'edit'], {
-          state: { orderPreview },
-        });
-      },
-      error: () => {
-        this.router.navigate(['/orders', order.id, 'edit'], {
-          state: {
-            orderPreview: {
-              ...order,
-              clienteNombre,
-              items: [],
-            },
-          },
-        });
+    // Navegamos al instante con los datos que ya tenemos del listado (cabecera y,
+    // si vinieron en la página, los ítems). El formulario revalida con getOrder en
+    // segundo plano, así que evitamos la espera previa que dejaba los campos vacíos.
+    this.router.navigate(['/orders', order.id, 'edit'], {
+      state: {
+        orderPreview: {
+          ...order,
+          clienteNombre: order.clienteNombre?.trim() || clienteNombre,
+        },
       },
     });
   }

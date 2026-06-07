@@ -22,7 +22,7 @@ import {
   listStockShortages,
   ensureStockReservationsSynced,
   reconcileOrderStockFromProductReservations,
-  autoReserveIncomingStockForProduct,
+  syncPendingOrdersAfterStockChange,
 } from '../utils/order-stock-reservations.ts';
 import {
   getStockMetrics,
@@ -176,7 +176,7 @@ router.post('/:businessId', async (req, res) => {
         usuarioId: 'admin',
         negocioId: businessId,
       });
-      await autoReserveIncomingStockForProduct(businessId, docRef.id);
+      await syncPendingOrdersAfterStockChange(businessId, [docRef.id]);
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -624,12 +624,9 @@ router.put('/:businessId/:itemId', async (req, res) => {
 
     const previousStock = Number(existingData.stockActual) || 0;
     const controlsStock = productControlsStock(itemData);
-    const requestedStock = controlsStock ? Number(itemData.stockActual) || 0 : 0;
-    const nextStock = controlsStock
-      ? previousStock > 0
-        ? previousStock
-        : requestedStock
-      : 0;
+    const requestedStock = controlsStock ? Math.max(0, Number(itemData.stockActual) || 0) : 0;
+    const nextStock = controlsStock ? requestedStock : 0;
+    const stockDelta = nextStock - previousStock;
 
     await itemRef.update({
       ...itemData,
@@ -651,8 +648,22 @@ router.put('/:businessId/:itemId', async (req, res) => {
       );
     }
 
-    if (controlsStock && previousStock <= 0 && nextStock > 0) {
-      await autoReserveIncomingStockForProduct(businessId, itemId);
+    if (controlsStock && stockDelta !== 0) {
+      await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+        productoId: itemId,
+        tipo: stockDelta > 0 ? 'entrada' : 'salida',
+        cantidad: Math.abs(stockDelta),
+        fecha: new Date().toISOString(),
+        motivo: 'Ajuste por edición de producto',
+        origenGrupo: 'ajuste',
+        origenTipo: 'edicion_producto',
+        usuarioId: 'admin',
+        negocioId: businessId,
+      });
+    }
+
+    if (controlsStock && stockDelta > 0) {
+      await syncPendingOrdersAfterStockChange(businessId, [itemId]);
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -701,7 +712,7 @@ router.patch('/:businessId/:itemId', async (req, res) => {
       negocioId: businessId,
     });
     if (quantity > 0) {
-      await autoReserveIncomingStockForProduct(businessId, itemId);
+      await syncPendingOrdersAfterStockChange(businessId, [itemId]);
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {

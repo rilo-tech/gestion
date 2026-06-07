@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
+import type { ComprobanteTipoId } from '../../../../../shared/comprobantes-config.ts';
 
 export interface SaleLineExtraCost {
   nombre: string;
@@ -25,6 +26,7 @@ export interface Sale {
   numeroVenta?: number;
   ventaLabel?: string;
   origen: 'mostrador' | 'pedido';
+  tipoComprobante?: ComprobanteTipoId;
   pedidoId?: string | null;
   numeroPedidoLabel?: string | null;
   pedidoDescripcion?: string | null;
@@ -96,6 +98,7 @@ export interface CreateSalePayload {
   medioPago?: string;
   notas?: string;
   fecha?: string;
+  tipoComprobante?: ComprobanteTipoId;
   compromisoPago?: CompromisoPagoPayload;
   draft?: boolean;
   ventaId?: string;
@@ -116,6 +119,7 @@ export interface UpdateSalePayload {
   medioPago?: string;
   notas?: string;
   fecha?: string;
+  tipoComprobante?: ComprobanteTipoId;
 }
 
 export interface PaginatedSales {
@@ -151,6 +155,7 @@ export class SalesService {
     count: number;
     totalFacturado: number;
     totalGanancia: number;
+    bonificacionOfertas?: number;
   }> {
     const params = new URLSearchParams({
       mes: String(mes),
@@ -162,6 +167,7 @@ export class SalesService {
       count: number;
       totalFacturado: number;
       totalGanancia: number;
+      bonificacionOfertas?: number;
     }>(`/api/sales/${this.businessId}/monthly-summary?${params}`);
   }
 

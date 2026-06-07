@@ -1,12 +1,11 @@
-import { Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import {
-  CreatePayableObligationPayload,
   PayableDisplayEstado,
   PayableInstallment,
   PayableObligation,
-  PayableTipo,
   PayablesService,
   CardStatementSummary,
 } from '../../core/services/payables.service';
@@ -28,21 +27,28 @@ import {
   usesCashAmbitoSeparation,
 } from '../../core/services/catalog-config.service';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import {
   IconActionComponent,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
   DESKTOP_LIST_SEARCH_WRAP_CLASS,
+  LIST_TOOLBAR_CONTROL_HEIGHT,
 } from '../../shared/components/icon-action/icon-action.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
+  EXPANDED_NESTED_WRAP_CLASS,
+  EXPANDED_NESTED_WRAP_LEVEL2_CLASS,
   MODULE_TABLE_HEAD_CELL_NESTED_CLASS,
   NATIVE_COMPACT_LIST_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
-import { ModalFormFooterComponent } from '../../shared/components/modal-form-footer/modal-form-footer.component';
 import { LucideAngularModule } from 'lucide-angular';
-import { Subscription } from 'rxjs';
+import { Subscription, finalize } from 'rxjs';
+import {
+  TransactionSaveBannerComponent,
+  TransactionSaveFeedback,
+} from '../../shared/components/transaction-form';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
@@ -59,8 +65,10 @@ import {
   ModuleTableRowTone,
 } from '../../shared/components/module-data-table';
 import { formatMonthYearLabel } from '../../core/utils/date-format';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import { formatDisplayDate } from '../../core/utils/transaction-date';
 
-type PayablesViewTab = 'month' | 'account';
+type PayablesViewTab = 'month' | 'account' | 'obligation';
 
 interface PayableInstallmentGroupSummary {
   count: number;
@@ -105,19 +113,19 @@ interface PayableAccountCardEntry {
   monthStatements: PayableAccountMonthStatement[];
 }
 
-interface ObligationPreset {
-  id: string;
-  label: string;
+interface PayableObligationGroupHeader extends PayableInstallmentGroupSummary {
+  obligacionId: string;
   beneficiario: string;
-  tipo: PayableTipo;
-  categoriaId?: string;
+  cuotaTotal: number;
+  paidCount: number;
+  isPrestamo: boolean;
 }
 
-const OBLIGATION_PRESETS: ObligationPreset[] = [
-  { id: 'vps', label: 'VPS / hosting', beneficiario: 'VPS / Hosting', tipo: 'mensual', categoriaId: 'servicios_cloud' },
-  { id: 'luz', label: 'Luz / agua', beneficiario: 'Servicios públicos', tipo: 'mensual', categoriaId: 'servicios_publicos' },
-  { id: 'alquiler', label: 'Alquiler', beneficiario: 'Alquiler', tipo: 'mensual', categoriaId: 'alquiler' },
-];
+interface PayableObligationGroupEntry {
+  key: string;
+  header: PayableObligationGroupHeader;
+  rows: PayableInstallment[];
+}
 
 @Component({
   selector: 'app-payables',
@@ -141,6 +149,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
     ModuleTableCellComponent,
     ModuleTableCellTextComponent,
     ModuleTableEmptyRowComponent,
+    TransactionSaveBannerComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -150,17 +159,67 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
         [searchQuery]="searchQuery"
         (searchQueryChange)="onSearchQueryChange($event)"
         searchFieldName="searchQueryMobile"
-        activityModule="payables">
-        <p headerExtra class="hidden sm:block text-xs text-gray-500 dark:text-gray-400 mt-1 leading-snug max-w-3xl">
+        activityModule="payables"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
+        <p
+          headerExtra
+          class="hidden lg:block text-[11px] xl:text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-tight max-w-2xl">
           <span class="font-semibold text-gray-600 dark:text-gray-300">Aviso:</span>
           <span>
-            en <span class="font-medium">Por mes</span> pagás cuota por cuota; en <span class="font-medium">Por cuenta</span> expandí la tarjeta para ver compras y, al elegir una, sus cuotas, o usá
-            <span class="font-medium">Pagar resumen</span> en cada tarjeta.
+            Las compras (también las de tarjeta) entran por <span class="font-medium">Compras</span> y siempre van al ámbito <span class="font-medium">Rilo</span>.
+            Si es una compra personal, registrala acá con <span class="font-medium">Nuevo gasto</span> y elegí el ámbito <span class="font-medium">Personal</span>.
+            En <span class="font-medium">Por mes</span> ves vencimientos del mes (gastos fijos, servicios y cuotas);
+            en <span class="font-medium">Por cuenta</span>, tarjetas y resúmenes; en
+            <span class="font-medium">Préstamos</span>, solo los creados con «Nuevo préstamo».
           </span>
         </p>
-        <app-icon-action headerActions label="Nuevo gasto fijo" (clicked)="openCreateModal()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <div headerActions class="hidden sm:contents">
+          <app-icon-action label="Nuevo préstamo" (clicked)="openLoanModal()">
+            <i-lucide name="credit-card" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <app-icon-action label="Nuevo gasto" (clicked)="openCreateModal()">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </div>
+        <div headerActions class="relative shrink-0 sm:hidden">
+          <button
+            type="button"
+            (click)="togglePayablesCreateMenu($event)"
+            [attr.aria-expanded]="payablesCreateMenuOpen"
+            aria-haspopup="menu"
+            aria-label="Nuevo préstamo o gasto"
+            [class]="payablesCreateMenuButtonClass">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </button>
+          <div
+            *ngIf="payablesCreateMenuOpen"
+            class="fixed inset-0 z-10"
+            aria-hidden="true"
+            (click)="closePayablesCreateMenu()"></div>
+          <div
+            *ngIf="payablesCreateMenuOpen"
+            role="menu"
+            class="absolute right-0 top-full z-20 mt-1 min-w-[10.5rem] overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1 shadow-lg">
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openLoanFromMenu()"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="credit-card" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Préstamo
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openExpenseFromMenu()"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="receipt" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Gasto
+            </button>
+          </div>
+        </div>
       </app-module-page-header>
 
       <div *ngIf="usesAmbitoSeparation" class="hidden sm:block mb-6 sm:mb-8">
@@ -173,6 +232,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
             [class.border-teal-600]="activeAmbitoTab === ambito.id"
             [class.text-teal-700]="activeAmbitoTab === ambito.id"
             [class.dark:text-teal-400]="activeAmbitoTab === ambito.id"
+            [class.bg-teal-50]="activeAmbitoTab === ambito.id"
+            [class.dark:bg-teal-950]="activeAmbitoTab === ambito.id"
             [class.border-transparent]="activeAmbitoTab !== ambito.id"
             [class.text-gray-500]="activeAmbitoTab !== ambito.id"
             [class.dark:text-gray-400]="activeAmbitoTab !== ambito.id">
@@ -204,7 +265,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ kpiScopePrefix }}Total pendiente
           </p>
-          <p class="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums">{{ '$' + totalPendiente }}</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums">{{ formatMoney(totalPendiente) }}</p>
         </div>
       </div>
 
@@ -222,6 +283,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                 [class.border-teal-600]="activeAmbitoTab === ambito.id"
                 [class.text-teal-700]="activeAmbitoTab === ambito.id"
                 [class.dark:text-teal-400]="activeAmbitoTab === ambito.id"
+                [class.bg-teal-50]="activeAmbitoTab === ambito.id"
+                [class.dark:bg-teal-950]="activeAmbitoTab === ambito.id"
                 [class.border-transparent]="activeAmbitoTab !== ambito.id"
                 [class.text-gray-500]="activeAmbitoTab !== ambito.id"
                 [class.dark:text-gray-400]="activeAmbitoTab !== ambito.id">
@@ -236,6 +299,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                 [class.border-teal-600]="viewTab === 'month'"
                 [class.text-teal-700]="viewTab === 'month'"
                 [class.dark:text-teal-400]="viewTab === 'month'"
+                [class.bg-teal-50]="viewTab === 'month'"
+                [class.dark:bg-teal-950]="viewTab === 'month'"
                 [class.border-transparent]="viewTab !== 'month'"
                 [class.text-gray-500]="viewTab !== 'month'"
                 [class.dark:text-gray-400]="viewTab !== 'month'">
@@ -248,16 +313,32 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                 [class.border-teal-600]="viewTab === 'account'"
                 [class.text-teal-700]="viewTab === 'account'"
                 [class.dark:text-teal-400]="viewTab === 'account'"
+                [class.bg-teal-50]="viewTab === 'account'"
+                [class.dark:bg-teal-950]="viewTab === 'account'"
                 [class.border-transparent]="viewTab !== 'account'"
                 [class.text-gray-500]="viewTab !== 'account'"
                 [class.dark:text-gray-400]="viewTab !== 'account'">
                 Por cuenta
               </button>
+              <button
+                type="button"
+                (click)="setViewTab('obligation')"
+                [class]="payablesTabButtonClass"
+                [class.border-teal-600]="viewTab === 'obligation'"
+                [class.text-teal-700]="viewTab === 'obligation'"
+                [class.dark:text-teal-400]="viewTab === 'obligation'"
+                [class.bg-teal-50]="viewTab === 'obligation'"
+                [class.dark:bg-teal-950]="viewTab === 'obligation'"
+                [class.border-transparent]="viewTab !== 'obligation'"
+                [class.text-gray-500]="viewTab !== 'obligation'"
+                [class.dark:text-gray-400]="viewTab !== 'obligation'">
+                Préstamos
+              </button>
             </div>
           </div>
           <div class="sm:hidden px-2 py-2 border-b border-gray-100 dark:border-gray-800">
             <label class="block text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">
-              {{ viewTab === 'month' ? 'Mes' : 'Cuenta' }}
+              {{ viewTab === 'month' ? 'Mes' : (viewTab === 'account' ? 'Cuenta' : 'Prestamista') }}
             </label>
             <input
               *ngIf="viewTab === 'month'"
@@ -265,7 +346,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
               [(ngModel)]="mesFilter"
               name="mesFilterMobile"
               (ngModelChange)="onMesFilterChange()"
-              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500"
+              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               title="Mes de vencimiento" />
             <select
               *ngIf="viewTab === 'account'"
@@ -276,6 +357,15 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
               <option [ngValue]="''">Todas las cuentas</option>
               <option *ngFor="let t of tarjetaFilterOptions" [ngValue]="t.id">{{ t.label }}</option>
             </select>
+            <select
+              *ngIf="viewTab === 'obligation'"
+              [(ngModel)]="obligacionFilter"
+              (ngModelChange)="onObligacionFilterChange()"
+              name="obligacionFilterMobile"
+              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+              <option [ngValue]="''">Todos los préstamos</option>
+              <option *ngFor="let o of obligacionFilterOptions" [ngValue]="o.id">{{ o.label }}</option>
+            </select>
           </div>
           <div [class]="desktopListSearchWrapClass + ' border-0 hidden sm:block'">
             <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
@@ -285,7 +375,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                   [query]="searchQuery"
                   (queryChange)="onSearchQueryChange($event)"
                   name="searchQuery"
-                  [placeholder]="viewTab === 'month' ? 'Buscar cuota, cuenta, compra...' : 'Buscar cuenta o compra...'"
+                  [placeholder]="viewTab === 'month' ? 'Buscar cuota, cuenta, compra...' : (viewTab === 'account' ? 'Buscar cuenta o compra...' : 'Buscar préstamo o cuota...')"
                   extraClass="w-full">
                 </app-list-search-field>
               </div>
@@ -296,7 +386,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                   [(ngModel)]="mesFilter"
                   name="mesFilter"
                   (ngModelChange)="onMesFilterChange()"
-                  class="w-full sm:w-auto min-w-[10.5rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500"
+                  class="w-full sm:w-auto min-w-[10.5rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   title="Mes de vencimiento" />
                 <select
                   *ngIf="viewTab === 'account'"
@@ -307,6 +397,15 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                   <option [ngValue]="''">Todas las cuentas</option>
                   <option *ngFor="let t of tarjetaFilterOptions" [ngValue]="t.id">{{ t.label }}</option>
                 </select>
+                <select
+                  *ngIf="viewTab === 'obligation'"
+                  [(ngModel)]="obligacionFilter"
+                  (ngModelChange)="onObligacionFilterChange()"
+                  name="obligacionFilter"
+                  class="w-full sm:w-auto min-w-[12rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+                  <option [ngValue]="''">Todos los préstamos</option>
+                  <option *ngFor="let o of obligacionFilterOptions" [ngValue]="o.id">{{ o.label }}</option>
+                </select>
               </div>
             </div>
           </div>
@@ -316,22 +415,52 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
           <ng-container *ngIf="viewTab === 'month'">
             <app-compact-list-row
               *ngFor="let row of monthViewInstallments"
-              (activate)="onMobileMonthRowActivate(row)"
-              [disabled]="savingCuotaId === row.id">
-              <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100">
-                {{ installmentCuentaLabel(row) }}
-              </div>
-              <div compactSubtitle class="compact-list-subtitle truncate">
-                {{ formatDate(row.fechaVencimiento) }} · {{ cuotaLabel(row) }} · {{ installmentDetalleLabel(row) }}
-              </div>
-              <div compactTrailing class="flex flex-col items-end gap-0.5 shrink-0">
-                <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ '$' + row.monto }}</span>
+              (activate)="openInstallmentEdit(row)"
+              [disabled]="!canOpenInstallmentEdit(row) || savingCuotaId === row.id">
+              <div compactTitle class="compact-list-title font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5 min-w-0">
+                <span class="truncate min-w-0">{{ installmentCuentaLabel(row) }}</span>
                 <span
-                  class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                  class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
                   [ngClass]="estadoBadgeClass(row.displayEstado)">
                   {{ estadoLabel(row.displayEstado) }}
                 </span>
               </div>
+              <div compactSubtitle class="compact-list-subtitle truncate">
+                {{ formatDate(row.fechaVencimiento) }} · {{ cuotaLabel(row) }} · {{ installmentDetalleLabel(row) }}
+              </div>
+              <span compactTrailing class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 whitespace-nowrap">{{ '$' + row.monto }}</span>
+              <span
+                *ngIf="row.displayEstado !== 'pagada'"
+                compactTrailing
+                role="button"
+                tabindex="0"
+                (click)="togglePaid(row); $event.stopPropagation()"
+                (keydown.enter)="togglePaid(row); $event.stopPropagation()"
+                [class.opacity-50]="savingCuotaId === row.id"
+                class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
+                Pago
+              </span>
+              <span
+                *ngIf="row.displayEstado === 'pagada' && canCorrectPaidCuota(row)"
+                compactTrailing
+                role="button"
+                tabindex="0"
+                (click)="openCorrectPaidCuota(row); $event.stopPropagation()"
+                (keydown.enter)="openCorrectPaidCuota(row); $event.stopPropagation()"
+                class="text-[10px] font-semibold text-amber-700 dark:text-amber-400 hover:underline whitespace-nowrap">
+                Corregir
+              </span>
+              <span
+                *ngIf="row.displayEstado === 'pagada'"
+                compactTrailing
+                role="button"
+                tabindex="0"
+                (click)="togglePaid(row); $event.stopPropagation()"
+                (keydown.enter)="togglePaid(row); $event.stopPropagation()"
+                [class.opacity-50]="savingCuotaId === row.id"
+                class="text-[10px] font-semibold text-gray-500 hover:underline whitespace-nowrap">
+                Deshacer
+              </span>
             </app-compact-list-row>
             <p *ngIf="loading" [class]="compactListEmptyClass">Cargando vencimientos...</p>
             <p *ngIf="!loading && !mesFilter" [class]="compactListEmptyClass">
@@ -378,8 +507,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
               <div
                 *ngIf="isAccountCardExpanded(card.key)"
                 class="border-b border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/30">
-                <ng-container *ngFor="let purchase of card.purchases">
-                  <div class="pl-3 ml-2 border-l-2 border-teal-200/70 dark:border-teal-800/60">
+                <div [class]="expandedNestedWrapClass">
+                  <ng-container *ngFor="let purchase of card.purchases">
                     <app-compact-list-row (activate)="toggleAccountPurchaseExpand(purchase.key)">
                       <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
                         <i-lucide
@@ -397,34 +526,118 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                       </div>
                     </app-compact-list-row>
 
-                    <div *ngIf="isAccountPurchaseExpanded(purchase.key)" class="border-t border-gray-100/80 dark:border-gray-800/80">
+                    <div *ngIf="isAccountPurchaseExpanded(purchase.key)" [class]="expandedNestedWrapLevel2Class">
                       <app-compact-list-row
                         *ngFor="let row of purchase.rows"
-                        (activate)="onMobileMonthRowActivate(row)"
+                        (activate)="onMobileInstallmentActivate(row)"
                         [disabled]="savingCuotaId === row.id">
-                        <div compactTitle class="compact-list-title truncate text-gray-800 dark:text-gray-200 pl-4">
-                          {{ cuotaLabel(row) }} · {{ formatDate(row.fechaVencimiento) }}
-                        </div>
-                        <div compactSubtitle class="compact-list-subtitle truncate capitalize pl-4">
-                          {{ formatMes(installmentMesKey(row)) }}
-                        </div>
-                        <div compactTrailing class="flex flex-col items-end gap-0.5 shrink-0">
-                          <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ '$' + row.monto }}</span>
+                        <div compactTitle class="compact-list-title text-gray-800 dark:text-gray-200 flex items-center gap-1.5 min-w-0">
+                          <span class="truncate min-w-0">{{ cuotaLabel(row) }} · {{ formatDate(row.fechaVencimiento) }}</span>
                           <span
-                            class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                            class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
                             [ngClass]="estadoBadgeClass(row.displayEstado)">
                             {{ estadoLabel(row.displayEstado) }}
                           </span>
                         </div>
+                        <div compactSubtitle class="compact-list-subtitle truncate capitalize">
+                          {{ formatMes(installmentMesKey(row)) }}
+                        </div>
+                        <span compactTrailing class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 whitespace-nowrap">{{ '$' + row.monto }}</span>
+                        <span
+                          *ngIf="row.displayEstado !== 'pagada'"
+                          compactTrailing
+                          role="button"
+                          tabindex="0"
+                          (click)="togglePaid(row); $event.stopPropagation()"
+                          (keydown.enter)="togglePaid(row); $event.stopPropagation()"
+                          [class.opacity-50]="savingCuotaId === row.id"
+                          class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
+                          Pago
+                        </span>
                       </app-compact-list-row>
                     </div>
-                  </div>
-                </ng-container>
+                  </ng-container>
+                </div>
               </div>
             </ng-container>
             <p *ngIf="loading" [class]="compactListEmptyClass">Cargando vencimientos...</p>
             <p *ngIf="!loading && accountViewCards.length === 0" [class]="compactListEmptyClass">
               {{ emptyAccountViewMessage }}
+            </p>
+          </ng-container>
+
+          <ng-container *ngIf="viewTab === 'obligation'">
+            <ng-container *ngFor="let group of obligationViewGroups">
+              <app-compact-list-row
+                (activate)="toggleObligationExpand(group.key)">
+                <div compactTitle class="compact-list-title font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5 min-w-0">
+                  <i-lucide
+                    [name]="isObligationExpanded(group.key) ? 'chevron-down' : 'chevron-right'"
+                    class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
+                  <span class="truncate min-w-0">{{ group.header.beneficiario }}</span>
+                  <span
+                    *ngIf="group.header.isPrestamo"
+                    class="inline-flex shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
+                    Préstamo
+                  </span>
+                  <span
+                    class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                    [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
+                    {{ estadoLabel(group.header.summaryEstado) }}
+                  </span>
+                </div>
+                <div compactSubtitle class="compact-list-subtitle truncate">
+                  {{ obligationGroupSubtitle(group) }}
+                </div>
+                <div compactTrailing class="shrink-0">
+                  <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ '$' + group.header.totalPending }}</span>
+                </div>
+              </app-compact-list-row>
+
+              <div
+                *ngIf="isObligationExpanded(group.key)"
+                class="border-b border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/30">
+                <div [class]="expandedNestedWrapClass">
+                  <app-compact-list-row
+                    *ngFor="let row of group.rows"
+                    (activate)="onMobileInstallmentActivate(row)"
+                    [disabled]="savingCuotaId === row.id">
+                    <div compactTitle class="compact-list-title text-gray-800 dark:text-gray-200 flex items-center gap-1.5 min-w-0">
+                      <span class="truncate min-w-0">{{ cuotaLabel(row) }} · {{ formatDate(row.fechaVencimiento) }}</span>
+                      <span
+                        class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                        [ngClass]="estadoBadgeClass(row.displayEstado)">
+                        {{ estadoLabel(row.displayEstado) }}
+                      </span>
+                    </div>
+                    <div compactSubtitle class="compact-list-subtitle truncate">
+                      {{ installmentDetalleLabel(row) }}
+                    </div>
+                    <span compactTrailing class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 whitespace-nowrap">{{ '$' + row.monto }}</span>
+                    <span
+                      *ngIf="row.displayEstado !== 'pagada'"
+                      compactTrailing
+                      role="button"
+                      tabindex="0"
+                      (click)="togglePaid(row); $event.stopPropagation()"
+                      (keydown.enter)="togglePaid(row); $event.stopPropagation()"
+                      [class.opacity-50]="savingCuotaId === row.id"
+                      class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
+                      Pago
+                    </span>
+                  </app-compact-list-row>
+                  <p
+                    *ngIf="group.rows.length === 0"
+                    class="py-2 text-xs text-gray-500 dark:text-gray-400">
+                    Sin cuotas pendientes.
+                  </p>
+                </div>
+              </div>
+            </ng-container>
+
+            <p *ngIf="loading" [class]="compactListEmptyClass">Cargando vencimientos...</p>
+            <p *ngIf="!loading && obligationViewGroups.length === 0" [class]="compactListEmptyClass">
+              {{ emptyObligationViewMessage }}
             </p>
           </ng-container>
         </div>
@@ -454,7 +667,9 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
             <tbody app-module-table-body>
               <tr app-module-table-row
                 *ngFor="let row of monthViewInstallments"
-                [tone]="installmentRowTone(row)">
+                [tone]="installmentRowTone(row)"
+                [clickable]="canOpenInstallmentEdit(row)"
+                (click)="openInstallmentEdit(row)">
                 <td app-module-table-cell align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700 max-w-0">
                   {{ cuotaLabel(row) }}
                 </td>
@@ -487,18 +702,18 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                   <button
                     *ngIf="row.displayEstado !== 'pagada'"
                     type="button"
-                    (click)="togglePaid(row)"
+                    (click)="togglePaid(row); $event.stopPropagation()"
                     [disabled]="savingCuotaId === row.id"
                     class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
-                    Pagar cuota
+                    Pago
                   </button>
                   <button
                     *ngIf="row.displayEstado === 'pagada'"
                     type="button"
-                    (click)="togglePaid(row)"
+                    (click)="togglePaid(row); $event.stopPropagation()"
                     [disabled]="savingCuotaId === row.id"
                     class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
-                    Deshacer
+                    Deshacer pago
                   </button>
                 </td>
               </tr>
@@ -517,8 +732,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
             minWidthClass="min-w-[760px]">
             <colgroup>
               <col class="w-[2.5rem]" />
-              <col class="w-[14rem]" />
-              <col class="w-[12rem]" />
+              <col class="w-[11rem]" />
+              <col class="w-[10rem]" />
               <col class="w-[7rem]" />
               <col class="w-[6.5rem]" />
               <col class="w-[7.5rem]" />
@@ -526,7 +741,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
             <thead app-module-table-head>
               <th app-module-table-head-cell></th>
               <th app-module-table-head-cell>Cuenta</th>
-              <th app-module-table-head-cell>Resumen</th>
+              <th app-module-table-head-cell [nowrap]="true">Resumen</th>
               <th app-module-table-head-cell [nowrap]="true">Próx. venc.</th>
               <th app-module-table-head-cell align="right" [nowrap]="true">Pendiente</th>
               <th app-module-table-head-cell align="right">Acción</th>
@@ -546,7 +761,7 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
                   <td app-module-table-cell>
                     <span class="font-medium text-gray-900 dark:text-gray-100 truncate block">{{ card.header.tarjetaLabel }}</span>
                   </td>
-                  <td app-module-table-cell extraClass="text-gray-600 text-sm">
+                  <td app-module-table-cell [nowrap]="true" extraClass="text-gray-600 text-sm whitespace-nowrap">
                     {{ accountCardSubtitle(card) }}
                   </td>
                   <td app-module-table-cell [nowrap]="true" extraClass="tabular-nums text-gray-700">
@@ -581,90 +796,95 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
 
                 <tr *ngIf="isAccountCardExpanded(card.key)">
                   <td colspan="6" class="p-0 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/40">
-                    <div class="divide-y divide-gray-100 dark:divide-gray-800">
-                      <div *ngFor="let purchase of card.purchases" class="border-l-4 border-teal-300/60 dark:border-teal-700/50">
-                        <button
-                          type="button"
-                          (click)="toggleAccountPurchaseExpand(purchase.key)"
-                          class="w-full px-4 py-2.5 bg-gray-100/50 dark:bg-gray-800/30 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
-                          <div class="flex items-start gap-2">
-                            <i-lucide
-                              [name]="isAccountPurchaseExpanded(purchase.key) ? 'chevron-down' : 'chevron-right'"
-                              class="w-4 h-4 shrink-0 text-gray-500 mt-0.5"></i-lucide>
-                            <div class="min-w-0 flex-1">
-                              <p class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ purchase.header.title }}</p>
-                              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                {{ purchase.header.subtitle }}
-                                <span *ngIf="purchase.header.nextDueDate"> · vence {{ formatDate(purchase.header.nextDueDate) }}</span>
-                                · {{ '$' + purchase.header.totalPending }} pend.
-                              </p>
+                    <div [class]="expandedNestedWrapClass">
+                      <div class="divide-y divide-gray-100 dark:divide-gray-800">
+                        <div *ngFor="let purchase of card.purchases">
+                          <button
+                            type="button"
+                            (click)="toggleAccountPurchaseExpand(purchase.key)"
+                            class="w-full py-2.5 bg-gray-100/50 dark:bg-gray-800/30 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors">
+                            <div class="flex items-start gap-2">
+                              <i-lucide
+                                [name]="isAccountPurchaseExpanded(purchase.key) ? 'chevron-down' : 'chevron-right'"
+                                class="w-4 h-4 shrink-0 text-gray-500 mt-0.5"></i-lucide>
+                              <div class="min-w-0 flex-1">
+                                <p class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ purchase.header.title }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                  {{ purchase.header.subtitle }}
+                                  <span *ngIf="purchase.header.nextDueDate"> · vence {{ formatDate(purchase.header.nextDueDate) }}</span>
+                                  · {{ '$' + purchase.header.totalPending }} pend.
+                                </p>
+                              </div>
+                              <span class="shrink-0 text-[11px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
+                                {{ purchase.header.pendingCount }}/{{ purchase.header.count }} cuotas
+                              </span>
                             </div>
-                            <span class="shrink-0 text-[11px] font-semibold text-gray-500 dark:text-gray-400 tabular-nums">
-                              {{ purchase.header.pendingCount }}/{{ purchase.header.count }} cuotas
-                            </span>
+                          </button>
+                          <div *ngIf="isAccountPurchaseExpanded(purchase.key)" [class]="expandedNestedWrapLevel2Class">
+                            <table
+                              [class]="nativeCompactTableClass + ' module-table-nested module-data-table-layout w-full max-w-4xl'">
+                              <thead>
+                                <tr class="bg-gray-100/80 dark:bg-gray-800/60">
+                                  <th [class]="moduleTableHeadNestedClass + ' text-right'">Cuota</th>
+                                  <th [class]="moduleTableHeadNestedClass">Venc.</th>
+                                  <th [class]="moduleTableHeadNestedClass">Mes</th>
+                                  <th [class]="moduleTableHeadNestedClass + ' text-right'">Monto</th>
+                                  <th [class]="moduleTableHeadNestedClass">Estado</th>
+                                  <th [class]="moduleTableHeadNestedClass + ' text-right'">Acción</th>
+                                </tr>
+                              </thead>
+                              <tbody class="divide-y divide-gray-50 dark:divide-gray-800">
+                                <tr
+                                  app-module-table-row
+                                  *ngFor="let row of purchase.rows"
+                                  [tone]="installmentRowTone(row)"
+                                  [hover]="canOpenInstallmentEdit(row)"
+                                  [clickable]="canOpenInstallmentEdit(row)"
+                                  (click)="openInstallmentEdit(row)">
+                                  <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700">
+                                    {{ cuotaLabel(row) }}
+                                  </td>
+                                  <td app-module-table-cell nested [nowrap]="true" extraClass="tabular-nums">
+                                    <span
+                                      [class.text-red-700]="row.displayEstado === 'vencida'"
+                                      [class.font-semibold]="row.displayEstado === 'vencida'">
+                                      {{ formatDate(row.fechaVencimiento) }}
+                                    </span>
+                                  </td>
+                                  <td app-module-table-cell nested [nowrap]="true" extraClass="text-gray-600 capitalize">
+                                    {{ formatMes(installmentMesKey(row)) }}
+                                  </td>
+                                  <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
+                                    {{ '$' + row.monto }}
+                                  </td>
+                                  <td app-module-table-cell nested>
+                                    <span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
+                                      {{ estadoLabel(row.displayEstado) }}
+                                    </span>
+                                  </td>
+                                  <td app-module-table-cell nested align="right">
+                                    <button
+                                      *ngIf="row.displayEstado !== 'pagada'"
+                                      type="button"
+                                      (click)="togglePaid(row); $event.stopPropagation()"
+                                      [disabled]="savingCuotaId === row.id"
+                                      class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                                      Pago
+                                    </button>
+                                    <button
+                                      *ngIf="row.displayEstado === 'pagada'"
+                                      type="button"
+                                      (click)="togglePaid(row); $event.stopPropagation()"
+                                      [disabled]="savingCuotaId === row.id"
+                                      class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
+                                      Deshacer pago
+                                    </button>
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
                           </div>
-                        </button>
-                        <table
-                          *ngIf="isAccountPurchaseExpanded(purchase.key)"
-                          [class]="nativeCompactTableClass + ' module-table-nested module-data-table-layout w-full'">
-                          <thead>
-                            <tr class="bg-gray-100/80 dark:bg-gray-800/60">
-                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Cuota</th>
-                              <th [class]="moduleTableHeadNestedClass">Venc.</th>
-                              <th [class]="moduleTableHeadNestedClass">Mes</th>
-                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Monto</th>
-                              <th [class]="moduleTableHeadNestedClass">Estado</th>
-                              <th [class]="moduleTableHeadNestedClass + ' text-right'">Acción</th>
-                            </tr>
-                          </thead>
-                          <tbody class="divide-y divide-gray-50 dark:divide-gray-800">
-                            <tr
-                              app-module-table-row
-                              *ngFor="let row of purchase.rows"
-                              [tone]="installmentRowTone(row)"
-                              [hover]="false">
-                              <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700">
-                                {{ cuotaLabel(row) }}
-                              </td>
-                              <td app-module-table-cell nested [nowrap]="true" extraClass="tabular-nums">
-                                <span
-                                  [class.text-red-700]="row.displayEstado === 'vencida'"
-                                  [class.font-semibold]="row.displayEstado === 'vencida'">
-                                  {{ formatDate(row.fechaVencimiento) }}
-                                </span>
-                              </td>
-                              <td app-module-table-cell nested [nowrap]="true" extraClass="text-gray-600 capitalize">
-                                {{ formatMes(installmentMesKey(row)) }}
-                              </td>
-                              <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
-                                {{ '$' + row.monto }}
-                              </td>
-                              <td app-module-table-cell nested>
-                                <span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
-                                  {{ estadoLabel(row.displayEstado) }}
-                                </span>
-                              </td>
-                              <td app-module-table-cell nested align="right">
-                                <button
-                                  *ngIf="row.displayEstado !== 'pagada'"
-                                  type="button"
-                                  (click)="togglePaid(row)"
-                                  [disabled]="savingCuotaId === row.id"
-                                  class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
-                                  Pagar cuota
-                                </button>
-                                <button
-                                  *ngIf="row.displayEstado === 'pagada'"
-                                  type="button"
-                                  (click)="togglePaid(row)"
-                                  [disabled]="savingCuotaId === row.id"
-                                  class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
-                                  Deshacer
-                                </button>
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -676,6 +896,132 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
               </tr>
               <tr app-module-table-empty-row *ngIf="!loading && accountViewCards.length === 0" [colspan]="6">
                 {{ emptyAccountViewMessage }}
+              </tr>
+            </tbody>
+          </app-module-data-table>
+
+          <app-module-data-table
+            *ngIf="viewTab === 'obligation'"
+            minWidthClass="min-w-[760px]">
+            <colgroup>
+              <col class="w-[2.5rem]" />
+              <col class="w-[11rem]" />
+              <col class="w-[10rem]" />
+              <col class="w-[7rem]" />
+              <col class="w-[6.5rem]" />
+              <col class="w-[7.5rem]" />
+            </colgroup>
+            <thead app-module-table-head>
+              <th app-module-table-head-cell></th>
+              <th app-module-table-head-cell>Prestamista</th>
+              <th app-module-table-head-cell [nowrap]="true">Resumen</th>
+              <th app-module-table-head-cell [nowrap]="true">Próx. venc.</th>
+              <th app-module-table-head-cell align="right" [nowrap]="true">Pendiente</th>
+              <th app-module-table-head-cell align="right">Acción</th>
+            </thead>
+            <tbody app-module-table-body>
+              <ng-container *ngFor="let group of obligationViewGroups">
+                <tr
+                  app-module-table-row
+                  tone="group"
+                  [clickable]="true"
+                  (click)="toggleObligationExpand(group.key)">
+                  <td app-module-table-cell align="center" extraClass="w-10">
+                    <i-lucide
+                      [name]="isObligationExpanded(group.key) ? 'chevron-down' : 'chevron-right'"
+                      class="w-4 h-4 text-gray-500 mx-auto"></i-lucide>
+                  </td>
+                  <td app-module-table-cell>
+                    <span class="font-medium text-gray-900 dark:text-gray-100 truncate block">{{ group.header.beneficiario }}</span>
+                    <span
+                      *ngIf="group.header.isPrestamo"
+                      class="inline-flex mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-violet-100 text-violet-800">
+                      Préstamo
+                    </span>
+                  </td>
+                  <td app-module-table-cell [nowrap]="true" extraClass="text-gray-600 text-sm whitespace-nowrap">
+                    {{ obligationGroupSubtitle(group) }}
+                  </td>
+                  <td app-module-table-cell [nowrap]="true" extraClass="tabular-nums">
+                    {{ group.header.nextDueDate ? formatDate(group.header.nextDueDate) : '—' }}
+                  </td>
+                  <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
+                    {{ '$' + group.header.totalPending }}
+                  </td>
+                  <td app-module-table-cell align="right">
+                    <span
+                      class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
+                      [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
+                      {{ estadoLabel(group.header.summaryEstado) }}
+                    </span>
+                  </td>
+                </tr>
+                <tr *ngIf="isObligationExpanded(group.key)" app-module-table-row tone="nested">
+                  <td app-module-table-cell nested [attr.colspan]="6" extraClass="!p-0 bg-gray-50/80 dark:bg-gray-900/30">
+                    <div [class]="expandedNestedWrapClass">
+                      <table [class]="nativeCompactTableClass + ' module-table-nested module-data-table-layout w-full max-w-4xl'">
+                      <thead>
+                        <tr class="bg-gray-100/80 dark:bg-gray-800/60">
+                          <th [class]="moduleTableHeadNestedClass + ' text-right'">Cuota</th>
+                          <th [class]="moduleTableHeadNestedClass">Venc.</th>
+                          <th [class]="moduleTableHeadNestedClass">Detalle</th>
+                          <th [class]="moduleTableHeadNestedClass + ' text-right'">Monto</th>
+                          <th [class]="moduleTableHeadNestedClass">Estado</th>
+                          <th [class]="moduleTableHeadNestedClass + ' text-right'">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-gray-50 dark:divide-gray-800">
+                        <tr
+                          app-module-table-row
+                          *ngFor="let row of group.rows"
+                          [tone]="installmentRowTone(row)"
+                          [hover]="canOpenInstallmentEdit(row)"
+                          [clickable]="canOpenInstallmentEdit(row)"
+                          (click)="openInstallmentEdit(row)">
+                          <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="tabular-nums text-gray-700">
+                            {{ cuotaLabel(row) }}
+                          </td>
+                          <td app-module-table-cell nested [nowrap]="true" extraClass="tabular-nums">
+                            <span
+                              [class.text-red-700]="row.displayEstado === 'vencida'"
+                              [class.font-semibold]="row.displayEstado === 'vencida'">
+                              {{ formatDate(row.fechaVencimiento) }}
+                            </span>
+                          </td>
+                          <td app-module-table-cell nested extraClass="text-gray-600 text-sm max-w-0 truncate">
+                            {{ installmentDetalleLabel(row) }}
+                          </td>
+                          <td app-module-table-cell nested align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
+                            {{ '$' + row.monto }}
+                          </td>
+                          <td app-module-table-cell nested>
+                            <span class="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold" [ngClass]="estadoBadgeClass(row.displayEstado)">
+                              {{ estadoLabel(row.displayEstado) }}
+                            </span>
+                          </td>
+                          <td app-module-table-cell nested align="right">
+                            <button
+                              *ngIf="row.displayEstado !== 'pagada'"
+                              type="button"
+                              (click)="togglePaid(row); $event.stopPropagation()"
+                              [disabled]="savingCuotaId === row.id"
+                              class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                              Pago
+                            </button>
+                          </td>
+                        </tr>
+                        <tr *ngIf="group.rows.length === 0">
+                          <td [attr.colspan]="6" class="px-4 py-3 text-xs text-gray-500">Sin cuotas pendientes.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    </div>
+                  </td>
+                </tr>
+              </ng-container>
+              <tr app-module-table-empty-row *ngIf="loading" [colspan]="6">Cargando vencimientos...</tr>
+              <tr app-module-table-empty-row *ngIf="!loading && obligationViewGroups.length === 0" [colspan]="6">
+                {{ emptyObligationViewMessage }}
               </tr>
             </tbody>
           </app-module-data-table>
@@ -738,157 +1084,13 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
     </div>
 
     <app-transaction-modal
-      [open]="createModalOpen"
-      title="Nuevo gasto fijo o servicio"
-      subtitle="Para sueldos, VPS, luz, agua, alquiler y otros pagos que no pasan por Compras."
-      (closed)="closeCreateModal()">
-      <form class="space-y-4" (ngSubmit)="submitCreate()">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Atajo rápido</label>
-          <div class="flex flex-wrap gap-2">
-            <button
-              *ngFor="let preset of obligationPresets"
-              type="button"
-              (click)="applyPreset(preset)"
-              class="px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors"
-              [class.border-teal-500]="form.presetId === preset.id"
-              [class.bg-teal-50]="form.presetId === preset.id"
-              [class.text-teal-700]="form.presetId === preset.id"
-              [class.border-gray-200]="form.presetId !== preset.id"
-              [class.text-gray-700]="form.presetId !== preset.id">
-              {{ preset.label }}
-            </button>
-          </div>
-        </div>
-
-        <div *ngIf="usesAmbitoSeparation">
-          <label class="block text-sm font-medium text-gray-700 mb-2">Etiqueta</label>
-          <div class="flex flex-wrap gap-2">
-            <button
-              *ngFor="let ambito of cajaAmbitos"
-              type="button"
-              (click)="formAmbito = ambito.id"
-              class="px-3 py-2 rounded-lg border text-sm font-semibold transition-colors"
-              [class.border-teal-500]="formAmbito === ambito.id"
-              [class.bg-teal-50]="formAmbito === ambito.id"
-              [class.text-teal-700]="formAmbito === ambito.id"
-              [class.border-gray-200]="formAmbito !== ambito.id"
-              [class.text-gray-700]="formAmbito !== ambito.id">
-              {{ ambito.label }}
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Concepto / beneficiario</label>
-          <input
-            [(ngModel)]="form.beneficiario"
-            name="beneficiario"
-            required
-            placeholder="Ej: Sueldo María, VPS DigitalOcean, EDESUR..."
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Categoría (opcional)</label>
-          <select
-            [(ngModel)]="form.categoriaId"
-            name="categoriaId"
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-teal-500">
-            <option value="">Sin categoría</option>
-            <option *ngFor="let cat of categoriasGasto" [ngValue]="cat.id">{{ cat.label }}</option>
-          </select>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Monto</label>
-            <input
-              [(ngModel)]="form.monto"
-              name="monto"
-              type="number"
-              min="0"
-              step="0.01"
-              required
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Primer vencimiento</label>
-            <input
-              [(ngModel)]="form.fechaPrimerVencimiento"
-              name="fechaPrimerVencimiento"
-              type="date"
-              required
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Tipo de pago</label>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label
-              class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
-              [class.border-teal-500]="form.tipo === 'unico'"
-              [class.bg-teal-50]="form.tipo === 'unico'"
-              [class.border-gray-200]="form.tipo !== 'unico'">
-              <input type="radio" [(ngModel)]="form.tipo" name="tipo" value="unico" class="mt-1">
-              <span>
-                <span class="block text-sm font-semibold text-gray-900">Pago único / en cuotas</span>
-                <span class="block text-xs text-gray-500 mt-0.5">Una vez o N cuotas mensuales (ej. 12 pagos).</span>
-              </span>
-            </label>
-            <label
-              class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
-              [class.border-teal-500]="form.tipo === 'mensual'"
-              [class.bg-teal-50]="form.tipo === 'mensual'"
-              [class.border-gray-200]="form.tipo !== 'mensual'">
-              <input type="radio" [(ngModel)]="form.tipo" name="tipo" value="mensual" class="mt-1">
-              <span>
-                <span class="block text-sm font-semibold text-gray-900">Mensual recurrente</span>
-                <span class="block text-xs text-gray-500 mt-0.5">Se repite cada mes hasta que lo desactives.</span>
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <div *ngIf="form.tipo === 'unico'">
-          <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad de pagos</label>
-          <input
-            [(ngModel)]="form.cantidadCuotas"
-            name="cantidadCuotas"
-            type="number"
-            min="1"
-            max="120"
-            required
-            class="w-full sm:max-w-xs px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-          <p class="text-xs text-gray-500 mt-1">1 = un solo pago. 12 = doce cuotas mensuales desde la fecha indicada.</p>
-        </div>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
-          <input
-            [(ngModel)]="form.notas"
-            name="notas"
-            placeholder="Referencia, CBU, etc."
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
-        </div>
-
-        <app-modal-form-footer
-          [saving]="creating"
-          primaryLabel="Crear"
-          (cancelClick)="closeCreateModal()"
-          (primaryClick)="submitCreate()">
-        </app-modal-form-footer>
-      </form>
-    </app-transaction-modal>
-
-    <app-transaction-modal
       [open]="payCardModalOpen"
       title="Pagar resumen"
       [subtitle]="payCardModalSubtitle"
       [hideSubtitleOnMobile]="false"
       (closed)="closePayCardModal()">
       <div *ngIf="payCardTarget as target" class="space-y-4">
+        <app-transaction-save-banner [message]="payCardSave.successMessage"></app-transaction-save-banner>
         <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 px-4 py-3 space-y-1">
           <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Cuenta / tarjeta
@@ -926,9 +1128,28 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
           </ul>
         </div>
 
-        <div class="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-900 px-4 py-3 flex justify-between items-center">
-          <span class="text-sm text-teal-900 dark:text-teal-200">Total · un egreso de caja</span>
-          <span class="text-lg font-bold tabular-nums text-teal-900 dark:text-teal-100">{{ '$' + target.total }}</span>
+        <div class="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-900 px-4 py-3 space-y-2">
+          <div class="flex justify-between items-center gap-3">
+            <span class="text-sm text-teal-900 dark:text-teal-200">Total pendiente del resumen</span>
+            <span class="text-lg font-bold tabular-nums text-teal-900 dark:text-teal-100">{{ '$' + payCardPendingTotal }}</span>
+          </div>
+          <p *ngIf="payCardSaldoResumen > 0 && payCardMonto !== null && payCardMonto < payCardPendingTotal" class="text-xs text-teal-800 dark:text-teal-300 m-0">
+            Saldo que quedará pendiente: {{ '$' + payCardSaldoResumen }}
+          </p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Monto a pagar (egreso de caja)</label>
+          <input
+            type="number"
+            [(ngModel)]="payCardMonto"
+            name="payCardMonto"
+            min="0.01"
+            [max]="payCardPendingTotal"
+            step="0.01"
+            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm tabular-nums bg-white dark:bg-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary">
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-snug">
+            Podés pagar menos del total: se imputa a cuotas en orden de vencimiento (completas primero) y el resto queda pendiente en la última cuota afectada.
+          </p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Medio de pago (egreso de caja)</label>
@@ -941,6 +1162,8 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
         </div>
         <app-modal-form-footer
           [saving]="payingCardStatement"
+          [primaryDisabled]="!canSubmitPayCardStatement"
+          [successMessage]="payCardSave.successMessage"
           primaryLabel="Confirmar pago del resumen"
           (cancelClick)="closePayCardModal()"
           (primaryClick)="submitPayCardStatement()">
@@ -950,11 +1173,12 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
 
     <app-transaction-modal
       [open]="payCuotaModalOpen"
-      title="Pagar cuota"
+      title="{{ payCuotaModalTitle }}"
       [subtitle]="payCuotaModalSubtitle"
       [hideSubtitleOnMobile]="false"
       (closed)="closePayCuotaModal()">
       <div *ngIf="payCuotaTarget as target" class="space-y-4">
+        <app-transaction-save-banner [message]="payCuotaSave.successMessage"></app-transaction-save-banner>
         <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 px-4 py-3 space-y-1">
           <p class="text-base font-bold text-gray-900 dark:text-gray-100">{{ installmentCuentaLabel(target) }}</p>
           <p class="text-sm text-gray-600 dark:text-gray-300">{{ installmentCuotaCompraLabel(target) }}</p>
@@ -962,9 +1186,39 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
             Vence {{ formatDate(target.fechaVencimiento) }} · {{ formatMes(installmentMesKey(target)) }}
           </p>
         </div>
-        <div class="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-900 px-4 py-3 flex justify-between items-center">
-          <span class="text-sm text-teal-900 dark:text-teal-200">Monto · un egreso de caja</span>
-          <span class="text-lg font-bold tabular-nums text-teal-900 dark:text-teal-100">{{ '$' + target.monto }}</span>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Detalle</label>
+          <input
+            [(ngModel)]="payCuotaDetalle"
+            name="payCuotaDetalle"
+            placeholder="Detalle del pago"
+            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {{ payCuotaMontoEditable ? 'Monto a pagar (egreso de caja)' : 'Monto de esta cuota (egreso de caja)' }}
+          </label>
+          <input
+            type="number"
+            [(ngModel)]="payCuotaMonto"
+            name="payCuotaMonto"
+            min="0"
+            step="0.01"
+            placeholder="0"
+            [readonly]="!payCuotaMontoEditable"
+            [class.bg-gray-50]="!payCuotaMontoEditable"
+            [class.dark:bg-gray-800]="!payCuotaMontoEditable"
+            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm tabular-nums bg-white dark:bg-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary">
+          <p *ngIf="payCuotaMontoEditable && payCuotaIsCorrection" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+            Corregí el monto de la cuota y el egreso en caja se actualiza automáticamente.
+          </p>
+          <p *ngIf="payCuotaMontoEditable && !payCuotaIsCorrection" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Gasto recurrente: podés ajustar el importe si este mes vino distinto al habitual.
+            Monto programado: {{ '$' + (payCuotaTarget?.monto ?? 0) }}.
+          </p>
+          <p *ngIf="!payCuotaMontoEditable" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ payCuotaMontoFixedHint }}
+          </p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago (egreso de caja)</label>
@@ -977,7 +1231,9 @@ const OBLIGATION_PRESETS: ObligationPreset[] = [
         </div>
         <app-modal-form-footer
           [saving]="payingCuota"
-          primaryLabel="Confirmar pago de la cuota"
+          [primaryDisabled]="!canSubmitPayCuota"
+          [successMessage]="payCuotaSave.successMessage"
+          primaryLabel="{{ payCuotaConfirmLabel }}"
           (cancelClick)="closePayCuotaModal()"
           (primaryClick)="submitPayCuota()">
         </app-modal-form-footer>
@@ -990,6 +1246,10 @@ export class PayablesComponent implements OnInit, OnDestroy {
   private payables = inject(PayablesService);
   private dialog = inject(DialogService);
   private configService = inject(CatalogConfigService);
+  private router = inject(Router);
+  private route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
   private configSub?: Subscription;
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
@@ -999,14 +1259,15 @@ export class PayablesComponent implements OnInit, OnDestroy {
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
+  readonly expandedNestedWrapClass = EXPANDED_NESTED_WRAP_CLASS;
+  readonly expandedNestedWrapLevel2Class = EXPANDED_NESTED_WRAP_LEVEL2_CLASS;
   readonly payablesTabButtonClass =
-    'px-2.5 py-1 text-[11px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap sm:px-4 sm:py-2 sm:text-sm';
+    'px-2.5 py-1 text-[11px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap rounded-t-md sm:px-4 sm:py-2 sm:text-sm';
   readonly payablesTabRowClass =
-    'flex gap-0.5 sm:gap-1 overflow-x-auto';
+    'flex flex-wrap gap-0.5 sm:gap-1';
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   activeAmbitoTab = '';
-  formAmbito = '';
 
   installments: PayableInstallment[] = [];
   obligations: PayableObligation[] = [];
@@ -1015,27 +1276,42 @@ export class PayablesComponent implements OnInit, OnDestroy {
   payCardTarget: CardStatementSummary | null = null;
   payCardPendingRows: PayableInstallment[] = [];
   payCardMedioId = 'transferencia';
-  payingCardStatement = false;
+  payCardMonto: number | null = null;
   payCuotaModalOpen = false;
   payCuotaTarget: PayableInstallment | null = null;
   payCuotaMedioId = 'transferencia';
-  payingCuota = false;
+  payCuotaMonto: number | null = null;
+  payCuotaDetalle = '';
   loading = true;
-  createModalOpen = false;
-  creating = false;
+
+  readonly payCardSave = new TransactionSaveFeedback();
+  readonly payCuotaSave = new TransactionSaveFeedback();
+
+  get payingCardStatement(): boolean {
+    return this.payCardSave.saving;
+  }
+
+  get payingCuota(): boolean {
+    return this.payCuotaSave.saving;
+  }
+
   savingCuotaId: string | null = null;
   savingObligationId: string | null = null;
 
   searchQuery = '';
   mesFilter = '';
   cuentaFilter = '';
+  obligacionFilter = '';
   viewTab: PayablesViewTab = 'month';
   expandedAccountCardKeys: Record<string, boolean> = {};
   expandedAccountPurchaseKeys: Record<string, boolean> = {};
+  expandedObligationKeys: Record<string, boolean> = {};
 
   tarjetaFilterOptions: { id: string; label: string }[] = [];
+  obligacionFilterOptions: { id: string; label: string }[] = [];
   monthViewInstallments: PayableInstallment[] = [];
   accountViewCards: PayableAccountCardEntry[] = [];
+  obligationViewGroups: PayableObligationGroupEntry[] = [];
   mensualObligations: PayableObligation[] = [];
   kpiScopePrefix = '';
   countPendientes = 0;
@@ -1044,12 +1320,24 @@ export class PayablesComponent implements OnInit, OnDestroy {
   totalPendiente = 0;
 
   private payablesViewCacheKey = '';
+  payablesCreateMenuOpen = false;
 
-  readonly obligationPresets = OBLIGATION_PRESETS;
-
-  form = this.emptyForm();
+  readonly payablesCreateMenuButtonClass =
+    `inline-flex items-center justify-center rounded-lg bg-teal-600 text-white hover:bg-teal-700 w-[42px] p-0 transition-colors ${LIST_TOOLBAR_CONTROL_HEIGHT}`;
 
   ngOnInit(): void {
+    bindListPageRefreshOnReturn({
+      listPath: '/payables',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
+    const tab = this.route.snapshot.queryParamMap.get('tab');
+    if (tab === 'obligation' || tab === 'account' || tab === 'month') {
+      this.viewTab = tab;
+    }
+
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
       this.syncActiveAmbitoTab();
@@ -1064,6 +1352,22 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.configSub?.unsubscribe();
+    this.payCardSave.destroy();
+    this.payCuotaSave.destroy();
+  }
+
+  private finishModalSave(
+    feedback: TransactionSaveFeedback,
+    message: string,
+    close: () => void,
+    afterClose?: () => void
+  ): void {
+    feedback.showSuccess(message);
+    window.setTimeout(() => {
+      feedback.clearSuccess();
+      close();
+      afterClose?.();
+    }, 1400);
   }
 
   get cajaAmbitos(): CajaAmbitoConfig[] {
@@ -1111,8 +1415,43 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.syncPayablesView();
   }
 
-  onMobileMonthRowActivate(row: PayableInstallment): void {
-    this.togglePaid(row);
+  onObligacionFilterChange(): void {
+    this.expandedObligationKeys = {};
+    this.syncPayablesView();
+  }
+
+  canOpenInstallmentEdit(row: PayableInstallment): boolean {
+    return !!(row.obligacionId || row.compraId);
+  }
+
+  openInstallmentEdit(row: PayableInstallment): void {
+    if (row.compraId) {
+      if (!this.auth.canViewStockCosts) {
+        this.dialog.alert({
+          message: 'No tenés permiso para editar compras.',
+        });
+        return;
+      }
+      this.router.navigate(['/purchases', row.compraId, 'edit']);
+      return;
+    }
+
+    if (row.obligacionId) {
+      this.router.navigate(['/payables/obligations', row.obligacionId, 'edit']);
+      return;
+    }
+
+    this.dialog.alert({
+      message: 'Este vencimiento no tiene formulario de edición.',
+    });
+  }
+
+  onMobileInstallmentActivate(row: PayableInstallment): void {
+    if (row.displayEstado !== 'pagada') {
+      this.togglePaid(row);
+      return;
+    }
+    this.openInstallmentEdit(row);
   }
 
   setActiveAmbito(id: string): void {
@@ -1141,6 +1480,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
       this.viewTab,
       this.mesFilter,
       this.cuentaFilter,
+      this.obligacionFilter,
       this.searchQuery,
       this.activeAmbitoTab,
       this.installments.length,
@@ -1158,6 +1498,10 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.accountViewCards = this.buildAccountCardEntries(
       this.sortInstallments(this.rowsMatchingFilters({ applyCuenta: true }))
     );
+    this.obligationViewGroups = this.buildObligationGroupEntries(
+      this.sortInstallments(this.rowsMatchingFilters({ applyObligacion: true }))
+    );
+    this.obligacionFilterOptions = this.buildObligacionFilterOptions();
     this.syncAccountViewAutoExpand();
     this.mensualObligations = this.buildMensualObligations();
 
@@ -1174,6 +1518,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
   private rowsMatchingFilters(opts: {
     applyMes?: boolean;
     applyCuenta?: boolean;
+    applyObligacion?: boolean;
   }): PayableInstallment[] {
     const query = this.searchQuery.trim().toLowerCase();
     const mes = this.mesFilter.trim();
@@ -1184,6 +1529,10 @@ export class PayablesComponent implements OnInit, OnDestroy {
       }
       if (opts.applyCuenta && this.cuentaFilter) {
         if (row.tarjetaId !== this.cuentaFilter) return false;
+      }
+      if (opts.applyObligacion) {
+        if (!this.isObligationScheduleRow(row)) return false;
+        if (this.obligacionFilter && row.obligacionId !== this.obligacionFilter) return false;
       }
       if (query && !this.installmentMatchesSearch(row, query)) return false;
       return true;
@@ -1295,6 +1644,87 @@ export class PayablesComponent implements OnInit, OnDestroy {
       });
   }
 
+  private isObligationScheduleRow(row: PayableInstallment): boolean {
+    if (row.compraId || row.tarjetaId) return false;
+    // Solo préstamos explícitos (botón «Nuevo préstamo»). Los gastos en cuotas van en «Por mes».
+    return row.origenTipo === 'prestamo';
+  }
+
+  private buildObligacionFilterOptions(): { id: string; label: string }[] {
+    const seen = new Map<string, string>();
+    for (const row of this.getScopedInstallments()) {
+      if (!this.isObligationScheduleRow(row) || !row.obligacionId) continue;
+      if (!seen.has(row.obligacionId)) {
+        seen.set(row.obligacionId, row.beneficiario?.trim() || 'Sin nombre');
+      }
+    }
+    return Array.from(seen.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'es'));
+  }
+
+  private buildObligationGroupEntries(rows: PayableInstallment[]): PayableObligationGroupEntry[] {
+    const byObligation = new Map<string, PayableInstallment[]>();
+
+    for (const row of rows) {
+      if (!this.isObligationScheduleRow(row)) continue;
+      const key = row.obligacionId || row.beneficiario;
+      const list = byObligation.get(key) ?? [];
+      list.push(row);
+      byObligation.set(key, list);
+    }
+
+    return Array.from(byObligation.entries())
+      .map(([key, groupRows]) => {
+        const sorted = this.sortInstallments(groupRows);
+        const unpaid = sorted.filter((row) => row.displayEstado !== 'pagada');
+        const summary = this.buildInstallmentGroupSummary(sorted);
+        const first = sorted[0];
+        const cuotaTotal = first.cuotaTotal ?? sorted.length;
+        const paidCount = sorted.filter((row) => row.displayEstado === 'pagada').length;
+
+        return {
+          key,
+          header: {
+            ...summary,
+            obligacionId: first.obligacionId,
+            beneficiario: first.beneficiario?.trim() || 'Sin nombre',
+            cuotaTotal,
+            paidCount,
+            isPrestamo: sorted.some((row) => row.origenTipo === 'prestamo'),
+          },
+          rows: unpaid,
+        };
+      })
+      .sort((a, b) => {
+        const statusCmp =
+          this.installmentEstadoSortOrder(a.header.summaryEstado) -
+          this.installmentEstadoSortOrder(b.header.summaryEstado);
+        if (statusCmp !== 0) return statusCmp;
+
+        const dateCmp = (a.header.nextDueDate || '').localeCompare(b.header.nextDueDate || '');
+        if (dateCmp !== 0) return dateCmp;
+
+        return a.header.beneficiario.localeCompare(b.header.beneficiario, 'es');
+      });
+  }
+
+  toggleObligationExpand(key: string): void {
+    this.expandedObligationKeys = {
+      ...this.expandedObligationKeys,
+      [key]: !this.expandedObligationKeys[key],
+    };
+  }
+
+  isObligationExpanded(key: string): boolean {
+    return !!this.expandedObligationKeys[key];
+  }
+
+  obligationGroupSubtitle(group: PayableObligationGroupEntry): string {
+    const h = group.header;
+    return `${h.paidCount}/${h.cuotaTotal} pagadas · ${h.pendingCount} pendiente(s)`;
+  }
+
   private purchaseGroupKey(row: PayableInstallment): string {
     return row.compraId || row.obligacionId;
   }
@@ -1370,9 +1800,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   accountCardSubtitle(card: PayableAccountCardEntry): string {
     const h = card.header;
-    const parts = [`${h.purchaseCount} compra(s)`, `${h.pendingCount} cuota(s) pend.`];
-    if (h.nextDueDate) parts.push(`próx. ${this.formatDate(h.nextDueDate)}`);
-    return parts.join(' · ');
+    return `${h.purchaseCount} compra(s) · ${h.pendingCount} cuota(s) pend.`;
   }
 
   cardPayResumenHint(card: PayableAccountCardEntry): string | null {
@@ -1389,7 +1817,17 @@ export class PayablesComponent implements OnInit, OnDestroy {
     if (this.cuentaFilter) {
       return 'No hay cuotas para esta cuenta.';
     }
-    return 'No hay cuotas para mostrar.';
+    return 'No hay cuotas de tarjeta para mostrar.';
+  }
+
+  get emptyObligationViewMessage(): string {
+    if (this.obligacionFilter) {
+      return 'No hay cuotas pendientes para este préstamo.';
+    }
+    if (this.searchQuery.trim()) {
+      return 'No hay préstamos que coincidan con la búsqueda.';
+    }
+    return 'No hay préstamos cargados. Usá «Nuevo préstamo» para registrar cuotas.';
   }
 
   setViewTab(tab: PayablesViewTab): void {
@@ -1398,6 +1836,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
     if (tab === 'account') {
       this.expandedAccountCardKeys = {};
       this.expandedAccountPurchaseKeys = {};
+    }
+    if (tab === 'obligation') {
+      this.expandedObligationKeys = {};
     }
     if (tab === 'month' && !this.mesFilter) {
       this.mesFilter = new Date().toISOString().slice(0, 7);
@@ -1422,6 +1863,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   installmentDetalleLabel(row: PayableInstallment): string {
+    if (row.descripcion?.trim()) return row.descripcion.trim();
     if (row.compraLabel) return `Compra #${row.compraLabel}`;
     const ben = row.beneficiario?.trim() ?? '';
     if (row.tarjetaLabel && ben.startsWith(row.tarjetaLabel)) {
@@ -1448,6 +1890,13 @@ export class PayablesComponent implements OnInit, OnDestroy {
       if (!mes) return [];
       return scoped.filter((row) => this.installmentMesKey(row) === mes);
     }
+    if (this.viewTab === 'obligation') {
+      let rows = scoped.filter((row) => this.isObligationScheduleRow(row));
+      if (this.obligacionFilter) {
+        rows = rows.filter((row) => row.obligacionId === this.obligacionFilter);
+      }
+      return rows;
+    }
     if (this.cuentaFilter) {
       return scoped.filter((row) => row.tarjetaId === this.cuentaFilter);
     }
@@ -1462,6 +1911,13 @@ export class PayablesComponent implements OnInit, OnDestroy {
     if (this.viewTab === 'month') {
       const mes = this.mesFilter.trim();
       if (mes) parts.push(this.formatMes(mes));
+    } else if (this.viewTab === 'obligation') {
+      if (this.obligacionFilter) {
+        const label = this.obligacionFilterOptions.find((o) => o.id === this.obligacionFilter)?.label;
+        if (label) parts.push(label);
+      } else {
+        parts.push('Préstamos');
+      }
     } else if (this.cuentaFilter) {
       const label = this.tarjetaFilterOptions.find((t) => t.id === this.cuentaFilter)?.label;
       if (label) parts.push(label);
@@ -1481,7 +1937,82 @@ export class PayablesComponent implements OnInit, OnDestroy {
         return (a.numeroCuota || 0) - (b.numeroCuota || 0);
       });
     this.payCardMedioId = this.mediosPagoCaja[0]?.id ?? 'transferencia';
+    this.payCardMonto = this.payCardPendingTotal;
     this.payCardModalOpen = true;
+  }
+
+  get payCardPendingTotal(): number {
+    return Math.round(this.payCardPendingRows.reduce((sum, row) => sum + row.monto, 0) * 100) / 100;
+  }
+
+  get payCardSaldoResumen(): number {
+    const monto = Number(this.payCardMonto);
+    if (!Number.isFinite(monto) || monto <= 0) return this.payCardPendingTotal;
+    return Math.max(0, Math.round((this.payCardPendingTotal - monto) * 100) / 100);
+  }
+
+  get canSubmitPayCardStatement(): boolean {
+    const monto = Number(this.payCardMonto);
+    return (
+      Number.isFinite(monto) &&
+      monto > 0 &&
+      monto <= this.payCardPendingTotal + 0.009
+    );
+  }
+
+  get payCuotaMontoEditable(): boolean {
+    const row = this.payCuotaTarget;
+    if (!row) return false;
+    if (this.canCorrectPaidCuota(row)) return true;
+    if (row.tarjetaId || row.compraId) return false;
+    if (row.tipo === 'mensual') return true;
+    const total = row.cuotaTotal ?? 1;
+    return total <= 1;
+  }
+
+  get payCuotaIsCorrection(): boolean {
+    return !!(this.payCuotaTarget && this.canCorrectPaidCuota(this.payCuotaTarget));
+  }
+
+  get payCuotaModalTitle(): string {
+    return this.payCuotaIsCorrection ? 'Corregir pago de cuota' : 'Registrar pago';
+  }
+
+  get payCuotaConfirmLabel(): string {
+    return this.payCuotaIsCorrection ? 'Guardar corrección' : 'Confirmar pago de la cuota';
+  }
+
+  get payCuotaMontoFixedHint(): string {
+    const row = this.payCuotaTarget;
+    if (!row) return '';
+    const monto = this.installmentDisplayMonto(row);
+    if (row.tarjetaId || row.compraId) {
+      return `Cuota de tarjeta o compra: se paga por el monto completo (${'$' + monto}).`;
+    }
+    const total = row.cuotaTotal ?? 1;
+    if (total > 1) {
+      return `Cuota ${row.numeroCuota ?? 1}/${total}: el egreso en caja será de ${'$' + monto}.`;
+    }
+    return `El egreso en caja será de ${'$' + monto}.`;
+  }
+
+  canCorrectPaidCuota(row: PayableInstallment): boolean {
+    return (
+      row.displayEstado === 'pagada' &&
+      !row.tarjetaId &&
+      !row.compraId &&
+      row.tipo !== 'mensual' &&
+      !!row.movimientoCajaId
+    );
+  }
+
+  openCorrectPaidCuota(row: PayableInstallment): void {
+    if (!this.canCorrectPaidCuota(row)) return;
+    this.payCuotaTarget = row;
+    this.payCuotaMedioId = row.medioPagoId ?? this.mediosPagoCaja[0]?.id ?? 'transferencia';
+    this.payCuotaMonto = row.monto;
+    this.payCuotaDetalle = this.installmentDetalleLabel(row);
+    this.payCuotaModalOpen = true;
   }
 
   get payCardModalSubtitle(): string {
@@ -1491,7 +2022,10 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   get payCuotaModalSubtitle(): string {
     if (!this.payCuotaTarget) return '';
-    return `${this.installmentCuentaLabel(this.payCuotaTarget)} · vence ${this.formatDate(this.payCuotaTarget.fechaVencimiento)}`;
+    const cuota = this.payCuotaTarget.numeroCuota ?? 1;
+    const total = this.payCuotaTarget.cuotaTotal ?? 1;
+    const cuotaLabel = total > 1 ? ` · cuota ${cuota}/${total}` : '';
+    return `${this.installmentCuentaLabel(this.payCuotaTarget)}${cuotaLabel} · vence ${this.formatDate(this.payCuotaTarget.fechaVencimiento)}`;
   }
 
   private resolvePayCardPendingRows(target: CardStatementSummary): PayableInstallment[] {
@@ -1505,31 +2039,39 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.payCardModalOpen = false;
     this.payCardTarget = null;
     this.payCardPendingRows = [];
+    this.payCardMonto = null;
+    this.payCardSave.clearSuccess();
+    this.payCardSave.endSave();
   }
 
   submitPayCardStatement(): void {
-    if (!this.payCardTarget || this.payingCardStatement) return;
+    if (!this.payCardTarget || !this.canSubmitPayCardStatement || !this.payCardSave.tryBeginSave()) return;
 
-    this.payingCardStatement = true;
+    const montoPago = Math.round(Number(this.payCardMonto) * 100) / 100;
+
     this.payables
       .payCardStatement({
         tarjetaId: this.payCardTarget.tarjetaId,
         mes: this.payCardTarget.mes,
         medioPagoId: this.payCardMedioId,
         ambito: this.usesAmbitoSeparation ? this.payCardTarget.ambito : undefined,
+        montoPago,
       })
+      .pipe(finalize(() => this.payCardSave.endSave()))
       .subscribe({
         next: (result) => {
-          this.payingCardStatement = false;
-          this.closePayCardModal();
-          this.dialog.alert({
-            title: 'Resumen pagado',
-            message: `Se marcaron ${result.cuotasPagadas} cuotas como pagadas por $${result.total}.`,
-          });
-          this.loadData();
+          const parcial =
+            result.saldoPendiente > 0
+              ? ` · saldo pendiente $${result.saldoPendiente}`
+              : '';
+          this.finishModalSave(
+            this.payCardSave,
+            `Pago registrado · $${result.total}${parcial}`,
+            () => this.closePayCardModal(),
+            () => this.loadData()
+          );
         },
         error: (err) => {
-          this.payingCardStatement = false;
           this.dialog.alert({
             message:
               typeof err.error?.error === 'string'
@@ -1615,8 +2157,19 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   installmentCuotaCompraLabel(row: PayableInstallment): string {
-    const compra = row.compraLabel ? `Compra #${row.compraLabel}` : 'Compra';
-    return `${compra} · Cuota ${this.cuotaLabel(row)}`;
+    const cuota = this.cuotaLabel(row);
+    if (row.origenTipo === 'compra' && row.compraLabel) {
+      return `Compra #${row.compraLabel} · Cuota ${cuota}`;
+    }
+    if ((row.cuotaTotal ?? 0) > 1 || (row.numeroCuota ?? 1) > 1) {
+      return `Cuota ${cuota}`;
+    }
+    return cuota;
+  }
+
+  /** Monto programado de la cuota (tras corrección en servidor). */
+  installmentDisplayMonto(row: PayableInstallment): number {
+    return Number(row.monto) || 0;
   }
 
   installmentRowTone(row: PayableInstallment): ModuleTableRowTone {
@@ -1663,48 +2216,42 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   openCreateModal(): void {
-    this.form = this.emptyForm();
-    this.formAmbito = this.usesAmbitoSeparation
-      ? this.activeAmbitoTab
-      : getDefaultCashAmbitoId(this.appConfig);
-    this.createModalOpen = true;
-  }
-
-  applyPreset(preset: ObligationPreset): void {
-    this.form.presetId = preset.id;
-    this.form.beneficiario = preset.beneficiario;
-    this.form.tipo = preset.tipo;
-    this.form.cantidadCuotas = 1;
-    this.form.categoriaId = preset.categoriaId ?? '';
-    const cat = this.categoriasGasto.find((c) => c.id === preset.categoriaId);
-    if (cat && this.usesAmbitoSeparation) {
-      this.formAmbito = cat.ambitoDefault;
-    }
-  }
-
-  closeCreateModal(): void {
-    this.createModalOpen = false;
-  }
-
-  submitCreate(): void {
-    const payload = this.buildPayload();
-    if (!payload) {
-      this.dialog.alert({ message: 'Completá beneficiario, monto y fecha de vencimiento.' });
-      return;
-    }
-
-    this.creating = true;
-    this.payables.createObligation(payload).subscribe({
-      next: () => {
-        this.creating = false;
-        this.closeCreateModal();
-        this.loadData();
-      },
-      error: () => {
-        this.creating = false;
-        this.dialog.alert({ message: 'No se pudo crear la obligación.' });
-      },
+    this.closePayablesCreateMenu();
+    const ambito = this.usesAmbitoSeparation
+      ? this.activeAmbitoTab || getDefaultCashAmbitoId(this.appConfig)
+      : '';
+    this.router.navigate(['/payables/new'], {
+      queryParams: ambito ? { ambito } : {},
     });
+  }
+
+  openLoanModal(): void {
+    this.closePayablesCreateMenu();
+    const ambito = this.usesAmbitoSeparation
+      ? this.activeAmbitoTab || getDefaultCashAmbitoId(this.appConfig)
+      : '';
+    this.router.navigate(['/payables/loans/new'], {
+      queryParams: ambito ? { ambito } : {},
+    });
+  }
+
+  togglePayablesCreateMenu(event: Event): void {
+    event.stopPropagation();
+    this.payablesCreateMenuOpen = !this.payablesCreateMenuOpen;
+  }
+
+  closePayablesCreateMenu(): void {
+    this.payablesCreateMenuOpen = false;
+  }
+
+  openLoanFromMenu(): void {
+    this.closePayablesCreateMenu();
+    this.openLoanModal();
+  }
+
+  openExpenseFromMenu(): void {
+    this.closePayablesCreateMenu();
+    this.openCreateModal();
   }
 
   togglePaid(row: PayableInstallment): void {
@@ -1729,32 +2276,62 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
     this.payCuotaTarget = row;
     this.payCuotaMedioId = this.mediosPagoCaja[0]?.id ?? 'transferencia';
+    this.payCuotaMonto = row.monto;
+    this.payCuotaDetalle = this.installmentDetalleLabel(row);
     this.payCuotaModalOpen = true;
   }
 
   closePayCuotaModal(): void {
     this.payCuotaModalOpen = false;
     this.payCuotaTarget = null;
+    this.payCuotaMonto = null;
+    this.payCuotaDetalle = '';
+    this.payCuotaSave.clearSuccess();
+    this.payCuotaSave.endSave();
+  }
+
+  get canSubmitPayCuota(): boolean {
+    if (this.payCuotaMonto === null || !Number.isFinite(Number(this.payCuotaMonto))) return false;
+    const monto = Number(this.payCuotaMonto);
+    if (monto <= 0) return false;
+    if (!this.payCuotaMontoEditable && this.payCuotaTarget) {
+      return Math.abs(monto - this.payCuotaTarget.monto) < 0.01;
+    }
+    return true;
   }
 
   submitPayCuota(): void {
-    if (!this.payCuotaTarget || this.payingCuota) return;
+    if (!this.payCuotaTarget || !this.canSubmitPayCuota) return;
+    if (!this.payCuotaSave.tryBeginSave()) return;
 
-    this.payingCuota = true;
+    const montoPago = Math.round(Number(this.payCuotaMonto) * 100) / 100;
+    const concepto = this.payCuotaDetalle.trim();
+
     this.payables
-      .setInstallmentPaid(this.payCuotaTarget.id, true, this.payCuotaMedioId)
+      .setInstallmentPaid(this.payCuotaTarget.id, true, this.payCuotaMedioId, {
+        montoPago,
+        concepto,
+      })
+      .pipe(finalize(() => this.payCuotaSave.endSave()))
       .subscribe({
         next: (updated) => {
-          this.payingCuota = false;
           this.installments = this.installments.map((item) =>
             item.id === updated.id ? updated : item
           );
           this.payablesViewCacheKey = '';
           this.syncPayablesView();
-          this.closePayCuotaModal();
+          this.finishModalSave(
+            this.payCuotaSave,
+            this.payCuotaIsCorrection
+              ? `Pago corregido · $${updated.monto}`
+              : `Cuota pagada · $${updated.monto}`,
+            () => this.closePayCuotaModal(),
+            () => {
+              this.loadData();
+            }
+          );
         },
         error: (err) => {
-          this.payingCuota = false;
           this.dialog.alert({
             message:
               typeof err.error?.error === 'string'
@@ -1798,11 +2375,15 @@ export class PayablesComponent implements OnInit, OnDestroy {
       });
   }
 
+  formatMoney(value: number | null | undefined): string {
+    return '$' + Number(value ?? 0).toLocaleString('es-AR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
   formatDate(value: string): string {
-    if (!value) return '—';
-    const [year, month, day] = value.slice(0, 10).split('-');
-    if (!year || !month || !day) return value;
-    return `${day}/${month}/${year}`;
+    return formatDisplayDate(value);
   }
 
   installmentMesKey(row: PayableInstallment): string {
@@ -1871,6 +2452,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
     }
   }
 
+  reloadList(): void {
+    this.payablesViewCacheKey = '';
+    this.loadData();
+  }
+
   private loadData(): void {
     this.loading = true;
     this.loadCardStatements();
@@ -1914,41 +2500,4 @@ export class PayablesComponent implements OnInit, OnDestroy {
     });
   }
 
-  private emptyForm() {
-    return {
-      presetId: '',
-      beneficiario: '',
-      monto: null as number | null,
-      tipo: 'mensual' as PayableTipo,
-      cantidadCuotas: 1,
-      fechaPrimerVencimiento: new Date().toISOString().slice(0, 10),
-      notas: '',
-      categoriaId: '',
-    };
-  }
-
-  private buildPayload(): CreatePayableObligationPayload | null {
-    const beneficiario = this.form.beneficiario.trim();
-    const monto = Number(this.form.monto);
-    const fechaPrimerVencimiento = this.form.fechaPrimerVencimiento?.trim();
-    if (!beneficiario || !fechaPrimerVencimiento || !Number.isFinite(monto) || monto <= 0) {
-      return null;
-    }
-
-    const payload: CreatePayableObligationPayload = {
-      beneficiario,
-      monto,
-      tipo: this.form.tipo,
-      cantidadCuotas:
-        this.form.tipo === 'unico'
-          ? Math.min(Math.max(1, Math.round(Number(this.form.cantidadCuotas) || 1)), 120)
-          : 1,
-      fechaPrimerVencimiento,
-      ambito: this.usesAmbitoSeparation ? this.formAmbito : undefined,
-      notas: this.form.notas.trim() || undefined,
-      categoriaId: this.form.categoriaId.trim() || undefined,
-    };
-
-    return payload;
-  }
 }

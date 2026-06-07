@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -35,6 +35,7 @@ import { ModulePageHeaderComponent } from '../../shared/components/module-page-h
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 @Component({
   selector: 'app-suppliers',
@@ -63,7 +64,10 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="suppliersPage = 1"
         searchFieldName="suppliersSearchQueryMobile"
-        activityModule="suppliers">
+        activityModule="suppliers"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <a
           headerActions
           routerLink="/suppliers/new"
@@ -234,6 +238,8 @@ export class SuppliersComponent implements OnInit {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   suppliers: Supplier[] = [];
   loading = true;
@@ -282,6 +288,13 @@ export class SuppliersComponent implements OnInit {
   }
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/suppliers',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.loadSuppliers();
 
     this.route.queryParamMap.subscribe((params) => {
@@ -354,6 +367,12 @@ export class SuppliersComponent implements OnInit {
 
   onSupplierDeleted() {
     this.closeSupplierModal();
+    this.loadSuppliers();
+  }
+
+  reloadList() {
+    this.suppliersPage = 1;
+    this.suppliersCursor = null;
     this.loadSuppliers();
   }
 

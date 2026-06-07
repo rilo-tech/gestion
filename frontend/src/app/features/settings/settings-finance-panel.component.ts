@@ -284,6 +284,42 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
             (labelBlur)="persist()">
           </app-config-editable-list>
         </app-config-setting-card>
+
+        <app-config-setting-card
+          title="Notas de crédito y débito"
+          description="Habilitá comprobantes adicionales en los formularios de Compras y Ventas. Si están desactivados, los formularios se ven igual que siempre."
+          [cardClass]="cardClass">
+          <div configList class="space-y-3">
+            <label class="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                [checked]="config.comprobantes.notaCreditoActiva"
+                (change)="setComprobanteFlag('notaCreditoActiva', $any($event.target).checked)"
+                [disabled]="saving"
+                class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+              <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
+                <span class="font-semibold">Nota de crédito</span>
+                <span class="block text-xs text-gray-500 dark:text-gray-400">
+                  Devoluciones: en compras saca stock y baja el saldo; en ventas reingresa stock y genera saldo a favor del cliente.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                [checked]="config.comprobantes.notaDebitoActiva"
+                (change)="setComprobanteFlag('notaDebitoActiva', $any($event.target).checked)"
+                [disabled]="saving"
+                class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+              <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
+                <span class="font-semibold">Nota de débito</span>
+                <span class="block text-xs text-gray-500 dark:text-gray-400">
+                  Ajustes que aumentan el saldo. Mueve stock igual que una factura.
+                </span>
+              </span>
+            </label>
+          </div>
+        </app-config-setting-card>
       </div>
 
       <div class="mt-6 sm:mt-8">
@@ -450,6 +486,15 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
     }
     if (parts.length === 0) return 'Sin movimiento automático al confirmar la compra.';
     return parts.join(' · ');
+  }
+
+  setComprobanteFlag(flag: 'notaCreditoActiva' | 'notaDebitoActiva', checked: boolean) {
+    if (this.saving) return;
+    this.config.comprobantes = {
+      ...this.config.comprobantes,
+      [flag]: checked,
+    };
+    this.persist();
   }
 
   onMedioLabelChange(id: string, label: string) {

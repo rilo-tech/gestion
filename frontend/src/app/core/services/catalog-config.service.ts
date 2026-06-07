@@ -45,6 +45,13 @@ import {
   syncMedioPagoFlags,
 } from '../../../../../shared/finance-config.ts';
 import {
+  DEFAULT_COLLABORATOR_EXTRA_TIPOS,
+  normalizeCollaboratorExtraTipos,
+  resolveCollaboratorExtraTipoLabel,
+  slugifyCollaboratorExtraTipoId,
+  type CollaboratorExtraTipoConfig,
+} from '../../../../../shared/collaborators-config.ts';
+import {
   DEFAULT_PRODUCTOS_CODIGO_CONFIG,
   getPrefijoForCategoria,
   findCategoriaByPrefijo,
@@ -54,6 +61,16 @@ import {
   normalizeProductosCodigo,
   type ProductosCodigoConfig,
 } from '../../../../../shared/product-code-config.ts';
+import {
+  DEFAULT_COMPROBANTES_CONFIG,
+  getComprobantesDisponibles,
+  hasComprobantesExtra,
+  normalizeComprobanteTipo,
+  type ComprobanteModulo,
+  type ComprobanteTipoId,
+  type ComprobanteTipoOption,
+  type ComprobantesConfig,
+} from '../../../../../shared/comprobantes-config.ts';
 
 export type { OrderEstadoConfig, OrderExtraCostPreset, OrderPedidosConfigShape, OrderStockMode };
 export {
@@ -109,7 +126,8 @@ export type ConfigRemovalKind =
   | 'stock.origenes'
   | 'finanzas.categoriasGasto'
   | 'finanzas.mediosPago'
-  | 'finanzas.tarjetas';
+  | 'finanzas.tarjetas'
+  | 'colaboradores.tiposExtra';
 
 export interface ConfigUsageHit {
   module: string;
@@ -196,6 +214,10 @@ export interface AppConfig {
     tarjetas: TarjetaConfig[];
     categoriasGasto: CategoriaGastoConfig[];
   };
+  colaboradores: {
+    tiposExtra: CollaboratorExtraTipoConfig[];
+  };
+  comprobantes: ComprobantesConfig;
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
@@ -254,7 +276,34 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     tarjetas: [],
     categoriasGasto: [...DEFAULT_CATEGORIAS_GASTO],
   },
+  colaboradores: {
+    tiposExtra: DEFAULT_COLLABORATOR_EXTRA_TIPOS.map((item) => ({ ...item })),
+  },
+  comprobantes: { ...DEFAULT_COMPROBANTES_CONFIG },
 };
+
+export type {
+  CollaboratorExtraTipoConfig,
+  ComprobanteModulo,
+  ComprobanteTipoId,
+  ComprobanteTipoOption,
+  ComprobantesConfig,
+};
+export { normalizeComprobanteTipo };
+export {
+  DEFAULT_COLLABORATOR_EXTRA_TIPOS,
+  normalizeCollaboratorExtraTipos,
+  resolveCollaboratorExtraTipoLabel,
+  slugifyCollaboratorExtraTipoId,
+};
+
+export function getCollaboratorExtraTipos(config: AppConfig): CollaboratorExtraTipoConfig[] {
+  return normalizeCollaboratorExtraTipos(config.colaboradores?.tiposExtra);
+}
+
+export function getCollaboratorExtraTipoLabel(config: AppConfig, id?: string): string {
+  return resolveCollaboratorExtraTipoLabel(getCollaboratorExtraTipos(config), id);
+}
 
 export { buildProductDisplayName, inferNombreBase } from '../../../../../shared/product-display-name.ts';
 
@@ -295,9 +344,9 @@ export function usesOrderPrintSingleLandscape(config: AppConfig): boolean {
   );
 }
 
-/** Hoja apaisada al imprimir (automático con dos vías). */
+/** Hoja apaisada al imprimir (solo una vía con la opción activada). */
 export function usesOrderPrintLandscapeSheet(config: AppConfig): boolean {
-  return usesOrderPrintDualCopy(config) || usesOrderPrintSingleLandscape(config);
+  return usesOrderPrintSingleLandscape(config);
 }
 
 export function usesOrderPrintLineCheckboxes(config: AppConfig): boolean {
@@ -419,6 +468,17 @@ export function getTarjetasActivas(config: AppConfig): TarjetaConfig[] {
   return (config.finanzas?.tarjetas ?? []).filter((t) => t.activa !== false);
 }
 
+export function getComprobantesActivos(
+  config: AppConfig,
+  modulo: ComprobanteModulo
+): ComprobanteTipoOption[] {
+  return getComprobantesDisponibles(config.comprobantes, modulo);
+}
+
+export function usesComprobantesExtra(config: AppConfig): boolean {
+  return hasComprobantesExtra(config.comprobantes);
+}
+
 export function getCategoriasGasto(config: AppConfig): CategoriaGastoConfig[] {
   return config.finanzas?.categoriasGasto ?? DEFAULT_CATEGORIAS_GASTO;
 }
@@ -437,7 +497,10 @@ export function getMediosPagoConCuentaHija(config: AppConfig): MedioPagoConfig[]
 
 export function getTarjetasForMedio(config: AppConfig, medioPagoId: string): TarjetaConfig[] {
   const key = medioPagoId.trim().toLowerCase();
-  return getTarjetasActivas(config).filter((tarjeta) => tarjeta.medioPagoId === key);
+  if (!key) return [];
+  return getTarjetasActivas(config).filter(
+    (tarjeta) => String(tarjeta.medioPagoId ?? '').trim().toLowerCase() === key
+  );
 }
 
 export function getCashConceptOptions(
@@ -494,6 +557,8 @@ export class CatalogConfigService {
     options?: {
       confirmConfigRemovals?: boolean;
       renameCategoria?: { from: string; to: string };
+      renameTalle?: { from: string; to: string };
+      renameColor?: { from: string; to: string };
       regenerateCodigosCategoria?: string;
     }
   ): Observable<AppConfig> {
@@ -501,6 +566,8 @@ export class CatalogConfigService {
       ...config,
       confirmConfigRemovals: options?.confirmConfigRemovals ?? false,
       ...(options?.renameCategoria ? { renameCategoria: options.renameCategoria } : {}),
+      ...(options?.renameTalle ? { renameTalle: options.renameTalle } : {}),
+      ...(options?.renameColor ? { renameColor: options.renameColor } : {}),
       ...(options?.regenerateCodigosCategoria
         ? { regenerateCodigosCategoria: options.regenerateCodigosCategoria }
         : {}),

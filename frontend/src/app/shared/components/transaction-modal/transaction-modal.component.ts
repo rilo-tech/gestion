@@ -30,12 +30,19 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
           <div class="mb-6 flex flex-col gap-3 sm:gap-4 max-w-7xl mx-auto w-full">
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
-                <h2
-                  *ngIf="title"
-                  [id]="titleId"
-                  class="text-xl sm:text-2xl font-bold text-gray-900">
-                  {{ title }}
-                </h2>
+                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <h2
+                    *ngIf="title"
+                    [id]="titleId"
+                    class="text-xl sm:text-2xl font-bold text-gray-900">
+                    {{ title }}
+                  </h2>
+                  <span
+                    *ngIf="titleBadge"
+                    class="shrink-0 text-sm sm:text-lg font-semibold text-teal-700 tabular-nums">
+                    #{{ titleBadge }}
+                  </span>
+                </div>
                 <p
                   *ngIf="subtitle"
                   class="text-sm text-gray-500 mt-1 desc-lg-only"
@@ -79,16 +86,24 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
           [class.mb-4]="!compact && (title || subtitle)">
           <div class="flex items-start justify-between gap-4">
             <div class="min-w-0">
-              <h2
-                *ngIf="title"
-                [id]="titleId"
-                class="font-bold text-gray-900"
-                [class.text-lg]="compact"
-                [class.text-xl]="!compact"
-                [class.mb-0]="compact"
-                [class.mb-1]="!compact">
-                {{ title }}
-              </h2>
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <h2
+                  *ngIf="title"
+                  [id]="titleId"
+                  class="font-bold text-gray-900"
+                  [class.text-lg]="compact"
+                  [class.text-xl]="!compact"
+                  [class.mb-0]="compact"
+                  [class.mb-1]="!compact">
+                  {{ title }}
+                </h2>
+                <span
+                  *ngIf="titleBadge"
+                  class="shrink-0 text-sm font-semibold text-teal-700 tabular-nums"
+                  [class.sm:text-base]="!compact">
+                  #{{ titleBadge }}
+                </span>
+              </div>
               <p
                 *ngIf="subtitle"
                 class="text-sm text-gray-500"
@@ -120,6 +135,8 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
 export class TransactionModalComponent {
   @Input() open = false;
   @Input() title = '';
+  /** Número de documento (ej. compra) junto al título. */
+  @Input() titleBadge = '';
   @Input() subtitle = '';
   @Input() maxWidthClass = 'max-w-2xl';
   @Input() zIndexClass = 'z-50';
@@ -128,9 +145,9 @@ export class TransactionModalComponent {
   @Input() compact = false;
   /** Oculta el subtítulo en pantallas chicas. */
   @Input() hideSubtitleOnMobile = true;
-  /** Botón superior en pantalla completa: cerrar (X) o volver (flecha). */
-  @Input() fullscreenCloseIcon: 'x' | 'arrow-left' = 'x';
-  @Input() fullscreenCloseLabel = 'Cerrar';
+  /** Botón superior en pantalla completa: flecha «Volver» (mismo criterio que formularios). */
+  @Input() fullscreenCloseIcon: 'x' | 'arrow-left' = 'arrow-left';
+  @Input() fullscreenCloseLabel = 'Volver';
   @Output() closed = new EventEmitter<void>();
 
   readonly titleId = `transaction-modal-title-${Math.random().toString(36).slice(2, 9)}`;

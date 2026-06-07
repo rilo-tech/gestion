@@ -24,7 +24,8 @@ import {
 import { Client, ClientService } from '../../core/services/client.service';
 import { StockItem, StockService, getStockDisponible, itemControlsStock } from '../../core/services/stock.service';
 import { DialogService } from '../../core/services/dialog.service';
-import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
+import { TransactionPartySearchComponent } from '../../shared/components/transaction-party-search/transaction-party-search.component';
+import { SearchableSelectOption } from '../../shared/components/searchable-select/searchable-select.component';
 import {
   ClientFormPanelComponent,
   ClientFormSaveEvent,
@@ -51,10 +52,15 @@ import {
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
   OrderExtraCostPreset,
+  getComprobantesActivos,
+  usesComprobantesExtra,
+  normalizeComprobanteTipo,
+  type ComprobanteTipoId,
+  type ComprobanteTipoOption,
 } from '../../core/services/catalog-config.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
-import { Subscription } from 'rxjs';
+import { Subscription, finalize } from 'rxjs';
 import {
   readSalesFormDraft,
   saveSalesFormDraft,
@@ -68,6 +74,8 @@ import {
   TransactionPaymentSimpleComponent,
   TransactionNotesFieldComponent,
   TransactionDateFieldComponent,
+  TransactionSaveBannerComponent,
+  TransactionSaveFeedback,
 } from '../../shared/components/transaction-form';
 import { TransactionFormSaveEvent } from '../../shared/components/transaction-form/transaction-form.types';
 import {
@@ -94,7 +102,7 @@ interface SaleDraftLine {
     CommonModule,
     FormsModule,
     LucideAngularModule,
-    SearchableSelectComponent,
+    TransactionPartySearchComponent,
     ClientFormPanelComponent,
     FormFooterComponent,
     TransactionModalComponent,
@@ -106,6 +114,7 @@ interface SaleDraftLine {
     TransactionPaymentSimpleComponent,
     TransactionNotesFieldComponent,
     TransactionDateFieldComponent,
+    TransactionSaveBannerComponent,
   ],
   template: `
     <div *ngIf="isEditing && editingSaleLoading" class="py-8 text-center text-xs sm:text-sm text-gray-400">
@@ -113,30 +122,54 @@ interface SaleDraftLine {
     </div>
 
     <form *ngIf="!(isEditing && editingSaleLoading)" (submit)="submitSale(); $event.preventDefault()" class="space-y-4">
-      <app-transaction-party-field
-        label="Cliente"
-        createActionLabel="+ Nuevo cliente"
-        (createClick)="goToNewClientForm()">
-        <app-searchable-select
-          [(ngModel)]="saleClienteId"
-          name="saleClienteId"
-          [labeledOptions]="clientOptions"
-          [fallbackLabel]="selectedSaleClientLabel"
-          [creatable]="true"
-          createLabelPrefix="Crear cliente"
-          (createRequested)="quickCreateClient($event)"
-          (searchChange)="pendingClientName = $event"
-          placeholder="Buscar cliente..."
-          emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
-        </app-searchable-select>
-      </app-transaction-party-field>
+      <app-transaction-save-banner [message]="saveSuccessMessage"></app-transaction-save-banner>
 
-      <app-transaction-date-field
-        [date]="saleFecha"
-        (dateChange)="saleFecha = $event"
-        fieldName="saleFecha"
-        label="Fecha">
-      </app-transaction-date-field>
+      <div *ngIf="showComprobanteSelector" class="min-w-0">
+        <label class="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de comprobante</label>
+        <select
+          [(ngModel)]="tipoComprobante"
+          name="saleTipoComprobante"
+          class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+          <option *ngFor="let option of comprobanteOptions" [ngValue]="option.id">
+            {{ option.label }}
+          </option>
+        </select>
+        <p *ngIf="tipoComprobante === 'nota_credito'" class="text-[11px] text-amber-600 dark:text-amber-400 mt-1 m-0 leading-snug">
+          Nota de crédito: reingresa el stock y genera saldo a favor del cliente (el monto cobrado se devuelve).
+        </p>
+      </div>
+
+      <div class="relative z-50 overflow-visible grid grid-cols-[minmax(0,1fr)_8.5rem] sm:grid-cols-[minmax(0,1fr)_10.5rem] gap-2 sm:gap-4 items-start">
+        <div class="min-w-0 overflow-visible">
+          <app-transaction-party-field
+            label="Cliente"
+            createActionLabel="+ Nuevo cliente"
+            (createClick)="goToNewClientForm()">
+            <app-transaction-party-search
+              [(ngModel)]="saleClienteId"
+              inputName="saleClienteId"
+              [labeledOptions]="clientOptions"
+              [fallbackLabel]="selectedSaleClientLabel"
+              [creatable]="true"
+              createLabelPrefix="Crear cliente"
+              (partySelected)="onSalePartySelected($event)"
+              (createRequested)="quickCreateClient($event)"
+              (searchChange)="pendingClientName = $event"
+              placeholder="Buscar cliente..."
+              emptyOptionsMessage="Escribí al menos 2 letras para buscar clientes.">
+            </app-transaction-party-search>
+          </app-transaction-party-field>
+        </div>
+
+        <div class="min-w-0">
+          <app-transaction-date-field
+            [date]="saleFecha"
+            (dateChange)="saleFecha = $event"
+            fieldName="saleFecha"
+            label="Fecha">
+          </app-transaction-date-field>
+        </div>
+      </div>
 
       <app-transaction-lines-section
         title="Productos"
@@ -285,8 +318,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
 
-  saveSuccessMessage = '';
-  private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
+  readonly saveFeedback = new TransactionSaveFeedback();
 
   readonly auth = inject(AuthService);
   readonly usesInlineFormPage = prefersInlineFormPage();
@@ -312,8 +344,15 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   saleTableColumns = buildTransactionTableColumns(SALE_FORM_TABLE_COLUMNS, {
     personalization: false,
   });
-  savingSale = false;
   savingDraft = false;
+
+  get savingSale(): boolean {
+    return this.saveFeedback.saving;
+  }
+
+  get saveSuccessMessage(): string {
+    return this.saveFeedback.successMessage;
+  }
   isDraftSale = false;
   private activeDraftId: string | null = null;
   editingSaleLabel = '';
@@ -330,6 +369,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   medioPago = 'efectivo';
   saleNotas = '';
   saleFecha = todayDateInputValue();
+  tipoComprobante: ComprobanteTipoId = 'factura';
 
   extraCostsModalIndex: number | null = null;
 
@@ -339,6 +379,14 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
 
   get saleExtraCostPresets(): OrderExtraCostPreset[] {
     return this.appConfig.pedidos?.costosExtraPredeterminados ?? [];
+  }
+
+  get showComprobanteSelector(): boolean {
+    return usesComprobantesExtra(this.appConfig);
+  }
+
+  get comprobanteOptions(): ComprobanteTipoOption[] {
+    return getComprobantesActivos(this.appConfig, 'ventas');
   }
 
   get isEditing(): boolean {
@@ -472,11 +520,14 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.catalogConfig.getAppConfig().subscribe();
     this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
       this.appConfig = config;
+      if (!this.comprobanteOptions.some((option) => option.id === this.tipoComprobante)) {
+        this.tipoComprobante = 'factura';
+      }
     });
 
     if (!this.auth.canCreateSales) return;
 
-    this.clientService.getClientsPage(120).subscribe((page) => {
+    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
       this.clients = page.items;
       this.ensureSaleClient(this.saleClienteId, this.selectedSaleClientLabel);
     });
@@ -495,29 +546,31 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
 
   ngOnDestroy() {
     this.configSub?.unsubscribe();
-    if (this.saveSuccessTimeout) {
-      clearTimeout(this.saveSuccessTimeout);
-    }
+    this.saveFeedback.destroy();
   }
 
-  private showSaveSuccess(message: string) {
-    this.saveSuccessMessage = message;
-    if (this.saveSuccessTimeout) {
-      clearTimeout(this.saveSuccessTimeout);
-    }
-    this.saveSuccessTimeout = setTimeout(() => {
-      this.saveSuccessMessage = '';
-    }, 2500);
+  private applyFreshSaveSuccess(id: string, label: string | undefined, message: string) {
+    this.saveFeedback.markSkipReload(id);
+    this.editingSaleLabel = label || '';
+    this.isDraftSale = false;
+    this.activeDraftId = null;
+    this.saveFeedback.showSuccessWithDetail(message, label);
+    this.saved.emit({ id, label, freshSave: true });
   }
 
   ngOnChanges(changes: SimpleChanges) {
     if (!changes['editingSaleId'] || changes['editingSaleId'].firstChange) return;
 
-    if (this.editingSaleId) {
-      this.loadEditingSale(this.editingSaleId);
-    } else {
+    if (!this.editingSaleId) {
       this.resetNewSaleForm();
+      return;
     }
+
+    if (this.saveFeedback.consumeSkipReload(this.editingSaleId)) {
+      return;
+    }
+
+    this.loadEditingSale(this.editingSaleId);
   }
 
   restoreFromSessionDraft(clienteId: string | null) {
@@ -550,7 +603,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       this.ensureSaleClient(this.saleClienteId, this.selectedSaleClientLabel);
     }
 
-    this.clientService.getClientsPage(120).subscribe((page) => {
+    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
       this.clients = page.items;
       this.ensureSaleClient(this.saleClienteId, this.selectedSaleClientLabel);
     });
@@ -582,6 +635,13 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         returnTo: 'sales',
       },
     });
+  }
+
+  onSalePartySelected(option: SearchableSelectOption) {
+    this.saleClienteId = option.value;
+    this.pendingClientName = option.label;
+    this.selectedSaleClientLabel = option.label;
+    this.mergeClientOption(option.value, option.label);
   }
 
   quickCreateClient(name: string) {
@@ -631,7 +691,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.pendingClientName = event.client.nombre ?? '';
     this.selectedSaleClientLabel = event.client.nombre ?? '';
     this.mergeClientOption(event.id, event.client.nombre ?? '');
-    this.clientService.getClientsPage(120).subscribe((page) => {
+    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
       this.clients = page.items;
       this.ensureSaleClient(this.saleClienteId, this.selectedSaleClientLabel);
     });
@@ -803,7 +863,10 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   submitSale() {
+    if (this.savingSale || this.savingDraft) return;
     if (this.saleSubmitBlockedReason) return;
+
+    this.saveFeedback.clearSuccess();
 
     if (this.isDraftSale && this.draftId) {
       this.confirmDraft();
@@ -819,6 +882,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
 
   saveDraft() {
     if (this.savingDraft || this.savingSale) return;
+    this.saveFeedback.clearSuccess();
 
     const payload = this.buildSalePayload(false);
     if (!payload) return;
@@ -837,7 +901,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         this.savingChange.emit(false);
         this.isDraftSale = true;
         this.activeDraftId = result.id;
-        this.showSaveSuccess('Borrador guardado');
+        this.saveFeedback.showSuccess('Borrador guardado');
         this.saved.emit({ id: result.id, label: 'Borrador', draft: true });
       },
       error: (err: HttpErrorResponse) => {
@@ -862,20 +926,20 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     if (!payload) return;
 
     this.setSavingSale(true);
-    this.salesService
-      .createSale({ ...payload, draft: true, ventaId })
-      .subscribe({
-        next: () => {
-          this.salesService.confirmSale(ventaId).subscribe({
+    this.salesService.createSale({ ...payload, draft: true, ventaId }).subscribe({
+      next: () => {
+        this.salesService
+          .confirmSale(ventaId)
+          .pipe(finalize(() => this.setSavingSale(false)))
+          .subscribe({
             next: (result) => {
-              this.setSavingSale(false);
-              this.isDraftSale = false;
-              this.activeDraftId = null;
-              this.showSaveSuccess('Venta registrada');
-              this.saved.emit({ id: result.id, label: result.ventaLabel });
+              this.applyFreshSaveSuccess(
+                result.id,
+                result.ventaLabel,
+                'Venta registrada'
+              );
             },
             error: (err: HttpErrorResponse) => {
-              this.setSavingSale(false);
               const message =
                 typeof err.error?.error === 'string'
                   ? err.error.error
@@ -883,18 +947,18 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
               this.dialogService.alert({ title: 'Error', message });
             },
           });
-        },
-        error: (err: HttpErrorResponse) => {
-          this.setSavingSale(false);
-          this.dialogService.alert({
-            title: 'Error',
-            message:
-              typeof err.error?.error === 'string'
-                ? err.error.error
-                : 'No se pudo actualizar el borrador antes de confirmar.',
-          });
-        },
-      });
+      },
+      error: (err: HttpErrorResponse) => {
+        this.setSavingSale(false);
+        this.dialogService.alert({
+          title: 'Error',
+          message:
+            typeof err.error?.error === 'string'
+              ? err.error.error
+              : 'No se pudo actualizar el borrador antes de confirmar.',
+        });
+      },
+    });
   }
 
   private buildSalePayload(strict: boolean): CreateSalePayload | null {
@@ -942,6 +1006,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       medioPago: this.medioPago,
       notas: this.saleNotas.trim(),
       fecha: dateInputToIso(this.saleFecha),
+      tipoComprobante: this.tipoComprobante,
     };
   }
 
@@ -958,23 +1023,31 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   private submitNewSale() {
+    if (this.savingSale) return;
+
     const payload = this.buildSalePayload(true);
     if (!payload) return;
 
     this.setSavingSale(true);
-    this.salesService.createSale(payload).subscribe({
-      next: (result) => {
-        this.setSavingSale(false);
-        this.showSaveSuccess('Venta registrada');
-        this.saved.emit({ id: result.id, label: result.ventaLabel });
-      },
-      error: (err: HttpErrorResponse) => {
-        this.setSavingSale(false);
-        const message =
-          typeof err.error?.error === 'string' ? err.error.error : 'No se pudo registrar la venta.';
-        this.offerSaveAsDraft(message);
-      },
-    });
+    this.salesService
+      .createSale(payload)
+      .pipe(finalize(() => this.setSavingSale(false)))
+      .subscribe({
+        next: (result) => {
+          this.applyFreshSaveSuccess(
+            result.id,
+            result.ventaLabel,
+            'Venta registrada'
+          );
+        },
+        error: (err: HttpErrorResponse) => {
+          const message =
+            typeof err.error?.error === 'string'
+              ? err.error.error
+              : 'No se pudo registrar la venta.';
+          this.offerSaveAsDraft(message);
+        },
+      });
   }
 
   private submitEditSale() {
@@ -1026,6 +1099,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       notas: this.saleNotas.trim(),
       medioPago: this.medioPago,
       fecha: dateInputToIso(this.saleFecha),
+      tipoComprobante: this.tipoComprobante,
     };
 
     if (!this.editHasExtraCobros) {
@@ -1033,23 +1107,26 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     }
 
     this.setSavingSale(true);
-    this.salesService.updateSale(this.editingSaleId, payload).subscribe({
-      next: (result) => {
-        this.setSavingSale(false);
-        this.showSaveSuccess('Cambios guardados');
-        this.saved.emit({ id: result.id, label: result.ventaLabel });
-      },
-      error: (err: HttpErrorResponse) => {
-        this.setSavingSale(false);
-        this.dialogService.alert({
-          title: 'Error',
-          message:
-            typeof err.error?.error === 'string'
-              ? err.error.error
-              : 'No se pudo actualizar la venta.',
-        });
-      },
-    });
+    this.salesService
+      .updateSale(this.editingSaleId, payload)
+      .pipe(finalize(() => this.setSavingSale(false)))
+      .subscribe({
+        next: (result) => {
+          const label = result.ventaLabel || this.editingSaleLabel;
+          this.editingSaleLabel = label;
+          this.saveFeedback.showSuccessWithDetail('Cambios guardados', label);
+          this.saved.emit({ id: result.id, label });
+        },
+        error: (err: HttpErrorResponse) => {
+          this.dialogService.alert({
+            title: 'Error',
+            message:
+              typeof err.error?.error === 'string'
+                ? err.error.error
+                : 'No se pudo actualizar la venta.',
+          });
+        },
+      });
   }
 
   private buildSaleItems() {
@@ -1128,6 +1205,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         this.medioPago = fullSale.medioPago || 'efectivo';
         this.saleNotas = fullSale.notas || '';
         this.saleFecha = toDateInputValue(fullSale.fecha);
+        this.tipoComprobante = normalizeComprobanteTipo(fullSale.tipoComprobante);
         this.montoCobrado = Number(fullSale.montoCobrado) || 0;
         this.editHasExtraCobros = this.saleHasExtraCobros(fullSale);
         this.draftLines = (fullSale.items ?? []).map((line) =>
@@ -1162,6 +1240,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.medioPago = 'efectivo';
     this.saleNotas = '';
     this.saleFecha = todayDateInputValue();
+    this.tipoComprobante = 'factura';
     this.montoCobrado = null;
     this.onDraftLineChange();
   }
@@ -1227,7 +1306,12 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   private setSavingSale(value: boolean) {
-    this.savingSale = value;
-    this.savingChange.emit(value);
+    if (value) {
+      this.saveFeedback.saving = true;
+      this.saveFeedback.clearSuccess();
+    } else {
+      this.saveFeedback.endSave();
+    }
+    this.savingChange.emit(this.saveFeedback.saving);
   }
 }

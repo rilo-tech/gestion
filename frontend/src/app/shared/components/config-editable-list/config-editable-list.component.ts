@@ -9,16 +9,18 @@ import {
   CONFIG_EDITABLE_LIST_FOOTER_CLASS,
   CONFIG_EDITABLE_LIST_HINT_CLASS,
   CONFIG_EDITABLE_LIST_INDEX_CLASS,
-  CONFIG_EDITABLE_LIST_ITEM_CLASS,
+  CONFIG_EDITABLE_LIST_ITEM_COMPACT_CLASS,
+  CONFIG_EDITABLE_LIST_ITEM_COMPACT_INPUT_CLASS,
+  CONFIG_EDITABLE_LIST_ITEM_EXTENDED_CLASS,
   CONFIG_EDITABLE_LIST_LABEL_EMPHASIS_CLASS,
   CONFIG_EDITABLE_LIST_LABEL_TEXT_CLASS,
-  CONFIG_EDITABLE_LIST_ROW_INPUT_CLASS,
-  CONFIG_EDITABLE_LIST_SELECT_CLASS,
-  CONFIG_EDITABLE_LIST_SELECT_ROW_CLASS,
   CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
   CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
   CONFIG_EDITABLE_LIST_ROW_FIELD_CLASS,
+  CONFIG_EDITABLE_LIST_ROW_INPUT_CLASS,
   CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
+  CONFIG_EDITABLE_LIST_SELECT_CLASS,
+  CONFIG_EDITABLE_LIST_SELECT_ROW_CLASS,
 } from './config-editable-list.constants';
 import { ConfigListRemoveButtonComponent } from './config-list-remove-button.component';
 
@@ -70,28 +72,59 @@ export interface ConfigEditableListItem {
 
       <ul
         *ngIf="showList"
-        class="space-y-2 m-0 p-0 list-none"
+        class="space-y-1 m-0 p-0 list-none"
         [class.overflow-y-auto]="!!listMaxHeightClass"
         [ngClass]="listMaxHeightClass">
         <li
           *ngFor="let item of items; let i = index; trackBy: trackItem"
-          [class]="itemClass">
-          <span
-            *ngIf="showIndex"
-            [class]="indexClass"
-            aria-hidden="true">
-            {{ i + 1 }}
-          </span>
+          [class]="rowClass(item)">
+          <!-- Fila compacta: una línea -->
+          <ng-container *ngIf="!isExtendedItem(item); else extendedRow">
+            <span
+              *ngIf="showIndex"
+              [class]="indexClass"
+              aria-hidden="true">
+              {{ i + 1 }}
+            </span>
+            <ng-container *ngIf="labelMode === 'input'; else compactLabelText">
+              <input
+                [ngModel]="item.label"
+                (ngModelChange)="onLabelChange(item, $event)"
+                (blur)="onLabelBlur(item)"
+                [name]="inputNamePrefix + '_' + item.id"
+                [disabled]="disabled"
+                [class]="addInputClass + ' flex-1 min-w-0 font-medium'" />
+            </ng-container>
+            <ng-template #compactLabelText>
+              <span [class]="(labelEmphasis ? labelEmphasisClass : labelTextClass) + ' flex-1 min-w-0'">
+                {{ item.label }}
+              </span>
+            </ng-template>
+            <app-config-list-remove-button
+              *ngIf="item.removable !== false"
+              position="inline"
+              [compact]="labelMode === 'input'"
+              [disabled]="disabled || (!!busyRemoveId && busyRemoveId !== item.id)"
+              [loading]="busyRemoveId === item.id"
+              (clicked)="remove.emit(item.id)">
+            </app-config-list-remove-button>
+          </ng-container>
 
-          <div class="min-w-0 flex-1 flex flex-col gap-2">
-            <div
-              [class]="rowShellClass + ' sm:flex sm:items-start sm:justify-between sm:gap-2'">
+          <!-- Fila extendida: badge/índice + campo + selects -->
+          <ng-template #extendedRow>
+            <div [class]="rowShellClass">
+              <span
+                *ngIf="showIndex"
+                [class]="indexClass"
+                aria-hidden="true">
+                {{ i + 1 }}
+              </span>
               <div [class]="rowBodyClass">
-                <div *ngIf="item.badge" [class]="rowChipsClass">
+                <span *ngIf="item.badge" [class]="rowChipsClass">
                   <span [class]="badgeClass">{{ item.badge }}</span>
-                </div>
+                </span>
                 <div [class]="rowFieldClass">
-                  <ng-container *ngIf="labelMode === 'input'; else labelText">
+                  <ng-container *ngIf="labelMode === 'input'; else extendedLabelText">
                     <input
                       [ngModel]="item.label"
                       (ngModelChange)="onLabelChange(item, $event)"
@@ -100,7 +133,7 @@ export interface ConfigEditableListItem {
                       [disabled]="disabled"
                       [class]="rowInputClass" />
                   </ng-container>
-                  <ng-template #labelText>
+                  <ng-template #extendedLabelText>
                     <span [class]="labelEmphasis ? labelEmphasisClass : labelTextClass">
                       {{ item.label }}
                     </span>
@@ -108,9 +141,9 @@ export interface ConfigEditableListItem {
                   <p *ngIf="item.hint" [class]="hintClass">{{ item.hint }}</p>
                 </div>
               </div>
-
               <app-config-list-remove-button
                 *ngIf="item.removable !== false"
+                position="inline"
                 [disabled]="disabled || (!!busyRemoveId && busyRemoveId !== item.id)"
                 [loading]="busyRemoveId === item.id"
                 (clicked)="remove.emit(item.id)">
@@ -152,7 +185,7 @@ export interface ConfigEditableListItem {
                 </option>
               </select>
             </div>
-          </div>
+          </ng-template>
         </li>
 
         <li *ngIf="items.length === 0" [class]="emptyClass">
@@ -193,7 +226,9 @@ export class ConfigEditableListComponent {
 
   readonly addInputClass = CONFIG_EDITABLE_LIST_ADD_INPUT_CLASS;
   readonly addButtonClass = CONFIG_EDITABLE_LIST_ADD_BUTTON_CLASS;
-  readonly itemClass = CONFIG_EDITABLE_LIST_ITEM_CLASS;
+  readonly itemCompactClass = CONFIG_EDITABLE_LIST_ITEM_COMPACT_CLASS;
+  readonly itemCompactInputClass = CONFIG_EDITABLE_LIST_ITEM_COMPACT_INPUT_CLASS;
+  readonly itemExtendedClass = CONFIG_EDITABLE_LIST_ITEM_EXTENDED_CLASS;
   readonly rowInputClass = CONFIG_EDITABLE_LIST_ROW_INPUT_CLASS;
   readonly indexClass = CONFIG_EDITABLE_LIST_INDEX_CLASS;
   readonly rowShellClass = CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS;
@@ -210,6 +245,22 @@ export class ConfigEditableListComponent {
   readonly selectClass = CONFIG_EDITABLE_LIST_SELECT_CLASS;
 
   draft = '';
+
+  isExtendedItem(item: ConfigEditableListItem): boolean {
+    return (
+      this.showIndex ||
+      !!item.badge ||
+      !!item.hint ||
+      !!(item.selectOptions?.length) ||
+      !!(item.select2Options?.length)
+    );
+  }
+
+  rowClass(item: ConfigEditableListItem): string {
+    if (this.isExtendedItem(item)) return this.itemExtendedClass;
+    if (this.labelMode === 'input') return this.itemCompactInputClass;
+    return this.itemCompactClass;
+  }
 
   trackItem(_index: number, item: ConfigEditableListItem): string {
     return item.id;

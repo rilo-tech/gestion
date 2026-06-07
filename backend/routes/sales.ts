@@ -24,6 +24,12 @@ import {
   consumeOrderStockOnDelivery,
   orderHasPendingPhysicalStock,
 } from '../utils/order-stock-reservations.ts';
+import {
+  comprobanteStockDireccion,
+  esNotaCredito,
+  normalizeComprobanteTipo,
+  type ComprobanteTipoId,
+} from '../../shared/comprobantes-config.ts';
 
 const router = createCompanyRouter();
 
@@ -287,6 +293,40 @@ async function createCashIncome(
   return docRef.id;
 }
 
+/** Devolución de dinero al cliente (egreso) generada por una nota de crédito de venta. */
+async function createCashRefund(
+  businessId: string,
+  params: {
+    monto: number;
+    concepto: string;
+    origenId: string;
+    origenTipo: string;
+    medio?: string;
+    clienteId?: string;
+    ventaId?: string | null;
+    ventaLabel?: string | null;
+  }
+) {
+  const caja = await loadCajaConfig(businessId);
+  const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
+    tipo: 'egreso',
+    monto: params.monto,
+    medio: params.medio ?? 'efectivo',
+    concepto: params.concepto,
+    ambito: getBusinessCashAmbitoId(caja),
+    fecha: new Date().toISOString(),
+    origenId: params.origenId,
+    origenTipo: params.origenTipo,
+    origenGrupo: 'venta',
+    pedidoId: null,
+    ventaId: params.ventaId ?? null,
+    ventaLabel: params.ventaLabel ?? null,
+    clienteId: params.clienteId ?? null,
+    negocioId: businessId,
+  });
+  return docRef.id;
+}
+
 async function reverseCashMovement(
   businessId: string,
   movimientoId: string,
@@ -330,9 +370,14 @@ async function restoreStockForVenta(
   businessId: string,
   ventaId: string,
   ventaLabel: string,
-  items: SaleLine[]
+  items: SaleLine[],
+  tipoComprobante: ComprobanteTipoId = 'factura'
 ): Promise<void> {
   const timestamp = new Date().toISOString();
+  // La reversión deshace lo aplicado al crear: una factura/ND descontó stock
+  // (se reintegra), una nota de crédito reingresó stock (se vuelve a descontar).
+  const aplicoSalida = comprobanteStockDireccion(tipoComprobante, 'ventas') === 'salida';
+  const reverseEsEntrada = aplicoSalida;
 
   for (const line of items) {
     const qty = Number(line.cantidad) || 0;
@@ -346,11 +391,16 @@ async function restoreStockForVenta(
     if (!productControlsStock(itemData)) continue;
 
     const currentStock = Number(itemData.stockActual) || 0;
-    await itemRef.update({ stockActual: currentStock + qty, updatedAt: timestamp });
+    await itemRef.update({
+      stockActual: reverseEsEntrada
+        ? currentStock + qty
+        : Math.max(0, currentStock - qty),
+      updatedAt: timestamp,
+    });
 
     await db.collection(`negocios/${businessId}/movimientos_stock`).add({
       productoId: line.stockItemId,
-      tipo: 'entrada',
+      tipo: reverseEsEntrada ? 'entrada' : 'salida',
       cantidad: qty,
       fecha: timestamp,
       motivo: `Anulación venta #${ventaLabel}`,
@@ -371,8 +421,16 @@ async function reverseStockMovementsForDeletedVenta(
   businessId: string,
   ventaId: string,
   ventaLabel: string,
-  items: SaleLine[]
+  items: SaleLine[],
+  tipoComprobante: ComprobanteTipoId = 'factura'
 ): Promise<void> {
+  // Nota de crédito: al crear reingresó stock (entrada). Para anularla hay que
+  // volver a descontar, así que delegamos en restoreStockForVenta con el tipo.
+  if (esNotaCredito(tipoComprobante)) {
+    await restoreStockForVenta(businessId, ventaId, ventaLabel, items, tipoComprobante);
+    return;
+  }
+
   const salidaByProduct = new Map<string, number>();
   const stockSnap = await db
     .collection(`negocios/${businessId}/movimientos_stock`)
@@ -471,11 +529,13 @@ function buildMostradorDraftFields(params: {
   notas: string;
   timestamp: string;
   businessId: string;
+  tipoComprobante: ComprobanteTipoId;
 }) {
   return {
     origen: 'mostrador',
     pedidoId: null,
     estado: 'borrador',
+    tipoComprobante: params.tipoComprobante,
     clienteId: params.clienteId,
     items: params.items,
     total: params.total,
@@ -517,6 +577,7 @@ async function confirmMostradorSaleDraft(
   const montoCobrado = Number(venta.montoCobrado) || 0;
   const medioPago = String(venta.medioPago ?? 'efectivo').trim() || 'efectivo';
   const notas = String(venta.notas ?? '').trim();
+  const tipoComprobante = normalizeComprobanteTipo(venta.tipoComprobante);
   const timestamp = new Date().toISOString();
 
   if (!clienteId) {
@@ -539,7 +600,7 @@ async function confirmMostradorSaleDraft(
   });
 
   for (const line of items) {
-    const stockError = await applyStockForVenta(businessId, ventaId, ventaLabel, [line]);
+    const stockError = await applyStockForVenta(businessId, ventaId, ventaLabel, [line], tipoComprobante);
     if (stockError) {
       await reverseStockMovementsForDeletedVenta(businessId, ventaId, ventaLabel, items);
       await ventaRef.update({
@@ -554,17 +615,28 @@ async function confirmMostradorSaleDraft(
 
   let movimientoCajaId: string | null = null;
   if (montoCobrado > 0) {
-    movimientoCajaId = await createCashIncome(businessId, {
-      monto: montoCobrado,
-      concepto: `Venta mostrador #${ventaLabel}`,
-      origenId: ventaId,
-      origenTipo: 'venta_mostrador',
-      medio: medioPago,
-      clienteId,
-      ventaId,
-      ventaLabel,
-      pedidoId: null,
-    });
+    movimientoCajaId = esNotaCredito(tipoComprobante)
+      ? await createCashRefund(businessId, {
+          monto: montoCobrado,
+          concepto: `Devolución nota de crédito #${ventaLabel}`,
+          origenId: ventaId,
+          origenTipo: 'venta_nota_credito',
+          medio: medioPago,
+          clienteId,
+          ventaId,
+          ventaLabel,
+        })
+      : await createCashIncome(businessId, {
+          monto: montoCobrado,
+          concepto: `Venta mostrador #${ventaLabel}`,
+          origenId: ventaId,
+          origenTipo: 'venta_mostrador',
+          medio: medioPago,
+          clienteId,
+          ventaId,
+          ventaLabel,
+          pedidoId: null,
+        });
     await ventaRef.update({ movimientoCajaId });
   }
 
@@ -597,9 +669,15 @@ async function applyStockForVenta(
   businessId: string,
   ventaId: string,
   ventaLabel: string,
-  items: SaleLine[]
+  items: SaleLine[],
+  tipoComprobante: ComprobanteTipoId = 'factura'
 ): Promise<string | null> {
   const timestamp = new Date().toISOString();
+  const direccion = comprobanteStockDireccion(tipoComprobante, 'ventas');
+  const esEntrada = direccion === 'entrada';
+  const motivo = esEntrada
+    ? `Nota de crédito venta #${ventaLabel}`
+    : `Venta mostrador #${ventaLabel}`;
 
   for (const line of items) {
     const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
@@ -612,23 +690,23 @@ async function applyStockForVenta(
     if (!productControlsStock(itemData)) continue;
 
     const currentStock = Number(itemData.stockActual) || 0;
-    if (currentStock - line.cantidad < 0) {
+    if (!esEntrada && currentStock - line.cantidad < 0) {
       return `Stock insuficiente para "${line.nombre}": hay ${currentStock} u., pediste ${line.cantidad} u.`;
     }
 
     await itemRef.update({
-      stockActual: currentStock - line.cantidad,
+      stockActual: esEntrada ? currentStock + line.cantidad : currentStock - line.cantidad,
       updatedAt: timestamp,
     });
 
     await db.collection(`negocios/${businessId}/movimientos_stock`).add({
       productoId: line.stockItemId,
-      tipo: 'salida',
+      tipo: esEntrada ? 'entrada' : 'salida',
       cantidad: line.cantidad,
       fecha: timestamp,
-      motivo: `Venta mostrador #${ventaLabel}`,
+      motivo,
       origenId: ventaId,
-      origenTipo: 'venta',
+      origenTipo: esEntrada ? 'venta_nota_credito' : 'venta',
       origenGrupo: 'venta',
       ventaId,
       usuarioId: 'admin',
@@ -807,7 +885,7 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
     const lastDay = new Date(anio, mes, 0).getDate();
     const monthEnd = `${anio}-${String(mes).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-    const [monthSnapshot, allSalesSnapshot, ordersSnapshot] = await Promise.all([
+    const [monthSnapshot, allSalesSnapshot, ordersSnapshot, comprasSnapshot] = await Promise.all([
       db
         .collection(`negocios/${businessId}/ventas`)
         .where('fecha', '>=', `${monthStart}T00:00:00.000Z`)
@@ -815,6 +893,11 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
         .get(),
       db.collection(`negocios/${businessId}/ventas`).get(),
       db.collection(`negocios/${businessId}/pedidos`).get(),
+      db
+        .collection(`negocios/${businessId}/compras`)
+        .where('fecha', '>=', `${monthStart}T00:00:00.000Z`)
+        .where('fecha', '<=', `${monthEnd}T23:59:59.999Z`)
+        .get(),
     ]);
 
     const ordersById = new Map<string, Record<string, unknown>>();
@@ -848,6 +931,21 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
       totalGanancia += resolveSaleGananciaEstimada(data);
     }
 
+    let bonificacionOfertas = 0;
+    for (const doc of comprasSnapshot.docs) {
+      const data = doc.data();
+      if (String(data.estado ?? '') === 'borrador') continue;
+      const totalCompra = Number(data.ahorroOfertaTotal);
+      if (Number.isFinite(totalCompra) && totalCompra > 0) {
+        bonificacionOfertas += totalCompra;
+        continue;
+      }
+      const items = Array.isArray(data.items) ? data.items : [];
+      for (const item of items) {
+        bonificacionOfertas += Number((item as Record<string, unknown>).ahorroOferta) || 0;
+      }
+    }
+
     res.json({
       mes,
       anio,
@@ -855,6 +953,7 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
       totalFacturado: Math.round(totalFacturado),
       totalCosto: Math.round(totalCosto),
       totalGanancia: Math.round(totalGanancia),
+      bonificacionOfertas: Math.round(bonificacionOfertas),
     });
   } catch (error) {
     console.error('Error fetching monthly sales summary:', error);
@@ -1034,6 +1133,7 @@ router.post('/:businessId', async (req, res) => {
     const pedidoId = String(req.body.pedidoId ?? '').trim() || null;
     const medioPago = String(req.body.medioPago ?? 'efectivo').trim() || 'efectivo';
     const notas = String(req.body.notas ?? '').trim();
+    const tipoComprobante = normalizeComprobanteTipo(req.body.tipoComprobante);
     const montoCobradoInput = Number(req.body.montoCobrado);
     const timestamp = normalizeTransactionDateToIso(req.body.fecha);
 
@@ -1236,6 +1336,7 @@ router.post('/:businessId', async (req, res) => {
         notas,
         timestamp,
         businessId,
+        tipoComprobante,
       });
 
       if (draftVentaId) {
@@ -1279,6 +1380,7 @@ router.post('/:businessId', async (req, res) => {
       origen: 'mostrador',
       pedidoId: null,
       estado: 'confirmada',
+      tipoComprobante,
       numeroVenta,
       ventaLabel,
       clienteId,
@@ -1300,7 +1402,8 @@ router.post('/:businessId', async (req, res) => {
         businessId,
         ventaRef.id,
         ventaLabel,
-        [line]
+        [line],
+        tipoComprobante
       );
       if (stockError) {
         await reverseStockMovementsForDeletedVenta(
@@ -1316,17 +1419,28 @@ router.post('/:businessId', async (req, res) => {
 
     let movimientoCajaId: string | null = null;
     if (montoCobrado > 0) {
-      movimientoCajaId = await createCashIncome(businessId, {
-        monto: montoCobrado,
-        concepto: `Venta mostrador #${ventaLabel}`,
-        origenId: ventaRef.id,
-        origenTipo: 'venta_mostrador',
-        medio: medioPago,
-        clienteId,
-        ventaId: ventaRef.id,
-        ventaLabel,
-        pedidoId: null,
-      });
+      movimientoCajaId = esNotaCredito(tipoComprobante)
+        ? await createCashRefund(businessId, {
+            monto: montoCobrado,
+            concepto: `Devolución nota de crédito #${ventaLabel}`,
+            origenId: ventaRef.id,
+            origenTipo: 'venta_nota_credito',
+            medio: medioPago,
+            clienteId,
+            ventaId: ventaRef.id,
+            ventaLabel,
+          })
+        : await createCashIncome(businessId, {
+            monto: montoCobrado,
+            concepto: `Venta mostrador #${ventaLabel}`,
+            origenId: ventaRef.id,
+            origenTipo: 'venta_mostrador',
+            medio: medioPago,
+            clienteId,
+            ventaId: ventaRef.id,
+            ventaLabel,
+            pedidoId: null,
+          });
       await ventaRef.update({ movimientoCajaId });
     }
 
@@ -1571,10 +1685,23 @@ router.patch('/:businessId/:ventaId', async (req, res) => {
             new Date(String(venta.fecha ?? Date.now()))
           ),
           businessId,
+          tipoComprobante: normalizeComprobanteTipo(
+            req.body.tipoComprobante ?? venta.tipoComprobante
+          ),
         })
       );
 
       return res.json({ id: ventaId, ventaLabel: 'Borrador', draft: true });
+    }
+
+    // La edición de notas de crédito/débito confirmadas (con su reversión de
+    // stock y caja invertida) se maneja como mejora posterior: por ahora pedimos
+    // anular y volver a registrar para no descuadrar inventario ni caja.
+    if (normalizeComprobanteTipo(venta.tipoComprobante) !== 'factura') {
+      return res.status(400).json({
+        error:
+          'Las notas de crédito/débito confirmadas no se pueden editar todavía. Eliminá y registrá una nueva.',
+      });
     }
 
     const clienteId = String(req.body.clienteId ?? venta.clienteId ?? '').trim();
@@ -1784,22 +1911,55 @@ router.delete('/:businessId/:ventaId', async (req, res) => {
 
     const ventaLabel = resolveSaleLabel(venta);
     const items = (Array.isArray(venta.items) ? venta.items : []) as SaleLine[];
-    await reverseStockMovementsForDeletedVenta(businessId, ventaId, ventaLabel, items);
-
-    const movimientoIds = await collectCashMovementIdsForDeletedVenta(
+    const tipoComprobante = normalizeComprobanteTipo(venta.tipoComprobante);
+    await reverseStockMovementsForDeletedVenta(
       businessId,
       ventaId,
-      venta
+      ventaLabel,
+      items,
+      tipoComprobante
     );
 
-    for (const movimientoId of movimientoIds) {
-      await reverseCashMovement(businessId, movimientoId, {
-        origenId: ventaId,
-        origenTipo: 'venta_eliminada',
+    let movimientoIds: Set<string> = new Set();
+
+    if (esNotaCredito(tipoComprobante)) {
+      // La nota de crédito generó un egreso (devolución); reponemos ese dinero.
+      const movimientoCajaId = String(venta.movimientoCajaId ?? '').trim();
+      if (movimientoCajaId) {
+        const movSnap = await db
+          .collection(`negocios/${businessId}/movimientos_caja`)
+          .doc(movimientoCajaId)
+          .get();
+        if (movSnap.exists && movSnap.data()?.tipo === 'egreso') {
+          await createCashIncome(businessId, {
+            monto: Number(movSnap.data()?.monto) || 0,
+            concepto: `Anulación devolución nota de crédito #${ventaLabel}`,
+            origenId: ventaId,
+            origenTipo: 'venta_eliminada',
+            medio: String(movSnap.data()?.medio ?? 'efectivo'),
+            clienteId: String(venta.clienteId ?? ''),
+            ventaId,
+            ventaLabel,
+            pedidoId: null,
+          });
+        }
+      }
+    } else {
+      movimientoIds = await collectCashMovementIdsForDeletedVenta(
+        businessId,
         ventaId,
-        ventaLabel,
-        clienteId: String(venta.clienteId ?? ''),
-      });
+        venta
+      );
+
+      for (const movimientoId of movimientoIds) {
+        await reverseCashMovement(businessId, movimientoId, {
+          origenId: ventaId,
+          origenTipo: 'venta_eliminada',
+          ventaId,
+          ventaLabel,
+          clienteId: String(venta.clienteId ?? ''),
+        });
+      }
     }
 
     const compromisoPagoId = String(venta.compromisoPagoId ?? '').trim();

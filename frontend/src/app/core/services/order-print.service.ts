@@ -12,7 +12,7 @@ export interface OrderPrintOptions {
   showPrices: boolean;
   showBalance: boolean;
   dualCopy: boolean;
-  /** A4 apaisado (siempre con dos vías; opcional con una sola). */
+  /** A4 apaisado solo con una vía y la opción activada en configuración. */
   landscapeSheet: boolean;
   /** Casilla vacía imprimible junto a cada producto. */
   lineCheckboxes: boolean;
@@ -218,7 +218,6 @@ function renderOrderSheet(
     <article class="sheet">
       <header class="sheet-header">
         <div class="brand">
-          <p class="brand-label">Pedido personalizado</p>
           <h1>${escapeHtml(options.companyName)}</h1>
         </div>
         <div class="order-badge">
@@ -290,6 +289,7 @@ function buildPrintStyles(): string {
       print-color-adjust: exact;
     }
     @page { size: A4; margin: 12mm; }
+    @page sheet-portrait-dual { size: A4; margin: 8mm 10mm; }
     @page sheet-landscape { size: A4 landscape; margin: 10mm; }
     .print-page {
       page-break-after: always;
@@ -318,37 +318,41 @@ function buildPrintStyles(): string {
       padding: 2mm 0 4mm;
     }
     .print-page--dual {
-      page: sheet-landscape;
-      width: calc(297mm - 20mm);
-      height: calc(210mm - 20mm);
+      page: sheet-portrait-dual;
+      page-break-inside: auto;
+      width: 190mm;
+      max-width: 190mm;
       display: flex;
       flex-direction: row;
-      align-items: stretch;
+      align-items: flex-start;
+      justify-content: flex-start;
       gap: 0;
       padding: 0;
+      height: auto;
+      min-height: 0;
     }
     .print-page--dual .sheet {
-      min-height: 0;
+      width: 95mm;
+      max-width: 95mm;
+      flex: 0 0 95mm;
       min-width: 0;
-      flex: 1 1 0;
-      overflow: hidden;
-      padding: 1mm 2mm;
-      gap: 5px;
+      min-height: 0;
+      height: auto;
+      overflow: visible;
+      padding: 1mm 1.5mm 2mm;
+      gap: 3px;
     }
     .via-divider--vertical {
       flex-shrink: 0;
       position: relative;
-      width: 10mm;
+      width: 0;
+      margin: 0;
+      padding: 0;
       height: auto;
-      margin: 0 1mm;
       align-self: stretch;
-      border-top: none;
-      border-bottom: none;
+      border: none;
       border-left: 2px dashed #6b7280;
-      border-right: 2px dashed #6b7280;
-      background:
-        linear-gradient(#fff, #fff) padding-box,
-        repeating-linear-gradient(180deg, #9ca3af 0 6px, transparent 6px 12px) border-box;
+      background: none;
     }
     .via-divider::after {
       content: 'Corte';
@@ -401,14 +405,6 @@ function buildPrintStyles(): string {
       gap: 12px;
       padding-bottom: 8px;
       border-bottom: 2px solid #0d9488;
-    }
-    .brand-label {
-      margin: 0 0 2px;
-      font-size: 9px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #6b7280;
-      font-weight: 700;
     }
     .brand h1 {
       margin: 0;
@@ -535,6 +531,7 @@ function buildPrintStyles(): string {
       line-height: 1.45;
       font-weight: 500;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
     .products-section {
       flex-shrink: 0;
@@ -610,7 +607,6 @@ function buildPrintStyles(): string {
       color: #9ca3af;
     }
     .print-page--dual .brand h1 { font-size: 13px; }
-    .print-page--dual .brand-label { font-size: 7px; }
     .print-page--dual .order-number { font-size: 15px; }
     .print-page--dual .order-status { font-size: 8px; padding: 1px 6px; }
     .print-page--dual .sheet-header {
@@ -619,8 +615,9 @@ function buildPrintStyles(): string {
     }
     .print-page--dual .meta-strip {
       padding: 2px 6px;
-      gap: 4px 10px;
+      gap: 4px 8px;
       font-size: 9px;
+      flex-wrap: wrap;
     }
     .print-page--dual .meta-item em { font-size: 7px; }
     .print-page--dual .meta-item strong { font-size: 9px; }
@@ -631,20 +628,23 @@ function buildPrintStyles(): string {
     .print-page--dual .client-label { font-size: 7px; }
     .print-page--dual .client-value strong { font-size: 10px; }
     .print-page--dual .section {
-      padding: 4px 6px;
+      padding: 3px 5px;
       border-radius: 6px;
     }
     .print-page--dual .section h2 {
-      margin-bottom: 3px;
+      margin-bottom: 2px;
       font-size: 7px;
     }
     .print-page--dual .description-box {
-      min-height: 28px;
+      flex: 1 1 auto;
+      min-height: 0;
+      page-break-inside: auto;
     }
     .print-page--dual .description-box p {
-      font-size: 12px;
-      line-height: 1.35;
-      font-weight: 600;
+      font-size: 10px;
+      line-height: 1.22;
+      font-weight: 500;
+      overflow-wrap: anywhere;
     }
     .print-page--dual table { font-size: 9px; }
     .print-page--dual th,
@@ -652,13 +652,16 @@ function buildPrintStyles(): string {
     .print-page--dual th { font-size: 7px; }
     .print-page--dual .extra-row td { font-size: 8px; }
     .print-page--dual .balance-footer {
-      padding: 4px 6px;
-      gap: 4px;
+      padding: 3px 5px;
+      gap: 3px;
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .print-page--dual .balance-item span { font-size: 7px; }
-    .print-page--dual .balance-item strong { font-size: 11px; }
-    .print-page--dual .balance-item--total strong { font-size: 12px; }
+    .print-page--dual .balance-item strong { font-size: 10px; }
+    .print-page--dual .balance-item--total strong { font-size: 11px; }
+    .print-page--dual .products-section {
+      padding-bottom: 2px;
+    }
     .print-page--dual .sheet-footer {
       padding-top: 2px;
       font-size: 7px;
@@ -680,9 +683,10 @@ function buildPrintStyles(): string {
         padding: 14mm 14mm;
       }
       .print-page--dual {
-        max-width: calc(297mm - 8mm);
-        min-height: calc(210mm - 8mm);
-        padding: 8mm 10mm;
+        max-width: 210mm;
+        width: auto;
+        min-height: auto;
+        padding: 12mm 10mm;
       }
       .print-page--single-landscape {
         max-width: calc(297mm - 8mm);

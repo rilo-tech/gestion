@@ -8,7 +8,8 @@ export const FORM_BACK_BUTTON_CLASS =
   'shrink-0 inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 pt-0.5 transition-colors';
 
 /**
- * Botón o enlace «volver atrás» unificado para toda la aplicación.
+ * Botón «volver atrás» unificado para toda la aplicación.
+ * Preferí `(clicked)` + NavigationBackService; `routerLink` queda solo por compatibilidad.
  * En móvil muestra `shortLabel`; en desktop muestra `label`.
  */
 @Component({

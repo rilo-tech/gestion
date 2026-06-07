@@ -11,7 +11,14 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
       <div class="mb-6 sm:mb-8 flex flex-col gap-3 sm:gap-4">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
-            <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">{{ title }}</h1>
+            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">{{ title }}</h1>
+              <span
+                *ngIf="titleBadge"
+                class="shrink-0 text-sm sm:text-lg font-semibold text-teal-700 dark:text-teal-400 tabular-nums">
+                #{{ titleBadge }}
+              </span>
+            </div>
             <p
               *ngIf="subtitle"
               class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mt-1"
@@ -19,16 +26,20 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
               {{ subtitle }}
             </p>
           </div>
-          <app-form-back-button
-            [label]="backLabel"
-            [shortLabel]="backShortLabel"
-            [ariaLabel]="backAriaLabel"
-            [routerLink]="backRouterLink"
-            (clicked)="backClick.emit()">
-          </app-form-back-button>
-        </div>
-        <div *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
-          <ng-content select="[headerActions]"></ng-content>
+          <div class="flex flex-col items-end gap-2.5 sm:gap-3 shrink-0">
+            <app-form-back-button
+              [label]="backLabel"
+              [shortLabel]="backShortLabel"
+              [ariaLabel]="backAriaLabel"
+              [routerLink]="backRouterLink"
+              (clicked)="backClick.emit()">
+            </app-form-back-button>
+            <div
+              *ngIf="hasHeaderActions"
+              class="flex flex-wrap items-center justify-end gap-2.5 sm:gap-3 max-sm:w-full">
+              <ng-content select="[headerActions]"></ng-content>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -45,6 +56,8 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
 })
 export class TransactionFormPageComponent {
   @Input() title = '';
+  /** Número de documento (ej. pedido) mostrado junto al título. */
+  @Input() titleBadge = '';
   @Input() subtitle = '';
   @Input() backLabel = 'Volver';
   @Input() backShortLabel = 'Volver';

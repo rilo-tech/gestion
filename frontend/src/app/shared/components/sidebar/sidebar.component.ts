@@ -4,6 +4,10 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/ro
 import { LucideAngularModule } from 'lucide-angular';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
 import { AuthService } from '../../../core/services/auth.service';
+import {
+  isModuleSubRoute,
+  normalizeListPath,
+} from '../../../core/utils/list-page-refresh';
 import { filter, Subscription } from 'rxjs';
 
 interface NavItem {
@@ -40,7 +44,7 @@ interface NavItem {
             *ngFor="let item of visibleNavItems"
             [routerLink]="item.path"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
-            (click)="nav.closeMobileMenu()"
+            (click)="onModuleNavClick($event, item)"
             class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-800/80 transition-colors">
             <i-lucide [name]="item.icon" class="w-5 h-5 shrink-0"></i-lucide>
             <span class="text-sm font-medium">{{ item.label }}</span>
@@ -106,7 +110,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
     },
     {
       path: '/collaborators',
-      icon: 'user-cog',
+      icon: 'id-card',
       label: 'Colaboradores',
       visible: () => this.auth.canAccessCollaborators,
     },
@@ -134,6 +138,30 @@ export class SidebarComponent implements OnInit, OnDestroy {
     this.routerSub = this.router.events
       .pipe(filter((event) => event instanceof NavigationEnd))
       .subscribe(() => this.nav.closeMobileMenu());
+  }
+
+  /**
+   * Volver a la grilla del módulo al re-tocar su ítem del menú
+   * (como el botón «Volver»), incluso si venís de un formulario o detalle.
+   */
+  onModuleNavClick(event: MouseEvent, item: NavItem) {
+    event.preventDefault();
+    this.nav.closeMobileMenu();
+
+    const target = normalizeListPath(item.path);
+    const current = normalizeListPath(this.router.url);
+
+    if (current === target) {
+      this.nav.requestListRoot(target);
+      return;
+    }
+
+    if (isModuleSubRoute(current, target)) {
+      void this.router.navigateByUrl(target);
+      return;
+    }
+
+    void this.router.navigateByUrl(target);
   }
 
   ngOnDestroy() {

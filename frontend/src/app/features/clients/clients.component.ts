@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -16,6 +16,7 @@ import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
+  totalListPages,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
@@ -24,6 +25,7 @@ import {
 } from './client-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
+import { handleClientDeleteError } from '../../core/utils/client-delete-flow';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -33,8 +35,8 @@ import {
 } from '../../shared/components/compact-list/compact-list.constants';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
-import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 @Component({
   selector: 'app-clients',
@@ -52,7 +54,6 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
     CompactListRowComponent,
     ModulePageHeaderComponent,
     CompactDataListComponent,
-    ListLoadMoreComponent,
     ListSearchFieldComponent,
   ],
   template: `
@@ -64,7 +65,10 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="clientsPage = 1"
         searchFieldName="clientsSearchQueryMobile"
-        activityModule="clients">
+        activityModule="clients"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <a
           headerActions
           routerLink="/clients/new"
@@ -90,7 +94,9 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
           <app-compact-list-row
             *ngFor="let client of paginatedFilteredClients"
             (activate)="openClient(client)">
-            <div compactTitle class="compact-list-title truncate">{{ client.nombre }}</div>
+            <div compactTitle class="compact-list-title truncate">
+              {{ client.nombre }}<span *ngIf="client.activo === false" class="text-gray-400"> · inactivo</span>
+            </div>
             <div compactSubtitle class="compact-list-subtitle truncate">{{ getContactDisplay(client) }}</div>
             <span
               *ngIf="auth.canViewAccountBalance"
@@ -135,7 +141,9 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
               (click)="openClient(client)"
               [class]="listTableRowClass">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div class="font-medium text-gray-900 truncate">{{ client.nombre }}</div>
+                <div class="font-medium text-gray-900 truncate">
+                  {{ client.nombre }}<span *ngIf="client.activo === false" class="text-gray-400"> · inactivo</span>
+                </div>
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-600 truncate">
                 {{ getContactDisplay(client) }}
@@ -199,15 +207,11 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
           [page]="clientsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredClients.length"
-          (pageChange)="clientsPage = $event">
+          [canFetchMore]="clientsHasMore && !searchQuery.trim()"
+          [loadingMore]="loadingMoreClients"
+          (pageChange)="clientsPage = $event"
+          (fetchMore)="loadMoreClients()">
         </app-list-pagination>
-        <app-list-load-more
-          listFooter
-          [hasMore]="clientsHasMore"
-          [loading]="loadingMoreClients"
-          label="Cargar más clientes"
-          (loadMoreClick)="loadMoreClients()">
-        </app-list-load-more>
       </app-compact-data-list>
     </div>
 
@@ -243,6 +247,8 @@ export class ClientsComponent implements OnInit {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   clients: Client[] = [];
   loading = true;
@@ -291,6 +297,14 @@ export class ClientsComponent implements OnInit {
   }
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/clients',
+      reload: () => this.reloadList(),
+      reset: () => this.closeClientModal(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.loadClients();
 
     this.route.queryParamMap.subscribe((params) => {
@@ -350,6 +364,12 @@ export class ClientsComponent implements OnInit {
     this.loadClients();
   }
 
+  reloadList() {
+    this.clientsPage = 1;
+    this.clientsCursor = null;
+    this.loadClients();
+  }
+
   loadClients() {
     this.loading = true;
     this.clientsPage = 1;
@@ -371,7 +391,9 @@ export class ClientsComponent implements OnInit {
   }
 
   loadMoreClients() {
-    if (!this.clientsHasMore || this.loadingMoreClients) return;
+    if (!this.clientsHasMore || this.loadingMoreClients || this.searchQuery.trim()) return;
+    const pageBefore = this.clientsPage;
+    const totalPagesBefore = totalListPages(this.filteredClients.length, this.listPageSize);
     this.loadingMoreClients = true;
     this.clientService.getClientsPage(this.listPageSize, this.clientsCursor ?? undefined).subscribe({
       next: (page) => {
@@ -379,6 +401,12 @@ export class ClientsComponent implements OnInit {
         this.clientsHasMore = page.hasMore;
         this.clientsCursor = page.nextCursor;
         this.loadingMoreClients = false;
+        if (pageBefore >= totalPagesBefore) {
+          this.clientsPage = Math.min(
+            pageBefore + 1,
+            totalListPages(this.filteredClients.length, this.listPageSize)
+          );
+        }
       },
       error: () => {
         this.loadingMoreClients = false;
@@ -419,11 +447,15 @@ export class ClientsComponent implements OnInit {
 
         this.clientService.deleteClient(client.id!).subscribe({
           next: () => this.loadClients(),
-          error: () =>
-            this.dialogService.alert({
-              title: 'Error',
-              message: 'No se pudo eliminar el cliente.',
-            }),
+          error: (err) =>
+            handleClientDeleteError(
+              err,
+              client.id!,
+              client.nombre,
+              this.clientService,
+              this.dialogService,
+              () => this.loadClients()
+            ),
         });
       });
   }

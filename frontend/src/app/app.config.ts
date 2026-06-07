@@ -7,7 +7,7 @@ import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, requireAnyPermission, requirePermission } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, Copy, Save, Receipt, FileText, Boxes, CreditCard } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, Boxes, CreditCard, LoaderCircle, RefreshCw } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -34,6 +34,8 @@ import { AppearancePageComponent } from './features/settings/appearance-page.com
 import { PriceCatalogComponent } from './features/price-catalog/price-catalog.component';
 import { PriceCatalogFormComponent } from './features/price-catalog/price-catalog-form.component';
 import { PayablesComponent } from './features/payables/payables.component';
+import { NewPayableObligationComponent } from './features/payables/new-payable-obligation.component';
+import { NewPayableLoanComponent } from './features/payables/new-payable-loan.component';
 import { StockShortagesComponent } from './features/stock/stock-shortages.component';
 import { CollaboratorsComponent } from './features/collaborators/collaborators.component';
 
@@ -97,6 +99,16 @@ const companyRoutes: Routes = [
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
   },
   {
+    path: 'purchases/:id/edit',
+    component: NewPurchaseComponent,
+    canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+  },
+  {
+    path: 'purchases/:id',
+    component: NewPurchaseComponent,
+    canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+  },
+  {
     path: 'purchases',
     component: PurchasesComponent,
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
@@ -152,6 +164,21 @@ const companyRoutes: Routes = [
   {
     path: 'cash',
     component: CashComponent,
+  },
+  {
+    path: 'payables/obligations/:id/edit',
+    component: NewPayableObligationComponent,
+    canActivate: [requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
+  },
+  {
+    path: 'payables/new',
+    component: NewPayableObligationComponent,
+    canActivate: [requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
+  },
+  {
+    path: 'payables/loans/new',
+    component: NewPayableLoanComponent,
+    canActivate: [requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
   },
   {
     path: 'payables',
@@ -276,12 +303,15 @@ export const appConfig: ApplicationConfig = {
         Clock,
         Gift,
         UserCog,
+        IdCard,
         Copy,
         Save,
         Receipt,
         FileText,
         Boxes,
         CreditCard,
+        LoaderCircle,
+        RefreshCw,
       })
     ),
     {
@@ -292,6 +322,8 @@ export const appConfig: ApplicationConfig = {
     },
   ],
 };
+
+
 
 
 

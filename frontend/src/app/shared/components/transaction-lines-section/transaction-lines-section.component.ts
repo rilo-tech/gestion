@@ -22,7 +22,7 @@ import { LucideAngularModule } from 'lucide-angular';
         <ng-content select="[headerAction]"></ng-content>
       </div>
 
-      <div *ngIf="searchVisible" class="relative z-30 px-2.5 sm:px-4 py-1.5 sm:py-4 border-b border-gray-100 dark:border-gray-800 bg-teal-50/40 dark:bg-teal-950/20">
+      <div *ngIf="searchVisible" class="relative z-20 px-2.5 sm:px-4 py-1.5 sm:py-4 border-b border-gray-100 dark:border-gray-800 bg-teal-50/40 dark:bg-teal-950/20">
         <div *ngIf="searchTitle" class="mb-1">
           <p class="text-xs sm:text-sm font-semibold text-gray-900 dark:text-gray-100">{{ searchTitle }}</p>
           <p *ngIf="searchHint" class="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 mt-0.5 leading-snug">{{ searchHint }}</p>

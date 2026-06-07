@@ -20,7 +20,11 @@ import {
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
-import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
+import {
+  normalizeTransactionDateTimeToIso,
+} from '../utils/transaction-date.ts';
+import { sortCashMovementsByRecency } from '../../shared/cash-movement-sort.ts';
+import { reconcilePayablesAndCashData } from '../utils/payables.ts';
 import {
   applyCashMovementToPeriod,
   classifyMovementPeriod,
@@ -138,6 +142,21 @@ function resolveOrigenLabel(
     return movement.tipo === 'egreso' ? `${base} · egreso` : `${base} · ingreso`;
   }
   return base;
+}
+
+function mapCashMovementDoc(
+  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
+): Record<string, unknown> {
+  const data = doc.data() ?? {};
+  const createdAt =
+    (typeof data.createdAt === 'string' && data.createdAt) ||
+    doc.createTime?.toDate().toISOString() ||
+    null;
+  return {
+    id: doc.id,
+    ...data,
+    createdAt,
+  };
 }
 
 async function enrichMovements(
@@ -291,6 +310,7 @@ router.get('/:businessId/summary', async (req, res) => {
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
+    await reconcilePayablesAndCashData(businessId);
     const paged = String(req.query.paged ?? '') === '1';
     if (paged) {
       const requestedLimit = Number(req.query.limit);
@@ -317,8 +337,10 @@ router.get('/:businessId', async (req, res) => {
       const snapshot = await query.get();
       const hasMore = snapshot.docs.length > limit;
       const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-      const movements = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const enriched = await enrichMovements(businessId, movements);
+      const movements = pageDocs.map((doc) => mapCashMovementDoc(doc));
+      const enriched = sortCashMovementsByRecency(
+        await enrichMovements(businessId, movements)
+      );
       const nextCursor =
         hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
       return res.json({ items: enriched, nextCursor, hasMore });
@@ -328,8 +350,10 @@ router.get('/:businessId', async (req, res) => {
       .collection(`negocios/${businessId}/movimientos_caja`)
       .orderBy('fecha', 'desc')
       .get();
-    const movements = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    const enriched = await enrichMovements(businessId, movements);
+    const movements = snapshot.docs.map((doc) => mapCashMovementDoc(doc));
+    const enriched = sortCashMovementsByRecency(
+      await enrichMovements(businessId, movements)
+    );
     res.json(enriched);
   } catch (error) {
     res.status(500).json({ error: 'Error fetching cash movements' });
@@ -362,7 +386,8 @@ router.post('/:businessId', async (req, res) => {
 
     const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
     const descripcion = normalizeMovementDescripcion(req.body.descripcion);
-    const fecha = normalizeTransactionDateToIso(req.body.fecha);
+    const fecha = normalizeTransactionDateTimeToIso(req.body.fecha);
+    const createdAt = new Date().toISOString();
 
     const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
       tipo,
@@ -373,6 +398,7 @@ router.post('/:businessId', async (req, res) => {
       descripcion,
       ambito,
       fecha,
+      createdAt,
       origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
       origenGrupo: 'manual',
       origenId: null,
@@ -433,7 +459,7 @@ router.put('/:businessId/:movementId', async (req, res) => {
 
     const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
     const descripcion = normalizeMovementDescripcion(req.body.descripcion);
-    const fecha = normalizeTransactionDateToIso(
+    const fecha = normalizeTransactionDateTimeToIso(
       req.body.fecha,
       new Date(String(existing?.fecha ?? Date.now()))
     );

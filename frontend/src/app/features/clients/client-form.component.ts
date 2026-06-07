@@ -11,6 +11,7 @@ import {
   ClientFormSaveEvent,
 } from './client-form-panel.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 @Component({
   selector: 'app-client-form',
@@ -45,6 +46,7 @@ export class ClientFormComponent implements OnInit {
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private navigationBack = inject(NavigationBackService);
 
   clientId: string | null = null;
   prefillNombre = '';
@@ -102,6 +104,6 @@ export class ClientFormComponent implements OnInit {
       return;
     }
 
-    this.router.navigate(['/clients']);
+    this.navigationBack.back(['/clients']);
   }
 }

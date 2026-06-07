@@ -17,6 +17,19 @@ export interface AlertDialogOptions {
   confirmLabel?: string;
 }
 
+export interface ChoiceDialogOption {
+  id: string;
+  label: string;
+  variant?: DialogVariant;
+}
+
+export interface ChoiceDialogOptions {
+  title?: string;
+  message: string;
+  options: ChoiceDialogOption[];
+  cancelLabel?: string;
+}
+
 export type DialogRequest =
   | {
       type: 'confirm';
@@ -27,6 +40,11 @@ export type DialogRequest =
       type: 'alert';
       options: AlertDialogOptions;
       result: Subject<void>;
+    }
+  | {
+      type: 'choice';
+      options: ChoiceDialogOptions;
+      result: Subject<string | null>;
     };
 
 @Injectable({
@@ -45,6 +63,13 @@ export class DialogService {
   alert(options: AlertDialogOptions): Observable<void> {
     const result = new Subject<void>();
     this.requestSubject.next({ type: 'alert', options, result });
+    return result.asObservable();
+  }
+
+  /** Diálogo con varios botones de acción. Emite el id elegido o null si se cancela. */
+  choose(options: ChoiceDialogOptions): Observable<string | null> {
+    const result = new Subject<string | null>();
+    this.requestSubject.next({ type: 'choice', options, result });
     return result.asObservable();
   }
 

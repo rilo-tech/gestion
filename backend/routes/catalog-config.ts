@@ -16,8 +16,16 @@ import {
 } from '../utils/config-usage.ts';
 import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
 import { normalizeFinanzasConfig } from '../utils/finance-config.ts';
+import { normalizeCollaboratorExtraTipos } from '../../shared/collaborators-config.ts';
+import {
+  DEFAULT_COMPROBANTES_CONFIG,
+  getComprobantesDisponibles,
+  normalizeComprobantesConfig,
+  type ComprobanteModulo,
+} from '../../shared/comprobantes-config.ts';
 import {
   renameProductCategory,
+  renameProductField,
 } from '../utils/stock-product.ts';
 import {
   DEFAULT_PRODUCTOS_CODIGO_CONFIG,
@@ -73,6 +81,10 @@ const DEFAULT_APP_CONFIG = {
     origenes: normalizeStockOrigenes([]),
   },
   finanzas: normalizeFinanzasConfig({}),
+  colaboradores: {
+    tiposExtra: normalizeCollaboratorExtraTipos([]),
+  },
+  comprobantes: { ...DEFAULT_COMPROBANTES_CONFIG },
 };
 
 function normalizeList(values: unknown): string[] {
@@ -213,6 +225,8 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
   const stock = (data.stock as Record<string, unknown>) ?? {};
   const finanzas = (data.finanzas as Record<string, unknown>) ?? {};
+  const colaboradores = (data.colaboradores as Record<string, unknown>) ?? {};
+  const comprobantes = data.comprobantes;
 
   return {
     productos: normalizeProductos(productos as Record<string, unknown>),
@@ -254,6 +268,10 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
       origenes: normalizeStockOrigenes(stock.origenes),
     },
     finanzas: normalizeFinanzasConfig(finanzas),
+    colaboradores: {
+      tiposExtra: normalizeCollaboratorExtraTipos(colaboradores.tiposExtra),
+    },
+    comprobantes: normalizeComprobantesConfig(comprobantes),
   };
 }
 
@@ -304,27 +322,62 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
     const confirmConfigRemovals = body.confirmConfigRemovals === true;
     delete body.confirmConfigRemovals;
 
-    const renameRaw = body.renameCategoria;
+    const parseRename = (raw: unknown): { from: string; to: string } => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { from: '', to: '' };
+      }
+      const record = raw as Record<string, unknown>;
+      return {
+        from: String(record.from ?? '').trim(),
+        to: String(record.to ?? '').trim(),
+      };
+    };
+
+    const { from: renameFrom, to: renameTo } = parseRename(body.renameCategoria);
     delete body.renameCategoria;
-    const renameFrom =
-      renameRaw &&
-      typeof renameRaw === 'object' &&
-      !Array.isArray(renameRaw)
-        ? String((renameRaw as Record<string, unknown>).from ?? '').trim()
-        : '';
-    const renameTo =
-      renameRaw &&
-      typeof renameRaw === 'object' &&
-      !Array.isArray(renameRaw)
-        ? String((renameRaw as Record<string, unknown>).to ?? '').trim()
-        : '';
+
+    const { from: renameTalleFrom, to: renameTalleTo } = parseRename(body.renameTalle);
+    delete body.renameTalle;
+
+    const { from: renameColorFrom, to: renameColorTo } = parseRename(body.renameColor);
+    delete body.renameColor;
 
     const regenerateCodigosCategoria = String(body.regenerateCodigosCategoria ?? '').trim();
     delete body.regenerateCodigosCategoria;
 
     const current = await loadAppConfig(businessId);
     const next = normalizeAppConfig(body);
-    const removals = diffConfigRemovals(current, next);
+    const isCategoryRename =
+      !!renameFrom && !!renameTo && renameFrom.toLowerCase() !== renameTo.toLowerCase();
+    const isTalleRename =
+      !!renameTalleFrom && !!renameTalleTo && renameTalleFrom.toLowerCase() !== renameTalleTo.toLowerCase();
+    const isColorRename =
+      !!renameColorFrom && !!renameColorTo && renameColorFrom.toLowerCase() !== renameColorTo.toLowerCase();
+    const removals = diffConfigRemovals(current, next).filter((removal) => {
+      // Un renombre no es una baja: los productos se migran al nuevo nombre.
+      if (
+        isCategoryRename &&
+        removal.kind === 'productos.categorias' &&
+        removal.value.trim().toLowerCase() === renameFrom.toLowerCase()
+      ) {
+        return false;
+      }
+      if (
+        isTalleRename &&
+        removal.kind === 'productos.talles' &&
+        removal.value.trim().toLowerCase() === renameTalleFrom.toLowerCase()
+      ) {
+        return false;
+      }
+      if (
+        isColorRename &&
+        removal.kind === 'productos.colores' &&
+        removal.value.trim().toLowerCase() === renameColorFrom.toLowerCase()
+      ) {
+        return false;
+      }
+      return true;
+    });
 
     if (removals.length > 0 && !confirmConfigRemovals) {
       const usage = await getRemovalsUsage(businessId, removals);
@@ -342,8 +395,14 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    if (renameFrom && renameTo && renameFrom.toLowerCase() !== renameTo.toLowerCase()) {
+    if (isCategoryRename) {
       await renameProductCategory(businessId, renameFrom, renameTo);
+    }
+    if (isTalleRename) {
+      await renameProductField(businessId, 'talle', renameTalleFrom, renameTalleTo);
+    }
+    if (isColorRename) {
+      await renameProductField(businessId, 'color', renameColorFrom, renameColorTo);
     }
 
     await db.doc(`negocios/${businessId}/config/app`).set(payload);
@@ -366,6 +425,20 @@ router.patch('/:businessId', requireSettingsAccess, async (req, res) => {
   } catch (error) {
     console.error('Error updating app config:', error);
     res.status(500).json({ error: 'Error updating app config' });
+  }
+});
+
+router.get('/:businessId/tipos-documentos', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const moduloRaw = String(req.query.modulo ?? '').trim().toLowerCase();
+    const modulo: ComprobanteModulo =
+      moduloRaw === 'compras' || moduloRaw === 'ventas' ? moduloRaw : 'ventas';
+    const config = await loadAppConfig(businessId);
+    res.json(getComprobantesDisponibles(config.comprobantes, modulo));
+  } catch (error) {
+    console.error('Error fetching document types:', error);
+    res.status(500).json({ error: 'Error fetching document types' });
   }
 });
 

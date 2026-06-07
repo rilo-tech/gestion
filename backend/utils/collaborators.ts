@@ -6,16 +6,19 @@ import {
   loadFinanzasConfig,
   medioPagoGeneratesImmediateCash,
 } from './finance-config.ts';
+import {
+  loadCollaboratorExtraTipos,
+  type CollaboratorExtraTipoConfig,
+} from './collaborators-config.ts';
+import {
+  normalizeCollaboratorExtraTipoValue,
+  resolveCollaboratorExtraTipoLabel,
+} from '../../shared/collaborators-config.ts';
 
 export type CollaboratorModalidad = 'por_hora' | 'fijo' | 'mixto';
 export type CollaboratorPeriodoReferencia = 'semana' | 'quincena' | 'mes';
 export type CollaboratorMovementTipo = 'horas' | 'extra' | 'pago';
-export type CollaboratorExtraTipo =
-  | 'reparto'
-  | 'premio'
-  | 'aguinaldo'
-  | 'bonificacion'
-  | 'otro';
+export type CollaboratorExtraTipo = string;
 
 export type CollaboratorRecord = {
   id: string;
@@ -39,6 +42,8 @@ export type CollaboratorMovementRecord = {
   tipo: CollaboratorMovementTipo;
   fecha: string;
   horas?: number;
+  horaDesde?: string;
+  horaHasta?: string;
   valorHora?: number;
   extraTipo?: CollaboratorExtraTipo;
   concepto?: string;
@@ -48,6 +53,8 @@ export type CollaboratorMovementRecord = {
   notas?: string;
   medioPagoId?: string;
   movimientoCajaId?: string;
+  /** Movimiento de horas/extra que liquida este pago (pago por día). */
+  liquidacionMovimientoId?: string;
   createdAt: string;
 };
 
@@ -78,13 +85,6 @@ export type CollaboratorsPeriodSummary = {
   extrasPorTipo: Array<{ tipo: string; label: string; monto: number }>;
 };
 
-const EXTRA_LABELS: Record<CollaboratorExtraTipo, string> = {
-  reparto: 'Repartos',
-  premio: 'Premios',
-  aguinaldo: 'Aguinaldo',
-  bonificacion: 'Bonificaciones',
-  otro: 'Otros extras',
-};
 
 function collaboratorsCollection(businessId: string) {
   return db.collection(`negocios/${businessId}/colaboradores`);
@@ -127,16 +127,76 @@ function normalizeMovementTipo(value: unknown): CollaboratorMovementTipo | null 
   return null;
 }
 
-function normalizeExtraTipo(value: unknown): CollaboratorExtraTipo {
-  const raw = String(value ?? '').trim();
-  if (raw === 'reparto' || raw === 'premio' || raw === 'aguinaldo' || raw === 'bonificacion') {
-    return raw;
-  }
-  return 'otro';
+function normalizeExtraTipo(
+  value: unknown,
+  tipos: CollaboratorExtraTipoConfig[]
+): CollaboratorExtraTipo {
+  return normalizeCollaboratorExtraTipoValue(value, tipos);
 }
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function roundHours(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** HH:mm → minutos desde medianoche */
+function parseClockMinutes(value: string): number | null {
+  const match = String(value ?? '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes > 59 || hours > 23) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+export function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null {
+  const start = parseClockMinutes(horaDesde);
+  const end = parseClockMinutes(horaHasta);
+  if (start === null || end === null) return null;
+  let endMinutes = end;
+  if (endMinutes <= start) endMinutes += 24 * 60;
+  const diff = endMinutes - start;
+  if (diff <= 0) return null;
+  return roundHours(diff / 60);
+}
+
+export function movementToFirestore(
+  input: Omit<CollaboratorMovementRecord, 'id' | 'createdAt' | 'colaboradorNombre'>
+): Record<string, unknown> {
+  const doc: Record<string, unknown> = {
+    colaboradorId: input.colaboradorId,
+    tipo: input.tipo,
+    fecha: input.fecha,
+    monto: input.monto,
+  };
+
+  const optionalKeys = [
+    'horas',
+    'horaDesde',
+    'horaHasta',
+    'valorHora',
+    'extraTipo',
+    'concepto',
+    'periodoDesde',
+    'periodoHasta',
+    'notas',
+    'medioPagoId',
+    'liquidacionMovimientoId',
+  ] as const;
+
+  for (const key of optionalKeys) {
+    const value = input[key];
+    if (value !== undefined && value !== null && value !== '') {
+      doc[key] = value;
+    }
+  }
+
+  return doc;
 }
 
 export function parseCollaboratorInput(body: Record<string, unknown>) {
@@ -205,7 +265,10 @@ export async function parseMovementInput(
   const fecha = String(body.fecha ?? '').slice(0, 10);
   if (!colaboradorId || !tipo || !fecha) return null;
 
-  const collaborator = await getCollaborator(businessId, colaboradorId);
+  const [collaborator, extraTipos] = await Promise.all([
+    getCollaborator(businessId, colaboradorId),
+    loadCollaboratorExtraTipos(businessId),
+  ]);
   if (!collaborator) return null;
 
   const notas = String(body.notas ?? '').trim() || undefined;
@@ -213,21 +276,31 @@ export async function parseMovementInput(
   const periodoHasta = String(body.periodoHasta ?? '').slice(0, 10) || undefined;
 
   if (tipo === 'horas') {
-    const horas = Number(body.horas);
+    const horaDesde = String(body.horaDesde ?? '').trim() || undefined;
+    const horaHasta = String(body.horaHasta ?? '').trim() || undefined;
+    let horas = Number(body.horas);
+    if ((!Number.isFinite(horas) || horas <= 0) && horaDesde && horaHasta) {
+      horas = hoursFromTimeRange(horaDesde, horaHasta) ?? NaN;
+    }
     if (!Number.isFinite(horas) || horas <= 0) return null;
+
     const valorHora =
       Number(body.valorHora) > 0
         ? roundMoney(Number(body.valorHora))
         : Number(collaborator.valorHora) > 0
           ? roundMoney(Number(collaborator.valorHora))
           : 0;
+
+    const roundedHoras = roundHours(horas);
     return {
       colaboradorId,
       tipo,
       fecha,
-      horas: roundMoney(horas),
+      horas: roundedHoras,
+      horaDesde,
+      horaHasta,
       valorHora: valorHora || undefined,
-      monto: roundMoney(horas * valorHora),
+      monto: roundMoney(roundedHoras * valorHora),
       periodoDesde,
       periodoHasta,
       notas,
@@ -241,7 +314,7 @@ export async function parseMovementInput(
       colaboradorId,
       tipo,
       fecha,
-      extraTipo: normalizeExtraTipo(body.extraTipo),
+      extraTipo: normalizeExtraTipo(body.extraTipo, extraTipos),
       concepto: String(body.concepto ?? '').trim() || undefined,
       monto: roundMoney(monto),
       periodoDesde,
@@ -253,6 +326,8 @@ export async function parseMovementInput(
   const monto = Number(body.monto);
   if (!Number.isFinite(monto) || monto <= 0) return null;
   const medioPagoId = String(body.medioPagoId ?? 'efectivo').trim().toLowerCase();
+  const liquidacionMovimientoId =
+    String(body.liquidacionMovimientoId ?? '').trim() || undefined;
   return {
     colaboradorId,
     tipo,
@@ -262,6 +337,7 @@ export async function parseMovementInput(
     periodoHasta,
     notas,
     medioPagoId,
+    liquidacionMovimientoId,
   };
 }
 
@@ -278,7 +354,7 @@ function buildCollaboratorPaymentConcepto(
   periodoDesde?: string,
   periodoHasta?: string
 ): string {
-  let concepto = `Pago colaborador · ${colaboradorNombre}`;
+  let concepto = colaboradorNombre.trim() || 'Colaborador';
   if (periodoDesde && periodoHasta) {
     concepto += ` · ${periodoDesde} → ${periodoHasta}`;
   } else if (periodoDesde) {
@@ -417,9 +493,10 @@ export async function buildCollaboratorsPeriodSummary(
   const fromDate = parseDateOnly(from) ?? parseDateOnly(defaultFromDate())!;
   const toDate = parseDateOnly(to, true) ?? parseDateOnly(defaultToDate(), true)!;
 
-  const [collaborators, movementsSnap] = await Promise.all([
+  const [collaborators, movementsSnap, extraTipos] = await Promise.all([
     listCollaborators(businessId),
     movementsCollection(businessId).get(),
+    loadCollaboratorExtraTipos(businessId),
   ]);
 
   const movements = movementsSnap.docs.map((doc) => ({
@@ -520,7 +597,7 @@ export async function buildCollaboratorsPeriodSummary(
   const extrasPorTipo = [...extrasPorTipoMap.entries()]
     .map(([tipo, monto]) => ({
       tipo,
-      label: EXTRA_LABELS[tipo as CollaboratorExtraTipo] ?? tipo,
+      label: resolveCollaboratorExtraTipoLabel(extraTipos, tipo),
       monto: roundMoney(monto),
     }))
     .sort((a, b) => b.monto - a.monto);
@@ -553,4 +630,4 @@ export function defaultToDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export { collaboratorsCollection, movementsCollection, EXTRA_LABELS };
+export { collaboratorsCollection, movementsCollection };

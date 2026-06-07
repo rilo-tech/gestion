@@ -25,8 +25,11 @@ import {
   listReservationSourcesForProduct,
   listReservationTargetsForProduct,
   mergeOrderItemsPreservingStock,
+  reconcileOrderStockOnItemsChange,
   normalizeOrderItemsStock,
-  autoReserveIncomingStockForProduct,
+  collectStockProductIdsFromOrderLines,
+  syncPendingOrdersAfterStockChange,
+  loadNormalizedOrderItems,
   OrderStockError,
   releaseOrderStockReservations,
   transferReservedStockBetweenOrders,
@@ -138,6 +141,7 @@ function toOrderListSummary(id: string, data: Record<string, unknown>) {
   return {
     id,
     clienteId: data.clienteId ?? '',
+    clienteNombre: String(data.clienteNombre ?? '').trim(),
     estado: data.estado ?? '',
     fechaEntrega: data.fechaEntrega ?? null,
     createdAt: data.createdAt ?? null,
@@ -168,20 +172,19 @@ function toOrderListSummary(id: string, data: Record<string, unknown>) {
   };
 }
 
-async function enrichOrdersWithClientNames<T extends { clienteId?: unknown }>(
-  businessId: string,
-  items: T[]
-): Promise<Array<T & { clienteNombre: string }>> {
+async function enrichOrdersWithClientNames<
+  T extends { clienteId?: unknown; clienteNombre?: unknown }
+>(businessId: string, items: T[]): Promise<Array<T & { clienteNombre: string }>> {
+  // Solo resolvemos contra Firestore los pedidos que todavía no tienen el
+  // nombre denormalizado guardado (pedidos viejos). Los nuevos ya lo traen.
   const ids = [
     ...new Set(
       items
+        .filter((item) => !String(item.clienteNombre ?? '').trim())
         .map((item) => String(item.clienteId ?? '').trim())
         .filter(Boolean)
     ),
   ];
-  if (ids.length === 0) {
-    return items.map((item) => ({ ...item, clienteNombre: '' }));
-  }
 
   const nameMap = new Map<string, string>();
   for (let i = 0; i < ids.length; i += 30) {
@@ -196,7 +199,10 @@ async function enrichOrdersWithClientNames<T extends { clienteId?: unknown }>(
 
   return items.map((item) => ({
     ...item,
-    clienteNombre: nameMap.get(String(item.clienteId ?? '').trim()) ?? '',
+    clienteNombre:
+      String(item.clienteNombre ?? '').trim() ||
+      nameMap.get(String(item.clienteId ?? '').trim()) ||
+      '',
   }));
 }
 
@@ -1173,8 +1179,53 @@ router.patch('/:businessId/:orderId', async (req, res) => {
       return res.status(403).json({ error: 'No se puede modificar un pedido cancelado.' });
     }
     if (isEntregadoTotalStatus(existingOrder.estado)) {
-      return res.status(403).json({
-        error: 'Este pedido fue entregado total y no se puede modificar.',
+      const hasIncomingFecha =
+        incomingFecha !== undefined &&
+        incomingFecha !== null &&
+        String(incomingFecha).trim();
+      const patchKeys = Object.keys(orderData).filter(
+        (key) => orderData[key] !== undefined && orderData[key] !== null
+      );
+      const descriptionOnly =
+        !hasIncomingFecha &&
+        patchKeys.length === 1 &&
+        patchKeys[0] === 'descripcion';
+
+      if (!descriptionOnly) {
+        return res.status(403).json({
+          error:
+            'Este pedido fue entregado total. Solo podés actualizar la descripción del trabajo.',
+        });
+      }
+
+      await orderRef.update({
+        descripcion: String(orderData.descripcion ?? '').trim(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const orderLabel = resolveOrderLabel(existingOrder);
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'orders',
+        action: 'update',
+        entityType: 'pedido',
+        entityId: orderId,
+        entityLabel: orderLabel,
+        summary: `Actualizó la descripción del pedido #${orderLabel}`,
+      });
+
+      return res.json({
+        id: orderId,
+        estado: existingOrder.estado,
+        pagos: existingOrder.pagos ?? [],
+        totalPagado: existingOrder.totalPagado,
+        saldo: existingOrder.saldo,
+        entregadoAt: existingOrder.entregadoAt,
+        ventaId: existingOrder.ventaId,
+        locked: true,
+        items: existingOrder.items,
+        estadoStock: existingOrder.estadoStock,
+        stockPreparado: existingOrder.stockPreparado,
+        stockDescontado: existingOrder.stockDescontado,
       });
     }
 
@@ -1240,6 +1291,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     }
 
     let stockDescontado = mergedOrder.stockDescontado ?? false;
+    let productionStockPatch: Partial<OrderRecord> = {};
 
     if (orderData.items !== undefined) {
       orderData.items = mergeOrderItemsPreservingStock(
@@ -1247,10 +1299,63 @@ router.patch('/:businessId/:orderId', async (req, res) => {
         existingOrder.items ?? []
       );
       mergedOrder.items = orderData.items;
+
+      if (!isDraftStatus(mergedEstado)) {
+        const itemsReconcile = await reconcileOrderStockOnItemsChange(
+          businessId,
+          orderId,
+          {
+            items: existingOrder.items ?? [],
+            stockDescontado: existingOrder.stockDescontado,
+            stockPreparado: existingOrder.stockPreparado,
+            numeroPedido: existingOrder.numeroPedido,
+            numeroPedidoLabel: existingOrder.numeroPedidoLabel,
+            clienteId: existingOrder.clienteId,
+          },
+          orderData.items
+        );
+        orderData.items = itemsReconcile.items;
+        mergedOrder.items = itemsReconcile.items;
+        productionStockPatch = {
+          items: itemsReconcile.items,
+          stockDescontado: itemsReconcile.stockDescontado,
+          stockPreparado: itemsReconcile.stockPreparado,
+          estadoStock: itemsReconcile.estadoStock,
+        };
+        stockDescontado = itemsReconcile.stockDescontado;
+
+        const productIds = collectStockProductIdsFromOrderLines(
+          existingOrder.items,
+          orderData.items
+        );
+        if (productIds.length > 0) {
+          // Persistimos las líneas reconciliadas (incluye productos recién
+          // agregados/quitados) ANTES de sincronizar pedidos pendientes. Si no,
+          // syncPendingOrdersAfterStockChange + loadNormalizedOrderItems leen del
+          // documento todavía desactualizado y pisan los items nuevos.
+          await orderRef.update({
+            items: itemsReconcile.items,
+            stockDescontado: itemsReconcile.stockDescontado,
+            stockPreparado: itemsReconcile.stockPreparado,
+            estadoStock: itemsReconcile.estadoStock,
+          });
+          await syncPendingOrdersAfterStockChange(businessId, productIds);
+          const refreshed = await loadNormalizedOrderItems(businessId, orderId);
+          if (refreshed) {
+            orderData.items = refreshed.items;
+            mergedOrder.items = refreshed.items;
+            productionStockPatch = {
+              ...productionStockPatch,
+              items: refreshed.items,
+              estadoStock: refreshed.estadoStock,
+              stockPreparado: refreshed.stockPreparado ?? itemsReconcile.stockPreparado,
+            };
+          }
+        }
+      }
     }
 
     let deliveryPatch: Partial<OrderRecord> = {};
-    let productionStockPatch: Partial<OrderRecord> = {};
     const previousEstado = resolveOrderEstado(existingOrder.estado);
     const nextEstado = resolveOrderEstado(mergedEstado);
     const pedidosConfig = await loadOrderPedidosConfig(businessId);

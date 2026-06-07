@@ -12,6 +12,7 @@ import { FormFooterComponent } from '../form-shell/form-footer.component';
       [saveLabel]="primaryLabel"
       [cancelLabel]="cancelLabel"
       [saving]="saving"
+      [successMessage]="successMessage"
       [saveDisabled]="primaryDisabled"
       [footerClass]="footerClass"
       [saveButtonClass]="primaryButtonClass"
@@ -24,6 +25,7 @@ export class ModalFormFooterComponent {
   @Input() cancelLabel = 'Cancelar';
   @Input() primaryLabel = 'Guardar';
   @Input() saving = false;
+  @Input() successMessage = '';
   @Input() primaryDisabled = false;
   @Input() primaryButtonClass = '';
   @Input() footerClass = 'mt-6 pt-2';

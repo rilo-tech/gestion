@@ -7,6 +7,8 @@ import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFr
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
+import { validateClientDeletion } from '../utils/client-deletion-guards.ts';
+import { mapDeletionError } from '../utils/deletion-guards.ts';
 
 const router = createCompanyRouter();
 
@@ -131,15 +133,18 @@ router.get('/:businessId', async (req, res) => {
         businessId,
         docs.map((doc) => doc.id)
       );
-      const items = docs.map((doc) => {
-        const saldoPendiente = balanceMap.get(doc.id) ?? 0;
-        return {
-          id: doc.id,
-          ...doc.data(),
-          saldoPendiente,
-          debe: saldoPendiente > 0,
-        };
-      });
+      const soloActivos = String(req.query.soloActivos ?? '') === '1';
+      const items = docs
+        .map((doc) => {
+          const saldoPendiente = balanceMap.get(doc.id) ?? 0;
+          return {
+            id: doc.id,
+            ...doc.data(),
+            saldoPendiente,
+            debe: saldoPendiente > 0,
+          };
+        })
+        .filter((client) => !soloActivos || client.activo !== false);
 
       const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
       return res.json({ items, nextCursor, hasMore });
@@ -148,15 +153,18 @@ router.get('/:businessId', async (req, res) => {
     const snapshot = await db.collection(`negocios/${businessId}/clientes`).get();
     const balanceMap = await computeClientBalanceMap(businessId);
 
-    const clients = snapshot.docs.map((doc) => {
-      const saldoPendiente = balanceMap.get(doc.id) ?? 0;
-      return {
-        id: doc.id,
-        ...doc.data(),
-        saldoPendiente,
-        debe: saldoPendiente > 0,
-      };
-    });
+    const soloActivos = String(req.query.soloActivos ?? '') === '1';
+    const clients = snapshot.docs
+      .map((doc) => {
+        const saldoPendiente = balanceMap.get(doc.id) ?? 0;
+        return {
+          id: doc.id,
+          ...doc.data(),
+          saldoPendiente,
+          debe: saldoPendiente > 0,
+        };
+      })
+      .filter((client) => !soloActivos || client.activo !== false);
 
     res.json(clients);
   } catch (error) {
@@ -424,6 +432,10 @@ router.delete('/:businessId/:clientId', async (req, res) => {
   try {
     const { businessId, clientId } = req.params;
     const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clientId).get();
+    if (!clientSnap.exists) {
+      return res.status(404).json({ error: 'Cliente no encontrado.' });
+    }
+    await validateClientDeletion(businessId, clientId);
     const clientName = String(clientSnap.data()?.nombre ?? clientId);
     await db.collection(`negocios/${businessId}/clientes`).doc(clientId).delete();
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
@@ -436,6 +448,13 @@ router.delete('/:businessId/:clientId', async (req, res) => {
     });
     res.json({ id: clientId });
   } catch (error) {
+    const blocked = mapDeletionError(error);
+    if (blocked) {
+      return res.status(blocked.status).json({
+        error: blocked.message,
+        suggestDeactivate: true,
+      });
+    }
     res.status(500).json({ error: 'Error deleting client' });
   }
 });

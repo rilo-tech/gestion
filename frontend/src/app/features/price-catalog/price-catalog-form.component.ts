@@ -7,6 +7,7 @@ import {
   PriceCatalogFormSaveEvent,
 } from './price-catalog-form-panel.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 @Component({
   selector: 'app-price-catalog-form',
@@ -19,7 +20,7 @@ import { FormPageHeaderComponent } from '../../shared/components/form-shell';
         backLabel="Volver al catálogo"
         backShortLabel="Volver"
         backAriaLabel="Volver al catálogo"
-        backRouterLink="/price-catalog">
+        (backClick)="goBack()">
       </app-form-page-header>
 
       <div class="max-w-6xl">
@@ -38,6 +39,7 @@ export class PriceCatalogFormComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private auth = inject(AuthService);
+  private navigationBack = inject(NavigationBackService);
 
   entryId: string | null = null;
 
@@ -66,6 +68,6 @@ export class PriceCatalogFormComponent implements OnInit {
   }
 
   goBack() {
-    this.router.navigate(['/price-catalog']);
+    this.navigationBack.back(['/price-catalog']);
   }
 }

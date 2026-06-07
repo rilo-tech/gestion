@@ -21,6 +21,7 @@ import {
   OrderService,
   Order,
   OrderUpdateResult,
+  formatOrderNumber,
   OrderStockDiscountPreview,
   OrderPhysicalStockScope,
   resolveOrderBalance,
@@ -48,7 +49,8 @@ import {
 } from '../../core/constants/order-config';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
-import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
+import { TransactionPartySearchComponent } from '../../shared/components/transaction-party-search/transaction-party-search.component';
+import { SearchableSelectOption } from '../../shared/components/searchable-select/searchable-select.component';
 import {
   getOrderStatusBadgeClass,
   getOrderStatusLabel,
@@ -85,6 +87,7 @@ import {
   TransactionTableLine,
 } from '../../shared/components/transaction-lines-table/transaction-lines-table.types';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 import {
   ClientFormPanelComponent,
   ClientFormSaveEvent,
@@ -100,45 +103,43 @@ import {
   TransactionSummaryPanelComponent,
   TransactionFormPageComponent,
   TransactionDateFieldComponent,
+  TransactionSaveBannerComponent,
 } from '../../shared/components/transaction-form';
 import {
   dateInputToIso,
   toDateInputValue,
 } from '../../core/utils/transaction-date';
 import { FormFooterComponent } from '../../shared/components/form-shell';
-import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
+import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, SearchableSelectComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, IconToolbarButtonComponent, TransactionFormPageComponent, FormFooterComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
   template: `
     <app-transaction-form-page
       [title]="orderPageTitle"
+      [titleBadge]="orderPageTitleBadge"
       [subtitle]="orderPageSubtitle"
       backLabel="Volver a pedidos"
       backShortLabel="Volver"
       backAriaLabel="Volver a pedidos"
-      backRouterLink="/orders"
-      [hasHeaderActions]="!isReadOnlyOrder">
-      <div headerActions *ngIf="!isReadOnlyOrder" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
-        <app-icon-toolbar-button
-          class="sm:hidden"
-          icon="save"
-          [label]="primaryButtonLabel"
-          variant="primary"
-          [disabled]="orderActionsLocked || orderSaveState !== 'idle'"
-          [loading]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
-          (clicked)="submitOrder()">
-        </app-icon-toolbar-button>
+      (backClick)="goBack()"
+      [hasHeaderActions]="hasOrderHeaderActions">
+      <div headerActions *ngIf="hasOrderHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-record-action-toolbar
-          [showDuplicate]="isEditing && auth.canEditRecords"
+          [showSave]="!isReadOnlyOrder || canSaveLockedDescription"
+          [saveLabel]="primaryButtonLabel"
+          [saveDisabled]="orderSaveState === 'saving'"
+          [saveLoading]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
+          (saveClick)="onOrderSaveClick()"
+          [showDuplicate]="canDuplicateOrder"
           duplicateLabel="Duplicar pedido"
           (duplicateClick)="duplicateOrder()"
           [showPrint]="isEditing && auth.canPrintOrders"
           printLabel="Imprimir pedido"
           (printClick)="printCurrentOrder()"
-          [showDelete]="isEditing && auth.canEditRecords && !isCancelledOrder && !isLockedOrder"
+          [showDelete]="isEditing && !isReadOnlyOrder && auth.canEditRecords && !isCancelledOrder && !isLockedOrder"
           deleteLabel="Cancelar pedido"
           (deleteClick)="confirmCancelCurrentOrder()"
           [showRegisterSale]="canRegisterSale && auth.canCreateSales"
@@ -147,6 +148,8 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
       </div>
 
       <ng-container main *ngIf="orderPageReady; else orderPageLoading">
+      <app-transaction-save-banner [message]="orderSaveBannerText"></app-transaction-save-banner>
+
       <div
         *ngIf="isDeliveryPendingSave"
         class="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -157,7 +160,8 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
       <div
         *ngIf="isLockedOrder && !isCancelledOrder"
         class="mb-6 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-        Pedido en estado <span class="font-semibold">Entregado total</span>. No podés editarlo ni cambiar el estado.
+        Pedido en estado <span class="font-semibold">Entregado total</span>. Montos, productos y estado no se modifican.
+        Podés actualizar la <span class="font-semibold">descripción del trabajo</span>.
         Registrá pagos pendientes desde caja, el saldo del cliente o la venta asociada.
       </div>
 
@@ -169,69 +173,76 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
 
       <div class="space-y-4">
           <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-            <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_10.5rem_10.5rem] gap-4 mb-4">
-              <app-transaction-party-field
-                label="Cliente"
-                [showCreateAction]="!isReadOnlyOrder"
-                createActionLabel="+ Nuevo cliente"
-                (createClick)="goToNewClientForm()">
-                <app-searchable-select
-                  [compact]="true"
-                  [(ngModel)]="order.clienteId"
-                  name="clienteId"
-                  [labeledOptions]="clientOptions"
-                  [fallbackLabel]="selectedClientLabel"
-                  [disabled]="isReadOnlyOrder"
-                  [creatable]="!isReadOnlyOrder"
-                  createLabelPrefix="Crear cliente"
-                  (createRequested)="quickCreateClient($event)"
-                  (searchChange)="pendingClientName = $event"
-                  placeholder="Buscar cliente..."
-                  emptyOptionsMessage="No hay clientes cargados. Escribí el nombre para crearlo.">
-                </app-searchable-select>
-              </app-transaction-party-field>
-
-              <app-transaction-date-field
-                [date]="orderFechaInput"
-                (dateChange)="onOrderFechaChange($event)"
-                fieldName="orderFecha"
-                label="Fecha"
-                [disabled]="isReadOnlyOrder">
-              </app-transaction-date-field>
+            <div
+              class="relative z-50 overflow-visible grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_10.5rem_10.5rem] items-start mb-4">
+              <div class="min-w-0 overflow-visible col-span-2 lg:col-span-1">
+                <app-transaction-party-field
+                  label="Cliente"
+                  [showCreateAction]="!isReadOnlyOrder"
+                  createActionLabel="+ Nuevo cliente"
+                  (createClick)="goToNewClientForm()">
+                  <app-transaction-party-search
+                    [(ngModel)]="order.clienteId"
+                    inputName="clienteId"
+                    [labeledOptions]="clientOptions"
+                    [fallbackLabel]="selectedClientLabel"
+                    [disabled]="isReadOnlyOrder"
+                    [creatable]="!isReadOnlyOrder"
+                    createLabelPrefix="Crear cliente"
+                    (partySelected)="onOrderPartySelected($event)"
+                    (createRequested)="quickCreateClient($event)"
+                    (searchChange)="pendingClientName = $event"
+                    placeholder="Buscar cliente..."
+                    emptyOptionsMessage="Escribí al menos 2 letras para buscar clientes.">
+                  </app-transaction-party-search>
+                </app-transaction-party-field>
+              </div>
 
               <div class="min-w-0">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de entrega</label>
-                <input
-                  type="date"
-                  [ngModel]="fechaEntregaInput"
-                  (ngModelChange)="onFechaEntregaChange($event)"
-                  name="fechaEntrega"
-                  [disabled]="isReadOnlyOrder"
-                  class="w-full px-3 lg:px-2 xl:px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500">
+                <app-transaction-date-field
+                  [date]="orderFechaInput"
+                  (dateChange)="onOrderFechaChange($event)"
+                  fieldName="orderFecha"
+                  label="Fecha"
+                  [disabled]="isReadOnlyOrder">
+                </app-transaction-date-field>
+              </div>
+
+              <div class="min-w-0">
+                <app-transaction-date-field
+                  [date]="fechaEntregaInput"
+                  (dateChange)="onFechaEntregaChange($event)"
+                  fieldName="fechaEntrega"
+                  label="Entrega"
+                  [disabled]="isReadOnlyOrder">
+                </app-transaction-date-field>
               </div>
             </div>
 
             <div *ngIf="isEditing" class="mb-4">
-              <div class="flex flex-nowrap items-center gap-x-1.5 gap-y-0 min-w-0 overflow-x-auto">
-                <label class="text-sm font-medium text-gray-700 shrink-0">Estado</label>
-                <select
-                  *ngIf="!isReadOnlyOrder"
-                  [ngModel]="orderEstadoDisplay"
-                  (ngModelChange)="onOrderEstadoChange($event)"
-                  name="estado"
-                  [disabled]="savingEstado"
-                  class="order-status-select shrink-0 w-[7.75rem] max-w-[7.75rem] px-2 py-1.5 rounded-md border border-gray-200 bg-white text-xs text-gray-900 outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 disabled:opacity-60 cursor-pointer">
-                  <option *ngFor="let option of orderStatusOptions" [value]="option.value">
-                    {{ option.label }}
-                  </option>
-                </select>
-                <span
-                  *ngIf="isReadOnlyOrder"
-                  class="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold shrink-0"
-                  [ngClass]="getOrderStatusBadgeClass(order.estado)">
-                  {{ getOrderStatusLabelFor(order.estado) }}
-                </span>
-                <ng-container *ngIf="canReviewStock">
+              <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-1.5 sm:gap-y-0 min-w-0">
+                <div class="flex items-center gap-2 min-w-0">
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Estado</label>
+                  <select
+                    *ngIf="!isReadOnlyOrder"
+                    [ngModel]="orderEstadoDisplay"
+                    (ngModelChange)="onOrderEstadoChange($event)"
+                    name="estado"
+                    class="order-status-select min-w-0 flex-1 sm:flex-none sm:min-w-[9rem] sm:w-[10.5rem] lg:min-w-[11rem] lg:w-[12.5rem] px-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 disabled:opacity-60 cursor-pointer">
+                    <option *ngFor="let option of orderStatusOptions" [value]="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <span
+                    *ngIf="isReadOnlyOrder"
+                    class="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold shrink-0"
+                    [ngClass]="getOrderStatusBadgeClass(order.estado)">
+                    {{ getOrderStatusLabelFor(order.estado) }}
+                  </span>
+                </div>
+                <div
+                  *ngIf="canReviewStock"
+                  class="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
                   <span
                     *ngIf="order.estadoStock"
                     class="inline-flex px-2 py-1 rounded-md text-xs font-semibold shrink-0 whitespace-nowrap"
@@ -241,7 +252,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
                   <button
                     type="button"
                     (click)="openStockPreparation()"
-                    class="text-xs font-semibold text-teal-700 hover:text-teal-900 underline shrink-0 whitespace-nowrap">
+                    class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:text-teal-900 dark:hover:text-teal-300 underline shrink-0 whitespace-nowrap">
                     {{ order.stockPreparado ? 'Editar stock' : 'Revisar stock' }}
                   </button>
                   <button
@@ -249,13 +260,13 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
                     type="button"
                     (click)="openConsumePendingDialog()"
                     [disabled]="consumingPendingStock"
-                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100 disabled:opacity-60 disabled:cursor-not-allowed shrink-0 whitespace-nowrap">
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-950/60 disabled:opacity-60 disabled:cursor-not-allowed shrink-0 whitespace-nowrap">
                     {{ consumingPendingStock ? 'Descontando…' : ('Descontar (' + pendingReservedToConsumeUnits + ' u.)') }}
                   </button>
-                  <span *ngIf="lastStockOperationLabel" class="text-[10px] text-gray-500 hidden sm:inline shrink-0">
+                  <span *ngIf="lastStockOperationLabel" class="text-[10px] text-gray-500 dark:text-gray-400 hidden sm:inline shrink-0">
                     {{ lastStockOperationLabel }}
                   </span>
-                </ng-container>
+                </div>
               </div>
               <p
                 *ngIf="orderPhysicalDiscountHint"
@@ -270,9 +281,9 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
                 [(ngModel)]="order.descripcion"
                 name="descripcion"
                 rows="3"
-                [disabled]="isReadOnlyOrder"
+                [disabled]="!canEditOrderDescription"
                 placeholder="Ej. 13 canguros — seña recibida, faltan talles y diseños"
-                class="w-full px-4 py-2 rounded-lg border border-gray-200 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500">
+                class="w-full px-4 py-2 rounded-lg border border-gray-200 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 max-lg:min-h-[5.5rem]">
               </textarea>
             </div>
           </section>
@@ -371,15 +382,25 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
           mode="inline"
           [saveLabel]="primaryButtonLabel"
           [saving]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
-          [saveDisabled]="orderActionsLocked || orderSaveState !== 'idle'"
+          [saveDisabled]="orderSaveState === 'saving'"
           [successMessage]="orderSaveSuccessMessage"
           [secondaryActionLabel]="showSaveDraftButton ? draftButtonLabel : ''"
           [secondarySaving]="orderSaveState === 'saving' && orderSaveAction === 'draft'"
-          [secondaryActionDisabled]="orderActionsLocked"
+          [secondaryActionDisabled]="orderSaveState === 'saving'"
           cancelLabel="Cancelar"
           (cancelClick)="goBack()"
           (saveClick)="submitOrder()"
           (secondaryActionClick)="saveDraft()">
+        </app-form-footer>
+
+        <app-form-footer
+          *ngIf="isReadOnlyOrder && canDuplicateOrder"
+          mode="inline"
+          [showSave]="false"
+          cancelLabel="Volver"
+          secondaryActionLabel="Duplicar pedido"
+          (cancelClick)="goBack()"
+          (secondaryActionClick)="duplicateOrder()">
         </app-form-footer>
       </div>
       </ng-container>
@@ -389,51 +410,58 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
           <app-transaction-summary-panel
             *ngIf="auth.canViewEconomics"
             title="Resumen Económico"
+            variant="light"
             class="sm:sticky sm:top-8">
 
             <div
-              *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE"
+              *ngIf="auth.canViewAccountBalance || auth.canViewOrderSalePrice"
               class="grid grid-cols-2 gap-x-3 gap-y-1 mb-2 sm:hidden text-xs">
-              <div>
-                <p class="text-[10px] uppercase text-gray-500">Venta</p>
-                <p class="font-bold text-teal-300 tabular-nums">{{ '$' + (order.total || 0) }}</p>
-              </div>
-              <div *ngIf="auth.canViewAccountBalance" class="text-right">
+              <div *ngIf="auth.canViewAccountBalance">
                 <p class="text-[10px] uppercase text-gray-500">Saldo</p>
-                <p class="font-bold text-orange-300 tabular-nums">{{ '$' + (order.saldo || 0) }}</p>
+                <p class="font-bold text-orange-600 tabular-nums">{{ '$' + (order.saldo || 0) }}</p>
+              </div>
+              <div
+                *ngIf="auth.canViewOrderSalePrice"
+                [class.text-right]="auth.canViewAccountBalance">
+                <p class="text-[10px] uppercase text-gray-500">Venta</p>
+                <p class="font-bold text-teal-600 tabular-nums">{{ '$' + (order.total || 0) }}</p>
               </div>
               <div>
                 <p class="text-[10px] uppercase text-gray-500">Costo</p>
-                <p class="font-semibold tabular-nums">{{ '$' + totalCost }}</p>
+                <p class="font-semibold text-gray-900 tabular-nums">{{ '$' + totalCost }}</p>
               </div>
               <div class="text-right">
                 <p class="text-[10px] uppercase text-gray-500">Ganancia</p>
-                <p class="font-semibold text-green-400 tabular-nums">{{ '$' + (order.gananciaEstimada || 0) }}</p>
+                <p class="font-semibold text-green-600 tabular-nums">{{ '$' + (order.gananciaEstimada || 0) }}</p>
+              </div>
+              <div class="col-span-2 flex justify-between pt-1 border-t border-gray-100">
+                <span class="text-[10px] uppercase text-gray-500">Margen</span>
+                <span class="font-semibold text-teal-700 tabular-nums">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
               </div>
             </div>
 
             <div class="hidden sm:block space-y-3 mb-6 text-sm">
               <div class="flex justify-between">
-                <span class="text-gray-400">Costo base</span>
-                <span>{{ '$' + baseProductCost }}</span>
+                <span class="text-gray-500">Costo base</span>
+                <span class="text-gray-900 tabular-nums">{{ '$' + baseProductCost }}</span>
               </div>
               <div class="flex justify-between">
-                <span class="text-gray-400">Personalización</span>
-                <span>{{ '$' + customizationCostTotal }}</span>
+                <span class="text-gray-500">Personalización</span>
+                <span class="text-gray-900 tabular-nums">{{ '$' + customizationCostTotal }}</span>
               </div>
-              <div class="border-t border-gray-800 pt-3 flex justify-between font-bold">
+              <div class="border-t border-gray-200 pt-3 flex justify-between font-bold text-gray-900">
                 <span>Costo total</span>
-                <span>{{ '$' + totalCost }}</span>
+                <span class="tabular-nums">{{ '$' + totalCost }}</span>
               </div>
-              <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="flex justify-between font-bold text-teal-300">
+              <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="flex justify-between font-bold text-teal-700">
                 <span>Precio venta</span>
-                <span>{{ '$' + (order.total || 0) }}</span>
+                <span class="tabular-nums">{{ '$' + (order.total || 0) }}</span>
               </div>
             </div>
 
-            <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 bg-gray-800/60 rounded-lg sm:rounded-xl border border-gray-700">
+            <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
-                <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Seña recibida</label>
+                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
                   [(ngModel)]="order.senia"
@@ -441,7 +469,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
                   [disabled]="isReadOnlyOrder"
                   (ngModelChange)="calculateTotals()"
                   min="0"
-                  class="w-full px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-gray-600 bg-gray-900/40 text-lg sm:text-xl font-bold tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                  class="w-full px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 bg-white text-lg sm:text-xl font-bold text-gray-900 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
                 <p class="mt-1 text-xs text-gray-500 hidden sm:block">
                   Al guardar el pedido, se registra en caja con la fecha de hoy y queda bloqueada.
                 </p>
@@ -449,48 +477,48 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
 
               <ng-container *ngIf="seniaBloqueada || isEditing">
                 <div class="flex items-center justify-between gap-2 mb-1 sm:mb-2">
-                  <span class="text-[10px] sm:text-xs font-bold text-gray-400 uppercase">Pagos</span>
+                  <span class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase">Pagos</span>
                   <button
                     type="button"
                     (click)="openPaymentModal()"
                     *ngIf="auth.canAccessCash"
                     [disabled]="!canRegisterOrderPayment"
-                    class="text-[10px] sm:text-xs font-semibold text-teal-300 hover:text-teal-200 disabled:opacity-40 disabled:cursor-not-allowed">
+                    class="text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Pago
                   </button>
                 </div>
                 <div class="space-y-0.5 mb-1 sm:mb-3 max-h-14 sm:max-h-28 overflow-auto">
                   <div
                     *ngFor="let pago of order.pagos"
-                    class="flex items-center justify-between gap-2 text-[10px] sm:text-[11px] leading-tight text-gray-300">
+                    class="flex items-center justify-between gap-2 text-[10px] sm:text-[11px] leading-tight text-gray-700">
                     <span class="truncate min-w-0">
                       {{ getPaymentLineLabel(pago) }}
                       <span class="text-gray-500 hidden sm:inline">· {{ formatPaymentDate(pago.fecha) }}</span>
                       <span *ngIf="shouldShowPaymentNotas(pago)" class="text-gray-500 hidden sm:inline">· {{ pago.notas }}</span>
                     </span>
-                    <span class="text-[10px] sm:text-xs font-semibold tabular-nums shrink-0">{{ '$' + pago.monto }}</span>
+                    <span class="text-[10px] sm:text-xs font-semibold text-gray-900 tabular-nums shrink-0">{{ '$' + pago.monto }}</span>
                   </div>
                 </div>
-                <div class="flex justify-between text-[10px] sm:text-xs text-gray-400">
+                <div class="flex justify-between text-[10px] sm:text-xs text-gray-600">
                   <span>Pagado</span>
-                  <span class="tabular-nums">{{ '$' + getTotalPagado() }}</span>
+                  <span class="tabular-nums text-gray-900">{{ '$' + getTotalPagado() }}</span>
                 </div>
               </ng-container>
 
-              <div class="flex justify-between text-[10px] sm:text-xs text-gray-400 mt-1 sm:mt-2 pt-1 sm:pt-2 border-t border-gray-700">
+              <div class="flex justify-between text-[10px] sm:text-xs text-gray-600 mt-1 sm:mt-2 pt-1 sm:pt-2 border-t border-gray-200">
                 <span>Saldo pendiente</span>
-                <span class="font-semibold text-orange-300 tabular-nums">{{ '$' + (order.saldo || 0) }}</span>
+                <span class="font-semibold text-orange-600 tabular-nums">{{ '$' + (order.saldo || 0) }}</span>
               </div>
             </div>
 
             <div class="hidden sm:block space-y-2 mb-6 text-sm">
               <div class="flex justify-between">
-                <span class="text-gray-400">Ganancia est.</span>
-                <span class="text-green-400 font-bold">{{ '$' + (order.gananciaEstimada || 0) }}</span>
+                <span class="text-gray-500">Ganancia est.</span>
+                <span class="text-green-600 font-bold tabular-nums">{{ '$' + (order.gananciaEstimada || 0) }}</span>
               </div>
               <div class="flex justify-between">
-                <span class="text-gray-400">Margen</span>
-                <span class="text-teal-400">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
+                <span class="text-gray-500">Margen</span>
+                <span class="text-teal-700 tabular-nums">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
               </div>
             </div>
 
@@ -498,18 +526,18 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
               *ngIf="isEditing && order.ventaId"
               [routerLink]="['/sales']"
               [queryParams]="{ ventaId: order.ventaId }"
-              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-300 hover:text-teal-200 hover:underline">
+              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
-            <div *ngIf="isCancelledOrder" class="space-y-2 sm:space-y-3">
-              <p class="text-xs sm:text-sm text-gray-400 hidden sm:block">
-                Este pedido quedó cerrado. Para seguir trabajando, creá un pedido nuevo.
+            <div *ngIf="isReadOnlyOrder && canDuplicateOrder" class="space-y-2 sm:space-y-3">
+              <p class="text-xs sm:text-sm text-gray-500 hidden sm:block">
+                Este pedido no se puede modificar. Podés duplicarlo para crear uno nuevo con los mismos datos.
               </p>
               <button
                 type="button"
-                routerLink="/orders/new"
-                class="w-full rounded-lg sm:rounded-xl bg-teal-500 py-2 sm:py-3 text-sm font-bold text-gray-900 hover:bg-teal-400 transition-all">
-                Nuevo pedido
+                (click)="duplicateOrder()"
+                class="w-full rounded-lg sm:rounded-xl bg-teal-600 py-2 sm:py-3 text-sm font-bold text-white hover:bg-teal-700 transition-all">
+                Duplicar pedido
               </button>
             </div>
           </app-transaction-summary-panel>
@@ -520,8 +548,8 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
             variant="light"
             class="sm:sticky sm:top-8">
             <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4 flex items-baseline justify-between gap-3 sm:block">
-              <p class="text-[10px] sm:text-xs font-bold text-gray-400 uppercase sm:mb-1">Total venta</p>
-              <p class="text-lg sm:text-2xl font-bold text-teal-600 tabular-nums">{{ '$' + (order.total || 0) }}</p>
+              <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase sm:mb-1">Total venta</p>
+              <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ '$' + (order.total || 0) }}</p>
             </div>
             <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
@@ -564,18 +592,18 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
               *ngIf="isEditing && order.ventaId"
               [routerLink]="['/sales']"
               [queryParams]="{ ventaId: order.ventaId }"
-              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-300 hover:text-teal-200 hover:underline">
+              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
-            <div *ngIf="isCancelledOrder" class="space-y-2 sm:space-y-3">
+            <div *ngIf="isReadOnlyOrder && canDuplicateOrder" class="space-y-2 sm:space-y-3">
               <p class="text-xs sm:text-sm text-gray-500 hidden sm:block">
-                Pedido cancelado. Creá uno nuevo para continuar.
+                Este pedido no se puede modificar. Podés duplicarlo para crear uno nuevo con los mismos datos.
               </p>
               <button
                 type="button"
-                routerLink="/orders/new"
-                class="w-full rounded-lg sm:rounded-xl bg-teal-500 py-2 sm:py-3 text-sm font-bold text-gray-900 hover:bg-teal-400 transition-all">
-                Nuevo pedido
+                (click)="duplicateOrder()"
+                class="w-full rounded-lg sm:rounded-xl bg-teal-600 py-2 sm:py-3 text-sm font-bold text-white hover:bg-teal-700 transition-all">
+                Duplicar pedido
               </button>
             </div>
           </app-transaction-summary-panel>
@@ -723,7 +751,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
         <header class="px-4 py-3 border-b border-gray-200">
           <h2 id="stock-discount-title" class="text-base font-bold text-gray-900">Descuento de depósito</h2>
           <p class="text-sm text-gray-600 mt-1">
-            Al pasar a «{{ stockDiscountPreview.nextEstadoLabel }}» se descontará stock físico del depósito.
+            Al guardar con estado «{{ stockDiscountPreview.nextEstadoLabel }}» se descontará stock físico del depósito.
           </p>
         </header>
 
@@ -802,7 +830,7 @@ import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../
             (click)="confirmStockDiscountDialog()"
             [disabled]="stockDiscountUnitsForSelectedScope <= 0"
             class="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-50">
-            Confirmar y cambiar estado
+            Confirmar y guardar
           </button>
         </footer>
       </div>
@@ -898,6 +926,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private destroyRef = inject(DestroyRef);
+  private navigationBack = inject(NavigationBackService);
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
 
@@ -948,9 +977,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   paymentMonto: number | null = null;
   paymentSaldoSnapshot = 0;
   paymentSubmitting = false;
-  savingEstado = false;
   orderSaveState: 'idle' | 'saving' | 'success' = 'idle';
   orderSaveAction: 'draft' | 'submit' | null = null;
+  orderSaveBannerText = '';
   private orderSaveFeedbackTimeout?: ReturnType<typeof setTimeout>;
   private savedOrderEstado = '';
   private orderFormLocked = false;
@@ -959,6 +988,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   stockDiscountPreview: OrderStockDiscountPreview | null = null;
   stockDiscountSelectedScope: OrderPhysicalStockScope = 'solo_reservado';
   private pendingEstadoForStockDiscount: string | null = null;
+  private pendingSaveEstado: string | null = null;
   readonly getOrderPhysicalStockScopeLabel = getOrderPhysicalStockScopeLabel;
   private pendingEstadoChange: string | null = null;
   private stockPrepFromEstadoChange = false;
@@ -1001,7 +1031,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       estados: this.appConfig.pedidos.estados,
     });
     if (!crosses || stockFullyConsumed) return null;
-    return `Si pasás a «${this.getOrderStatusLabelFor(next)}», por defecto se descontará: ${getOrderPhysicalStockScopeLabel(scope)}.`;
+    return `Al guardar, si queda en «${this.getOrderStatusLabelFor(next)}», por defecto se descontará: ${getOrderPhysicalStockScopeLabel(scope)}.`;
   }
 
   get pendingReservedToConsumeUnits(): number {
@@ -1018,7 +1048,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get canConsumePendingReservedStockNow(): boolean {
     if (!this.isEditing || this.isReadOnlyOrder || !this.editingOrderId) return false;
     if (normalizeOrderStatus(this.order.estado) !== 'en_produccion') return false;
-    if (this.consumingPendingStock || this.savingEstado) return false;
+    if (this.consumingPendingStock) return false;
     return this.pendingReservedToConsumeUnits > 0;
   }
 
@@ -1139,24 +1169,30 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return 'Nuevo pedido personalizado';
   }
 
+  get orderPageTitleBadge(): string {
+    if (!this.isEditing) return '';
+    const fromSnapshot = this.loadedOrderSnapshot ? formatOrderNumber(this.loadedOrderSnapshot) : '';
+    if (fromSnapshot) return fromSnapshot;
+    if (this.editingOrderId) return this.editingOrderId.slice(-6).toUpperCase();
+    return '';
+  }
+
   get orderPageSubtitle(): string {
     if (this.isCancelledOrder) {
       return 'Solo lectura. Este pedido no se puede modificar; creá uno nuevo si necesitás continuar.';
     }
     if (this.isLockedOrder) {
-      return 'Solo lectura. El pedido fue entregado total y ya no se puede modificar.';
+      return 'Podés editar la descripción del trabajo; el resto del pedido queda bloqueado.';
     }
     return '';
   }
 
   get orderSaveSuccessMessage(): string {
-    if (this.orderSaveState !== 'success') return '';
-    if (this.orderSaveAction === 'draft') return 'Borrador guardado';
-    return this.isEditing && !this.isDraftOrder ? 'Pedido guardado' : 'Pedido confirmado';
+    return this.orderSaveState === 'success' ? this.orderSaveBannerText : '';
   }
 
   goBack() {
-    this.router.navigate(['/orders']);
+    this.navigationBack.back(['/orders']);
   }
 
   get isDraft(): boolean {
@@ -1172,7 +1208,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get orderActionsLocked(): boolean {
-    return this.orderSaveState !== 'idle';
+    return this.orderSaveState === 'saving';
   }
 
   get draftButtonLabel(): string {
@@ -1184,9 +1220,26 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get primaryButtonLabel(): string {
     if (this.orderSaveState === 'saving' && this.orderSaveAction === 'submit') return 'Guardando...';
     if (this.orderSaveState === 'success' && this.orderSaveAction === 'submit') {
+      if (this.isLockedOrder) return 'Descripción guardada';
       return this.isEditing && !this.isDraftOrder ? 'Guardado' : 'Pedido confirmado';
     }
+    if (this.canSaveLockedDescription) return 'Guardar descripción';
     return this.primaryOrderActionLabel;
+  }
+
+  get canEditOrderDescription(): boolean {
+    return this.isEditing && !this.isCancelledOrder && this.auth.canEditRecords;
+  }
+
+  get hasPendingDescriptionChange(): boolean {
+    if (!this.loadedOrderSnapshot) return false;
+    const current = (this.order.descripcion ?? '').trim();
+    const saved = (this.loadedOrderSnapshot.descripcion ?? '').trim();
+    return current !== saved;
+  }
+
+  get canSaveLockedDescription(): boolean {
+    return this.isLockedOrder && this.canEditOrderDescription && this.hasPendingDescriptionChange;
   }
 
   get isCancelledOrder(): boolean {
@@ -1214,6 +1267,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (this.isCancelledOrder || this.isLockedOrder) return true;
     if (this.isEditing && !this.auth.canEditRecords) return true;
     return false;
+  }
+
+  get canDuplicateOrder(): boolean {
+    return this.isEditing && !!this.editingOrderId && this.auth.canEditRecords;
+  }
+
+  /** Hay al menos una acción para mostrar arriba a la derecha (guardar/duplicar/imprimir/etc.). */
+  get hasOrderHeaderActions(): boolean {
+    return (
+      !this.isReadOnlyOrder ||
+      this.canSaveLockedDescription ||
+      this.canDuplicateOrder ||
+      (this.isEditing && this.auth.canPrintOrders) ||
+      (this.canRegisterSale && this.auth.canCreateSales)
+    );
   }
 
   get pendingOrderSaldo(): number {
@@ -1260,14 +1328,14 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
 
   onOrderEstadoChange(newEstado: string) {
-    if (!this.editingOrderId || this.savingEstado) return;
+    if (!this.editingOrderId) return;
     if (this.orderFormLocked) {
       this.order.estado = this.savedOrderEstado || this.order.estado;
       return;
     }
     if (normalizeOrderStatus(this.savedOrderEstado) === 'cancelado') return;
 
-    const previous = normalizeOrderStatus(this.savedOrderEstado || this.order.estado);
+    const previous = normalizeOrderStatus(this.order.estado);
     const next = normalizeOrderStatus(newEstado);
     if (next === previous) return;
 
@@ -1280,7 +1348,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     });
 
     if (!transition.allowed) {
-      this.order.estado = this.savedOrderEstado || previous;
+      this.order.estado = previous;
       this.dialogService.alert({
         title: 'Estado del pedido',
         message: transition.error ?? 'No podés retroceder el estado del pedido.',
@@ -1288,87 +1356,27 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (transition.requiresStockRestore) {
-      const nextLabel = getOrderStatusLabelFromConfig(next, this.appConfig.pedidos);
-      this.dialogService
-        .confirm({
-          title: 'Retroceder estado',
-          message: `Al volver a «${nextLabel}», se devolverá el stock al depósito (entrada de stock). ¿Continuar?`,
-          confirmLabel: 'Sí, retroceder',
-          cancelLabel: 'Cancelar',
-          variant: 'danger',
-        })
-        .subscribe((confirmed) => {
-          if (confirmed) {
-            this.commitOrderEstadoChange(newEstado);
-          } else {
-            this.order.estado = this.savedOrderEstado || previous;
-          }
-        });
-      return;
-    }
-
-    if (isOrderDeliveryEstado(next)) {
-      this.order.estado = newEstado;
-      return;
-    }
-
-    const stockFullyConsumed = orderStockFullyConsumed(this.orderLines);
-    const crossesStock = shouldConsumeStockOnStatusChange({
-      previousEstado: previous,
-      nextEstado: next,
-      triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
-      stockDescontado: this.order.stockDescontado,
-      stockFullyConsumed,
-      estados: this.appConfig.pedidos.estados,
-    });
-
-    if (!crossesStock) {
-      this.commitOrderEstadoChange(newEstado);
-      return;
-    }
-
-    this.orderService.getStockDiscountPreview(this.editingOrderId, newEstado).subscribe({
-      next: (preview) => {
-        if (preview.blocked) {
-          this.order.estado = this.savedOrderEstado || previous;
-          this.dialogService.alert({
-            title: 'Stock insuficiente',
-            message: preview.blockReason ?? 'No podés pasar a este estado todavía.',
-          });
-          return;
-        }
-
-        if (!preview.willConsume) {
-          this.commitOrderEstadoChange(newEstado);
-          return;
-        }
-
-        this.stockDiscountPreview = preview;
-        this.stockDiscountSelectedScope = preview.defaultScope;
-        this.pendingEstadoForStockDiscount = newEstado;
-        this.stockDiscountDialogOpen = true;
-      },
-      error: () => {
-        this.commitOrderEstadoChange(newEstado);
-      },
-    });
+    this.order.estado = newEstado;
   }
 
   confirmStockDiscountDialog() {
-    const newEstado = this.pendingEstadoForStockDiscount;
+    const newEstado = this.pendingEstadoForStockDiscount ?? this.pendingSaveEstado;
     if (!newEstado || !this.editingOrderId) return;
-    this.stockDiscountDialogOpen = false;
-    this.stockDiscountPreview = null;
-    this.pendingEstadoForStockDiscount = null;
-    this.commitOrderEstadoChange(newEstado, this.stockDiscountSelectedScope);
+    const scope = this.stockDiscountSelectedScope;
+    this.closeStockDiscountDialog();
+    this.executePersistOrder(newEstado, scope);
   }
 
   cancelStockDiscountDialog() {
+    this.closeStockDiscountDialog();
+    this.pendingSaveEstado = null;
+    this.resetOrderSaveState();
+  }
+
+  private closeStockDiscountDialog() {
     this.stockDiscountDialogOpen = false;
     this.stockDiscountPreview = null;
     this.pendingEstadoForStockDiscount = null;
-    this.order.estado = this.savedOrderEstado || normalizeOrderStatus(this.order.estado);
   }
 
   openStockPreparation() {
@@ -1416,7 +1424,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           const nextEstado = this.pendingEstadoChange ?? this.appConfig.pedidos.estadoDescuentaStock;
           this.pendingEstadoChange = null;
           this.stockPrepFromEstadoChange = false;
-          this.commitOrderEstadoChange(nextEstado);
+          this.order.estado = nextEstado;
         } else {
           this.stockPrepFromEstadoChange = false;
           if (this.awaitingStockPrepAfterSave) {
@@ -1432,7 +1440,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           const nextEstado = this.pendingEstadoChange ?? this.appConfig.pedidos.estadoDescuentaStock;
           this.pendingEstadoChange = null;
           this.stockPrepFromEstadoChange = false;
-          this.commitOrderEstadoChange(nextEstado);
+          this.order.estado = nextEstado;
         } else {
           this.stockPrepFromEstadoChange = false;
           if (this.awaitingStockPrepAfterSave) {
@@ -1440,32 +1448,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             this.finishOrderSaveSuccess();
           }
         }
-      },
-    });
-  }
-
-  private commitOrderEstadoChange(newEstado: string, descuentoFisicoAlcance?: OrderPhysicalStockScope) {
-    if (!this.editingOrderId) return;
-
-    this.savingEstado = true;
-    this.orderService
-      .updateOrderStatus(this.editingOrderId, newEstado, descuentoFisicoAlcance ? { descuentoFisicoAlcance } : undefined)
-      .subscribe({
-      next: (result) => {
-        this.applyOrderUpdateResult(result);
-        this.savedOrderEstado = newEstado;
-        this.savingEstado = false;
-      },
-      error: (err: HttpErrorResponse) => {
-        this.savingEstado = false;
-        this.order.estado = this.savedOrderEstado || normalizeOrderStatus(this.order.estado);
-        this.dialogService.alert({
-          title: 'Error',
-          message:
-            typeof err.error?.error === 'string'
-              ? err.error.error
-              : 'No se pudo actualizar el estado del pedido.',
-        });
       },
     });
   }
@@ -1582,7 +1564,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     event?.stopPropagation();
     const stockItemId = String(line.stockItemId ?? '').trim();
     if (!stockItemId) return;
-    this.router.navigate(['/stock', stockItemId, 'edit']);
+    this.saveOrderFormDraftForReturn();
+    this.router.navigate(['/stock', stockItemId, 'edit'], {
+      queryParams: {
+        returnTo: 'orders',
+        ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
+      },
+    });
   }
 
   get addedOrderProductIds(): string[] {
@@ -1690,11 +1678,19 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderPageReady = true;
     this.orderDetailLoading = true;
 
+    // Pintamos al instante con la mejor fuente disponible para que los campos no
+    // queden en blanco mientras llega la respuesta del backend: preferimos la que
+    // traiga líneas (preview de navegación o caché del listado) y, si ninguna las
+    // tiene, usamos al menos la cabecera conocida. loadOrder revalida en segundo plano.
     const preview = this.readOrderPreview(orderId);
+    const cached = this.orderService.getCachedOrder(orderId);
     const previewHasLines = this.orderHasLinePayload(preview);
+    const cachedHasLines = this.orderHasLinePayload(cached);
+    const instant = previewHasLines ? preview : cachedHasLines ? cached : preview ?? cached;
+    const instantHasLines = this.orderHasLinePayload(instant);
 
-    if (preview) {
-      if (!this.auth.canViewOrder(preview.estado)) {
+    if (instant) {
+      if (!this.auth.canViewOrder(instant.estado)) {
         this.dialogService.alert({
           title: 'Sin acceso',
           message: 'No tenés permiso para ver este pedido.',
@@ -1702,8 +1698,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.router.navigate(['/orders']);
         return;
       }
-      this.applyLoadedOrder(preview, { includeLines: previewHasLines });
-      if (previewHasLines) {
+      this.applyLoadedOrder(instant, { includeLines: instantHasLines });
+      if (instantHasLines) {
         this.orderDetailLoading = false;
       }
     } else {
@@ -1722,7 +1718,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private refreshClients() {
-    this.clientService.getClientsPage(120).subscribe((page) => {
+    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
       this.clients = page.items;
       this.ensureSelectedClient(this.order.clienteId, this.selectedClientLabel);
     });
@@ -1764,6 +1760,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private mergeClientOption(id: string, nombre: string) {
     if (this.clients.some((client) => client.id === id)) return;
     this.clients = [{ id, nombre }, ...this.clients];
+  }
+
+  onOrderPartySelected(option: SearchableSelectOption) {
+    this.order.clienteId = option.value;
+    this.pendingClientName = option.label;
+    this.selectedClientLabel = option.label;
+    this.mergeClientOption(option.value, option.label);
   }
 
   quickCreateClient(name: string) {
@@ -2216,10 +2219,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       Number(this.loadedOrderSnapshot?.total) ||
       0;
 
+    // Una línea con precio explícito (incluido 0, p. ej. donación) manda sobre el total
+    // guardado. Solo conservamos el total a nivel pedido cuando ninguna línea tiene precio
+    // propio (pedidos antiguos que guardaban el total sin desglose por línea).
+    const hasExplicitLinePrice = this.orderLines.some((line) => line.precioVenta != null);
     const nextTotal =
-      this.orderLines.length > 0 && lineTotal > 0
-        ? lineTotal
-        : preservedTotal || lineTotal;
+      this.orderLines.length > 0
+        ? hasExplicitLinePrice
+          ? lineTotal
+          : preservedTotal || lineTotal
+        : preservedTotal;
     const nextCostoReal =
       this.orderLines.length > 0
         ? totalCost
@@ -2456,6 +2465,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!this.validateClient()) return;
     if (!this.validateProducts()) return;
 
+    this.confirmDonationIfNeeded(() => this.proceedSubmitOrder());
+  }
+
+  private proceedSubmitOrder() {
     const estado =
       !this.isEditing || this.isDraftOrder ? 'pendiente' : this.order.estado || 'pendiente';
 
@@ -2509,17 +2522,54 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     if (this.auth.canViewOrderSalePrice) {
-      const missingPrice = this.orderLines.filter((line) => !Number(line.precioVenta));
-      if (missingPrice.length > 0) {
-        this.dialogService.alert({
-          title: 'Campo requerido',
-          message: 'Ingresá el precio de venta de cada producto antes de confirmar el pedido.',
-        });
-        return false;
+      // Un precio 0 es válido (donación / ítem sin cargo). Solo exigimos completar precios
+      // cuando el pedido tiene un total de venta > 0 pero quedó alguna línea sin precio cargado.
+      const totalVenta = this.orderLines.reduce(
+        (acc, line) => acc + this.getLineSaleTotal(line),
+        0
+      );
+      if (totalVenta > 0) {
+        const missingPrice = this.orderLines.filter((line) => line.precioVenta == null);
+        if (missingPrice.length > 0) {
+          this.dialogService.alert({
+            title: 'Campo requerido',
+            message:
+              'Falta el precio de venta en algún producto. Ingresalo (puede ser 0) antes de confirmar el pedido.',
+          });
+          return false;
+        }
       }
     }
 
     return true;
+  }
+
+  /** El total de venta es 0 (todos los productos sin cargo) → es una donación. */
+  private get isDonationOrder(): boolean {
+    if (!this.auth.canViewOrderSalePrice || this.orderLines.length === 0) return false;
+    const totalVenta = this.orderLines.reduce(
+      (acc, line) => acc + this.getLineSaleTotal(line),
+      0
+    );
+    return totalVenta === 0;
+  }
+
+  private confirmDonationIfNeeded(onConfirm: () => void): void {
+    if (!this.isDonationOrder) {
+      onConfirm();
+      return;
+    }
+    this.dialogService
+      .confirm({
+        title: 'Guardar como donación',
+        message:
+          'El precio de venta es $0. ¿Querés registrar este pedido como donación? No genera saldo a cobrar y la ganancia queda en negativo por el costo.',
+        confirmLabel: 'Sí, es donación',
+        cancelLabel: 'Volver',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) onConfirm();
+      });
   }
 
   private beginOrderSave(action: 'draft' | 'submit'): boolean {
@@ -2529,6 +2579,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (this.orderSaveState !== 'idle') return false;
     this.orderSaveAction = action;
     this.orderSaveState = 'saving';
+    this.orderSaveBannerText = '';
     return true;
   }
 
@@ -2536,14 +2587,62 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     window.clearTimeout(this.orderSaveFeedbackTimeout);
     this.orderSaveState = 'idle';
     this.orderSaveAction = null;
+    this.orderSaveBannerText = '';
+  }
+
+  private resolveOrderSaveBannerText(): string {
+    if (this.orderSaveAction === 'draft') return 'Borrador guardado';
+    if (this.isLockedOrder) return 'Descripción guardada';
+    if (this.isEditing && !this.isDraftOrder) return 'Pedido guardado correctamente';
+    return 'Pedido confirmado';
+  }
+
+  onOrderSaveClick() {
+    if (this.canSaveLockedDescription) {
+      this.saveLockedOrderDescription();
+      return;
+    }
+    this.submitOrder();
+  }
+
+  private saveLockedOrderDescription() {
+    if (!this.editingOrderId || !this.canSaveLockedDescription) return;
+    if (!this.beginOrderSave('submit')) return;
+
+    this.orderService
+      .updateOrder(this.editingOrderId, {
+        descripcion: this.order.descripcion?.trim() ?? '',
+      })
+      .subscribe({
+        next: (result) => {
+          this.applyOrderUpdateResult(result);
+          if (this.loadedOrderSnapshot) {
+            this.loadedOrderSnapshot = {
+              ...this.loadedOrderSnapshot,
+              descripcion: this.order.descripcion?.trim() ?? '',
+            };
+          }
+          this.finishOrderSaveSuccess();
+        },
+        error: (err: HttpErrorResponse) => {
+          this.resetOrderSaveState();
+          const serverMessage =
+            typeof err.error?.error === 'string' ? err.error.error : '';
+          this.dialogService.alert({
+            title: 'Error',
+            message: serverMessage || 'No se pudo guardar la descripción.',
+          });
+        },
+      });
   }
 
   private finishOrderSaveSuccess() {
     this.orderSaveState = 'success';
+    this.orderSaveBannerText = this.resolveOrderSaveBannerText();
     window.clearTimeout(this.orderSaveFeedbackTimeout);
     this.orderSaveFeedbackTimeout = window.setTimeout(() => {
       this.resetOrderSaveState();
-    }, 2500);
+    }, 6000);
   }
 
   private autoReserveStockForOrder(orderId: string) {
@@ -2618,11 +2717,137 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       this.resetOrderSaveState();
       return;
     }
+
+    if (this.editingOrderId) {
+      this.pendingSaveEstado = estado;
+      this.runPreSaveEstadoFlow(estado, () => this.executePersistOrder(estado));
+      return;
+    }
+
+    this.executePersistOrder(estado);
+  }
+
+  private runPreSaveEstadoFlow(targetEstado: string, onReady: () => void) {
+    const previous = normalizeOrderStatus(this.savedOrderEstado);
+    const next = normalizeOrderStatus(targetEstado);
+    if (next === previous) {
+      onReady();
+      return;
+    }
+
+    const transition = validateOrderEstadoTransition({
+      previousEstado: previous,
+      nextEstado: next,
+      triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
+      stockDescontado: this.order.stockDescontado,
+      estados: this.appConfig.pedidos.estados,
+    });
+
+    if (!transition.allowed) {
+      this.resetOrderSaveState();
+      this.pendingSaveEstado = null;
+      this.dialogService.alert({
+        title: 'Estado del pedido',
+        message: transition.error ?? 'No podés retroceder el estado del pedido.',
+      });
+      return;
+    }
+
+    if (transition.requiresStockRestore) {
+      const nextLabel = getOrderStatusLabelFromConfig(next, this.appConfig.pedidos);
+      this.dialogService
+        .confirm({
+          title: 'Retroceder estado',
+          message: `Al guardar en «${nextLabel}», se devolverá el stock al depósito (entrada de stock). ¿Continuar?`,
+          confirmLabel: 'Sí, guardar',
+          cancelLabel: 'Cancelar',
+          variant: 'danger',
+        })
+        .subscribe((confirmed) => {
+          if (!confirmed) {
+            this.resetOrderSaveState();
+            this.pendingSaveEstado = null;
+            return;
+          }
+          this.continuePreSaveStockDiscountCheck(targetEstado, onReady);
+        });
+      return;
+    }
+
+    this.continuePreSaveStockDiscountCheck(targetEstado, onReady);
+  }
+
+  private continuePreSaveStockDiscountCheck(targetEstado: string, onReady: () => void) {
+    if (!this.editingOrderId) {
+      onReady();
+      return;
+    }
+
+    const previous = normalizeOrderStatus(this.savedOrderEstado);
+    const next = normalizeOrderStatus(targetEstado);
+
+    if (isOrderDeliveryEstado(next)) {
+      onReady();
+      return;
+    }
+
+    const stockFullyConsumed = orderStockFullyConsumed(this.orderLines);
+    const crossesStock = shouldConsumeStockOnStatusChange({
+      previousEstado: previous,
+      nextEstado: next,
+      triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
+      stockDescontado: this.order.stockDescontado,
+      stockFullyConsumed,
+      estados: this.appConfig.pedidos.estados,
+    });
+
+    if (!crossesStock) {
+      onReady();
+      return;
+    }
+
+    this.orderService.getStockDiscountPreview(this.editingOrderId, next).subscribe({
+      next: (preview) => {
+        if (preview.blocked) {
+          this.resetOrderSaveState();
+          this.pendingSaveEstado = null;
+          this.dialogService.alert({
+            title: 'Stock insuficiente',
+            message: preview.blockReason ?? 'No podés guardar con este estado todavía.',
+          });
+          return;
+        }
+
+        if (!preview.willConsume) {
+          onReady();
+          return;
+        }
+
+        this.stockDiscountPreview = preview;
+        this.stockDiscountSelectedScope = preview.defaultScope;
+        this.pendingEstadoForStockDiscount = targetEstado;
+        this.stockDiscountDialogOpen = true;
+      },
+      error: () => {
+        onReady();
+      },
+    });
+  }
+
+  private executePersistOrder(estado: string, descuentoFisicoAlcance?: OrderPhysicalStockScope) {
+    if (!this.ensureEditable('guardar el pedido')) {
+      this.resetOrderSaveState();
+      this.pendingSaveEstado = null;
+      return;
+    }
     this.calculateTotals();
 
     const firstLine = this.orderLines[0];
-    const payload: Partial<Order> = {
+    const payload: Partial<Order> & { descuentoFisicoAlcance?: OrderPhysicalStockScope } = {
       clienteId: this.order.clienteId!,
+      // Guardamos el nombre denormalizado para que la grilla no tenga que
+      // resolver cada cliente contra Firestore al listar pedidos.
+      clienteNombre: (this.selectedClientLabel ?? this.order.clienteNombre ?? '').trim(),
       descripcion: this.order.descripcion?.trim() ?? '',
       estado,
       fechaEntrega: this.order.fechaEntrega || new Date().toISOString(),
@@ -2659,12 +2884,17 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       payload.senia = Number(this.order.senia) || 0;
     }
 
+    if (descuentoFisicoAlcance) {
+      payload.descuentoFisicoAlcance = descuentoFisicoAlcance;
+    }
+
     const request = this.editingOrderId
       ? this.orderService.updateOrder(this.editingOrderId, payload)
       : this.orderService.createOrder(payload as Order);
 
     request.subscribe({
       next: (result) => {
+        this.pendingSaveEstado = null;
         const createdId = 'id' in result ? result.id : undefined;
         const wasNew = !this.editingOrderId;
         if (createdId && wasNew) {
@@ -2703,6 +2933,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.finishOrderSaveSuccess();
       },
       error: (err: HttpErrorResponse) => {
+        this.pendingSaveEstado = null;
         this.resetOrderSaveState();
         const serverMessage =
           typeof err.error?.error === 'string' ? err.error.error : '';

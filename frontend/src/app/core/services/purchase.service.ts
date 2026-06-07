@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { PurchaseLineTipo } from '../../../../../shared/finance-config.ts';
+import type { ComprobanteTipoId } from '../../../../../shared/comprobantes-config.ts';
 
 export interface PurchaseLine {
   id?: string;
@@ -17,6 +18,9 @@ export interface PurchaseLine {
   costoUnitario?: number;
   importe?: number;
   subtotal?: number;
+  enOferta?: boolean;
+  descuentoOfertaPct?: number;
+  ahorroOferta?: number;
 }
 
 export interface Purchase {
@@ -28,10 +32,12 @@ export interface Purchase {
   proveedor?: string;
   notas?: string;
   numeroComprobante?: string;
+  tipoComprobante?: ComprobanteTipoId;
   items: PurchaseLine[];
   total: number;
   totalNegocio?: number;
   totalPersonal?: number;
+  ahorroOfertaTotal?: number;
   fecha: string;
   negocioId?: string;
   pago?: {
@@ -53,6 +59,8 @@ export interface CreatePurchaseLinePayload {
   cantidad?: number;
   costoUnitario?: number;
   importe?: number;
+  enOferta?: boolean;
+  descuentoOfertaPct?: number;
 }
 
 export interface CreatePurchasePayload {
@@ -60,6 +68,7 @@ export interface CreatePurchasePayload {
   proveedor?: string;
   notas?: string;
   numeroComprobante?: string;
+  tipoComprobante?: ComprobanteTipoId;
   fecha?: string;
   items: CreatePurchaseLinePayload[];
   pago?: {
@@ -86,6 +95,15 @@ export function formatPurchaseLabel(
   if (purchase.numeroCompra) return String(purchase.numeroCompra).padStart(5, '0');
   if (purchase.id) return purchase.id.slice(-6).toUpperCase();
   return '—';
+}
+
+/** Número para badge en encabezado de edición (vacío en borrador). */
+export function formatPurchaseNumberBadge(
+  purchase: Pick<Purchase, 'numeroCompra' | 'compraLabel' | 'estado' | 'id'> | null | undefined
+): string {
+  if (!purchase || purchase.estado === 'borrador') return '';
+  const label = formatPurchaseLabel(purchase);
+  return label === 'Borrador' || label === '—' ? '' : label;
 }
 
 @Injectable({
@@ -134,6 +152,12 @@ export class PurchaseService {
     return this.http.put<{ id: string; compraLabel: string }>(
       `/api/purchases/${this.businessId}/${compraId}`,
       payload
+    );
+  }
+
+  deletePurchase(compraId: string): Observable<{ id: string; compraLabel: string }> {
+    return this.http.delete<{ id: string; compraLabel: string }>(
+      `/api/purchases/${this.businessId}/${compraId}`
     );
   }
 }

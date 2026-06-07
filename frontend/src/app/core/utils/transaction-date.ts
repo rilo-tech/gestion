@@ -58,3 +58,39 @@ export function combineDateAndTimeToIso(
   }
   return dateInputToIso(dateValue);
 }
+
+/** Fecha corta para listas móviles: dd/mm/aa */
+export function formatDisplayDate(value?: string | null): string {
+  if (!value) return '—';
+  const raw = String(value).trim().slice(0, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T12:00:00`)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = String(date.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+}
+
+/** Rango corto: dd/mm/aa → dd/mm/aa */
+export function formatDisplayDateRange(
+  from?: string | null,
+  to?: string | null,
+  separator = '→'
+): string {
+  const start = formatDisplayDate(from);
+  const end = formatDisplayDate(to);
+  if (start === '—') return end === '—' ? '—' : end;
+  if (end === '—' || !to) return start;
+  return `${start} ${separator} ${end}`;
+}
+
+/** Reemplaza fechas ISO embebidas en textos (p. ej. conceptos de caja). */
+export function formatIsoDatesInText(text: string): string {
+  return text.replace(
+    /(\d{4}-\d{2}-\d{2})(?:\s*[→–-]\s*(\d{4}-\d{2}-\d{2}))?/g,
+    (_, from: string, to?: string) =>
+      to ? formatDisplayDateRange(from, to) : formatDisplayDate(from)
+  );
+}

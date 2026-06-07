@@ -586,6 +586,85 @@ export async function autoReserveIncomingStockForProduct(
   return { stockItemId: normalizedStockItemId, reservedTotal, updatedOrders };
 }
 
+/** Reparte reservas/uso agregados por producto en las líneas del pedido. */
+function applyAggregatedStockToOrderLines(
+  items: OrderLineStock[],
+  stockItemId: string,
+  targetUsed: number,
+  targetReserved: number,
+  stockPreparado: boolean
+): void {
+  const indices: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (String(items[i].stockItemId ?? '').trim() === stockItemId) indices.push(i);
+  }
+  if (indices.length === 0) return;
+
+  let remainingUsed = targetUsed;
+  let remainingReserved = targetReserved;
+
+  for (const lineIndex of indices) {
+    const line = items[lineIndex];
+    const linePedida = Number(line.cantidad) || 0;
+    const lineUsada = Math.min(linePedida, remainingUsed);
+    remainingUsed -= lineUsada;
+    const linePendiente = Math.max(0, linePedida - lineUsada);
+    const lineReserved = Math.min(linePendiente, remainingReserved);
+    remainingReserved -= lineReserved;
+    const faltanteCompra = stockPreparado ? Math.max(0, linePendiente - lineReserved) : undefined;
+
+    items[lineIndex] = computeLineStockFields({
+      ...line,
+      cantidadUsada: lineUsada,
+      cantidadReservada: lineReserved,
+      ...(faltanteCompra !== undefined ? { cantidadFaltanteCompra: faltanteCompra } : {}),
+    });
+  }
+}
+
+export function collectStockProductIdsFromOrderLines(
+  ...lineGroups: Array<OrderLineStock[] | undefined>
+): string[] {
+  const ids = new Set<string>();
+  for (const group of lineGroups) {
+    for (const line of group ?? []) {
+      const stockItemId = String(line.stockItemId ?? '').trim();
+      if (stockItemId) ids.add(stockItemId);
+    }
+  }
+  return [...ids];
+}
+
+/** Tras una entrada de stock, reserva en pedidos pendientes y actualiza faltantes. */
+export async function syncPendingOrdersAfterStockChange(
+  businessId: string,
+  stockItemIds: Iterable<string>
+): Promise<void> {
+  const unique = [...new Set([...stockItemIds].map((id) => String(id ?? '').trim()).filter(Boolean))];
+  for (const stockItemId of unique) {
+    await autoReserveIncomingStockForProduct(businessId, stockItemId);
+  }
+}
+
+export async function loadNormalizedOrderItems(
+  businessId: string,
+  orderId: string
+): Promise<{
+  items: OrderLineStock[];
+  stockPreparado?: boolean;
+  estadoStock?: OrderStockStatus;
+} | null> {
+  const snap = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as OrderStockRecord;
+  const items = normalizeOrderItemsStock(data.items ?? []);
+  return {
+    items,
+    stockPreparado: data.stockPreparado,
+    estadoStock: computeOrderStockStatus(items),
+  };
+}
+
 export type StockPreparationLine = {
   lineIndex: number;
   stockItemId: string;
@@ -2017,4 +2096,337 @@ export async function repairOrderPurchaseGaps(
   });
 
   return { items, estadoStock, stockRestored };
+}
+
+type AggregatedOrderLineStock = {
+  nombre: string;
+  cantidadPedida: number;
+  cantidadUsada: number;
+  cantidadReservada: number;
+};
+
+function aggregateOrderLinesByProduct(items: OrderLineStock[] = []): Map<string, AggregatedOrderLineStock> {
+  const map = new Map<string, AggregatedOrderLineStock>();
+
+  for (const rawLine of items) {
+    const stockItemId = String(rawLine.stockItemId ?? '').trim();
+    if (!stockItemId) continue;
+
+    const line = computeLineStockFields(rawLine);
+    const cantidadPedida = Number(line.cantidad) || 0;
+    const cantidadUsada = Math.max(0, Number(line.cantidadUsada) || 0);
+    const cantidadReservada = Math.max(0, Number(line.cantidadReservada) || 0);
+    const nombre = String(line.nombre ?? 'Producto');
+
+    const existing = map.get(stockItemId);
+    if (existing) {
+      existing.cantidadPedida += cantidadPedida;
+      existing.cantidadUsada += cantidadUsada;
+      existing.cantidadReservada += cantidadReservada;
+      if (!existing.nombre && nombre) existing.nombre = nombre;
+      continue;
+    }
+
+    map.set(stockItemId, {
+      nombre,
+      cantidadPedida,
+      cantidadUsada,
+      cantidadReservada,
+    });
+  }
+
+  return map;
+}
+
+function orderHasStockLedgerActivity(order: OrderStockRecord): boolean {
+  if (order.stockDescontado || order.stockPreparado) return true;
+  return normalizeOrderItemsStock(order.items ?? []).some((line) => {
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) return false;
+    return (Number(line.cantidadUsada) || 0) > 0 || (Number(line.cantidadReservada) || 0) > 0;
+  });
+}
+
+async function restoreOrderPhysicalUnits(
+  businessId: string,
+  orderId: string,
+  order: OrderStockRecord,
+  stockItemId: string,
+  qty: number,
+  productName: string
+): Promise<void> {
+  if (qty <= 0) return;
+
+  const itemRef = db.collection(`negocios/${businessId}/stock`).doc(stockItemId);
+  const itemSnap = await itemRef.get();
+  if (!itemSnap.exists) return;
+
+  const data = itemSnap.data() as Record<string, unknown>;
+  if (!productControlsStock(data)) return;
+
+  const orderLabel = resolveOrderLabel(order);
+  const stockActual = Number(data.stockActual) || 0;
+  await itemRef.update({ stockActual: stockActual + qty });
+
+  await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+    productoId: stockItemId,
+    tipo: 'entrada',
+    cantidad: qty,
+    fecha: new Date().toISOString(),
+    motivo: formatOrderStockMotivo(orderLabel, 'Ajuste edición'),
+    origenId: orderId,
+    origenTipo: 'pedido_edicion_devolucion',
+    origenGrupo: 'pedido',
+    pedidoId: orderId,
+    numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    afectaStockReal: true,
+    negocioId: businessId,
+  });
+  scheduleStockMetricsRefresh(businessId);
+}
+
+async function consumeOrderPhysicalUnits(
+  businessId: string,
+  orderId: string,
+  order: OrderStockRecord,
+  stockItemId: string,
+  qty: number,
+  productName: string
+): Promise<void> {
+  if (qty <= 0) return;
+
+  const itemRef = db.collection(`negocios/${businessId}/stock`).doc(stockItemId);
+  const itemSnap = await itemRef.get();
+  if (!itemSnap.exists) {
+    throw new OrderStockError(`Producto de stock no encontrado para "${productName}".`);
+  }
+
+  const data = itemSnap.data() as Record<string, unknown>;
+  if (!productControlsStock(data)) return;
+
+  const orderLabel = resolveOrderLabel(order);
+  const stockActual = Number(data.stockActual) || 0;
+  const allowNegative = productPermitsNegativeStock(data);
+
+  if (!allowNegative && stockActual < qty) {
+    const nombre = String(productName ?? data.nombre ?? 'Producto');
+    throw new OrderStockError(
+      `Stock insuficiente para «${nombre}»: hay ${stockActual} u. en depósito y el pedido necesita ${qty} u. más.`
+    );
+  }
+
+  const nextStock = allowNegative ? stockActual - qty : Math.max(0, stockActual - qty);
+  await itemRef.update({ stockActual: nextStock });
+
+  await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+    productoId: stockItemId,
+    tipo: 'salida',
+    cantidad: qty,
+    fecha: new Date().toISOString(),
+    motivo: formatOrderStockMotivo(orderLabel, 'Ajuste edición'),
+    origenId: orderId,
+    origenTipo: 'pedido_edicion_descuento',
+    origenGrupo: 'pedido',
+    pedidoId: orderId,
+    numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    afectaStockReal: true,
+    negocioId: businessId,
+  });
+  scheduleStockMetricsRefresh(businessId);
+}
+
+async function applyOrderReservationDelta(
+  businessId: string,
+  orderId: string,
+  order: OrderStockRecord,
+  stockItemId: string,
+  delta: number,
+  productName: string
+): Promise<void> {
+  if (delta === 0) return;
+
+  const orderLabel = resolveOrderLabel(order);
+  const clientName = await resolveClientName(businessId, order.clienteId);
+
+  await adjustGlobalStockReservation({
+    businessId,
+    stockItemId,
+    delta,
+    productName,
+  });
+
+  if (delta > 0) {
+    await writeStockMovement({
+      businessId,
+      productoId: stockItemId,
+      cantidad: delta,
+      motivo: formatOrderStockMotivo(orderLabel, 'Reserva (ajuste edición)'),
+      origenId: orderId,
+      origenTipo: 'pedido_edicion_reserva',
+      pedidoId: orderId,
+      numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+      clienteId: order.clienteId ?? null,
+      clienteNombre: clientName || null,
+    });
+    return;
+  }
+
+  await db.collection(`negocios/${businessId}/movimientos_stock`).add({
+    productoId: stockItemId,
+    tipo: 'entrada',
+    cantidad: Math.abs(delta),
+    fecha: new Date().toISOString(),
+    motivo: formatOrderStockMotivo(orderLabel, 'Liberación reserva (ajuste edición)'),
+    origenId: orderId,
+    origenTipo: 'pedido_edicion_liberacion',
+    origenGrupo: 'pedido',
+    pedidoId: orderId,
+    numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    clienteId: order.clienteId ?? null,
+    clienteNombre: clientName || null,
+    afectaStockReal: false,
+    negocioId: businessId,
+  });
+}
+
+export type ReconcileOrderItemsStockResult = {
+  items: OrderLineStock[];
+  stockDescontado: boolean;
+  stockPreparado: boolean;
+  estadoStock: OrderStockStatus;
+};
+
+/**
+ * Ajusta depósito y reservas cuando se editan líneas de un pedido ya confirmado
+ * (producto quitado, reemplazado o cambio de cantidad).
+ */
+export async function reconcileOrderStockOnItemsChange(
+  businessId: string,
+  orderId: string,
+  existingOrder: OrderStockRecord,
+  mergedItems: OrderLineStock[]
+): Promise<ReconcileOrderItemsStockResult> {
+  if (!orderHasStockLedgerActivity(existingOrder)) {
+    return {
+      items: normalizeOrderItemsStock(mergedItems),
+      stockDescontado: !!existingOrder.stockDescontado,
+      stockPreparado: !!existingOrder.stockPreparado,
+      estadoStock: computeOrderStockStatus(mergedItems),
+    };
+  }
+
+  const oldMap = aggregateOrderLinesByProduct(existingOrder.items ?? []);
+  const newMap = aggregateOrderLinesByProduct(mergedItems);
+  const stockByProduct = new Map<string, { cantidadUsada: number; cantidadReservada: number }>();
+  const stockDescontado = !!existingOrder.stockDescontado;
+  const stockPreparado = !!existingOrder.stockPreparado;
+  const allProductIds = new Set([...oldMap.keys(), ...newMap.keys()]);
+
+  for (const stockItemId of allProductIds) {
+    const old = oldMap.get(stockItemId) ?? {
+      nombre: 'Producto',
+      cantidadPedida: 0,
+      cantidadUsada: 0,
+      cantidadReservada: 0,
+    };
+    const neu = newMap.get(stockItemId) ?? {
+      nombre: old.nombre,
+      cantidadPedida: 0,
+      cantidadUsada: 0,
+      cantidadReservada: 0,
+    };
+    const nombre = neu.nombre || old.nombre;
+
+    let targetUsed = old.cantidadUsada;
+    if (stockDescontado) {
+      targetUsed = neu.cantidadPedida;
+    } else {
+      targetUsed = Math.min(old.cantidadUsada, neu.cantidadPedida);
+    }
+
+    const restoreUsed = Math.max(0, old.cantidadUsada - targetUsed);
+    const consumeUsed = Math.max(0, targetUsed - old.cantidadUsada);
+
+    if (restoreUsed > 0) {
+      await restoreOrderPhysicalUnits(
+        businessId,
+        orderId,
+        existingOrder,
+        stockItemId,
+        restoreUsed,
+        nombre
+      );
+    }
+    if (consumeUsed > 0) {
+      await consumeOrderPhysicalUnits(
+        businessId,
+        orderId,
+        existingOrder,
+        stockItemId,
+        consumeUsed,
+        nombre
+      );
+    }
+
+    let targetReserved = 0;
+    if (stockPreparado || old.cantidadReservada > 0) {
+      targetReserved = Math.max(0, neu.cantidadPedida - targetUsed);
+    }
+
+    const stockSnap = await db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get();
+    if (stockSnap.exists && productControlsStock(stockSnap.data() as Record<string, unknown>)) {
+      const stockData = stockSnap.data() as Record<string, unknown>;
+      const disponible = getStockDisponible(
+        Number(stockData.stockActual) || 0,
+        Number(stockData.stockReservado) || 0
+      );
+      const maxReserved = old.cantidadReservada + disponible;
+      targetReserved = Math.min(targetReserved, maxReserved);
+    }
+
+    const reserveDelta = targetReserved - old.cantidadReservada;
+    if (reserveDelta !== 0) {
+      await applyOrderReservationDelta(
+        businessId,
+        orderId,
+        existingOrder,
+        stockItemId,
+        reserveDelta,
+        nombre
+      );
+    }
+
+    stockByProduct.set(stockItemId, {
+      cantidadUsada: targetUsed,
+      cantidadReservada: targetReserved,
+    });
+  }
+
+  const items = mergedItems.map((line) => ({ ...line }));
+  for (const [stockItemId, state] of stockByProduct) {
+    applyAggregatedStockToOrderLines(
+      items,
+      stockItemId,
+      state.cantidadUsada,
+      state.cantidadReservada,
+      stockPreparado
+    );
+  }
+  for (let lineIndex = 0; lineIndex < items.length; lineIndex++) {
+    const stockItemId = String(items[lineIndex].stockItemId ?? '').trim();
+    if (!stockItemId || stockByProduct.has(stockItemId)) continue;
+    items[lineIndex] = computeLineStockFields(items[lineIndex]);
+  }
+
+  const estadoStock = computeOrderStockStatus(items);
+  const stillPrepared = items.some(
+    (line) => (Number(line.cantidadReservada) || 0) > 0 || (Number(line.cantidadFaltante) || 0) > 0
+  );
+
+  return {
+    items,
+    stockDescontado: stockDescontado || orderStockFullyConsumed(items),
+    stockPreparado: stockPreparado && stillPrepared,
+    estadoStock,
+  };
 }

@@ -1,7 +1,7 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
-import { CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS } from './config-editable-list.constants';
+import { CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS, CONFIG_EDITABLE_LIST_REMOVE_BUTTON_COMPACT_CLASS } from './config-editable-list.constants';
 
 @Component({
   selector: 'app-config-list-remove-button',
@@ -18,9 +18,9 @@ import { CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS } from './config-editable-list
       <i-lucide
         *ngIf="loading"
         name="loader-circle"
-        class="w-4 h-4 animate-spin"
+        [class]="iconClass + ' animate-spin'"
         aria-hidden="true"></i-lucide>
-      <i-lucide *ngIf="!loading" name="x" class="w-4 h-4" aria-hidden="true"></i-lucide>
+      <i-lucide *ngIf="!loading" name="x" [class]="iconClass" aria-hidden="true"></i-lucide>
     </button>
   `,
 })
@@ -28,12 +28,21 @@ export class ConfigListRemoveButtonComponent {
   @Input() disabled = false;
   @Input() loading = false;
   @Input() ariaLabel = 'Quitar';
-  /** absolute = esquina superior derecha en móvil; static = al lado del campo en pantallas grandes. */
-  @Input() position: 'corner' | 'inline' = 'corner';
+  /** inline = al lado del campo (recomendado); corner = esquina absoluta (legacy). */
+  @Input() position: 'corner' | 'inline' = 'inline';
+  @Input() compact = false;
 
   @Output() clicked = new EventEmitter<Event>();
 
-  readonly buttonClass = CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS;
+  get buttonClass(): string {
+    return this.compact
+      ? CONFIG_EDITABLE_LIST_REMOVE_BUTTON_COMPACT_CLASS
+      : CONFIG_EDITABLE_LIST_REMOVE_BUTTON_CLASS;
+  }
+
+  get iconClass(): string {
+    return this.compact ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  }
 
   get positionClass(): string {
     if (this.position === 'inline') {

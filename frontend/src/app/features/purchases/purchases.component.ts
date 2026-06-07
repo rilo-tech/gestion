@@ -1,4 +1,4 @@
-import { Component, ViewChild, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -9,14 +9,6 @@ import {
   formatPurchaseLabel,
 } from '../../core/services/purchase.service';
 import { DialogService } from '../../core/services/dialog.service';
-import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import {
-  TransactionDetailPageComponent,
-  TransactionSummaryPanelComponent,
-  TransactionSummaryRowComponent,
-  TransactionFormSaveEvent,
-  TRANSACTION_FORM_CARD_CLASS,
-} from '../../shared/components/transaction-form';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
@@ -38,13 +30,11 @@ import {
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { LucideAngularModule } from 'lucide-angular';
-import { PurchaseFormPanelComponent } from './purchase-form-panel.component';
-import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
-import { prefersInlineFormPage } from '../../core/utils/responsive-form';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 @Component({
   selector: 'app-purchases',
@@ -54,15 +44,9 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
     FormsModule,
     LucideAngularModule,
     RouterLink,
-    TransactionModalComponent,
     IconActionComponent,
     ActivityLogTriggerComponent,
     CompactListRowComponent,
-    IconToolbarButtonComponent,
-    PurchaseFormPanelComponent,
-    TransactionDetailPageComponent,
-    TransactionSummaryPanelComponent,
-    TransactionSummaryRowComponent,
     ModulePageHeaderComponent,
     CompactDataListComponent,
     ListLoadMoreComponent,
@@ -79,7 +63,10 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="purchasesPage = 1"
         searchFieldName="purchasesSearchQueryMobile"
-        activityModule="purchases">
+        activityModule="purchases"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <p headerExtra class="text-xs text-gray-400 mt-1 desc-lg-only">
           Los movimientos de stock se ven en
           <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
@@ -104,6 +91,12 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Este mes</p>
           <p class="text-2xl font-bold text-gray-900">{{ '$' + totalMes }}</p>
+        </div>
+        <div
+          *ngIf="ahorroOfertasMes > 0"
+          class="bg-amber-50 p-6 rounded-xl border border-amber-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
+          <p class="text-xs font-semibold text-amber-600 uppercase mb-2">Ahorro por ofertas (mes)</p>
+          <p class="text-2xl font-bold text-amber-700">{{ '$' + ahorroOfertasMes }}</p>
         </div>
       </div>
 
@@ -132,6 +125,7 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
             </div>
             <div compactSubtitle class="compact-list-subtitle truncate">
               {{ formatDate(purchase.fecha) }}
+              <span *ngIf="purchase.numeroComprobante?.trim()"> · Fact. {{ purchase.numeroComprobante }}</span>
             </div>
             <span compactTrailing class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
               {{ '$' + (purchase.total || 0) }}
@@ -154,7 +148,7 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Líneas</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -172,6 +166,9 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
               </td>
               <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm text-gray-700">
                 <div class="truncate">{{ purchase.proveedor?.trim() || '—' }}</div>
+                <div *ngIf="purchase.numeroComprobante?.trim()" class="text-xs text-gray-500 truncate">
+                  Fact. {{ purchase.numeroComprobante }}
+                </div>
                 <div class="text-xs text-gray-400 sm:hidden">{{ purchase.items?.length || 0 }} línea(s)</div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
@@ -180,12 +177,18 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ '$' + (purchase.total || 0) }}
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
                 <app-list-row-actions
-                  [editIcon]="canEditPurchase(purchase) ? 'pencil' : 'clipboard-list'"
-                  [editLabel]="canEditPurchase(purchase) ? 'Editar compra' : 'Ver compra'"
-                  [showDelete]="false"
-                  (editClick)="openPurchaseDetail(purchase)">
+                  [showDuplicate]="canDuplicatePurchase(purchase)"
+                  duplicateLabel="Duplicar compra"
+                  (duplicateClick)="duplicatePurchase(purchase, $event)"
+                  [editIcon]="canOpenPurchaseForEdit(purchase) ? 'pencil' : 'clipboard-list'"
+                  [editLabel]="getPurchaseEditLabel(purchase)"
+                  (editClick)="openPurchaseDetail(purchase)"
+                  [showDelete]="canDeletePurchase(purchase)"
+                  deleteLabel="Eliminar compra"
+                  [deleteLoading]="deletingPurchaseId === purchase.id"
+                  (deleteClick)="confirmDeletePurchase(purchase)">
                 </app-list-row-actions>
               </td>
             </tr>
@@ -221,87 +224,10 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         </app-list-load-more>
       </app-compact-data-list>
     </div>
-
-    <app-transaction-modal
-      [open]="purchaseModalOpen"
-      [title]="purchaseModalTitle"
-      subtitle="Productos suman stock al registrar. Gastos y servicios solo afectan caja y cuentas."
-      maxWidthClass="max-w-3xl"
-      (closed)="closePurchaseModal()">
-      <app-icon-toolbar-button
-        *ngIf="!purchaseModalCompleted"
-        headerActions
-        class="sm:hidden"
-        icon="save"
-        [label]="purchaseModalSaveLabel"
-        variant="primary"
-        [disabled]="purchaseModalSaving"
-        [loading]="purchaseModalSaving"
-        (clicked)="purchaseFormPanel?.submitPurchase()">
-      </app-icon-toolbar-button>
-      <app-purchase-form-panel
-        #purchaseFormPanel
-        *ngIf="purchaseModalOpen"
-        [initialPurchase]="purchaseModalPurchase"
-        [editingDraftId]="editingDraftPurchase?.id ?? null"
-        [editingConfirmedId]="editingConfirmedPurchaseId"
-        (saved)="onPurchaseCreated($event)"
-        (savingChange)="onPurchaseSavingChange($event)"
-        (cancelled)="closePurchaseModal()">
-      </app-purchase-form-panel>
-    </app-transaction-modal>
-
-    <app-transaction-detail-page
-      *ngIf="detailModalOpen"
-      [title]="detailModalTitle"
-      [subtitle]="detailModalSubtitle"
-      backLabel="Volver a compras"
-      backAriaLabel="Volver a compras"
-      [loading]="detailLoading"
-      [hasContent]="!!detailPurchase"
-      loadingMessage="Cargando compra..."
-      refreshingMessage="Actualizando detalle..."
-      (closeClick)="closePurchaseDetail()">
-      <section main [class]="formCardClass" *ngIf="detailPurchase as purchase">
-        <app-purchase-form-panel
-          #detailForm
-          [readOnly]="true"
-          [initialPurchase]="purchase"
-          [pageLayout]="true"
-          [hideInlineSummary]="true">
-        </app-purchase-form-panel>
-      </section>
-
-      <app-transaction-summary-panel aside *ngIf="detailForm">
-        <div class="space-y-2 sm:space-y-3 mb-4">
-          <app-transaction-summary-row label="Líneas" [value]="'' + detailForm.draftLineCount"></app-transaction-summary-row>
-          <app-transaction-summary-row label="Productos (stock)" [value]="'' + detailForm.stockLineCount"></app-transaction-summary-row>
-          <app-transaction-summary-row label="Gastos / servicios" [value]="'' + detailForm.expenseLineCount"></app-transaction-summary-row>
-          <app-transaction-summary-row
-            label="Total compra"
-            [value]="'$' + detailForm.draftTotal"
-            [bold]="true"
-            [divider]="true"
-            size="md"></app-transaction-summary-row>
-        </div>
-
-        <div class="p-3 bg-gray-800/60 rounded-lg border border-gray-700 text-xs sm:text-sm space-y-1">
-          <div class="flex justify-between gap-2">
-            <span class="text-gray-400">Medio de pago</span>
-            <span class="font-medium text-right">{{ detailForm.selectedMedioPagoLabel }}</span>
-          </div>
-          <p class="text-gray-500 leading-snug m-0">{{ detailForm.pagoResumenHint }}</p>
-        </div>
-      </app-transaction-summary-panel>
-    </app-transaction-detail-page>
   `,
 })
 export class PurchasesComponent implements OnInit {
-  @ViewChild('purchaseFormPanel') purchaseFormPanel?: PurchaseFormPanelComponent;
-  @ViewChild('detailForm') detailForm?: PurchaseFormPanelComponent;
-
   readonly pageShellClass = PAGE_SHELL_CLASS;
-  readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
@@ -317,6 +243,8 @@ export class PurchasesComponent implements OnInit {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   purchases: Purchase[] = [];
   loading = true;
@@ -327,28 +255,7 @@ export class PurchasesComponent implements OnInit {
 
   searchQuery = '';
   purchasesPage = 1;
-
-  purchaseModalOpen = false;
-  purchaseModalTitle = 'Nueva compra';
-  purchaseModalSaving = false;
-  purchaseModalCompleted = false;
-  editingDraftPurchase: Purchase | null = null;
-  editingConfirmedPurchaseId: string | null = null;
-  purchaseModalPurchase: Purchase | null = null;
-  detailModalOpen = false;
-  detailPurchase: Purchase | null = null;
-  detailLoading = false;
-
-  get detailModalTitle(): string {
-    if (!this.detailPurchase) return 'Detalle de compra';
-    return `Compra #${formatPurchaseLabel(this.detailPurchase)}`;
-  }
-
-  get purchaseModalSaveLabel(): string {
-    if (this.editingConfirmedPurchaseId) return 'Guardar cambios';
-    if (this.editingDraftPurchase) return 'Confirmar compra';
-    return 'Registrar compra';
-  }
+  deletingPurchaseId: string | null = null;
 
   canEditPurchase(purchase: Purchase): boolean {
     return (
@@ -358,9 +265,22 @@ export class PurchasesComponent implements OnInit {
     );
   }
 
-  get detailModalSubtitle(): string {
-    if (!this.detailPurchase) return 'Productos, gastos y pago de la compra.';
-    return this.detailPurchase.proveedor?.trim() || 'Detalle completo de la compra.';
+  canOpenPurchaseForEdit(purchase: Purchase): boolean {
+    return this.auth.canEditRecords && !!purchase.id;
+  }
+
+  canDuplicatePurchase(purchase: Purchase): boolean {
+    return this.canOpenPurchaseForEdit(purchase);
+  }
+
+  canDeletePurchase(purchase: Purchase): boolean {
+    return this.auth.canDeleteRecords && !!purchase.id;
+  }
+
+  getPurchaseEditLabel(purchase: Purchase): string {
+    if (purchase.estado === 'borrador') return 'Editar borrador';
+    if (this.canEditPurchase(purchase)) return 'Editar compra';
+    return 'Ver compra';
   }
 
   get filteredPurchases(): Purchase[] {
@@ -398,19 +318,20 @@ export class PurchasesComponent implements OnInit {
       this.router.navigate(['/dashboard']);
       return;
     }
+    bindListPageRefreshOnReturn({
+      listPath: '/purchases',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.loadPurchases();
 
     this.route.queryParamMap.subscribe((params) => {
-      const detailId = params.get('detail');
+      const detailId = params.get('detail')?.trim();
       if (!detailId) return;
-      this.openPurchaseDetailById(detailId);
+      this.router.navigate(['/purchases', detailId], { replaceUrl: true });
     });
-  }
-
-  private tryOpenDetailFromQuery() {
-    const detailId = this.route.snapshot.queryParamMap.get('detail');
-    if (!detailId) return;
-    this.openPurchaseDetailById(detailId);
   }
 
   get totalComprado(): number {
@@ -431,6 +352,31 @@ export class PurchasesComponent implements OnInit {
       .reduce((acc, purchase) => acc + (Number(purchase.total) || 0), 0);
   }
 
+  get ahorroOfertasMes(): number {
+    const now = new Date();
+    const total = this.purchases
+      .filter((purchase) => {
+        const date = new Date(purchase.fecha);
+        return (
+          !Number.isNaN(date.getTime()) &&
+          date.getMonth() === now.getMonth() &&
+          date.getFullYear() === now.getFullYear()
+        );
+      })
+      .reduce((acc, purchase) => acc + this.purchaseAhorroOferta(purchase), 0);
+    return Math.round(total * 100) / 100;
+  }
+
+  private purchaseAhorroOferta(purchase: Purchase): number {
+    if (typeof purchase.ahorroOfertaTotal === 'number') {
+      return Number(purchase.ahorroOfertaTotal) || 0;
+    }
+    return (purchase.items ?? []).reduce(
+      (acc, line) => acc + (Number(line.ahorroOferta) || 0),
+      0
+    );
+  }
+
   formatDate(value?: string): string {
     if (!value) return '—';
     const date = new Date(value);
@@ -439,111 +385,42 @@ export class PurchasesComponent implements OnInit {
   }
 
   openPurchaseModal() {
-    if (prefersInlineFormPage()) {
-      this.router.navigate(['/purchases/new']);
-      return;
-    }
-    this.purchaseModalTitle = 'Nueva compra';
-    this.purchaseModalSaving = false;
-    this.purchaseModalCompleted = false;
-    this.editingDraftPurchase = null;
-    this.editingConfirmedPurchaseId = null;
-    this.purchaseModalPurchase = null;
-    this.purchaseModalOpen = true;
+    this.router.navigate(['/purchases/new']);
   }
 
   openPurchaseDraftEdit(purchase: Purchase) {
-    if (prefersInlineFormPage()) {
-      this.router.navigate(['/purchases/new'], { queryParams: { draftId: purchase.id } });
-      return;
-    }
-    this.editingDraftPurchase = purchase;
-    this.editingConfirmedPurchaseId = null;
-    this.purchaseModalPurchase = purchase;
-    this.purchaseModalTitle = 'Borrador de compra';
-    this.purchaseModalSaving = false;
-    this.purchaseModalCompleted = false;
-    this.purchaseModalOpen = true;
+    if (!purchase.id) return;
+    this.router.navigate(['/purchases/new'], { queryParams: { draftId: purchase.id } });
   }
 
   openPurchaseEdit(purchase: Purchase) {
     if (!purchase.id || !this.canEditPurchase(purchase)) return;
 
-    const openModal = (fullPurchase: Purchase) => {
-      this.editingDraftPurchase = null;
-      this.editingConfirmedPurchaseId = fullPurchase.id!;
-      this.purchaseModalPurchase = fullPurchase;
-      this.purchaseModalTitle = `Editar compra #${formatPurchaseLabel(fullPurchase)}`;
-      this.purchaseModalSaving = false;
-      this.purchaseModalCompleted = false;
-      this.purchaseModalOpen = true;
+    const navigate = (fullPurchase: Purchase) => {
+      this.router.navigate(['/purchases', fullPurchase.id, 'edit'], {
+        state: { purchasePreview: fullPurchase },
+      });
     };
 
-    if (prefersInlineFormPage()) {
-      this.purchaseService.getPurchase(purchase.id).subscribe({
-        next: openModal,
-        error: () => this.showPurchaseLoadError(),
-      });
-      return;
-    }
-
     this.purchaseService.getPurchase(purchase.id).subscribe({
-      next: openModal,
-      error: () => this.showPurchaseLoadError(),
+      next: navigate,
+      error: () => {
+        this.router.navigate(['/purchases', purchase.id, 'edit'], {
+          state: { purchasePreview: purchase },
+        });
+      },
     });
   }
 
-  onPurchaseSavingChange(saving: boolean) {
-    queueMicrotask(() => {
-      this.purchaseModalSaving = saving;
+  openPurchaseView(purchase: Purchase) {
+    if (!purchase.id) return;
+    this.router.navigate(['/purchases', purchase.id], {
+      state: { purchasePreview: purchase },
     });
-  }
-
-  onPurchaseCreated(event?: TransactionFormSaveEvent) {
-    if (event?.draft) {
-      this.purchaseModalSaving = false;
-      this.purchaseModalTitle = 'Borrador de compra';
-      if (event.id) {
-        this.editingDraftPurchase = {
-          ...(this.editingDraftPurchase ?? {}),
-          id: event.id,
-          estado: 'borrador',
-          items: this.editingDraftPurchase?.items ?? [],
-          total: this.editingDraftPurchase?.total ?? 0,
-          fecha: this.editingDraftPurchase?.fecha ?? new Date().toISOString(),
-        };
-      }
-      this.loadPurchases();
-      return;
-    }
-    const wasConfirmedEdit = !!this.editingConfirmedPurchaseId;
-    this.purchaseModalSaving = false;
-    this.editingDraftPurchase = null;
-    this.editingConfirmedPurchaseId = null;
-    this.purchaseModalPurchase = null;
-    this.loadPurchases();
-
-    if (wasConfirmedEdit) {
-      this.closePurchaseModal();
-      return;
-    }
-
-    const label = event?.label || (event?.id ? formatPurchaseLabel({ id: event.id }) : '');
-    this.purchaseModalTitle = label ? `Compra #${label}` : 'Compra registrada';
-    this.purchaseModalCompleted = true;
-  }
-
-  closePurchaseModal() {
-    this.purchaseModalOpen = false;
-    this.purchaseModalTitle = 'Nueva compra';
-    this.purchaseModalSaving = false;
-    this.purchaseModalCompleted = false;
-    this.editingDraftPurchase = null;
-    this.editingConfirmedPurchaseId = null;
-    this.purchaseModalPurchase = null;
   }
 
   openPurchaseDetail(purchase: Purchase) {
+    if (!purchase.id) return;
     if (purchase.estado === 'borrador') {
       this.openPurchaseDraftEdit(purchase);
       return;
@@ -552,75 +429,64 @@ export class PurchasesComponent implements OnInit {
       this.openPurchaseEdit(purchase);
       return;
     }
-    if (!purchase.id) return;
+    this.openPurchaseView(purchase);
+  }
 
-    this.detailModalOpen = true;
-    this.detailLoading = true;
-    this.detailPurchase = purchase;
+  duplicatePurchase(purchase: Purchase, event?: Event) {
+    event?.stopPropagation();
+    if (!purchase.id || !this.canDuplicatePurchase(purchase)) return;
+    this.router.navigate(['/purchases/new'], { queryParams: { duplicate: purchase.id } });
+  }
 
-    this.purchaseService.getPurchase(purchase.id).subscribe({
-      next: (fullPurchase) => {
-        this.detailPurchase = fullPurchase;
-        this.detailLoading = false;
-      },
-      error: () => {
-        this.detailLoading = false;
-        this.detailModalOpen = false;
-        this.dialogService.alert({
-          title: 'Servidor no disponible',
-          message:
-            'No se pudo cargar la compra. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
+  confirmDeletePurchase(purchase: Purchase) {
+    if (!purchase.id || !this.canDeletePurchase(purchase)) return;
+
+    const label =
+      purchase.estado === 'borrador'
+        ? 'borrador'
+        : `#${formatPurchaseLabel(purchase)}`;
+
+    this.dialogService
+      .confirm({
+        title: 'Eliminar compra',
+        message:
+          purchase.estado === 'borrador'
+            ? '¿Eliminar este borrador de compra?'
+            : `¿Eliminar la compra ${label}? Se revertirá el stock ingresado y los movimientos de caja vinculados.`,
+        confirmLabel: 'Eliminar',
+      })
+      .subscribe((confirmed) => {
+        if (!confirmed || !purchase.id) return;
+
+        this.deletingPurchaseId = purchase.id;
+        this.purchaseService.deletePurchase(purchase.id).subscribe({
+          next: () => {
+            this.deletingPurchaseId = null;
+            this.purchases = this.purchases.filter((row) => row.id !== purchase.id);
+          },
+          error: (err) => {
+            this.deletingPurchaseId = null;
+            this.dialogService.alert({
+              title: 'No se pudo eliminar',
+              message:
+                typeof err.error?.error === 'string'
+                  ? err.error.error
+                  : 'No se pudo eliminar la compra.',
+            });
+          },
         });
-      },
-    });
+      });
   }
 
-  openPurchaseDetailById(purchaseId: string) {
-    const purchase = this.purchases.find((entry) => entry.id === purchaseId);
-    if (purchase) {
-      this.openPurchaseDetail(purchase);
-      this.clearDetailQueryParam();
-      return;
-    }
-
-    this.purchaseService.getPurchase(purchaseId).subscribe({
-      next: (fullPurchase) => {
-        this.openPurchaseDetail(fullPurchase);
-        this.clearDetailQueryParam();
-      },
-      error: () => {
-        this.clearDetailQueryParam();
-      },
-    });
-  }
-
-  closePurchaseDetail() {
-    this.detailModalOpen = false;
-    this.detailPurchase = null;
-    this.detailLoading = false;
-    this.clearDetailQueryParam();
-  }
-
-  private showPurchaseLoadError() {
-    this.dialogService.alert({
-      title: 'Servidor no disponible',
-      message:
-        'No se pudo cargar la compra. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
-    });
-  }
-
-  private clearDetailQueryParam() {
-    if (!this.route.snapshot.queryParamMap.get('detail')) return;
-    this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { detail: null },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
+  reloadList() {
+    this.purchasesPage = 1;
+    this.purchasesCursor = null;
+    this.loadPurchases();
   }
 
   private loadPurchases() {
     this.loading = true;
+    this.purchasesPage = 1;
     this.purchaseService.getPurchasesPage(this.serverPageSize).subscribe({
       next: (page) => {
         this.purchases = page.items;

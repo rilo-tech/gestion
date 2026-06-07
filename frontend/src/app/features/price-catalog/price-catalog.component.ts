@@ -1,18 +1,21 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import {
   PriceCatalogEntry,
+  PriceCatalogListRow,
   PriceCatalogService,
-  buildPriceSummary,
+  buildPriceCatalogListRows,
 } from '../../core/services/price-catalog.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
   IconActionComponent,
+  LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
+  TABLE_SCROLL_CLASS,
   DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import {
@@ -20,10 +23,33 @@ import {
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
+import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
+import {
+  COMPACT_LIST_EMPTY_CLASS,
+  DESKTOP_TABLE_TD_CLASS,
+  DESKTOP_TABLE_TD_CLASS_RIGHT,
+  MODULE_TABLE_HEAD_CELL_CLASS,
+  EXPANDED_NESTED_WRAP_CLASS,
+  NATIVE_COMPACT_LIST_CLASS,
+  NATIVE_COMPACT_TABLE_CLASS,
+} from '../../shared/components/compact-list/compact-list.constants';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+
+const PRICE_QTY_BADGE_CLASS =
+  'inline-flex items-center rounded-md bg-teal-50 border border-teal-100 px-3 py-1 text-xs sm:text-sm leading-snug text-teal-900 whitespace-nowrap';
+
+const EXPANDED_DETAIL_GRID_CLASS =
+  'grid grid-cols-[minmax(5.5rem,9rem)_minmax(4.5rem,auto)_4.5rem] sm:grid-cols-[minmax(7rem,11rem)_minmax(5rem,auto)_5.5rem] gap-x-4 sm:gap-x-8 gap-y-2 py-1 items-center w-full max-w-xl';
+
+const EXPANDED_DETAIL_NAME_CLASS =
+  'text-xs sm:text-sm font-medium text-gray-800 min-w-0 truncate';
+
+const EXPANDED_DETAIL_PRICE_CLASS =
+  'text-xs sm:text-sm font-bold tabular-nums text-teal-800 whitespace-nowrap text-right justify-self-end';
 
 @Component({
   selector: 'app-price-catalog',
@@ -37,6 +63,8 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
     ModulePageHeaderComponent,
     CompactDataListComponent,
     ListSearchFieldComponent,
+    CompactListRowComponent,
+    ListRowActionsComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -45,9 +73,12 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         description="Catálogo por detalle (con/sin estampado) y cantidad. Solo precios de venta, sin costos."
         [showMobileSearch]="true"
         [(searchQuery)]="searchQuery"
-        (searchQueryChange)="catalogPage = 1"
+        (searchQueryChange)="onSearchChange()"
         searchFieldName="priceCatalogSearchMobile"
-        activityModule="price_catalog">
+        activityModule="price_catalog"
+        [showRefresh]="true"
+        [refreshing]="loading"
+        (refreshClick)="reloadList()">
         <app-icon-action
           headerActions
           *ngIf="auth.canManagePriceCatalog"
@@ -70,113 +101,222 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         </button>
       </div>
 
-      <app-compact-data-list class="block mb-6" [showSearch]="true">
+      <app-compact-data-list [showSearch]="true">
         <div listSearch [class]="desktopListSearchWrapClass">
           <app-list-search-field
             mode="filter"
             [(query)]="searchQuery"
-            (queryChange)="catalogPage = 1"
+            (queryChange)="onSearchChange()"
             name="priceCatalogSearch"
             placeholder="Buscar por producto, detalle o notas...">
           </app-list-search-field>
         </div>
-      </app-compact-data-list>
 
-      <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando referencias...</div>
+        <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando referencias...</p>
+          <p *ngIf="!loading && entries.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay referencias en el catálogo.
+          </p>
+          <p *ngIf="!loading && entries.length > 0 && filteredRows.length === 0" [class]="compactListEmptyClass">
+            No hay referencias que coincidan con la búsqueda.
+          </p>
 
-      <div *ngIf="!loading && filteredEntries.length === 0" class="py-16 text-center text-gray-400">
-        <p *ngIf="entries.length === 0">Todavía no hay referencias en el catálogo.</p>
-        <p *ngIf="entries.length > 0">No se encontraron referencias para "{{ searchQuery }}".</p>
-      </div>
+          <ng-container *ngFor="let row of paginatedFilteredRows">
+            <app-compact-list-row (activate)="toggleRowExpand(row.key)">
+              <div compactTitle class="compact-list-title truncate flex items-center gap-1.5 min-w-0">
+                <i-lucide
+                  [name]="isRowExpanded(row.key) ? 'chevron-down' : 'chevron-right'"
+                  class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
+                <span class="truncate">{{ row.entryNombre }}</span>
+                <span
+                  *ngIf="!row.entryActivo"
+                  class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 text-[9px] font-semibold uppercase">
+                  Inactiva
+                </span>
+              </div>
+              <div compactSubtitle *ngIf="row.entryNotas" class="compact-list-subtitle truncate">
+                {{ row.entryNotas }}
+              </div>
+              <div compactTrailing class="flex items-center gap-2 shrink-0">
+                <span class="text-[11px] font-bold tabular-nums text-teal-800 whitespace-nowrap">
+                  {{ '$' + row.peakUnitPrice }}
+                </span>
+                <app-list-row-actions
+                  *ngIf="auth.canManagePriceCatalog"
+                  [showDelete]="false"
+                  editLabel="Editar referencia"
+                  (editClick)="openEntry(row.entryId)">
+                </app-list-row-actions>
+              </div>
+            </app-compact-list-row>
 
-      <div *ngIf="!loading && filteredEntries.length > 0" class="space-y-4">
-        <div class="grid grid-cols-1 gap-4 sm:gap-5">
-        <article
-          *ngFor="let entry of paginatedFilteredEntries"
-          (click)="openEntry(entry)"
-          class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-5 hover:border-teal-200 hover:shadow-md transition-all cursor-pointer">
-          <div class="flex items-start justify-between gap-3 mb-4">
-            <div class="min-w-0">
-              <h2 class="text-lg font-bold text-gray-900 truncate">{{ entry.nombre }}</h2>
-              <span
-                *ngIf="entry.activo === false"
-                class="inline-block mt-1.5 px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 text-xs font-medium">
-                Inactiva
-              </span>
-            </div>
-          </div>
-
-          <div *ngIf="getSummary(entry).length; else emptySummary" class="overflow-x-auto rounded-lg border border-gray-100">
-            <table class="w-full min-w-[320px] text-sm">
-              <thead>
-                <tr class="bg-gray-50 border-b border-gray-100">
-                  <th class="text-left px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Detalle</th>
-                  <th class="text-left px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Precios</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngFor="let row of getSummary(entry)" class="border-b border-gray-50 last:border-0">
-                  <td class="px-3 py-2.5 font-medium text-gray-900 align-top whitespace-nowrap">{{ row.variantNombre }}</td>
-                  <td class="px-3 py-2.5">
-                    <div class="flex flex-wrap gap-1.5">
-                      <span
-                        *ngFor="let cell of row.cells"
-                        class="inline-flex items-center gap-1 rounded-md bg-teal-50 border border-teal-100 px-2 py-0.5 text-xs text-teal-900">
-                        <span>{{ cell.label }}</span>
-                        <span class="font-bold tabular-nums">{{ '$' + cell.precio }}</span>
+            <div
+              *ngIf="isRowExpanded(row.key)"
+              class="border-b border-gray-100 bg-gray-50/60 px-3 py-2">
+              <div [class]="expandedDetailWrapClass">
+                <div [class]="expandedDetailGridClass">
+                  <ng-container *ngFor="let detail of row.detalles">
+                    <ng-container *ngFor="let range of detail.ranges; let rangeIndex = index">
+                      <span [class]="expandedDetailNameClass">
+                        {{ rangeIndex === 0 ? detail.detalle : '' }}
                       </span>
+                      <span [class]="priceQtyBadgeClass + ' justify-self-start'">{{ range.label }}</span>
+                      <span [class]="expandedDetailPriceClass">{{ '$' + range.precio }}</span>
+                    </ng-container>
+                  </ng-container>
+                </div>
+              </div>
+            </div>
+          </ng-container>
+        </div>
+
+        <div listDesktop [class]="tableScrollClass">
+          <p *ngIf="loading" [class]="compactListEmptyClass">Cargando referencias...</p>
+
+          <p *ngIf="!loading && entries.length === 0" [class]="compactListEmptyClass">
+            Todavía no hay referencias en el catálogo.
+          </p>
+
+          <p *ngIf="!loading && entries.length > 0 && filteredRows.length === 0" [class]="compactListEmptyClass">
+            No hay referencias que coincidan con la búsqueda.
+          </p>
+
+          <table
+            *ngIf="!loading && filteredRows.length > 0"
+            [class]="nativeCompactTableClass + ' sm:min-w-[520px] sm:table-fixed'">
+            <colgroup class="hidden sm:table-column-group">
+              <col class="w-[2.5rem]" />
+              <col class="w-[min(38%,14rem)]" />
+              <col class="w-[6.5rem]" />
+              <col class="w-[5.5rem]" />
+            </colgroup>
+            <thead>
+              <tr class="border-b border-gray-100 bg-gray-50/80">
+                <th [class]="tableHeadClass + ' w-10 px-3 sm:px-4'"></th>
+                <th [class]="tableHeadClass">Producto</th>
+                <th [class]="tableHeadClass + ' text-right whitespace-nowrap'">Precio U.</th>
+                <th [class]="tableHeadClass + ' text-right'">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              <ng-container *ngFor="let row of paginatedFilteredRows">
+                <tr
+                  [class]="listTableRowClass"
+                  (click)="toggleRowExpand(row.key)"
+                  (keydown.enter)="toggleRowExpand(row.key)"
+                  tabindex="0"
+                  role="button"
+                  [attr.aria-expanded]="isRowExpanded(row.key)">
+                  <td [class]="tableCellClass + ' w-10 px-3 sm:px-4 text-gray-400'">
+                    <i-lucide
+                      [name]="isRowExpanded(row.key) ? 'chevron-down' : 'chevron-right'"
+                      class="w-4 h-4"></i-lucide>
+                  </td>
+                  <td [class]="tableCellClass + ' font-semibold text-gray-900 max-w-[14rem]'">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="truncate">{{ row.entryNombre }}</span>
+                      <span
+                        *ngIf="!row.entryActivo"
+                        class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700 text-[10px] font-semibold uppercase">
+                        Inactiva
+                      </span>
+                    </div>
+                    <p *ngIf="row.entryNotas" class="mt-0.5 text-xs font-normal text-gray-500 truncate">
+                      {{ row.entryNotas }}
+                    </p>
+                  </td>
+                  <td [class]="tableCellRightClass + ' font-bold tabular-nums text-teal-800 whitespace-nowrap'">
+                    {{ '$' + row.peakUnitPrice }}
+                  </td>
+                  <td [class]="tableCellClass + ' text-right'" (click)="$event.stopPropagation()">
+                    <app-list-row-actions
+                      *ngIf="auth.canManagePriceCatalog"
+                      [showDelete]="false"
+                      editLabel="Editar referencia"
+                      (editClick)="openEntry(row.entryId)">
+                    </app-list-row-actions>
+                  </td>
+                </tr>
+
+                <tr *ngIf="isRowExpanded(row.key)" class="bg-gray-50/50 border-b border-gray-100">
+                  <td colspan="4" class="px-3 sm:px-6 py-2">
+                    <div [class]="expandedDetailWrapClass">
+                      <div [class]="expandedDetailGridClass">
+                        <ng-container *ngFor="let detail of row.detalles">
+                          <ng-container *ngFor="let range of detail.ranges; let rangeIndex = index">
+                            <span [class]="expandedDetailNameClass">
+                              {{ rangeIndex === 0 ? detail.detalle : '' }}
+                            </span>
+                            <span [class]="priceQtyBadgeClass + ' justify-self-start'">{{ range.label }}</span>
+                            <span [class]="expandedDetailPriceClass">{{ '$' + range.precio }}</span>
+                          </ng-container>
+                        </ng-container>
+                      </div>
                     </div>
                   </td>
                 </tr>
-              </tbody>
-            </table>
-          </div>
-          <ng-template #emptySummary>
-            <p class="text-sm text-gray-400">Sin precios cargados.</p>
-          </ng-template>
-
-          <p *ngIf="entry.notas" class="text-xs text-gray-500 mt-3 line-clamp-2">{{ entry.notas }}</p>
-        </article>
+              </ng-container>
+            </tbody>
+          </table>
         </div>
+
         <app-list-pagination
+          *ngIf="!loading && filteredRows.length > 0"
+          listFooter
           [page]="catalogPage"
           [pageSize]="listPageSize"
-          [totalItems]="filteredEntries.length"
+          [totalItems]="filteredRows.length"
           (pageChange)="catalogPage = $event">
         </app-list-pagination>
-      </div>
+      </app-compact-data-list>
     </div>
   `,
 })
 export class PriceCatalogComponent implements OnInit {
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
+  readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
+  readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
+  readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly tableScrollClass = TABLE_SCROLL_CLASS;
+  readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
+  readonly tableHeadClass = MODULE_TABLE_HEAD_CELL_CLASS;
+  readonly tableCellClass = DESKTOP_TABLE_TD_CLASS;
+  readonly tableCellRightClass = DESKTOP_TABLE_TD_CLASS_RIGHT;
+  readonly priceQtyBadgeClass = PRICE_QTY_BADGE_CLASS;
+  readonly expandedDetailWrapClass = EXPANDED_NESTED_WRAP_CLASS;
+  readonly expandedDetailGridClass = EXPANDED_DETAIL_GRID_CLASS;
+  readonly expandedDetailNameClass = EXPANDED_DETAIL_NAME_CLASS;
+  readonly expandedDetailPriceClass = EXPANDED_DETAIL_PRICE_CLASS;
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly auth = inject(AuthService);
-  readonly getSummary = buildPriceSummary;
   readonly router = inject(Router);
 
   private route = inject(ActivatedRoute);
   private priceCatalogService = inject(PriceCatalogService);
   private dialogService = inject(DialogService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   entries: PriceCatalogEntry[] = [];
   loading = true;
   searchQuery = '';
   catalogPage = 1;
   savedNotice = '';
+  expandedRowKeys = new Set<string>();
 
-  get filteredEntries(): PriceCatalogEntry[] {
+  get filteredRows(): PriceCatalogListRow[] {
     const query = this.searchQuery.trim().toLowerCase();
-    if (!query) return this.entries;
+    const rows = buildPriceCatalogListRows(this.entries);
+    if (!query) return rows;
 
-    return this.entries.filter((entry) => {
+    return rows.filter((row) => {
       const haystack = [
-        entry.nombre,
-        entry.notas,
-        ...(entry.variantes ?? []).flatMap((variant) => [
-          variant.nombre,
-          ...(variant.rangosCantidad ?? []).map((range) => String(range.precioUnitario)),
+        row.entryNombre,
+        row.entryNotas,
+        ...row.detalles.flatMap((detail) => [
+          detail.detalle,
+          ...detail.ranges.map((range) => `${range.label} ${range.precio}`),
         ]),
       ]
         .filter(Boolean)
@@ -187,17 +327,29 @@ export class PriceCatalogComponent implements OnInit {
     });
   }
 
-  get paginatedFilteredEntries(): PriceCatalogEntry[] {
-    return paginateSlice(this.filteredEntries, this.catalogPage, this.listPageSize);
+  get paginatedFilteredRows(): PriceCatalogListRow[] {
+    return paginateSlice(this.filteredRows, this.catalogPage, this.listPageSize);
   }
 
   ngOnInit() {
+    bindListPageRefreshOnReturn({
+      listPath: '/price-catalog',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.route.queryParamMap.subscribe((params) => {
       if (params.get('saved') === '1') {
         this.savedNotice = 'Referencia guardada correctamente.';
       }
     });
     this.loadEntries();
+  }
+
+  onSearchChange() {
+    this.catalogPage = 1;
+    this.expandedRowKeys.clear();
   }
 
   dismissSavedNotice() {
@@ -210,13 +362,32 @@ export class PriceCatalogComponent implements OnInit {
     });
   }
 
-  openEntry(entry: PriceCatalogEntry) {
-    if (!entry.id) return;
-    this.router.navigate(['/price-catalog', entry.id, 'edit']);
+  isRowExpanded(key: string): boolean {
+    return this.expandedRowKeys.has(key);
+  }
+
+  toggleRowExpand(key: string) {
+    if (this.expandedRowKeys.has(key)) {
+      this.expandedRowKeys.delete(key);
+    } else {
+      this.expandedRowKeys.add(key);
+    }
+  }
+
+  openEntry(entryId: string) {
+    if (!entryId) return;
+    this.router.navigate(['/price-catalog', entryId, 'edit']);
+  }
+
+  reloadList() {
+    this.catalogPage = 1;
+    this.expandedRowKeys.clear();
+    this.loadEntries();
   }
 
   private loadEntries() {
     this.loading = true;
+    this.catalogPage = 1;
     this.priceCatalogService.getEntries().subscribe({
       next: (entries) => {
         this.entries = entries;

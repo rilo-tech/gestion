@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -33,6 +33,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 
 @Component({
   selector: 'app-users',
@@ -60,7 +61,10 @@ import { ListSearchFieldComponent } from '../../shared/components/list-search-fi
         [showMobileSearch]="true"
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="usersPage = 1"
-        searchFieldName="usersSearchQueryMobile">
+        searchFieldName="usersSearchQueryMobile"
+        [showRefresh]="true"
+        [refreshing]="loadingUsers"
+        (refreshClick)="reloadList()">
         <app-icon-action
           headerActions
           *appHasPermission="permissions.USERS_MANAGE"
@@ -227,6 +231,8 @@ export class UsersComponent implements OnInit {
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
 
   users: AppUser[] = [];
   loadingUsers = false;
@@ -257,6 +263,13 @@ export class UsersComponent implements OnInit {
       return;
     }
 
+    bindListPageRefreshOnReturn({
+      listPath: '/users',
+      reload: () => this.reloadList(),
+      router: this.router,
+      destroyRef: this.destroyRef,
+      injector: this.injector,
+    });
     this.loadUsers();
     this.route.queryParamMap.subscribe((params) => {
       if (params.get('new') === '1') {
@@ -340,8 +353,14 @@ export class UsersComponent implements OnInit {
       });
   }
 
+  reloadList() {
+    this.usersPage = 1;
+    this.loadUsers();
+  }
+
   private loadUsers() {
     this.loadingUsers = true;
+    this.usersPage = 1;
     this.userService.getUsers().subscribe({
       next: (users) => {
         this.users = users;

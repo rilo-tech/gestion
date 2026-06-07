@@ -32,7 +32,7 @@ export interface OrderExtraCostPreset {
 export interface OrderPedidosConfigShape {
   costosPersonalizacionDetallados?: boolean;
   impresionDosVias?: boolean;
-  /** Una sola vía en A4 apaisado (con dos vías siempre es horizontal). */
+  /** Una sola vía en A4 apaisado (dos vías: A4 vertical, copias lado a lado). */
   impresionDosViasHorizontal?: boolean;
   /** Casillas vacías junto a cada producto en la impresión. */
   impresionCasillasProductos?: boolean;

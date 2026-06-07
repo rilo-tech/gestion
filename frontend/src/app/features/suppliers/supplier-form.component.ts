@@ -7,6 +7,7 @@ import {
   SupplierFormSaveEvent,
 } from './supplier-form-panel.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 @Component({
   selector: 'app-supplier-form',
@@ -40,6 +41,7 @@ export class SupplierFormComponent implements OnInit {
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private navigationBack = inject(NavigationBackService);
 
   supplierId: string | null = null;
   prefillNombre = '';
@@ -79,6 +81,6 @@ export class SupplierFormComponent implements OnInit {
       this.router.navigate(['/purchases/new']);
       return;
     }
-    this.router.navigate(['/suppliers']);
+    this.navigationBack.back(['/suppliers']);
   }
 }

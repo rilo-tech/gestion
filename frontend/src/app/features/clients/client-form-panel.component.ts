@@ -33,6 +33,7 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { Subscription } from 'rxjs';
+import { handleClientDeleteError } from '../../core/utils/client-delete-flow';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
@@ -171,6 +172,19 @@ export interface ClientFormSaveEvent {
           </ng-template>
         </div>
         </fieldset>
+
+        <div
+          *ngIf="isEditing && clientForm.activo === false"
+          class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <p class="m-0">Este cliente está inactivo y no aparece al crear ventas o pedidos nuevos.</p>
+          <button
+            *ngIf="auth.canEditRecords"
+            type="button"
+            class="mt-2 text-sm font-semibold text-teal-700 hover:underline dark:text-teal-300"
+            (click)="reactivateClient()">
+            Reactivar cliente
+          </button>
+        </div>
 
         <app-form-panel-footer
           [deleteLabel]="isEditing && auth.canDeleteRecords ? 'Eliminar cliente' : ''"
@@ -436,13 +450,35 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
 
         this.clientService.deleteClient(this.clientId).subscribe({
           next: () => this.deleted.emit(),
-          error: () =>
-            this.dialogService.alert({
-              title: 'Error',
-              message: 'No se pudo eliminar el cliente.',
-            }),
+          error: (err) =>
+            handleClientDeleteError(
+              err,
+              this.clientId!,
+              name,
+              this.clientService,
+              this.dialogService,
+              () => this.deleted.emit()
+            ),
         });
       });
+  }
+
+  reactivateClient() {
+    if (!this.clientId || !this.auth.canEditRecords) return;
+    this.clientService.setClientActive(this.clientId, true).subscribe({
+      next: () => {
+        this.clientForm.activo = true;
+        this.dialogService.alert({
+          title: 'Cliente reactivado',
+          message: 'El cliente volvió a estar disponible para ventas y pedidos.',
+        });
+      },
+      error: () =>
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo reactivar el cliente.',
+        }),
+    });
   }
 
   private emptyClientForm(): Partial<Client> {

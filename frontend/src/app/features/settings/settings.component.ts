@@ -44,6 +44,7 @@ import { normalizeStockTipos } from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
 import { SettingsUsersPanelComponent } from './settings-users-panel.component';
 import { SettingsFinancePanelComponent } from './settings-finance-panel.component';
+import { SettingsCollaboratorsPanelComponent } from './settings-collaborators-panel.component';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
 import { ConfigStringListComponent } from '../../shared/components/config-string-list/config-string-list.component';
 import {
@@ -72,7 +73,7 @@ interface ConfigSection {
 }
 
 interface ConfigModule {
-  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'finanzas' | 'stock' | 'pedidos' | 'usuarios';
+  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'finanzas' | 'stock' | 'pedidos' | 'colaboradores' | 'usuarios';
   title: string;
   description: string;
   sections: ConfigSection[];
@@ -101,6 +102,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
     LucideAngularModule,
     SettingsUsersPanelComponent,
     SettingsFinancePanelComponent,
+    SettingsCollaboratorsPanelComponent,
     FormSaveFooterComponent,
     ConfigStringListComponent,
     ConfigEditableListComponent,
@@ -282,27 +284,37 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               (listExpandedChange)="onConfigSectionOpenChange('pedidos.impresion', $event)"
               [cardClass]="configCardClass">
               <div configList class="space-y-2">
-                <label class="flex items-center gap-2 cursor-pointer">
+                <label class="flex items-start gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     [(ngModel)]="config.pedidos.impresionDosVias"
                     name="pedidosImpresionDosVias"
                     [disabled]="savingPedidos"
                     (change)="onImpresionDosViasChange()"
-                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary">
-                  <span class="text-xs font-medium text-gray-900">Dos vías en A4</span>
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary mt-0.5">
+                  <span>
+                    <span class="block text-xs font-medium text-gray-900">Dos vías en A4</span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      Imprime dos copias iguales (9,5 cm cada una) lado a lado en la parte superior de una hoja vertical.
+                    </span>
+                  </span>
                 </label>
                 <label
                   *ngIf="!config.pedidos.impresionDosVias"
-                  class="flex items-center gap-2 cursor-pointer pl-5">
+                  class="flex items-start gap-2 cursor-pointer pl-5">
                   <input
                     type="checkbox"
                     [(ngModel)]="config.pedidos.impresionDosViasHorizontal"
                     name="pedidosImpresionDosViasHorizontal"
                     [disabled]="savingPedidos"
                     (change)="persistPedidosSettings()"
-                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary">
-                  <span class="text-xs font-medium text-gray-900">Hoja apaisada</span>
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary mt-0.5">
+                  <span>
+                    <span class="block text-xs font-medium text-gray-900">Hoja apaisada</span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      Solo con una vía: usa A4 horizontal en lugar de vertical.
+                    </span>
+                  </span>
                 </label>
                 <label class="flex items-start gap-2 cursor-pointer pl-5">
                   <input
@@ -509,11 +521,12 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           <app-config-editable-list
             configList
             [items]="cajaConceptoListItems"
-            labelMode="text"
-            labelEmphasis="true"
+            labelMode="input"
             [useCustomAdd]="true"
             [disabled]="isSavingCajaConceptos"
-            (remove)="removeCajaConceptoById($event)">
+            (remove)="removeCajaConceptoById($event)"
+            (labelChange)="onCajaConceptoLabelChange($event)"
+            (labelBlur)="onCajaConceptoLabelBlur($event)">
             <div configListAdd class="flex flex-col gap-2">
               <select
                 [(ngModel)]="cajaConceptoTipoDraft"
@@ -593,11 +606,13 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
 
       <app-settings-finance-panel *ngIf="activeModuleId === 'finanzas'"></app-settings-finance-panel>
 
+      <app-settings-collaborators-panel *ngIf="activeModuleId === 'colaboradores'"></app-settings-collaborators-panel>
+
       <section *ngIf="activeModuleId === 'productos'" [class]="configSectionClass">
         <div [class]="configSectionsListClass">
         <app-config-setting-card
           title="Categorías y códigos"
-          description="Por categoría podés activar códigos automáticos con un prefijo único (10, 20…). Sin prefijo, el código queda manual al crear productos."
+          description="Códigos automáticos por categoría con un prefijo único (10, 20…). Sin prefijo, el código es manual."
           [cardClass]="configCardClass"
           [listCount]="config.productos.categorias.length"
           [sectionCollapse]="true"
@@ -607,110 +622,123 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           <div configList class="space-y-3">
             <div
               configAdd
-              class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-2.5 space-y-2">
-              <input
-                [(ngModel)]="categoriaDraft"
-                name="productoCategoriaNew"
-                placeholder="Nombre de categoría, ej. Personalización"
-                [disabled]="savingCategorias"
-                (keyup.enter)="addCategoria()"
-                [class]="configInputClass + ' w-full'">
-              <label [class]="configCheckLabelClass + ' py-0'">
+              class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 p-2.5 sm:p-2 space-y-2">
+              <div class="flex items-center gap-2 min-w-0">
                 <input
-                  type="checkbox"
-                  [(ngModel)]="categoriaDraftUsesAuto"
-                  (ngModelChange)="onCategoriaDraftUsesAutoChange()"
-                  name="productoCategoriaAutoNew"
-                  [disabled]="savingCategorias"
-                  class="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
-                <span class="leading-snug text-xs">Usar código automático en esta categoría</span>
-              </label>
-              <div
-                *ngIf="categoriaDraftUsesAuto"
-                class="flex flex-wrap items-center gap-2 pt-1 border-t border-dashed border-teal-100 dark:border-teal-900/50">
-                <span class="inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-teal-200 text-teal-800 bg-teal-50/70 dark:border-teal-800 dark:text-teal-200 dark:bg-teal-950/40">
-                  Prefijo
-                </span>
-                <input
-                  [(ngModel)]="categoriaPrefijoDraft"
-                  (ngModelChange)="onAddPrefijoInput()"
-                  name="productoCategoriaPrefijoNew"
-                  type="text"
-                  inputmode="numeric"
-                  maxlength="4"
-                  placeholder="Ej. 10"
+                  [(ngModel)]="categoriaDraft"
+                  name="productoCategoriaNew"
+                  placeholder="Nueva categoría, ej. Personalización"
                   [disabled]="savingCategorias"
                   (keyup.enter)="addCategoria()"
-                  [class]="configInputClass + ' w-24 tabular-nums text-center border-teal-200 focus:ring-teal-500 dark:border-teal-700'">
-                <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
-                  Ej. {{ getPrefijoEjemploFromDraft() }}
-                </span>
+                  [class]="configInputClass + ' flex-1 min-w-0'">
+                <button
+                  type="button"
+                  (click)="addCategoria()"
+                  [disabled]="!canAddCategoria"
+                  [class]="configAddButtonClass + ' shrink-0 sm:hidden'">
+                  Agregar
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-gray-200/80 dark:border-gray-700/80 pt-2">
+                <label [class]="configCheckLabelClass + ' py-0 shrink-0'">
+                  <input
+                    type="checkbox"
+                    [(ngModel)]="categoriaDraftUsesAuto"
+                    (ngModelChange)="onCategoriaDraftUsesAutoChange()"
+                    name="productoCategoriaAutoNew"
+                    [disabled]="savingCategorias"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
+                  <span class="leading-snug text-xs whitespace-nowrap">Código auto</span>
+                </label>
+                <div
+                  *ngIf="categoriaDraftUsesAuto"
+                  class="flex items-center gap-1 shrink-0">
+                  <span class="inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border-teal-200 text-teal-800 bg-teal-50/70 dark:border-teal-800 dark:text-teal-200 dark:bg-teal-950/40">
+                    Prefijo
+                  </span>
+                  <input
+                    [(ngModel)]="categoriaPrefijoDraft"
+                    (ngModelChange)="onAddPrefijoInput()"
+                    name="productoCategoriaPrefijoNew"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="4"
+                    placeholder="10"
+                    [disabled]="savingCategorias"
+                    (keyup.enter)="addCategoria()"
+                    [class]="configInputClass + ' w-10 sm:w-12 max-w-[3rem] tabular-nums text-center border-teal-200 focus:ring-teal-500 dark:border-teal-700 py-1 px-1'">
+                  <span class="hidden sm:inline text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                    Ej. {{ getPrefijoEjemploFromDraft() }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  (click)="addCategoria()"
+                  [disabled]="!canAddCategoria"
+                  [class]="configAddButtonClass + ' hidden sm:inline-flex shrink-0 sm:ml-auto'">
+                  Agregar
+                </button>
               </div>
               <p
                 *ngIf="categoriaDraftUsesAuto && categoriaAddPrefijoError"
                 class="text-[11px] text-amber-700 dark:text-amber-300 leading-snug m-0">
                 {{ categoriaAddPrefijoError }}
               </p>
-              <button
-                type="button"
-                (click)="addCategoria()"
-                [disabled]="!canAddCategoria"
-                [class]="configAddButtonClass + ' w-full sm:w-auto'">
-                Agregar categoría
-              </button>
             </div>
 
-            <ul class="space-y-2 m-0 p-0 list-none">
+            <ul class="space-y-2.5 m-0 p-0 list-none">
               <li
                 *ngFor="let categoria of config.productos.categorias; let i = index; trackBy: trackCategoria"
-                class="relative rounded-lg border border-gray-100 dark:border-gray-700 p-2.5 space-y-2">
-                <div class="relative w-full sm:flex sm:items-start sm:justify-between sm:gap-2">
-                  <div [class]="configRowBodyClass">
-                    <input
-                      type="text"
-                      [ngModel]="getCategoriaDisplayName(categoria)"
-                      (ngModelChange)="onCategoriaNameInput(categoria, $event)"
-                      (blur)="onCategoriaNameBlur(categoria)"
-                      [name]="'categoria-nombre-' + categoria"
-                      [disabled]="savingCategorias"
-                      [class]="configInputClass + ' w-full min-w-0'">
-                  </div>
+                class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/40 p-2.5 sm:p-2 space-y-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <input
+                    type="text"
+                    [ngModel]="getCategoriaDisplayName(categoria)"
+                    (ngModelChange)="onCategoriaNameInput(categoria, $event)"
+                    (blur)="onCategoriaNameBlur(categoria)"
+                    [name]="'categoria-nombre-' + categoria"
+                    [disabled]="savingCategorias"
+                    [class]="configInputClass + ' flex-1 min-w-0 min-h-0 font-medium'">
                   <app-config-list-remove-button
+                    position="inline"
+                    [compact]="true"
                     [disabled]="savingCategorias"
                     (clicked)="removeCategoria(categoria)">
                   </app-config-list-remove-button>
                 </div>
 
-                <label [class]="configCheckLabelClass + ' py-0 text-xs text-gray-700 dark:text-gray-300'">
-                  <input
-                    type="checkbox"
-                    [checked]="categoriaUsesAutoCodigo(categoria)"
-                    (change)="setCategoriaUsesAutoCodigo(categoria, $any($event.target).checked)"
-                    [disabled]="savingCategorias"
-                    class="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
-                  <span class="leading-snug">Código automático</span>
-                </label>
-
-                <div
-                  *ngIf="categoriaUsesAutoCodigo(categoria)"
-                  class="flex flex-wrap items-center gap-2 pt-1 border-t border-dashed"
-                  [ngClass]="getCategoriaPrefijoTone(i).panelBorder">
-                  <span [ngClass]="getCategoriaPrefijoTone(i).chip">Prefijo</span>
-                  <input
-                    type="text"
-                    inputmode="numeric"
-                    maxlength="4"
-                    [ngModel]="getCategoriaPrefijoDisplay(categoria)"
-                    (ngModelChange)="onCategoriaPrefijoInput(categoria, $event)"
-                    (blur)="onCategoriaPrefijoBlur(categoria)"
-                    [name]="'prefijo-' + categoria"
-                    placeholder="Ej. 10"
-                    [disabled]="savingCategorias"
-                    [class]="configInputClass + ' w-24 tabular-nums text-center ' + getCategoriaPrefijoTone(i).input">
-                  <span class="text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
-                    Ej. {{ getCategoriaPrefijoEjemplo(categoria, i) }}
-                  </span>
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-gray-200/80 dark:border-gray-700/80 pt-2">
+                  <label [class]="configCheckLabelClass + ' py-0 shrink-0 text-xs text-gray-700 dark:text-gray-300'">
+                    <input
+                      type="checkbox"
+                      [checked]="categoriaUsesAutoCodigo(categoria)"
+                      (change)="setCategoriaUsesAutoCodigo(categoria, $any($event.target).checked)"
+                      [disabled]="savingCategorias"
+                      class="h-3.5 w-3.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0">
+                    <span class="leading-snug whitespace-nowrap">Código auto</span>
+                  </label>
+                  <div
+                    *ngIf="categoriaUsesAutoCodigo(categoria)"
+                    class="flex items-center gap-1 shrink-0 rounded-md px-1 py-0.5"
+                    [ngClass]="getCategoriaPrefijoTone(i).panelBorder">
+                    <span [ngClass]="getCategoriaPrefijoTone(i).chip">Prefijo</span>
+                    <input
+                      type="text"
+                      inputmode="numeric"
+                      maxlength="4"
+                      [ngModel]="getCategoriaPrefijoDisplay(categoria)"
+                      (ngModelChange)="onCategoriaPrefijoInput(categoria, $event)"
+                      (blur)="onCategoriaPrefijoBlur(categoria)"
+                      [name]="'prefijo-' + categoria"
+                      placeholder="10"
+                      [disabled]="savingCategorias"
+                      [class]="configInputClass + ' w-10 sm:w-12 max-w-[3rem] tabular-nums text-center min-h-0 py-1 px-1 ' + getCategoriaPrefijoTone(i).input">
+                    <span class="hidden sm:inline text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                      Ej. {{ getCategoriaPrefijoEjemplo(categoria, i) }}
+                    </span>
+                  </div>
                 </div>
+
                 <p
                   *ngIf="categoriaUsesAutoCodigo(categoria) && getCategoriaPrefijoConflict(categoria)"
                   class="text-[11px] text-amber-700 dark:text-amber-300 leading-snug m-0">
@@ -738,11 +766,14 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             <app-config-editable-list
               configList
               [items]="getStringListItems(section.key)"
+              labelMode="input"
               [addPlaceholder]="section.placeholder"
               [disabled]="isSavingField(section.key)"
               [inputName]="section.key + '-new'"
               (add)="addValueFromList(section.key, $event)"
-              (remove)="removeValue(section.key, $event)">
+              (remove)="removeStringListItemFromList(section.key, $event)"
+              (labelChange)="onStringListLabelChange(section.key, $event)"
+              (labelBlur)="onStringListLabelBlur(section.key, $event)">
             </app-config-editable-list>
           </app-config-setting-card>
         </div>
@@ -762,18 +793,21 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             <app-config-editable-list
               configList
               [items]="getStringListItems(section.key)"
+              labelMode="input"
               [addPlaceholder]="section.placeholder"
               [disabled]="isSavingField(section.key)"
               [inputName]="section.key + '-new'"
               (add)="addValueFromList(section.key, $event)"
-              (remove)="removeValue(section.key, $event)">
+              (remove)="removeStringListItemFromList(section.key, $event)"
+              (labelChange)="onStringListLabelChange(section.key, $event)"
+              (labelBlur)="onStringListLabelBlur(section.key, $event)">
             </app-config-editable-list>
           </app-config-setting-card>
         </div>
       </section>
 
       <div
-        *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas'"
+        *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas' && activeModuleId !== 'colaboradores'"
         class="mt-6 sm:mt-8">
         <app-form-save-footer
           [saving]="saving"
@@ -789,6 +823,9 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
 export class SettingsComponent implements OnInit, OnDestroy {
   @ViewChild(SettingsFinancePanelComponent)
   financePanel?: SettingsFinancePanelComponent;
+
+  @ViewChild(SettingsCollaboratorsPanelComponent)
+  collaboratorsPanel?: SettingsCollaboratorsPanelComponent;
 
   private catalogConfigService = inject(CatalogConfigService);
   private dialogService = inject(DialogService);
@@ -816,6 +853,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private categoriaAutoEnabled: Record<string, boolean> = {};
   private prefijoConflictByCategoria: Record<string, string> = {};
   private categoriaEditDrafts: Record<string, string> = {};
+  /** Renombre de categoría pendiente de confirmarse en el servidor (migra productos). */
+  private pendingCategoriaRename: { from: string; to: string } | null = null;
+  /** Edición en curso de un ítem de lista de texto (clave `key@index`). */
+  private stringListEditDrafts: Record<string, string> = {};
+  /** Renombre de talle/color pendiente de confirmarse (migra productos). */
+  private pendingFieldRename: { key: ConfigFieldKey; from: string; to: string } | null = null;
   private prefijoEditDrafts: Record<string, string> = {};
   private savedPrefijosSnapshot: Record<string, string> = {};
 
@@ -857,7 +900,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   private expandedConfigSectionKey: string | null = null;
   private readonly defaultConfigSectionByModule: Partial<Record<ConfigModule['id'], string>> = {
-    productos: 'productos.categorias',
     pedidos: 'pedidos.estados',
     caja: 'caja.ambitos',
     stock: 'stock.tipos',
@@ -950,6 +992,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
       id: 'pedidos',
       title: 'Pedidos',
       description: 'Estados, stock, costos de personalización e impresión.',
+      sections: [],
+    },
+    {
+      id: 'colaboradores',
+      title: 'Colaboradores',
+      description: 'Tipos de extra al registrar pagos adicionales (reparto, premio, aguinaldo, etc.).',
       sections: [],
     },
     {
@@ -1120,7 +1168,32 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   getStringListItems(key: ConfigFieldKey): ConfigEditableListItem[] {
-    return this.getList(key).map((label) => ({ id: label, label, removable: true }));
+    return this.getList(key).map((label, index) => {
+      const draft = this.stringListEditDrafts[this.stringListItemId(key, index)];
+      return {
+        id: this.stringListItemId(key, index),
+        label: draft ?? label,
+        removable: true,
+      };
+    });
+  }
+
+  private stringListItemId(key: ConfigFieldKey, index: number): string {
+    return `${key}@${index}`;
+  }
+
+  private parseStringListItemIndex(itemId: string): number {
+    const separator = itemId.lastIndexOf('@');
+    if (separator < 0) return -1;
+    const index = Number(itemId.slice(separator + 1));
+    return Number.isFinite(index) ? index : -1;
+  }
+
+  removeStringListItemFromList(key: ConfigFieldKey, itemId: string) {
+    const idx = this.parseStringListItemIndex(itemId);
+    const list = this.getList(key);
+    const value = idx >= 0 && idx < list.length ? list[idx] : itemId;
+    this.removeValue(key, value);
   }
 
   addPedidoEstadoFromList(label: string) {
@@ -1186,6 +1259,77 @@ export class SettingsComponent implements OnInit, OnDestroy {
   removeCajaConceptoById(nombre: string) {
     const concepto = this.config.caja.conceptos.find((item) => item.nombre === nombre);
     if (concepto) this.removeCajaConcepto(concepto);
+  }
+
+  onCajaConceptoLabelChange(event: { id: string; label: string }) {
+    const row = this.config.caja.conceptos.find((item) => item.nombre === event.id);
+    if (row) row.nombre = event.label;
+  }
+
+  onCajaConceptoLabelBlur(event: { id: string; label: string }) {
+    const row = this.config.caja.conceptos.find((item) => item.nombre === event.id);
+    if (!row || this.isSavingCajaConceptos) return;
+    const trimmed = event.label.trim();
+    if (!trimmed) {
+      row.nombre = event.id;
+      return;
+    }
+    if (
+      this.config.caja.conceptos.some(
+        (item) => item.nombre !== event.id && item.nombre.toLowerCase() === trimmed.toLowerCase()
+      )
+    ) {
+      row.nombre = event.id;
+      return;
+    }
+    row.nombre = trimmed;
+    this.persistCajaConceptos();
+  }
+
+  onStringListLabelChange(key: ConfigFieldKey, event: { id: string; label: string }) {
+    // Guardamos la edición en un draft sin tocar la lista guardada, así
+    // conservamos el valor original para detectar el renombre al perder foco.
+    this.stringListEditDrafts[event.id] = event.label;
+  }
+
+  onStringListLabelBlur(key: ConfigFieldKey, event: { id: string; label: string }) {
+    const idx = this.parseStringListItemIndex(event.id);
+    const hadDraft = this.stringListEditDrafts[event.id] !== undefined;
+    delete this.stringListEditDrafts[event.id];
+
+    if (this.isSavingField(key)) return;
+    const list = [...this.getList(key)];
+    if (idx < 0 || idx >= list.length) return;
+
+    const trimmed = event.label.trim();
+    const previous = list[idx];
+
+    // Sin cambios reales: nada que hacer (el draft ya se descartó).
+    if (!trimmed || trimmed === previous.trim()) return;
+
+    if (list.some((item, i) => i !== idx && item.toLowerCase() === trimmed.toLowerCase())) {
+      this.dialogService.alert({
+        title: 'Nombre duplicado',
+        message: `Ya existe «${trimmed}» en la lista.`,
+      });
+      return;
+    }
+
+    list[idx] = trimmed;
+    this.setList(key, list.sort((a, b) => a.localeCompare(b, 'es')));
+    this.syncFieldMode(key);
+
+    // Talle y color se guardan como un valor por producto: al renombrarlos
+    // hay que migrar los productos que los usan para no dejar datos huérfanos.
+    if (
+      hadDraft &&
+      (key === 'productos.talles' || key === 'productos.colores') &&
+      previous.trim().toLowerCase() !== trimmed.toLowerCase()
+    ) {
+      this.pendingFieldRename = { key, from: previous, to: trimmed };
+    }
+
+    this.persistField(key);
   }
 
   onStockTipoLabelChange(event: { id: string; label: string }) {
@@ -1822,6 +1966,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         'pedidos',
         'usuarios',
         'finanzas',
+        'colaboradores',
       ];
       let nextModuleId: ConfigModule['id'] | null =
         tab && knownTabs.includes(tab as ConfigModule['id']) ? (tab as ConfigModule['id']) : null;
@@ -1940,6 +2085,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.financePanel?.saveConfiguration();
       return;
     }
+    if (this.activeModuleId === 'colaboradores') {
+      this.collaboratorsPanel?.saveConfiguration();
+      return;
+    }
     if (this.activeModuleId === 'usuarios') {
       return;
     }
@@ -1949,6 +2098,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   isActiveModuleSaving(): boolean {
     if (this.activeModuleId === 'pedidos') return this.savingPedidos;
     if (this.activeModuleId === 'finanzas') return this.financePanel?.saving ?? false;
+    if (this.activeModuleId === 'colaboradores') return this.collaboratorsPanel?.saving ?? false;
     return this.saving;
   }
 
@@ -2174,7 +2324,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
 
     this.renameCategoria(currentKey, draft);
-    this.persistCategorias(undefined, false, { from: currentKey, to: draft });
+    // Si ya había un renombre pendiente que empezaba en este origen, encadenarlo.
+    const renameFrom =
+      this.pendingCategoriaRename &&
+      this.pendingCategoriaRename.to.trim().toLowerCase() === currentKey.trim().toLowerCase()
+        ? this.pendingCategoriaRename.from
+        : currentKey;
+    this.pendingCategoriaRename = { from: renameFrom, to: draft };
+    this.persistCategorias(undefined, false, this.pendingCategoriaRename);
   }
 
   private renameCategoria(from: string, to: string) {
@@ -2274,11 +2431,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     regenerateCodigosCategoria?: string
   ) {
     this.savingCategorias = true;
+    const effectiveRename = renameCategoria ?? this.pendingCategoriaRename ?? undefined;
 
     this.catalogConfigService
       .updateAppConfig(this.config, {
         confirmConfigRemovals,
-        renameCategoria,
+        renameCategoria: effectiveRename,
         regenerateCodigosCategoria,
       })
       .subscribe({
@@ -2287,10 +2445,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
           this.ensureProductosCodigo();
           this.syncPrefijosSnapshot();
           this.savingCategorias = false;
+          this.pendingCategoriaRename = null;
         },
         error: (err: HttpErrorResponse) => {
           this.savingCategorias = false;
-          this.handleConfigSaveError(err, () => this.persistCategorias(undefined, true));
+          this.handleConfigSaveError(err, () =>
+            this.persistCategorias(undefined, true, effectiveRename, regenerateCodigosCategoria)
+          );
         },
       });
   }
@@ -2396,6 +2557,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       finanzas: 'receipt',
       stock: 'boxes',
       pedidos: 'clipboard-list',
+      colaboradores: 'id-card',
       usuarios: 'user-cog',
     };
     return icons[moduleId] ?? 'settings';
@@ -2558,9 +2720,27 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.syncCajaConceptosMode();
     }
 
-    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
+    const renameTalle =
+      this.pendingFieldRename?.key === 'productos.talles'
+        ? { from: this.pendingFieldRename.from, to: this.pendingFieldRename.to }
+        : undefined;
+    const renameColor =
+      this.pendingFieldRename?.key === 'productos.colores'
+        ? { from: this.pendingFieldRename.from, to: this.pendingFieldRename.to }
+        : undefined;
+
+    this.catalogConfigService
+      .updateAppConfig(this.config, {
+        confirmConfigRemovals,
+        renameCategoria: this.pendingCategoriaRename ?? undefined,
+        renameTalle,
+        renameColor,
+      })
+      .subscribe({
       next: (config) => {
         this.config = config;
+        this.pendingCategoriaRename = null;
+        this.pendingFieldRename = null;
         if (pedidosOnly || this.activeModuleId === 'pedidos') {
           this.refreshPedidosViewState();
         }

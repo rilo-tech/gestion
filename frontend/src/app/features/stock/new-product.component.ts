@@ -24,6 +24,7 @@ import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.
 import { FormFooterComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { FormBackButtonComponent } from '../../shared/components/form-shell';
+import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
 import {
   FORM_CONTROL_CLASS,
@@ -42,19 +43,24 @@ import {
         </h1>
         <div class="flex items-center justify-end shrink-0 gap-1.5 sm:gap-4">
           <app-record-action-toolbar
-            *ngIf="isEditing"
-            [showDuplicate]="!formReadOnly"
+            *ngIf="!formReadOnly || isEditing"
+            [showSave]="!formReadOnly"
+            [saveLabel]="isEditing ? 'Guardar' : 'Guardar producto'"
+            [saveDisabled]="saving"
+            [saveSuccess]="!!saveSuccessMessage"
+            (saveClick)="submitProduct()"
+            [showDuplicate]="isEditing && !formReadOnly"
             duplicateLabel="Duplicar producto"
             (duplicateClick)="duplicateProduct()"
-            [showDelete]="auth.canDeleteRecords"
+            [showDelete]="isEditing && auth.canDeleteRecords"
             deleteLabel="Eliminar producto"
             (deleteClick)="confirmDeleteProduct()">
           </app-record-action-toolbar>
           <app-form-back-button
-            routerLink="/stock"
-            label="Volver al stock"
+            [label]="backLabel"
             shortLabel="Volver"
-            ariaLabel="Volver al stock">
+            [ariaLabel]="backLabel"
+            (clicked)="onBackClick()">
           </app-form-back-button>
         </div>
         <div class="min-w-0 col-start-1">
@@ -72,15 +78,73 @@ import {
               Datos del item
             </h2>
             <div class="space-y-3">
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
-                <div class="sm:col-span-2 lg:col-span-5 min-w-0">
-                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Nombre</label>
-                  <input [(ngModel)]="nombreBase" name="nombreBase" required
-                         placeholder="Ej. Remera básica"
-                         [class]="formControlClass">
+              <div class="flex flex-col gap-3 lg:grid lg:grid-cols-12 lg:gap-x-3 lg:gap-y-3">
+                <div class="grid grid-cols-3 gap-3 lg:contents">
+                  <div class="col-span-2 lg:col-span-5 min-w-0">
+                    <label class="block text-sm font-medium text-gray-700 mb-0.5">
+                      <span class="lg:hidden">Producto</span>
+                      <span class="hidden lg:inline">Nombre</span>
+                    </label>
+                    <input [(ngModel)]="nombreBase" name="nombreBase" required
+                           placeholder="Ej. Remera básica"
+                           [class]="formControlClass">
+                  </div>
+
+                  <div class="col-span-1 lg:col-span-3 lg:col-start-10 lg:row-start-1 min-w-0">
+                    <label class="block text-sm font-medium text-gray-700 mb-0.5">
+                      Código
+                      <span *ngIf="!item.categoria?.trim()" class="hidden lg:inline text-xs font-normal text-gray-400"> (opcional)</span>
+                    </label>
+                    <input
+                      [(ngModel)]="codigo"
+                      name="codigo"
+                      placeholder="Opcional, ej. 1001"
+                      (ngModelChange)="onCodigoInput()"
+                      (blur)="onCodigoBlur()"
+                      [readonly]="!usesCodigoEditable"
+                      [disabled]="formReadOnly"
+                      [class]="formControlClass + ' tabular-nums' + (!usesCodigoEditable ? ' bg-gray-50 text-gray-700' : '')">
+                  </div>
                 </div>
 
-                <div class="lg:col-span-4 min-w-0">
+                <div
+                  *ngIf="codigoFieldHint || codigoPrefijoWarning || codigoDuplicadoWarning"
+                  class="-mt-1 space-y-0.5 lg:col-span-12 lg:row-start-2">
+                  <p *ngIf="codigoFieldHint" class="text-[11px] text-gray-500 leading-snug">
+                    {{ codigoFieldHint }}
+                  </p>
+                  <p *ngIf="codigoPrefijoWarning" class="text-[11px] text-amber-700 leading-snug">
+                    {{ codigoPrefijoWarning }}
+                  </p>
+                  <p *ngIf="codigoDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug">
+                    {{ codigoDuplicadoWarning }}
+                  </p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 lg:contents">
+                  <div class="lg:col-span-4 lg:row-start-3 min-w-0">
+                    <label class="block text-sm font-medium text-gray-700 mb-0.5">Color</label>
+                    <app-searchable-select
+                      [(ngModel)]="item.color"
+                      name="color"
+                      [options]="colorOptions"
+                      placeholder="Buscar color..."
+                      plainPlaceholder="Ej. Negro">
+                    </app-searchable-select>
+                  </div>
+                  <div class="lg:col-span-4 lg:row-start-3 min-w-0">
+                    <label class="block text-sm font-medium text-gray-700 mb-0.5">Talle</label>
+                    <app-searchable-select
+                      [(ngModel)]="item.talle"
+                      name="talle"
+                      [options]="talleOptions"
+                      placeholder="Buscar talle..."
+                      plainPlaceholder="Ej. M">
+                    </app-searchable-select>
+                  </div>
+                </div>
+
+                <div class="min-w-0 lg:col-span-4 lg:col-start-6 lg:row-start-1">
                   <label class="block text-sm font-medium text-gray-700 mb-0.5">Categoría</label>
                   <app-searchable-select
                     [(ngModel)]="item.categoria"
@@ -89,56 +153,6 @@ import {
                     [options]="categoriaOptions"
                     placeholder="Buscar categoría..."
                     plainPlaceholder="Ej. Indumentaria">
-                  </app-searchable-select>
-                </div>
-
-                <div class="lg:col-span-3 min-w-0">
-                  <label class="block text-sm font-medium text-gray-700 mb-0.5">
-                    Código
-                    <span *ngIf="!item.categoria?.trim()" class="text-xs font-normal text-gray-400"> (opcional)</span>
-                  </label>
-                  <input
-                    [(ngModel)]="codigo"
-                    name="codigo"
-                    placeholder="Opcional, ej. 1001"
-                    (ngModelChange)="onCodigoInput()"
-                    (blur)="onCodigoBlur()"
-                    [readonly]="!usesCodigoEditable"
-                    [disabled]="formReadOnly"
-                    [class]="formControlClass + ' tabular-nums' + (!usesCodigoEditable ? ' bg-gray-50 text-gray-700' : '')">
-                </div>
-              </div>
-              <div *ngIf="codigoFieldHint || codigoPrefijoWarning || codigoDuplicadoWarning" class="-mt-1 space-y-0.5">
-                <p *ngIf="codigoFieldHint" class="text-[11px] text-gray-500 leading-snug">
-                  {{ codigoFieldHint }}
-                </p>
-                <p *ngIf="codigoPrefijoWarning" class="text-[11px] text-amber-700 leading-snug">
-                  {{ codigoPrefijoWarning }}
-                </p>
-                <p *ngIf="codigoDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug">
-                  {{ codigoDuplicadoWarning }}
-                </p>
-              </div>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
-                <div class="lg:col-span-4 min-w-0">
-                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Color</label>
-                  <app-searchable-select
-                    [(ngModel)]="item.color"
-                    name="color"
-                    [options]="colorOptions"
-                    placeholder="Buscar color..."
-                    plainPlaceholder="Ej. Negro">
-                  </app-searchable-select>
-                </div>
-                <div class="lg:col-span-4 min-w-0">
-                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Talle</label>
-                  <app-searchable-select
-                    [(ngModel)]="item.talle"
-                    name="talle"
-                    [options]="talleOptions"
-                    placeholder="Buscar talle..."
-                    plainPlaceholder="Ej. M">
                   </app-searchable-select>
                 </div>
               </div>
@@ -213,7 +227,7 @@ import {
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div class="grid grid-cols-3 gap-2">
                 <div *ngIf="showInventoryFields" class="min-w-0">
                   <label
                     class="block text-sm font-medium mb-0.5"
@@ -245,8 +259,8 @@ import {
                     [disabled]="formReadOnly"
                     [class]="formControlClass">
                 </div>
-                <div class="min-w-0 col-span-2 sm:col-span-1">
-                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Costo de compra</label>
+                <div class="min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Costo</label>
                   <input
                     type="number"
                     [(ngModel)]="item.costo"
@@ -276,9 +290,9 @@ import {
                     [disabled]="formReadOnly"
                     class="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-primary">
                   <span>
-                    <span class="block text-sm font-medium text-gray-700">Controla stock</span>
+                    <span class="block text-sm font-medium text-gray-700">Genera movimientos</span>
                     <span class="block text-xs text-gray-500 mt-0.5">
-                      Movimientos, reservas y faltantes. Desmarcá para servicios (estampado, bordado): solo precio en el pedido, sin cantidades.
+                      Controla cantidades. Desmarcá para servicios (estampado, bordado).
                     </span>
                   </span>
                 </label>
@@ -294,7 +308,7 @@ import {
                   <span>
                     <span class="block text-sm font-medium text-gray-700">Permitir stock negativo</span>
                     <span class="block text-xs text-gray-500 mt-0.5">
-                      Podés cargar pedidos aunque no alcance el depósito; al descontar puede quedar en negativo. Desmarcá para bloquear reservas y descuentos sin stock.
+                      Permite vender sin stock disponible. Desmarcá para bloquearlo.
                     </span>
                   </span>
                 </label>
@@ -383,6 +397,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private navigationBack = inject(NavigationBackService);
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
   private configSub?: Subscription;
@@ -393,12 +408,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
   talleOptions: string[] = [];
   colorOptions: string[] = [];
   editingItemId: string | null = null;
+  /** Contexto de retorno cuando se abre el producto desde otro formulario. */
+  private returnTo: string | null = null;
+  private returnOrderId: string | null = null;
   saving = false;
   saveSuccessMessage = '';
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
   nombreBase = '';
   controlaStock = true;
-  permitirStockNegativo = true;
+  permitirStockNegativo = false;
   stockAdjustmentQty: number | null = null;
   stockAdjustmentReason = '';
   adjustingStock = false;
@@ -431,6 +449,31 @@ export class NewProductComponent implements OnInit, OnDestroy {
     return this.isEditing && !this.auth.canEditRecords;
   }
 
+  /** Cuando hay contexto de retorno usamos navegación explícita al origen. */
+  get backLabel(): string {
+    return this.returnTo === 'orders' ? 'Volver al pedido' : 'Volver al stock';
+  }
+
+  onBackClick(): void {
+    if (this.returnTo === 'orders') {
+      const commands = this.returnOrderId
+        ? ['/orders', this.returnOrderId, 'edit']
+        : ['/orders/new'];
+      this.router.navigate(commands, { queryParams: { restoreDraft: '1' } });
+      return;
+    }
+    this.navigationBack.back(['/stock']);
+  }
+
+  /** Conserva el contexto de retorno al refrescar la URL tras guardar. */
+  private returnQueryParams(): Record<string, string> | undefined {
+    if (this.returnTo !== 'orders') return undefined;
+    return {
+      returnTo: 'orders',
+      ...(this.returnOrderId ? { orderId: this.returnOrderId } : {}),
+    };
+  }
+
   ngOnInit() {
     this.configSub = this.configService.appConfig$.subscribe((config) => {
       this.appConfig = config;
@@ -444,6 +487,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
     ]).subscribe(([params, query]) => {
       const id = params.get('id');
       const duplicateId = query.get('duplicate');
+      this.returnTo = query.get('returnTo');
+      this.returnOrderId = query.get('orderId');
 
       if (id) {
         this.editingItemId = id;
@@ -469,7 +514,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.savedCategoria = '';
     this.nextCodePreview = '';
     this.controlaStock = true;
-    this.permitirStockNegativo = true;
+    this.permitirStockNegativo = false;
     this.persistedStockActual = 0;
     this.item = {
       tipo: '',
@@ -698,7 +743,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       return;
     }
     if (this.permitirStockNegativo === undefined) {
-      this.permitirStockNegativo = true;
+      this.permitirStockNegativo = false;
     }
   }
 
@@ -935,7 +980,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
         this.showSaveSuccess(
           omitCodigo ? 'Producto guardado (sin código).' : 'Producto guardado.'
         );
-        this.router.navigate(['/stock', result.id, 'edit'], { replaceUrl: true });
+        this.router.navigate(['/stock', result.id, 'edit'], {
+          replaceUrl: true,
+          queryParams: this.returnQueryParams(),
+        });
       },
       error: (err: HttpErrorResponse) => {
         this.saving = false;
@@ -1004,6 +1052,13 @@ export class NewProductComponent implements OnInit, OnDestroy {
   }
 
   private loadProductForDuplicate(sourceId: string) {
+    const cached = this.stockService.peekItem(sourceId);
+    if (cached) {
+      this.applyProductFields(cached);
+      this.codigo = '';
+      this.refreshCodigoPreview();
+    }
+
     this.stockService.getItem(sourceId).subscribe({
       next: (product) => {
         this.applyProductFields(product);
@@ -1011,6 +1066,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
         this.refreshCodigoPreview();
       },
       error: () => {
+        if (cached) return;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudo cargar el producto a duplicar.',
@@ -1021,9 +1077,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
   }
 
   private loadProduct(itemId: string) {
+    const cached = this.stockService.peekItem(itemId);
+    if (cached) {
+      this.applyProductFields(cached);
+    }
+
     this.stockService.getItem(itemId).subscribe({
       next: (product) => this.applyProductFields(product),
       error: () => {
+        if (cached) return;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudo cargar el producto.',

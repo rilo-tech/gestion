@@ -70,6 +70,10 @@ import {
             Completando login con Google...
           </p>
 
+          <p *ngIf="sessionExpiredMessage" class="text-sm text-amber-400">
+            {{ sessionExpiredMessage }}
+          </p>
+
           <p *ngIf="subscriptionBlockedMessage" class="text-sm text-amber-400">
             {{ subscriptionBlockedMessage }}
           </p>
@@ -130,6 +134,7 @@ export class LoginComponent implements OnInit {
   googleRedirectPending = false;
   errorMessage = '';
   subscriptionBlockedMessage = '';
+  sessionExpiredMessage = '';
 
   private mapLoginError(err: unknown): string {
     if (isHtmlInsteadOfJsonError(err)) {
@@ -158,6 +163,11 @@ export class LoginComponent implements OnInit {
   }
 
   ngOnInit() {
+    if (this.route.snapshot.queryParamMap.get('session') === 'expired') {
+      this.sessionExpiredMessage =
+        'Tu sesión venció. Volvé a ingresar con tu usuario y contraseña.';
+    }
+
     if (this.route.snapshot.queryParamMap.get('subscription') === 'inactive') {
       this.subscriptionBlockedMessage =
         'La suscripción de tu empresa está desactivada. Contactá a RILO para reactivarla.';

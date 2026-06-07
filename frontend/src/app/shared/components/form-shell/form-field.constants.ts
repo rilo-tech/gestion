@@ -27,3 +27,10 @@ export const FORM_COMPACT_CHIP_INPUT_WRAP_CLASS =
 
 export const FORM_CARD_CLASS =
   'bg-white dark:bg-gray-900 p-3 sm:p-6 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm';
+
+/** Contenedor de buscadores picker (proveedor, cliente, cuenta) para que el menú quede sobre bloques siguientes. */
+export const FORM_PICKER_OVERLAY_HOST_CLASS = 'relative z-50 overflow-visible';
+
+/** Menú desplegable de buscadores picker (sobre el host z-50 y secciones con z-30). */
+export const FORM_PICKER_OVERLAY_MENU_CLASS =
+  'product-search-menu absolute left-0 right-0 top-full z-[60] mt-1 w-full max-h-56 sm:max-h-52 overflow-y-auto overscroll-y-contain touch-pan-y rounded-lg border border-gray-200 bg-white text-gray-900 shadow-xl divide-y divide-gray-100 dark:divide-gray-700 dark:bg-gray-900';
