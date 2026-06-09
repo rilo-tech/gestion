@@ -13,6 +13,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Client, ClientService } from '../../core/services/client.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { DialogService } from '../../core/services/dialog.service';
 import {
   AppConfig,
@@ -33,7 +34,7 @@ import {
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { Subscription } from 'rxjs';
-import { handleClientDeleteError } from '../../core/utils/client-delete-flow';
+import { confirmClientDeletion } from '../../core/utils/client-delete-flow';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
@@ -68,7 +69,7 @@ export interface ClientFormSaveEvent {
         </div>
         <div class="flex items-center gap-3 shrink-0">
           <span *ngIf="auth.canViewAccountBalance && clientSaldo > 0" class="text-sm font-bold tabular-nums text-orange-700">
-            {{ '$' + clientSaldo }}
+            {{ formatMoney(clientSaldo) }}
           </span>
           <i-lucide name="history" class="w-5 h-5 text-teal-700"></i-lucide>
         </div>
@@ -220,6 +221,10 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   clientSaldo = 0;
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
   savingClient = false;
   loadingClient = false;
   clientForm: Partial<Client> = this.emptyClientForm();
@@ -438,29 +443,13 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
     if (!this.clientId) return;
     const name = this.clientForm.nombre?.trim() || 'este cliente';
 
-    this.dialogService
-      .confirm({
-        title: 'Eliminar cliente',
-        message: `¿Eliminar a ${name}? Esta acción no se puede deshacer.`,
-        confirmLabel: 'Eliminar',
-        variant: 'danger',
-      })
-      .subscribe((confirmed) => {
-        if (!confirmed || !this.clientId) return;
-
-        this.clientService.deleteClient(this.clientId).subscribe({
-          next: () => this.deleted.emit(),
-          error: (err) =>
-            handleClientDeleteError(
-              err,
-              this.clientId!,
-              name,
-              this.clientService,
-              this.dialogService,
-              () => this.deleted.emit()
-            ),
-        });
-      });
+    confirmClientDeletion(
+      this.clientId,
+      name,
+      this.clientService,
+      this.dialogService,
+      () => this.deleted.emit()
+    );
   }
 
   reactivateClient() {

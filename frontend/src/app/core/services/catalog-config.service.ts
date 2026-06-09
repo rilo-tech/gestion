@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, of, tap } from 'rxjs';
+import { BehaviorSubject, Observable, of, shareReplay, tap } from 'rxjs';
 import { TenantService } from './tenant.service';
 
 import {
@@ -34,14 +34,20 @@ import {
 import {
   DEFAULT_CATEGORIAS_GASTO,
   DEFAULT_MEDIOS_PAGO,
+  enrichPurchasePago,
+  findMedioPagoInConfig,
+  findTarjetaInConfig,
   type CategoriaGastoConfig,
   type MedioPagoComportamiento,
   type MedioPagoConfig,
   type PurchaseLineTipo,
+  type PurchasePagoShape,
   type TarjetaConfig,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
+  normalizeMedioPagoLookupId,
+  resolvePurchasePagoDisplayLabel,
   syncMedioPagoFlags,
 } from '../../../../../shared/finance-config.ts';
 import {
@@ -103,14 +109,20 @@ export type {
   MedioPagoComportamiento,
   MedioPagoConfig,
   PurchaseLineTipo,
+  PurchasePagoShape,
   TarjetaConfig,
 };
 export {
   DEFAULT_CATEGORIAS_GASTO,
   DEFAULT_MEDIOS_PAGO,
+  enrichPurchasePago,
+  findMedioPagoInConfig,
+  findTarjetaInConfig,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
+  normalizeMedioPagoLookupId,
+  resolvePurchasePagoDisplayLabel,
   syncMedioPagoFlags,
 };
 
@@ -535,6 +547,7 @@ export class CatalogConfigService {
   private appConfigSubject = new BehaviorSubject<AppConfig>(
     structuredClone(DEFAULT_APP_CONFIG)
   );
+  private configLoadCache = new Map<string, Observable<AppConfig>>();
 
   private get businessId(): string {
     return this.tenant.businessId;
@@ -544,6 +557,21 @@ export class CatalogConfigService {
 
   get appConfig(): AppConfig {
     return this.appConfigSubject.value;
+  }
+
+  /** Una sola petición por negocio; reutilizable al abrir formularios de transacción. */
+  ensureAppConfigLoaded(): Observable<AppConfig> {
+    const businessId = this.businessId;
+    if (!businessId) {
+      return of(this.appConfig);
+    }
+
+    let cached = this.configLoadCache.get(businessId);
+    if (!cached) {
+      cached = this.getAppConfig().pipe(shareReplay({ bufferSize: 1, refCount: false }));
+      this.configLoadCache.set(businessId, cached);
+    }
+    return cached;
   }
 
   getAppConfig(): Observable<AppConfig> {

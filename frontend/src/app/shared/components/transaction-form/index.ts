@@ -11,3 +11,4 @@ export * from './transaction-detail-metadata.component';
 export * from './transaction-detail-page.component';
 export * from './transaction-save-feedback';
 export * from './transaction-save-banner.component';
+export * from './transaction-form-shell.component';

@@ -219,3 +219,73 @@ export function medioPagoRequiereCuentaHija(medio?: MedioPagoConfig | null): boo
 export function purchaseLineAffectsStock(tipo: PurchaseLineTipo): boolean {
   return tipo === 'stock';
 }
+
+const MEDIO_PAGO_ID_ALIASES: Record<string, string> = {
+  tarjeta_de_credito: 'tarjeta_credito',
+};
+
+export function normalizeMedioPagoLookupId(id: string | undefined | null): string {
+  const key = String(id ?? '').trim().toLowerCase();
+  if (!key) return '';
+  return MEDIO_PAGO_ID_ALIASES[key] ?? key;
+}
+
+export function findTarjetaInConfig(
+  tarjetas: TarjetaConfig[] | undefined,
+  tarjetaId: string | undefined | null
+): TarjetaConfig | undefined {
+  const key = String(tarjetaId ?? '').trim().toLowerCase();
+  if (!key) return undefined;
+  return (tarjetas ?? []).find((tarjeta) => String(tarjeta.id ?? '').trim().toLowerCase() === key);
+}
+
+export function findMedioPagoInConfig(
+  medios: MedioPagoConfig[] | undefined,
+  medioPagoId: string | undefined | null
+): MedioPagoConfig | undefined {
+  const key = normalizeMedioPagoLookupId(medioPagoId);
+  if (!key) return undefined;
+  const list = medios ?? DEFAULT_MEDIOS_PAGO;
+  return list.find((medio) => String(medio.id ?? '').trim().toLowerCase() === key);
+}
+
+export type PurchasePagoShape = {
+  medioPagoId?: string;
+  tarjetaId?: string;
+  tarjetaLabel?: string;
+  medioPagoLabel?: string;
+  displayLabel?: string;
+  cuotas?: number;
+  fechaPrimerVencimiento?: string;
+};
+
+export function enrichPurchasePago(
+  pago: PurchasePagoShape | undefined | null,
+  finanzas: { mediosPago?: MedioPagoConfig[]; tarjetas?: TarjetaConfig[] }
+): (PurchasePagoShape & { displayLabel: string }) | undefined {
+  if (!pago) return undefined;
+
+  const tarjeta = findTarjetaInConfig(finanzas.tarjetas, pago.tarjetaId);
+  const medio = findMedioPagoInConfig(finanzas.mediosPago, pago.medioPagoId ?? 'efectivo');
+  const syncedMedio = medio ? syncMedioPagoFlags(medio) : undefined;
+
+  const tarjetaLabel = String(pago.tarjetaLabel ?? '').trim() || tarjeta?.label?.trim() || '';
+  const medioPagoLabel =
+    String(pago.medioPagoLabel ?? '').trim() || syncedMedio?.label?.trim() || '';
+
+  const displayLabel = tarjetaLabel || medioPagoLabel || 'Efectivo';
+
+  return {
+    ...pago,
+    tarjetaLabel: tarjetaLabel || undefined,
+    medioPagoLabel: medioPagoLabel || undefined,
+    displayLabel,
+  };
+}
+
+export function resolvePurchasePagoDisplayLabel(
+  pago: PurchasePagoShape | undefined | null,
+  finanzas: { mediosPago?: MedioPagoConfig[]; tarjetas?: TarjetaConfig[] }
+): string {
+  return enrichPurchasePago(pago, finanzas)?.displayLabel ?? 'Efectivo';
+}

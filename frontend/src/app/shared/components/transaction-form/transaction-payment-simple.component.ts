@@ -45,7 +45,7 @@ export interface TransactionPaymentMedioOption {
               (ngModelChange)="onMethodChange($event)"
               [name]="methodFieldName"
               [disabled]="methodDisabled"
-              [class]="fieldClass + ' bg-white dark:bg-gray-900'">
+              [class]="fieldClass + ' form-control bg-white dark:bg-gray-900'">
               <option *ngFor="let option of medios" [ngValue]="option.value">{{ option.label }}</option>
             </select>
           </div>

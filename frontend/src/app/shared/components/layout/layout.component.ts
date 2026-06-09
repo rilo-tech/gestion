@@ -15,7 +15,7 @@ import { LayoutNavService } from '../../../core/services/layout-nav.service';
       <button
         *ngIf="nav.mobileMenuOpen()"
         type="button"
-        class="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-[1px] lg:hidden"
+        class="fixed inset-0 z-[70] bg-gray-900/50 backdrop-blur-[1px] lg:hidden"
         aria-label="Cerrar menú"
         (click)="nav.closeMobileMenu()">
       </button>

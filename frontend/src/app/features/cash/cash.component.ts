@@ -88,6 +88,7 @@ import {
 import { Subscription, finalize } from 'rxjs';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-sort.ts';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 
 @Component({
   selector: 'app-cash',
@@ -170,7 +171,7 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
               *ngIf="cajaAmbitos.length > 1"
               class="flex shrink-0 items-center gap-2 border-l-2 border-teal-600/40 bg-teal-50/70 px-3 py-2 text-sm">
               <span class="text-[10px] font-semibold uppercase tracking-wide text-teal-800/70">Total neto</span>
-              <span class="text-base font-bold tabular-nums text-teal-900">{{ '$' + totalNetoSaldo }}</span>
+              <span class="text-base font-bold tabular-nums text-teal-900">{{ formatMoney(totalNetoSaldo) }}</span>
             </div>
           </div>
           <div class="px-2 py-1 sm:px-3 sm:py-1.5 border-t border-gray-100 dark:border-gray-800">
@@ -254,7 +255,7 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
               class="text-[11px] font-bold tabular-nums"
               [class.text-teal-600]="movement.tipo === 'ingreso'"
               [class.text-red-500]="movement.tipo === 'egreso'">
-              {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+              {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ formatMoney(movement.monto || 0) }}
             </span>
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando movimientos...</p>
@@ -313,7 +314,7 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
                 class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-right tabular-nums"
                 [class.text-teal-600]="movement.tipo === 'ingreso'"
                 [class.text-red-500]="movement.tipo === 'egreso'">
-                {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ '$' + (movement.monto || 0) }}
+                {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ formatMoney(movement.monto || 0) }}
               </td>
               <td class="hidden sm:table-cell px-4 py-3 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
                 <app-list-row-actions
@@ -379,7 +380,7 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
             {{ movementSaveHint }}
           </p>
 
-          <div class="grid grid-cols-[minmax(0,1fr)_5.25rem] sm:grid-cols-[minmax(0,1fr)_8.5rem] gap-2 sm:gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_8.5rem] gap-2 sm:gap-3">
             <div #movementConceptField>
               <label class="block text-xs font-medium text-gray-700 mb-0.5">
                 {{ movementTipo === 'egreso' ? 'Gasto / concepto' : 'Concepto' }}
@@ -404,7 +405,7 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
                 [disabled]="movementFormDisabled"
                 class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
             </div>
-            <div>
+            <div class="hidden sm:block">
               <label class="block text-xs font-medium text-gray-700 mb-0.5">Monto</label>
               <input
                 #movementMontoInput
@@ -433,11 +434,12 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
           </app-transaction-date-field>
 
           <div
-            class="grid gap-2 sm:gap-3 items-start"
+            class="grid gap-2 sm:gap-3"
             [ngClass]="usesAmbitoSeparation ? 'grid-cols-2' : 'grid-cols-1'">
-            <div class="min-w-0">
-              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Tipo</span>
-              <div class="grid grid-cols-2 gap-1 rounded-lg sm:rounded-xl border border-gray-200 bg-gray-50 p-0.5 sm:p-1">
+            <div class="min-w-0 flex flex-col">
+              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1 min-h-[1.125rem] sm:min-h-[1.375rem]">Tipo</span>
+              <div class="min-h-10 flex items-center">
+                <div class="grid grid-cols-2 gap-1 w-full rounded-lg sm:rounded-xl border border-gray-200 bg-gray-50 p-0.5 sm:p-1">
                 <button
                   type="button"
                   (click)="setMovementTipo('ingreso')"
@@ -468,13 +470,15 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
                   <i-lucide name="arrow-down" class="w-4 h-4 shrink-0"></i-lucide>
                   <span class="hidden sm:inline">Egreso</span>
                 </button>
+                </div>
               </div>
             </div>
-            <div *ngIf="usesAmbitoSeparation" class="min-w-0">
-              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Ámbito</span>
-              <div
-                class="grid gap-1 sm:gap-1.5"
-                [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
+            <div *ngIf="usesAmbitoSeparation" class="min-w-0 flex flex-col">
+              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1 min-h-[1.125rem] sm:min-h-[1.375rem]">Ámbito</span>
+              <div class="min-h-10 flex items-center">
+                <div
+                  class="grid gap-1 sm:gap-1.5 w-full"
+                  [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
                 <button
                   *ngFor="let ambito of cajaAmbitos; trackBy: trackCajaAmbitoId"
                   type="button"
@@ -490,24 +494,39 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
                   ">
                   {{ ambito.label }}
                 </button>
+                </div>
               </div>
             </div>
           </div>
 
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-0.5">
-              <span class="sm:hidden">Medio</span>
-              <span class="hidden sm:inline">Medio de pago</span>
-            </label>
-            <select
-              [(ngModel)]="movementMedio"
-              name="movementMedio"
-              [disabled]="movementFormDisabled"
-              class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
-              <option value="efectivo">Efectivo</option>
-              <option value="transferencia">Transferencia</option>
-              <option value="tarjeta">Tarjeta</option>
-            </select>
+          <div class="grid grid-cols-[minmax(0,1fr)_5.5rem] sm:grid-cols-1 gap-2 sm:gap-3">
+            <div class="min-w-0">
+              <label class="block text-xs font-medium text-gray-700 mb-0.5">
+                <span class="sm:hidden">Medio</span>
+                <span class="hidden sm:inline">Medio de pago</span>
+              </label>
+              <select
+                [(ngModel)]="movementMedio"
+                name="movementMedio"
+                [disabled]="movementFormDisabled"
+                class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50">
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="tarjeta">Tarjeta</option>
+              </select>
+            </div>
+            <div class="min-w-0 sm:hidden">
+              <label class="block text-xs font-medium text-gray-700 mb-0.5">Monto</label>
+              <input
+                type="number"
+                [(ngModel)]="movementMonto"
+                name="movementMontoMobile"
+                min="1"
+                step="1"
+                placeholder="0"
+                [disabled]="movementFormDisabled"
+                class="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-sm tabular-nums text-center outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+            </div>
           </div>
 
           <div>
@@ -549,19 +568,9 @@ import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-
               *ngIf="!movementViewOnly"
               type="button"
               [disabled]="savingMovement"
-              [class]="movementModalSaveButtonClass + ' min-h-[42px] min-w-[42px] sm:min-w-0 px-2.5 sm:px-5'"
-              [attr.title]="movementModalSaveButtonLabel"
-              [attr.aria-label]="movementModalSaveButtonLabel"
+              [class]="movementModalSaveButtonClass + ' min-h-[42px] px-4 sm:px-5'"
               (click)="submitMovement()">
-              <span *ngIf="savingMovement" class="hidden sm:inline">Guardando...</span>
-              <i-lucide
-                *ngIf="savingMovement"
-                name="clock"
-                class="w-5 h-5 sm:hidden animate-pulse"></i-lucide>
-              <ng-container *ngIf="!savingMovement">
-                <i-lucide name="check" class="w-5 h-5 sm:hidden"></i-lucide>
-                <span class="hidden sm:inline">{{ movementModalSaveButtonLabel }}</span>
-              </ng-container>
+              {{ savingMovement ? 'Guardando...' : 'Guardar' }}
             </button>
           </div>
         </div>
@@ -716,17 +725,17 @@ export class CashComponent implements OnInit, OnDestroy {
 
   get cashKpiItems(): CompactInlineStat[] {
     return [
-      { label: 'Ing.', value: '$' + this.totalIngresos, tone: 'success' },
-      { label: 'Egr.', value: '$' + this.totalEgresos, tone: 'danger' },
-      { label: 'Saldo acum.', value: '$' + this.saldoCaja, alignEnd: true },
+      { label: 'Ing.', value: this.formatMoney(this.totalIngresos), tone: 'success' },
+      { label: 'Egr.', value: this.formatMoney(this.totalEgresos), tone: 'danger' },
+      { label: 'Saldo acum.', value: this.formatMoney(this.saldoCaja), alignEnd: true },
     ];
   }
 
   get activeAmbitoKpiItems(): CompactInlineStat[] {
     return [
-      { label: 'Ing.', value: '$' + this.activeAmbitoIngresos, tone: 'success' },
-      { label: 'Egr.', value: '$' + this.activeAmbitoEgresos, tone: 'danger' },
-      { label: 'Saldo acum.', value: '$' + this.activeAmbitoSaldo, alignEnd: true },
+      { label: 'Ing.', value: this.formatMoney(this.activeAmbitoIngresos), tone: 'success' },
+      { label: 'Egr.', value: this.formatMoney(this.activeAmbitoEgresos), tone: 'danger' },
+      { label: 'Saldo acum.', value: this.formatMoney(this.activeAmbitoSaldo), alignEnd: true },
     ];
   }
 
@@ -1430,8 +1439,8 @@ export class CashComponent implements OnInit, OnDestroy {
     return value.charAt(0).toUpperCase() + value.slice(1);
   }
 
-  private formatMoney(value?: number): string {
-    return `$${Number(value) || 0}`;
+  formatMoney(value?: number): string {
+    return formatMoneyValue(value);
   }
 
   submitMovement() {

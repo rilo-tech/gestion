@@ -6,8 +6,11 @@ import {
   createPayableObligation,
   deletePayableObligation,
   getPayableObligation,
+  getMensualInstallmentForMonth,
+  invalidatePayablesReconcileCache,
   listPayableInstallments,
   listPayableObligations,
+  schedulePayablesDataRepair,
   parseCreatePayableInput,
   setPayableInstallmentPaid,
   setPayableObligationActive,
@@ -36,7 +39,14 @@ function normalizeAmbito(value: unknown, caja: Record<string, unknown>): string 
 
 router.get('/:businessId/installments', async (req, res) => {
   try {
-    const installments = await listPayableInstallments(req.params.businessId);
+    const mes = String(req.query.mes ?? '').trim().slice(0, 7);
+    const scopeRaw = String(req.query.scope ?? '').trim().toLowerCase();
+    const scope = scopeRaw === 'all' ? 'all' : mes ? 'month' : 'all';
+    const installments = await listPayableInstallments(req.params.businessId, {
+      mes: /^\d{4}-\d{2}$/.test(mes) ? mes : undefined,
+      scope,
+      reconcile: req.query.reconcile === '1',
+    });
     res.json(installments);
   } catch (error) {
     console.error('Error listing payables installments:', error);
@@ -70,6 +80,38 @@ router.get('/:businessId/obligations/:obligacionId', async (req, res) => {
   }
 });
 
+router.get('/:businessId/obligations/:obligacionId/installment', async (req, res) => {
+  const mes = String(req.query.mes ?? '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(mes)) {
+    return res.status(400).json({ error: 'Mes inválido.' });
+  }
+
+  try {
+    const installment = await getMensualInstallmentForMonth(
+      req.params.businessId,
+      req.params.obligacionId,
+      mes
+    );
+    res.json(installment);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'OBLIGATION_NOT_FOUND') {
+        return res.status(404).json({ error: 'Obligación no encontrada.' });
+      }
+      if (error.message === 'NOT_MENSUAL') {
+        return res.status(400).json({ error: 'Esta obligación no es un gasto fijo mensual.' });
+      }
+      if (error.message === 'NO_CUOTA_FOR_MONTH') {
+        return res.status(404).json({
+          error: `No hay vencimiento en ${mes} para este gasto fijo.`,
+        });
+      }
+    }
+    console.error('Error loading mensual installment:', error);
+    res.status(500).json({ error: 'No se pudo cargar el vencimiento del mes.' });
+  }
+});
+
 router.put('/:businessId/obligations/:obligacionId', async (req, res) => {
   try {
     const input = parseCreatePayableInput(req.body);
@@ -87,6 +129,8 @@ router.put('/:businessId/obligations/:obligacionId', async (req, res) => {
       req.params.obligacionId,
       input
     );
+    invalidatePayablesReconcileCache(req.params.businessId);
+    schedulePayablesDataRepair(req.params.businessId);
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
       action: 'update',
@@ -139,6 +183,7 @@ router.post('/:businessId/obligations', async (req, res) => {
     input.ambito = normalizeAmbito(req.body.ambito, caja);
 
     const result = await createPayableObligation(req.params.businessId, input);
+    schedulePayablesDataRepair(req.params.businessId);
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
       action: 'create',
@@ -183,6 +228,8 @@ router.patch('/:businessId/installments/:cuotaId/paid', async (req, res) => {
       paid,
       paid ? { medioPagoId, montoPago, concepto } : undefined
     );
+    invalidatePayablesReconcileCache(req.params.businessId);
+    schedulePayablesDataRepair(req.params.businessId);
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
       action: paid ? 'payment' : 'update',
@@ -288,6 +335,9 @@ router.post('/:businessId/card-statements/pay', async (req, res) => {
       Number.isFinite(montoPagoRaw) && montoPagoRaw > 0
         ? Math.round(montoPagoRaw * 100) / 100
         : undefined;
+    const cuotaIds = Array.isArray(req.body.cuotaIds)
+      ? req.body.cuotaIds.map((id: unknown) => String(id ?? '').trim()).filter(Boolean)
+      : undefined;
 
     const result = await payCardStatement(req.params.businessId, {
       tarjetaId,
@@ -296,6 +346,7 @@ router.post('/:businessId/card-statements/pay', async (req, res) => {
       ambito,
       notas: String(req.body.notas ?? '').trim() || undefined,
       montoPago,
+      cuotaIds,
     });
 
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {

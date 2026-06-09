@@ -31,6 +31,7 @@ import {
   ClientFormSaveEvent,
 } from '../clients/client-form-panel.component';
 import { FormFooterComponent } from '../../shared/components/form-shell';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { TransactionProductSearchComponent } from '../../shared/components/transaction-product-search/transaction-product-search.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
@@ -60,7 +61,7 @@ import {
 } from '../../core/services/catalog-config.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
-import { Subscription, finalize } from 'rxjs';
+import { Subscription, finalize, take } from 'rxjs';
 import {
   readSalesFormDraft,
   saveSalesFormDraft,
@@ -76,6 +77,7 @@ import {
   TransactionDateFieldComponent,
   TransactionSaveBannerComponent,
   TransactionSaveFeedback,
+  TransactionFormShellComponent,
 } from '../../shared/components/transaction-form';
 import { TransactionFormSaveEvent } from '../../shared/components/transaction-form/transaction-form.types';
 import {
@@ -115,13 +117,19 @@ interface SaleDraftLine {
     TransactionNotesFieldComponent,
     TransactionDateFieldComponent,
     TransactionSaveBannerComponent,
+    TransactionFormShellComponent,
   ],
   template: `
-    <div *ngIf="isEditing && editingSaleLoading" class="py-8 text-center text-xs sm:text-sm text-gray-400">
+    <app-transaction-form-shell *ngIf="!formShellReady"></app-transaction-form-shell>
+
+    <div *ngIf="formShellReady && isEditing && editingSaleLoading" class="py-8 text-center text-xs sm:text-sm text-gray-400">
       Cargando venta...
     </div>
 
-    <form *ngIf="!(isEditing && editingSaleLoading)" (submit)="submitSale(); $event.preventDefault()" class="space-y-4">
+    <form
+      *ngIf="formShellReady && !(isEditing && editingSaleLoading)"
+      (submit)="submitSale(); $event.preventDefault()"
+      class="space-y-4">
       <app-transaction-save-banner [message]="saveSuccessMessage"></app-transaction-save-banner>
 
       <div *ngIf="showComprobanteSelector" class="min-w-0">
@@ -129,7 +137,7 @@ interface SaleDraftLine {
         <select
           [(ngModel)]="tipoComprobante"
           name="saleTipoComprobante"
-          class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+          class="form-control w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
           <option *ngFor="let option of comprobanteOptions" [ngValue]="option.id">
             {{ option.label }}
           </option>
@@ -139,14 +147,15 @@ interface SaleDraftLine {
         </p>
       </div>
 
-      <div class="relative z-50 overflow-visible grid grid-cols-[minmax(0,1fr)_8.5rem] sm:grid-cols-[minmax(0,1fr)_10.5rem] gap-2 sm:gap-4 items-start">
-        <div class="min-w-0 overflow-visible">
+      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4">
+        <div class="min-w-0 flex-1">
           <app-transaction-party-field
             label="Cliente"
             createActionLabel="+ Nuevo cliente"
             (createClick)="goToNewClientForm()">
             <app-transaction-party-search
               [(ngModel)]="saleClienteId"
+              name="saleClienteId"
               inputName="saleClienteId"
               [labeledOptions]="clientOptions"
               [fallbackLabel]="selectedSaleClientLabel"
@@ -161,7 +170,7 @@ interface SaleDraftLine {
           </app-transaction-party-field>
         </div>
 
-        <div class="min-w-0">
+        <div class="min-w-0 w-full sm:w-[10.5rem] shrink-0">
           <app-transaction-date-field
             [date]="saleFecha"
             (dateChange)="saleFecha = $event"
@@ -205,15 +214,15 @@ interface SaleDraftLine {
       <div *ngIf="!hideInlineSummary" class="rounded-lg bg-gray-50 border border-gray-100 p-3 space-y-1 text-sm">
         <div class="flex justify-between">
           <span class="text-gray-600">Total venta</span>
-          <span class="font-bold tabular-nums">{{ '$' + draftTotal }}</span>
+          <span class="font-bold tabular-nums">{{ formatMoney(draftTotal) }}</span>
         </div>
         <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-gray-500">
           <span>Costo estimado</span>
-          <span class="tabular-nums">{{ '$' + draftCostTotal }}</span>
+          <span class="tabular-nums">{{ formatMoney(draftCostTotal) }}</span>
         </div>
         <div *ngIf="auth.canViewEconomics" class="flex justify-between text-xs text-teal-700 font-medium">
           <span>Ganancia estimada</span>
-          <span class="tabular-nums">{{ '$' + draftProfitTotal }}</span>
+          <span class="tabular-nums">{{ formatMoney(draftProfitTotal) }}</span>
         </div>
       </div>
 
@@ -317,6 +326,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   @Output() saved = new EventEmitter<TransactionFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
+  @Output() formReadyChange = new EventEmitter<boolean>();
 
   readonly saveFeedback = new TransactionSaveFeedback();
 
@@ -358,6 +368,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   editingSaleLabel = '';
   editHasExtraCobros = false;
   editingSaleLoading = false;
+  formShellReady = false;
 
   saleClienteId = '';
   pendingClientName = '';
@@ -439,6 +450,10 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     return parts.join(' · ');
   };
 
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   get draftTotal(): number {
     return this.draftLines.reduce((acc, line) => {
       const qty = Number(line.cantidad) || 0;
@@ -517,7 +532,6 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       personalization: this.canEditSaleLineCosts,
     });
 
-    this.catalogConfig.getAppConfig().subscribe();
     this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
       this.appConfig = config;
       if (!this.comprobanteOptions.some((option) => option.id === this.tipoComprobante)) {
@@ -525,6 +539,17 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       }
     });
 
+    this.catalogConfig
+      .ensureAppConfigLoaded()
+      .pipe(take(1))
+      .subscribe(() => {
+        this.formShellReady = true;
+        queueMicrotask(() => this.formReadyChange.emit(true));
+        this.bootstrapSaleForm();
+      });
+  }
+
+  private bootstrapSaleForm(): void {
     if (!this.auth.canCreateSales) return;
 
     this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
@@ -547,6 +572,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.saveFeedback.destroy();
+    this.formReadyChange.emit(false);
   }
 
   private applyFreshSaveSuccess(id: string, label: string | undefined, message: string) {
@@ -614,7 +640,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
 
     saveSalesFormDraft({
       saleModalMode: this.isEditing ? 'edit' : 'mostrador',
-      saleModalOpen: true,
+      saleModalOpen: !this.pageLayout,
       saleClienteId: this.saleClienteId,
       pendingClientName: this.pendingClientName,
       draftLines: structuredClone(this.draftLines),

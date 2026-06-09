@@ -24,7 +24,7 @@ export const LIST_SEARCH_INPUT_CLASS =
 
 /** Buscador en formularios (picker): misma altura que campos compactos del formulario. */
 export const LIST_SEARCH_PICKER_INPUT_CLASS =
-  'w-full min-h-8 sm:min-h-10 box-border px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800';
+  'form-control w-full min-h-8 sm:min-h-10 box-border px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800';
 
 /** Variante solo móvil en el encabezado de módulo. */
 export const LIST_SEARCH_MOBILE_HEADER_CLASS =
@@ -48,6 +48,7 @@ export const LIST_SEARCH_DESKTOP_WRAP_CLASS =
       #inputEl
       [ngModel]="query"
       (ngModelChange)="onQueryChange($event)"
+      [ngModelOptions]="{ standalone: true }"
       [name]="name"
       [placeholder]="placeholder"
       [disabled]="disabled"

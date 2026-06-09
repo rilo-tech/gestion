@@ -52,6 +52,16 @@ export const CONFIG_EDITABLE_LIST_EMPTY_CLASS =
 export const CONFIG_EDITABLE_LIST_HINT_CLASS =
   'block text-xs text-gray-500 mt-0.5 desc-lg-only leading-snug';
 
+/** Descripción de tarjetas y módulos de configuración: máx. 2 líneas en celular. */
+export const CONFIG_SETTING_DESC_CLASS =
+  'text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2 sm:line-clamp-none';
+
+export const CONFIG_MODULE_LIST_DESC_CLASS =
+  'block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug line-clamp-2 sm:line-clamp-none';
+
+export const CONFIG_MODULE_HEADER_DESC_CLASS =
+  'block text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug line-clamp-2 sm:line-clamp-none';
+
 export const CONFIG_EDITABLE_LIST_FOOTER_CLASS = 'text-[11px] text-gray-500 leading-snug';
 
 export const CONFIG_EDITABLE_LIST_BADGE_CLASS =

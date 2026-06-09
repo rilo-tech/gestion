@@ -17,7 +17,7 @@ import {
       class="min-w-0"
       [ngClass]="
         showTime
-          ? 'grid grid-cols-[minmax(0,1fr)_5.5rem] sm:grid-cols-[minmax(0,1fr)_6.5rem] gap-2 sm:gap-3'
+          ? 'grid grid-cols-[minmax(0,1fr)_7.25rem] sm:grid-cols-[minmax(0,1fr)_6.5rem] gap-2 sm:gap-3'
           : null
       ">
       <div class="min-w-0">
@@ -30,7 +30,7 @@ import {
           (ngModelChange)="dateChange.emit($event)"
           [name]="fieldName"
           [disabled]="disabled"
-          [class]="fieldClass" />
+          [class]="fieldClass + ' form-control'" />
       </div>
       <div *ngIf="showTime" class="min-w-0">
         <div [class]="labelRowClass">
@@ -42,7 +42,7 @@ import {
           (ngModelChange)="timeChange.emit($event)"
           [name]="timeFieldName"
           [disabled]="disabled"
-          [class]="fieldClass" />
+          [class]="fieldClass + ' form-control tabular-nums text-center sm:text-left'" />
       </div>
     </div>
   `,

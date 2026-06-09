@@ -10,6 +10,7 @@ import {
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
 } from './finance-config.ts';
+import { resolvePurchaseLabel } from './purchase-number.ts';
 
 export type PayableTipo = 'unico' | 'mensual';
 export type PayableCuotaEstado = 'pendiente' | 'pagada';
@@ -301,8 +302,7 @@ function applyManualPaymentToInput(
   }
 
   const cuotas = Math.min(Math.max(1, Math.round(input.cantidadCuotas) || 1), 120);
-  const total = input.monto;
-  input.monto = Math.round((total / cuotas) * 100) / 100;
+  // El frontend ya envía monto por cuota; no volver a dividir.
   input.cuotaTotal = cuotas;
   input.cantidadCuotas = cuotas;
   if (!input.origenTipo || input.origenTipo === 'manual') {
@@ -489,6 +489,7 @@ export async function ensureMensualCuotasHorizon(businessId: string): Promise<vo
 export async function listPayableObligations(
   businessId: string
 ): Promise<PayableObligationRecord[]> {
+  await ensureMensualCuotasHorizon(businessId);
   const snapshot = await obligationsCollection(businessId).orderBy('beneficiario').get();
   return snapshot.docs.map((doc) => mapObligation(doc.id, doc.data() as Record<string, unknown>));
 }
@@ -503,6 +504,40 @@ export async function getPayableObligation(
     throw new Error('OBLIGATION_NOT_FOUND');
   }
   return mapObligation(snap.id, snap.data() as Record<string, unknown>);
+}
+
+export async function getMensualInstallmentForMonth(
+  businessId: string,
+  obligacionId: string,
+  mes: string
+): Promise<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }> {
+  const obligation = await getPayableObligation(businessId, obligacionId);
+  if (obligation.tipo !== 'mensual') {
+    throw new Error('NOT_MENSUAL');
+  }
+
+  await ensureMensualCuotasHorizon(businessId);
+
+  const snapshot = await cuotasCollection(businessId)
+    .where('obligacionId', '==', obligacionId)
+    .get();
+
+  const match = snapshot.docs.find((doc) => {
+    const data = doc.data() as Record<string, unknown>;
+    if (data.tipo !== 'mensual') return false;
+    const fecha = normalizeDate(data.fechaVencimiento);
+    return fecha?.slice(0, 7) === mes;
+  });
+
+  if (!match) {
+    throw new Error('NO_CUOTA_FOR_MONTH');
+  }
+
+  const cuota = mapCuota(match.id, match.data() as Record<string, unknown>);
+  return {
+    ...cuota,
+    displayEstado: resolveDisplayEstado(cuota.estado, cuota.fechaVencimiento),
+  };
 }
 
 function installmentEstadoSortOrder(estado: PayableDisplayEstado): number {
@@ -533,15 +568,31 @@ function compareInstallmentsByDueDate(
   return a.beneficiario.localeCompare(b.beneficiario, 'es');
 }
 
-export async function listPayableInstallments(
-  businessId: string
-): Promise<Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>> {
-  await ensureMensualCuotasHorizon(businessId);
-  await reconcilePayablesAndCashData(businessId);
-  await reconcilePendingInstallmentPayments(businessId);
+export type PayableInstallmentsScope = 'month' | 'all';
 
-  const snapshot = await cuotasCollection(businessId).orderBy('fechaVencimiento').get();
-  return snapshot.docs
+export interface ListPayableInstallmentsOptions {
+  /** YYYY-MM; con scope=month filtra vencimientos del mes. */
+  mes?: string;
+  scope?: PayableInstallmentsScope;
+  /** Corrección de datos (costosa); solo en escrituras o reconcile explícito. */
+  reconcile?: boolean;
+}
+
+function monthDateBounds(mes: string): { start: string; end: string } | null {
+  const raw = String(mes ?? '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(raw)) return null;
+  const [year, month] = raw.split('-').map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    start: `${raw}-01`,
+    end: `${raw}-${String(lastDay).padStart(2, '0')}`,
+  };
+}
+
+function mapInstallmentDocs(
+  docs: FirebaseFirestore.QueryDocumentSnapshot[]
+): Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }> {
+  return docs
     .map((doc) => {
       const cuota = mapCuota(doc.id, doc.data() as Record<string, unknown>);
       return {
@@ -550,6 +601,46 @@ export async function listPayableInstallments(
       };
     })
     .sort(compareInstallmentsByDueDate);
+}
+
+/** Reparación de datos; ejecutar en escrituras, no en cada lectura de listado. */
+export async function preparePayablesData(businessId: string): Promise<void> {
+  await ensureMensualCuotasHorizon(businessId);
+  await reconcilePayablesAndCashData(businessId, { force: true });
+  await reconcilePendingInstallmentPayments(businessId);
+}
+
+export function schedulePayablesDataRepair(businessId: string): void {
+  void preparePayablesData(businessId).catch((error) => {
+    console.error('Payables data repair failed:', error);
+  });
+}
+
+export async function listPayableInstallments(
+  businessId: string,
+  options?: ListPayableInstallmentsOptions
+): Promise<Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>> {
+  if (options?.reconcile) {
+    await preparePayablesData(businessId);
+  }
+
+  const scope: PayableInstallmentsScope =
+    options?.scope ?? (options?.mes ? 'month' : 'all');
+  const mes = String(options?.mes ?? '').trim().slice(0, 7);
+
+  if (scope === 'month') {
+    const bounds = monthDateBounds(mes);
+    if (!bounds) return [];
+
+    const snapshot = await cuotasCollection(businessId)
+      .where('fechaVencimiento', '>=', bounds.start)
+      .where('fechaVencimiento', '<=', bounds.end)
+      .get();
+    return mapInstallmentDocs(snapshot.docs);
+  }
+
+  const snapshot = await cuotasCollection(businessId).get();
+  return mapInstallmentDocs(snapshot.docs);
 }
 
 export async function createPayableObligation(
@@ -651,19 +742,18 @@ export async function setPayableInstallmentPaid(
 
   if (paid && montoOverride !== null && !isPaidAmountCorrection) {
     const isTarjetaCuota = !!(before.tarjetaId || before.compraId);
-    const isMensualRecurrente = before.tipo === 'mensual';
     if (isTarjetaCuota && Math.abs(montoOverride - before.monto) > 0.009) {
       throw new Error('CUOTA_MONTO_FIJO');
     }
-    if (
-      !isMensualRecurrente &&
-      !isTarjetaCuota &&
-      (before.cuotaTotal ?? 1) > 1 &&
-      Math.abs(montoOverride - before.monto) > 0.009
-    ) {
-      throw new Error('CUOTA_MONTO_FIJO');
-    }
   }
+
+  const isManualMontoAdjustment =
+    paid &&
+    montoOverride !== null &&
+    !before.tarjetaId &&
+    !before.compraId &&
+    before.tipo !== 'mensual' &&
+    Math.abs(montoOverride - before.monto) > 0.009;
 
   const conceptoOverride = paid ? String(options?.concepto ?? '').trim() : '';
   const concepto =
@@ -703,7 +793,11 @@ export async function setPayableInstallmentPaid(
   });
 
   if (paid && movimientoCajaId) {
-    await syncCashMovementMonto(businessId, movimientoCajaId, montoPago);
+    await syncCuotaLinkedCashMovement(businessId, movimientoCajaId, montoPago);
+  }
+
+  if ((isPaidAmountCorrection || isManualMontoAdjustment) && before.obligacionId) {
+    await syncObligationInstallmentMontos(businessId, before.obligacionId, montoPago);
   }
 
   const updated = await ref.get();
@@ -832,6 +926,78 @@ export async function updatePayableObligation(
   };
 }
 
+/** Propaga el monto por cuota a la obligación y al resto de vencimientos vinculados. */
+async function syncObligationInstallmentMontos(
+  businessId: string,
+  obligacionId: string,
+  perCuotaMonto: number
+): Promise<void> {
+  const monto = Math.round(perCuotaMonto * 100) / 100;
+  const now = new Date().toISOString();
+  const oblRef = obligationsCollection(businessId).doc(obligacionId);
+  const oblSnap = await oblRef.get();
+  if (!oblSnap.exists) return;
+
+  const obligation = mapObligation(oblSnap.id, oblSnap.data() as Record<string, unknown>);
+  if (Math.abs(obligation.monto - monto) > 0.009) {
+    await oblRef.update({ monto, updatedAt: now });
+  }
+
+  const cuotasSnap = await cuotasCollection(businessId)
+    .where('obligacionId', '==', obligacionId)
+    .get();
+
+  for (const doc of cuotasSnap.docs) {
+    const cuota = mapCuota(doc.id, doc.data() as Record<string, unknown>);
+    if (Math.abs(cuota.monto - monto) < 0.009) continue;
+    await doc.ref.update({ monto });
+    if (cuota.movimientoCajaId) {
+      await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, monto);
+    }
+  }
+}
+
+/** Alinea un egreso de caja con el monto corregido de su cuota vinculada. */
+export async function syncLinkedCashMovementMonto(
+  businessId: string,
+  movimientoCajaId: string,
+  monto: number
+): Promise<boolean> {
+  return syncCuotaLinkedCashMovement(businessId, movimientoCajaId, monto);
+}
+
+function roundPayableMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+async function getCashMovementOrigenTipo(
+  businessId: string,
+  movimientoCajaId: string
+): Promise<string> {
+  const snap = await db.doc(`negocios/${businessId}/movimientos_caja/${movimientoCajaId}`).get();
+  if (!snap.exists) return '';
+  return String(snap.data()?.origenTipo ?? '').trim();
+}
+
+/** Suma cuotas vinculadas a un egreso de resumen de tarjeta (incluye créditos negativos). */
+async function syncTarjetaResumenMovementFromLinkedCuotas(
+  businessId: string,
+  movimientoCajaId: string
+): Promise<boolean> {
+  const snap = await cuotasCollection(businessId)
+    .where('movimientoCajaId', '==', movimientoCajaId)
+    .get();
+  if (snap.empty) return false;
+
+  const montos = snap.docs.map((doc) => Number(doc.data().monto) || 0);
+  const netTotal = roundPayableMoney(montos.reduce((acc, monto) => acc + monto, 0));
+  const positiveTotal = roundPayableMoney(
+    montos.filter((monto) => monto > 0).reduce((acc, monto) => acc + monto, 0)
+  );
+  const targetMonto = netTotal > 0 ? netTotal : positiveTotal;
+  return syncCashMovementMonto(businessId, movimientoCajaId, targetMonto);
+}
+
 async function syncCashMovementMonto(
   businessId: string,
   movimientoCajaId: string,
@@ -841,21 +1007,51 @@ async function syncCashMovementMonto(
   const snap = await ref.get();
   if (!snap.exists) return false;
   const current = Number(snap.data()?.monto) || 0;
-  const next = Math.round(monto * 100) / 100;
+  const next = roundPayableMoney(monto);
   if (Math.abs(current - next) <= 0.009) return false;
   await ref.update({ monto: next });
   return true;
 }
 
+async function syncCuotaLinkedCashMovement(
+  businessId: string,
+  movimientoCajaId: string | undefined | null,
+  monto: number
+): Promise<boolean> {
+  const id = String(movimientoCajaId ?? '').trim();
+  if (!id) return false;
+
+  const origenTipo = await getCashMovementOrigenTipo(businessId, id);
+  if (origenTipo === 'tarjeta_resumen') {
+    return syncTarjetaResumenMovementFromLinkedCuotas(businessId, id);
+  }
+
+  return syncCashMovementMonto(businessId, id, monto);
+}
+
 /** Alinea egresos de caja con el monto de cuotas ya pagadas (corrección de datos). */
 async function reconcilePaidInstallmentCashAmounts(businessId: string): Promise<number> {
   const snapshot = await cuotasCollection(businessId).where('estado', '==', 'pagada').get();
+  const byMovement = new Map<string, ReturnType<typeof mapCuota>[]>();
   let fixes = 0;
 
   for (const doc of snapshot.docs) {
     const cuota = mapCuota(doc.id, doc.data() as Record<string, unknown>);
-    if (!cuota.movimientoCajaId) continue;
-    const fixed = await syncCashMovementMonto(businessId, cuota.movimientoCajaId, cuota.monto);
+    const movimientoCajaId = String(cuota.movimientoCajaId ?? '').trim();
+    if (!movimientoCajaId) continue;
+    const list = byMovement.get(movimientoCajaId) ?? [];
+    list.push(cuota);
+    byMovement.set(movimientoCajaId, list);
+  }
+
+  for (const [movimientoCajaId, cuotas] of byMovement) {
+    const origenTipo = await getCashMovementOrigenTipo(businessId, movimientoCajaId);
+    const fixed =
+      origenTipo === 'tarjeta_resumen'
+        ? await syncTarjetaResumenMovementFromLinkedCuotas(businessId, movimientoCajaId)
+        : cuotas.length === 1
+          ? await syncCashMovementMonto(businessId, movimientoCajaId, cuotas[0].monto)
+          : false;
     if (fixed) fixes += 1;
   }
 
@@ -874,7 +1070,7 @@ async function reconcileSplitInstallmentMontos(businessId: string): Promise<numb
   for (const oblDoc of obligationsSnap.docs) {
     const obligation = mapObligation(oblDoc.id, oblDoc.data() as Record<string, unknown>);
     if (obligation.tipo !== 'unico') continue;
-    if (obligation.origenTipo === 'prestamo') continue;
+    if (obligation.origenTipo === 'prestamo' || obligation.origenTipo === 'compra') continue;
 
     const cuotasSnap = await cuotasCollection(businessId)
       .where('obligacionId', '==', obligation.id)
@@ -892,30 +1088,16 @@ async function reconcileSplitInstallmentMontos(businessId: string): Promise<numb
     const firstMonto = montos[0] ?? 0;
     if (!firstMonto || montos.some((monto) => Math.abs(monto - firstMonto) > 0.02)) continue;
 
-    const perCuotaFromObligation = Math.round((obligation.monto / cuotaTotal) * 100) / 100;
     const perCuotaFromInstallment = Math.round((firstMonto / cuotaTotal) * 100) / 100;
 
     let targetPerCuota: number | null = null;
 
-    // Total duplicado: obligación y cuotas tienen el importe total (2823) con 3 cuotas → 941 c/u.
+    // Solo corregir cuando la cuota guardó el total y la obligación ya tiene monto por cuota.
     if (
-      Math.abs(obligation.monto - firstMonto) < 0.02 &&
-      perCuotaFromObligation > 0 &&
-      perCuotaFromObligation < obligation.monto - 0.02
+      firstMonto > obligation.monto * 1.5 &&
+      Math.abs(obligation.monto - perCuotaFromInstallment) < 0.02
     ) {
-      targetPerCuota = perCuotaFromObligation;
-    } else if (
-      Math.abs(obligation.monto - perCuotaFromInstallment) < 0.02 &&
-      firstMonto > obligation.monto * 1.5
-    ) {
-      // Obligación ya en monto por cuota; las cuotas quedaron con el total.
       targetPerCuota = obligation.monto;
-    } else if (
-      Math.abs(obligation.monto - firstMonto) < 0.02 &&
-      perCuotaFromInstallment > 0 &&
-      perCuotaFromInstallment < firstMonto - 0.02
-    ) {
-      targetPerCuota = perCuotaFromInstallment;
     }
 
     if (!targetPerCuota || Math.abs(firstMonto - targetPerCuota) < 0.009) continue;
@@ -933,7 +1115,218 @@ async function reconcileSplitInstallmentMontos(businessId: string): Promise<numb
         cuotaTotal,
       });
       if (cuota.movimientoCajaId) {
-        await syncCashMovementMonto(businessId, cuota.movimientoCajaId, targetPerCuota);
+        await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, targetPerCuota);
+      }
+      fixes += 1;
+    }
+  }
+
+  return fixes;
+}
+
+/** Recupera montos por cuota que fueron divididos repetidamente por error (ej. 3,87 → 941). */
+function recoverPerCuotaFromOverSplit(monto: number, cuotaTotal: number): number | null {
+  if (cuotaTotal <= 1 || monto <= 0 || monto >= 100) return null;
+
+  const candidates: number[] = [];
+  let candidate = monto;
+
+  for (let splits = 1; splits <= 12; splits++) {
+    candidate = Math.round(candidate * cuotaTotal * 100) / 100;
+    if (candidate > 10_000_000) break;
+
+    let back = candidate;
+    for (let j = 0; j < splits; j++) {
+      back = Math.round((back / cuotaTotal) * 100) / 100;
+    }
+    if (Math.abs(back - monto) > 0.05) continue;
+    if (candidate >= 100) {
+      candidates.push(candidate);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // El último valor suele ser el total; el anterior es el monto por cuota (ej. 940 vs 2821).
+  if (candidates.length >= 2) {
+    const last = candidates[candidates.length - 1];
+    const prev = candidates[candidates.length - 2];
+    if (Math.abs(last / prev - cuotaTotal) < 0.15) {
+      return prev;
+    }
+  }
+
+  const only = candidates[candidates.length - 1];
+  if (only <= monto * (cuotaTotal * 1.5)) return null;
+  return only;
+}
+
+/** Cuando obligación y cuotas guardaron el total en lugar del monto por cuota (ej. 2823 → 941). */
+async function reconcileTotalScaleInstallmentMontos(businessId: string): Promise<number> {
+  const obligationsSnap = await obligationsCollection(businessId).get();
+  let fixes = 0;
+  const now = new Date().toISOString();
+
+  for (const oblDoc of obligationsSnap.docs) {
+    const obligation = mapObligation(oblDoc.id, oblDoc.data() as Record<string, unknown>);
+    if (obligation.tipo !== 'unico') continue;
+    if (obligation.origenTipo === 'compra' || obligation.origenTipo === 'prestamo') continue;
+
+    const cuotasSnap = await cuotasCollection(businessId)
+      .where('obligacionId', '==', obligation.id)
+      .get();
+    if (cuotasSnap.empty) continue;
+
+    const cuotaTotal =
+      cuotasSnap.docs.reduce(
+        (max, doc) => Math.max(max, Math.max(1, Number(doc.data().cuotaTotal) || 0)),
+        0
+      ) || Math.max(obligation.cantidadCuotas, cuotasSnap.size);
+    if (cuotaTotal <= 1) continue;
+
+    const montos = cuotasSnap.docs.map((doc) => Number(doc.data().monto) || 0);
+    const firstMonto = montos[0] ?? 0;
+    if (!firstMonto || montos.some((monto) => Math.abs(monto - firstMonto) > 0.02)) continue;
+    if (Math.abs(obligation.monto - firstMonto) > 0.02) continue;
+    if (obligation.monto < 1500) continue;
+
+    const perCuota = Math.round((obligation.monto / cuotaTotal) * 100) / 100;
+    if (perCuota < 100 || perCuota >= obligation.monto - 0.02) continue;
+
+    await oblDoc.ref.update({
+      monto: perCuota,
+      cantidadCuotas: cuotaTotal,
+      updatedAt: now,
+    });
+
+    for (const cuotaDoc of cuotasSnap.docs) {
+      const cuota = mapCuota(cuotaDoc.id, cuotaDoc.data() as Record<string, unknown>);
+      await cuotaDoc.ref.update({ monto: perCuota, cuotaTotal });
+      if (cuota.movimientoCajaId) {
+        await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, perCuota);
+      }
+      fixes += 1;
+    }
+  }
+
+  return fixes;
+}
+
+async function reconcileCuotasToObligationMonto(businessId: string): Promise<number> {
+  const obligationsSnap = await obligationsCollection(businessId).get();
+  let fixes = 0;
+  const now = new Date().toISOString();
+
+  for (const oblDoc of obligationsSnap.docs) {
+    const obligation = mapObligation(oblDoc.id, oblDoc.data() as Record<string, unknown>);
+    if (obligation.tipo !== 'unico' || obligation.monto <= 0) continue;
+    if (obligation.origenTipo === 'compra') continue;
+
+    const cuotasSnap = await cuotasCollection(businessId)
+      .where('obligacionId', '==', obligation.id)
+      .get();
+
+    const cuotaTotal = Math.max(
+      1,
+      cuotasSnap.docs.reduce(
+        (max, doc) => Math.max(max, Math.max(1, Number(doc.data().cuotaTotal) || 0)),
+        0
+      ) || obligation.cantidadCuotas
+    );
+
+    const perCuotaFromObligationTotal =
+      cuotaTotal > 1
+        ? Math.round((obligation.monto / cuotaTotal) * 100) / 100
+        : obligation.monto;
+
+    let obligationFixes = 0;
+    for (const cuotaDoc of cuotasSnap.docs) {
+      const cuota = mapCuota(cuotaDoc.id, cuotaDoc.data() as Record<string, unknown>);
+      if (Math.abs(cuota.monto - obligation.monto) < 0.009) continue;
+
+      // Caso 0: la obligación guardó el total y la cuota ya tiene el monto por cuota correcto.
+      if (
+        cuotaTotal > 1 &&
+        Math.abs(cuota.monto - perCuotaFromObligationTotal) <
+          Math.max(1, perCuotaFromObligationTotal * 0.05) &&
+        Math.abs(obligation.monto - cuota.monto) > 0.009
+      ) {
+        await oblDoc.ref.update({ monto: perCuotaFromObligationTotal, updatedAt: now });
+        obligation.monto = perCuotaFromObligationTotal;
+        obligationFixes += 1;
+        continue;
+      }
+
+      // Caso 1: la cuota guardó un valor menor (división de más) → alinear al monto de la obligación.
+      // Caso 2: la cuota guardó el total y la obligación ya tiene el monto por cuota
+      //         (cuota ≈ obligación × cantidad de cuotas) → reducir al monto por cuota.
+      const cuotaEsTotal =
+        cuotaTotal > 1 &&
+        Math.abs(cuota.monto - obligation.monto * cuotaTotal) < Math.max(1, obligation.monto * 0.05);
+      const cuotaEsMenor = cuota.monto < obligation.monto * 0.95;
+
+      if (!cuotaEsTotal && !cuotaEsMenor) continue;
+
+      await cuotaDoc.ref.update({ monto: obligation.monto });
+      if (cuota.movimientoCajaId) {
+        await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, obligation.monto);
+      }
+      obligationFixes += 1;
+    }
+
+    if (obligationFixes > 0) {
+      await oblDoc.ref.update({ updatedAt: now });
+      fixes += obligationFixes;
+    }
+  }
+
+  return fixes;
+}
+
+async function reconcileOverSplitInstallmentRecovery(businessId: string): Promise<number> {
+  const obligationsSnap = await obligationsCollection(businessId).get();
+  let fixes = 0;
+  const now = new Date().toISOString();
+
+  for (const oblDoc of obligationsSnap.docs) {
+    const obligation = mapObligation(oblDoc.id, oblDoc.data() as Record<string, unknown>);
+    if (obligation.tipo !== 'unico') continue;
+    if (obligation.origenTipo === 'compra') continue;
+
+    const cuotasSnap = await cuotasCollection(businessId)
+      .where('obligacionId', '==', obligation.id)
+      .get();
+    if (cuotasSnap.empty) continue;
+
+    const cuotaTotal =
+      cuotasSnap.docs.reduce(
+        (max, doc) => Math.max(max, Math.max(1, Number(doc.data().cuotaTotal) || 0)),
+        0
+      ) || Math.max(obligation.cantidadCuotas, cuotasSnap.size);
+    if (cuotaTotal <= 1) continue;
+
+    const montos = cuotasSnap.docs.map((doc) => Number(doc.data().monto) || 0);
+    const firstMonto = montos[0] ?? 0;
+    if (!firstMonto || montos.some((monto) => Math.abs(monto - firstMonto) > 0.02)) continue;
+
+    const referenceMonto = Math.max(obligation.monto, firstMonto);
+    const recovered = recoverPerCuotaFromOverSplit(referenceMonto, cuotaTotal);
+    if (!recovered || Math.abs(recovered - referenceMonto) < 0.009) continue;
+
+    await oblDoc.ref.update({
+      monto: recovered,
+      cantidadCuotas: cuotaTotal,
+      updatedAt: now,
+    });
+
+    for (const cuotaDoc of cuotasSnap.docs) {
+      const cuota = mapCuota(cuotaDoc.id, cuotaDoc.data() as Record<string, unknown>);
+      await cuotaDoc.ref.update({
+        monto: recovered,
+        cuotaTotal,
+      });
+      if (cuota.movimientoCajaId) {
+        await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, recovered);
       }
       fixes += 1;
     }
@@ -960,19 +1353,8 @@ async function reconcileCashMovementsFromLinkedCuotas(businessId: string): Promi
     if (!cuotaSnap.exists) continue;
 
     let cuota = mapCuota(cuotaSnap.id, cuotaSnap.data() as Record<string, unknown>);
-    let targetMonto = cuota.monto;
+    const targetMonto = cuota.monto;
     const movMonto = Number(movDoc.data().monto) || 0;
-    const cuotaTotal = Math.max(1, cuota.cuotaTotal ?? 1);
-
-    if (cuotaTotal > 1 && targetMonto > 0) {
-      const perCuota = Math.round((targetMonto / cuotaTotal) * 100) / 100;
-      if (perCuota > 0 && perCuota < targetMonto - 0.02) {
-        targetMonto = perCuota;
-        await cuotaRef.update({ monto: targetMonto });
-        cuota = { ...cuota, monto: targetMonto };
-        fixes += 1;
-      }
-    }
 
     if (Math.abs(movMonto - targetMonto) > 0.009) {
       await movDoc.ref.update({ monto: targetMonto });
@@ -988,8 +1370,108 @@ async function reconcileCashMovementsFromLinkedCuotas(businessId: string): Promi
   return fixes;
 }
 
+/**
+ * La reconciliación es una reparación de datos puntual (no debería encontrar
+ * nada que corregir en operación normal). Para no penalizar cada lectura de
+ * caja/cuentas a pagar con decenas de consultas a Firestore, la corremos como
+ * mucho una vez por negocio cada TTL en la instancia caliente.
+ */
+const RECONCILE_TTL_MS = 10 * 60_000;
+const lastReconcileAt = new Map<string, number>();
+
+/** Forzar reconciliación en la próxima lectura (p. ej. tras corregir una cuota). */
+export function invalidatePayablesReconcileCache(businessId: string): void {
+  lastReconcileAt.delete(businessId);
+}
+
+/** Alinea tarjeta/cuenta en cuotas cuando la compra ya tiene tarjeta asignada. */
+async function reconcilePurchaseCuotaTarjetas(businessId: string): Promise<number> {
+  const finanzas = await loadFinanzasConfig(businessId);
+  const comprasSnap = await db.collection(`negocios/${businessId}/compras`).get();
+  let fixed = 0;
+
+  for (const doc of comprasSnap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    if (String(data.estado ?? '').trim() === 'borrador') continue;
+
+    const pago = (data.pago ?? {}) as Record<string, unknown>;
+    const tarjetaId = String(pago.tarjetaId ?? data.tarjetaId ?? '').trim();
+    const medioPagoId = String(pago.medioPagoId ?? '').trim().toLowerCase();
+    const medio = getMedioPagoById(finanzas.mediosPago, medioPagoId);
+    if (!medio || !medioPagoGeneratesPayables(medio) || !tarjetaId) continue;
+
+    const tarjeta = getTarjetaById(finanzas.tarjetas, tarjetaId);
+    if (!tarjeta) continue;
+
+    const compraLabel = resolvePurchaseLabel({ ...data, id: doc.id });
+    const proveedor = String(data.proveedor ?? '').trim();
+    const cuotasSnap = await cuotasCollection(businessId).where('compraId', '==', doc.id).get();
+    if (cuotasSnap.empty) continue;
+
+    const batch = db.batch();
+    let batchCount = 0;
+    for (const cuotaDoc of cuotasSnap.docs) {
+      const cuota = cuotaDoc.data() as Record<string, unknown>;
+      if (String(cuota.tarjetaId ?? '').trim() === tarjeta.id) continue;
+
+      const numero = Math.max(1, Number(cuota.numeroCuota) || 1);
+      const cuotaTotal = Math.max(1, Number(cuota.cuotaTotal) || 1);
+      const descripcionRaw = String(cuota.descripcion ?? '').trim();
+      const descripcionParts = descripcionRaw.split(' · ').filter(Boolean);
+      const descripcionBase =
+        descripcionParts.length >= 3
+          ? descripcionParts.slice(2, -1).join(' · ') || proveedor
+          : proveedor;
+      const beneficiario = `${tarjeta.label} · Compra #${compraLabel}`;
+
+      batch.update(cuotaDoc.ref, {
+        tarjetaId: tarjeta.id,
+        tarjetaLabel: tarjeta.label,
+        medioPagoId,
+        beneficiario,
+        descripcion: `Cuota ${numero}/${cuotaTotal} · Compra #${compraLabel} · ${descripcionBase} · ${tarjeta.label}`,
+      });
+      batchCount += 1;
+    }
+
+    if (batchCount > 0) {
+      await batch.commit();
+      fixed += batchCount;
+
+      const obligacionId = String(cuotasSnap.docs[0]?.data()?.obligacionId ?? '').trim();
+      if (obligacionId) {
+        await obligationsCollection(businessId).doc(obligacionId).update({
+          tarjetaId: tarjeta.id,
+          tarjetaLabel: tarjeta.label,
+          medioPagoId,
+          beneficiario: `${tarjeta.label} · Compra #${compraLabel}`,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  return fixed;
+}
+
 /** Corrección de cuotas mal divididas + caja vinculada (llamar al listar payables o caja). */
-export async function reconcilePayablesAndCashData(businessId: string): Promise<void> {
+export async function reconcilePayablesAndCashData(
+  businessId: string,
+  options?: { force?: boolean }
+): Promise<void> {
+  const now = Date.now();
+  if (!options?.force) {
+    const last = lastReconcileAt.get(businessId);
+    if (last !== undefined && now - last < RECONCILE_TTL_MS) {
+      return;
+    }
+  }
+  lastReconcileAt.set(businessId, now);
+
+  await reconcilePurchaseCuotaTarjetas(businessId);
+  await reconcileOverSplitInstallmentRecovery(businessId);
+  await reconcileTotalScaleInstallmentMontos(businessId);
+  await reconcileCuotasToObligationMonto(businessId);
   await reconcileSplitInstallmentMontos(businessId);
   await reconcileCashMovementsFromLinkedCuotas(businessId);
   await reconcilePaidInstallmentCashAmounts(businessId);
@@ -1077,7 +1559,7 @@ async function updatePayableObligationPreservingPaid(
     for (const doc of paidDocs) {
       const cuota = mapCuota(doc.id, doc.data() as Record<string, unknown>);
       if (cuota.movimientoCajaId) {
-        await syncCashMovementMonto(businessId, cuota.movimientoCajaId, scheduleInput.monto);
+        await syncCuotaLinkedCashMovement(businessId, cuota.movimientoCajaId, scheduleInput.monto);
       }
     }
   }

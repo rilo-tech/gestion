@@ -59,6 +59,9 @@ import {
   CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
   CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
   CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
+  CONFIG_MODULE_HEADER_DESC_CLASS,
+  CONFIG_MODULE_LIST_DESC_CLASS,
+  CONFIG_SETTING_DESC_CLASS,
 } from '../../shared/components/config-editable-list/config-editable-list.constants';
 import { ConfigSettingCardComponent } from '../../shared/components/config-setting-card/config-setting-card.component';
 import { FormBackButtonComponent } from '../../shared/components/form-shell/form-back-button.component';
@@ -166,7 +169,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           </span>
           <span class="min-w-0 flex-1">
             <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ module.title }}</span>
-            <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">{{ module.description }}</span>
+            <span [class]="configModuleListDescClass">{{ module.description }}</span>
           </span>
           <i-lucide name="chevron-right" class="w-5 h-5 shrink-0 text-gray-400 dark:text-gray-500"></i-lucide>
         </button>
@@ -407,7 +410,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                 </ul>
               </ng-container>
               <ng-template #pedidosCostosSimple>
-                <p class="text-xs text-gray-500 leading-snug">
+                <p [class]="configSettingDescClass">
                   Activá «Costos detallados» para casillas por producto y conceptos precargados.
                 </p>
               </ng-template>
@@ -429,7 +432,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               class="px-4 py-3 flex flex-col gap-3">
               <div class="min-w-0">
                 <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ row.label }}</p>
-                <p class="text-xs text-gray-500 mt-0.5">{{ row.mobileSummary }}</p>
+                <p [class]="configSettingDescClass">{{ row.mobileSummary }}</p>
               </div>
               <div class="w-full min-w-0">
                 <label class="block text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1">
@@ -889,14 +892,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
   readonly settingsShellClass = 'w-full max-w-4xl mx-auto min-w-0';
   readonly configSectionClass = 'space-y-4 sm:space-y-6';
   readonly configDescClass = 'block text-xs text-gray-500 mt-0.5 desc-lg-only leading-snug';
-  readonly activeModuleDescClass =
-    'block text-sm text-gray-500 dark:text-gray-400 mt-1 leading-snug';
+  readonly activeModuleDescClass = CONFIG_MODULE_HEADER_DESC_CLASS;
   readonly configCodeClass = 'mt-1 text-[11px] text-primary/80 desc-lg-only';
   readonly configCardClass =
     'bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4 flex flex-col min-w-0';
   readonly configToggleCardClass =
     'bg-white rounded-xl border border-gray-100 shadow-sm p-3 w-full';
   readonly configSectionsListClass = 'flex flex-col gap-2 w-full min-w-0';
+
+  readonly configModuleListDescClass = CONFIG_MODULE_LIST_DESC_CLASS;
+  readonly configSettingDescClass = CONFIG_SETTING_DESC_CLASS;
 
   private expandedConfigSectionKey: string | null = null;
   private readonly defaultConfigSectionByModule: Partial<Record<ConfigModule['id'], string>> = {
@@ -926,8 +931,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'productos',
       title: 'Productos',
-      description:
-        'Categorías con prefijos de código, talles y colores para el catálogo de productos.',
+      description: 'Prefijos de código, talles y colores del catálogo.',
       sections: [
         {
           key: 'productos.talles',
@@ -972,20 +976,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'caja',
       title: 'Caja',
-      description: 'Conceptos, orígenes y etiquetas de ámbito en la grilla de caja.',
+      description: 'Conceptos, orígenes y ámbitos en la grilla de caja.',
       sections: [],
     },
     {
       id: 'finanzas',
       title: 'Finanzas',
       description:
-        'Medios de pago, cuentas vinculadas y categorías de gasto. Agregar y quitar guardan al instante; Guardar sincroniza el resto.',
+        'Medios de pago, cuentas vinculadas y categorías de gasto.',
       sections: [],
     },
     {
       id: 'stock',
       title: 'Stock',
-      description: 'Etiquetas de tipos y orígenes en la grilla de movimientos de inventario.',
+      description: 'Tipos y orígenes en la grilla de movimientos de stock.',
       sections: [],
     },
     {
@@ -997,14 +1001,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'colaboradores',
       title: 'Colaboradores',
-      description: 'Tipos de extra al registrar pagos adicionales (reparto, premio, aguinaldo, etc.).',
+      description: 'Tipos de extra al registrar pagos (reparto, premio, etc.).',
       sections: [],
     },
     {
       id: 'usuarios',
       title: 'Usuarios',
-      description:
-        'Creá operadores y asigná permisos. El plan y la suscripción los gestiona la plataforma RILO.',
+      description: 'Operadores, permisos y acceso al sistema.',
       sections: [],
       supervisorOnly: true,
     },

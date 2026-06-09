@@ -111,6 +111,7 @@ import {
 } from '../../core/utils/transaction-date';
 import { FormFooterComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 
 @Component({
   selector: 'app-new-order',
@@ -369,7 +370,7 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
                       [disabled]="isReadOnlyOrder || !auth.canViewOrderSalePrice"
                       (click)="applyCatalogPrice(orderLines[index], option.price)"
                       class="font-semibold text-teal-700 hover:text-teal-900 hover:underline disabled:opacity-40">
-                      {{ option.label }} {{ '$' + option.price }}
+                      {{ option.label }} {{ formatMoney(option.price) }}
                     </button>
                   </ng-container>
                 </div>
@@ -418,21 +419,21 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
               class="grid grid-cols-2 gap-x-3 gap-y-1 mb-2 sm:hidden text-xs">
               <div *ngIf="auth.canViewAccountBalance">
                 <p class="text-[10px] uppercase text-gray-500">Saldo</p>
-                <p class="font-bold text-orange-600 tabular-nums">{{ '$' + (order.saldo || 0) }}</p>
+                <p class="font-bold text-orange-600 tabular-nums">{{ formatMoney(order.saldo || 0) }}</p>
               </div>
               <div
                 *ngIf="auth.canViewOrderSalePrice"
                 [class.text-right]="auth.canViewAccountBalance">
                 <p class="text-[10px] uppercase text-gray-500">Venta</p>
-                <p class="font-bold text-teal-600 tabular-nums">{{ '$' + (order.total || 0) }}</p>
+                <p class="font-bold text-teal-600 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
               </div>
               <div>
                 <p class="text-[10px] uppercase text-gray-500">Costo</p>
-                <p class="font-semibold text-gray-900 tabular-nums">{{ '$' + totalCost }}</p>
+                <p class="font-semibold text-gray-900 tabular-nums">{{ formatMoney(totalCost) }}</p>
               </div>
               <div class="text-right">
                 <p class="text-[10px] uppercase text-gray-500">Ganancia</p>
-                <p class="font-semibold text-green-600 tabular-nums">{{ '$' + (order.gananciaEstimada || 0) }}</p>
+                <p class="font-semibold text-green-600 tabular-nums">{{ formatMoney(order.gananciaEstimada || 0) }}</p>
               </div>
               <div class="col-span-2 flex justify-between pt-1 border-t border-gray-100">
                 <span class="text-[10px] uppercase text-gray-500">Margen</span>
@@ -443,19 +444,19 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
             <div class="hidden sm:block space-y-3 mb-6 text-sm">
               <div class="flex justify-between">
                 <span class="text-gray-500">Costo base</span>
-                <span class="text-gray-900 tabular-nums">{{ '$' + baseProductCost }}</span>
+                <span class="text-gray-900 tabular-nums">{{ formatMoney(baseProductCost) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500">Personalización</span>
-                <span class="text-gray-900 tabular-nums">{{ '$' + customizationCostTotal }}</span>
+                <span class="text-gray-900 tabular-nums">{{ formatMoney(customizationCostTotal) }}</span>
               </div>
               <div class="border-t border-gray-200 pt-3 flex justify-between font-bold text-gray-900">
                 <span>Costo total</span>
-                <span class="tabular-nums">{{ '$' + totalCost }}</span>
+                <span class="tabular-nums">{{ formatMoney(totalCost) }}</span>
               </div>
               <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="flex justify-between font-bold text-teal-700">
                 <span>Precio venta</span>
-                <span class="tabular-nums">{{ '$' + (order.total || 0) }}</span>
+                <span class="tabular-nums">{{ formatMoney(order.total || 0) }}</span>
               </div>
             </div>
 
@@ -496,25 +497,25 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
                       <span class="text-gray-500 hidden sm:inline">· {{ formatPaymentDate(pago.fecha) }}</span>
                       <span *ngIf="shouldShowPaymentNotas(pago)" class="text-gray-500 hidden sm:inline">· {{ pago.notas }}</span>
                     </span>
-                    <span class="text-[10px] sm:text-xs font-semibold text-gray-900 tabular-nums shrink-0">{{ '$' + pago.monto }}</span>
+                    <span class="text-[10px] sm:text-xs font-semibold text-gray-900 tabular-nums shrink-0">{{ formatMoney(pago.monto) }}</span>
                   </div>
                 </div>
                 <div class="flex justify-between text-[10px] sm:text-xs text-gray-600">
                   <span>Pagado</span>
-                  <span class="tabular-nums text-gray-900">{{ '$' + getTotalPagado() }}</span>
+                  <span class="tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
               </ng-container>
 
               <div class="flex justify-between text-[10px] sm:text-xs text-gray-600 mt-1 sm:mt-2 pt-1 sm:pt-2 border-t border-gray-200">
                 <span>Saldo pendiente</span>
-                <span class="font-semibold text-orange-600 tabular-nums">{{ '$' + (order.saldo || 0) }}</span>
+                <span class="font-semibold text-orange-600 tabular-nums">{{ formatMoney(order.saldo || 0) }}</span>
               </div>
             </div>
 
             <div class="hidden sm:block space-y-2 mb-6 text-sm">
               <div class="flex justify-between">
                 <span class="text-gray-500">Ganancia est.</span>
-                <span class="text-green-600 font-bold tabular-nums">{{ '$' + (order.gananciaEstimada || 0) }}</span>
+                <span class="text-green-600 font-bold tabular-nums">{{ formatMoney(order.gananciaEstimada || 0) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500">Margen</span>
@@ -549,7 +550,7 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
             class="sm:sticky sm:top-8">
             <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4 flex items-baseline justify-between gap-3 sm:block">
               <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase sm:mb-1">Total venta</p>
-              <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ '$' + (order.total || 0) }}</p>
+              <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
             </div>
             <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
@@ -580,11 +581,11 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
                 </div>
                 <div class="flex justify-between text-xs sm:text-sm">
                   <span class="text-gray-600">Pagado</span>
-                  <span class="font-semibold tabular-nums text-gray-900">{{ '$' + getTotalPagado() }}</span>
+                  <span class="font-semibold tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
                 <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200">
                   <span class="text-gray-600">Saldo</span>
-                  <span class="font-semibold tabular-nums text-orange-600">{{ '$' + pendingOrderSaldo }}</span>
+                  <span class="font-semibold tabular-nums text-orange-600">{{ formatMoney(pendingOrderSaldo) }}</span>
                 </div>
               </ng-container>
             </div>
@@ -637,7 +638,7 @@ import { RecordActionToolbarComponent } from '../../shared/components/icon-toolb
             </div>
             <div class="shrink-0 text-right leading-tight">
               <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Saldo</p>
-              <p class="text-lg font-bold text-orange-600 tabular-nums">{{ '$' + paymentSaldoSnapshot }}</p>
+              <p class="text-lg font-bold text-orange-600 tabular-nums">{{ formatMoney(paymentSaldoSnapshot) }}</p>
             </div>
           </div>
 
@@ -1228,7 +1229,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get canEditOrderDescription(): boolean {
-    return this.isEditing && !this.isCancelledOrder && this.auth.canEditRecords;
+    return !this.isCancelledOrder && this.auth.canEditRecords;
   }
 
   get hasPendingDescriptionChange(): boolean {
@@ -2399,8 +2400,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.registerPayment(monto, false);
   }
 
-  private formatMoney(value: number): string {
-    return `$${value}`;
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 
   private registerPayment(monto: number, allowExtra: boolean) {

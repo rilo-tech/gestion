@@ -468,15 +468,6 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
       this.formAmbito = obligation.ambito;
     }
 
-    const cuotas = Math.max(1, obligation.cantidadCuotas || 1);
-    if (obligation.tipo === 'unico' && cuotas > 1 && obligation.origenTipo !== 'prestamo') {
-      this.form.monto = Math.round(obligation.monto * cuotas * 100) / 100;
-      this.montoModo = 'total';
-    } else {
-      this.form.monto = obligation.monto;
-      this.montoModo = 'cuota';
-    }
-
     if (obligation.tipo === 'unico' && obligation.medioPagoId) {
       this.applyPagoMedioState(obligation.medioPagoId);
       if (obligation.tarjetaId) {
@@ -484,6 +475,16 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
       }
     } else {
       this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
+    }
+
+    const cuotas = Math.max(1, obligation.cantidadCuotas || 1);
+    if (this.form.tipo === 'unico' && cuotas > 1 && this.pagoGeneraCuotasVisible) {
+      // Tarjeta/crédito: el formulario muestra el monto total a dividir.
+      this.form.monto = Math.round(obligation.monto * cuotas * 100) / 100;
+      this.montoModo = 'total';
+    } else {
+      this.form.monto = obligation.monto;
+      this.montoModo = 'cuota';
     }
 
     this.cdr.markForCheck();

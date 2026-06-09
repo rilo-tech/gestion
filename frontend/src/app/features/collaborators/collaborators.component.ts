@@ -4,6 +4,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/services/auth.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   Collaborator,
   CollaboratorMovement,
@@ -1570,7 +1571,7 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
   }
 
   formatMoney(value: number | null | undefined): string {
-    return '$' + Number(value ?? 0).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+    return formatMoneyValue(value);
   }
 
   formatQty(value: number | null | undefined): string {

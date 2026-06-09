@@ -12,7 +12,7 @@ import { Router } from '@angular/router';
   imports: [CommonModule, LucideAngularModule],
   template: `
     <header
-      class="relative z-50 h-14 shrink-0 border-b border-gray-100 bg-white/90 backdrop-blur-sm px-3 sm:px-6 flex items-center justify-between gap-3">
+      class="relative z-[90] h-14 shrink-0 border-b border-gray-100 bg-white/90 backdrop-blur-sm px-3 sm:px-6 flex items-center justify-between gap-3">
       <button
         type="button"
         class="lg:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-gray-600 hover:bg-gray-100"

@@ -84,6 +84,7 @@ export interface SearchableSelectOption {
         type="text"
         [ngModel]="value"
         (ngModelChange)="onPlainChange($event)"
+        [ngModelOptions]="{ standalone: true }"
         [disabled]="disabled"
         [placeholder]="plainPlaceholder"
         (focus)="onPlainFocus($event)"

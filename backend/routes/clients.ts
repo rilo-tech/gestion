@@ -7,7 +7,11 @@ import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFr
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
-import { validateClientDeletion } from '../utils/client-deletion-guards.ts';
+import {
+  buildClientDeletionBlockedMessage,
+  getClientReferenceSummary,
+  validateClientDeletion,
+} from '../utils/client-deletion-guards.ts';
 import { mapDeletionError } from '../utils/deletion-guards.ts';
 
 const router = createCompanyRouter();
@@ -361,6 +365,31 @@ router.post('/:businessId/:clientId/cobros', async (req, res) => {
     console.error('Error collecting client balance:', error);
     const message = error instanceof Error ? error.message : 'Error collecting client balance';
     res.status(400).json({ error: message });
+  }
+});
+
+router.get('/:businessId/:clientId/deletion-guard', async (req, res) => {
+  try {
+    const { businessId, clientId } = req.params;
+    const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clientId).get();
+    if (!clientSnap.exists) {
+      return res.status(404).json({ error: 'Cliente no encontrado.' });
+    }
+
+    const references = await getClientReferenceSummary(businessId, clientId);
+    const canDelete =
+      !references.ventas &&
+      !references.pedidos &&
+      !references.movimientosCaja &&
+      !references.compromisosPago;
+
+    res.json({
+      canDelete,
+      references,
+      message: canDelete ? null : buildClientDeletionBlockedMessage(references),
+    });
+  } catch {
+    res.status(500).json({ error: 'Error checking client deletion guard' });
   }
 });
 

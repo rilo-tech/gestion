@@ -22,12 +22,19 @@ export type {
 export {
   DEFAULT_CATEGORIAS_GASTO,
   DEFAULT_MEDIOS_PAGO,
+  enrichPurchasePago,
+  findMedioPagoInConfig,
+  findTarjetaInConfig,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
+  normalizeMedioPagoLookupId,
   purchaseLineAffectsStock,
+  resolvePurchasePagoDisplayLabel,
   syncMedioPagoFlags,
 } from '../../shared/finance-config.ts';
+
+export type { PurchasePagoShape } from '../../shared/finance-config.ts';
 
 function normalizeComportamiento(value: unknown): MedioPagoComportamiento {
   if (value === 'cuotas' || value === 'proveedor') return value;

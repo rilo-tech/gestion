@@ -50,6 +50,7 @@ import {
   SupplierFormSaveEvent,
 } from '../suppliers/supplier-form-panel.component';
 import { FormFooterComponent } from '../../shared/components/form-shell';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { TransactionFormSaveEvent } from '../../shared/components/transaction-form/transaction-form.types';
 import { TransactionLinesSectionComponent } from '../../shared/components/transaction-lines-section/transaction-lines-section.component';
 import { TransactionProductSearchComponent } from '../../shared/components/transaction-product-search/transaction-product-search.component';
@@ -61,7 +62,7 @@ import {
 import { TransactionTableFieldChange, TransactionTableLine } from '../../shared/components/transaction-lines-table/transaction-lines-table.types';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import { LucideAngularModule } from 'lucide-angular';
-import { Subscription, finalize } from 'rxjs';
+import { Subscription, finalize, forkJoin, take } from 'rxjs';
 import { prefersInlineFormPage } from '../../core/utils/responsive-form';
 import {
   TransactionPartyFieldComponent,
@@ -70,6 +71,7 @@ import {
   TransactionPaymentMedioOption,
   TransactionSaveBannerComponent,
   TransactionSaveFeedback,
+  TransactionFormShellComponent,
 } from '../../shared/components/transaction-form';
 import {
   TRANSACTION_COMPACT_FIELD_CLASS,
@@ -114,18 +116,24 @@ interface PurchaseDraftLine {
     TransactionNotesFieldComponent,
     TransactionDateFieldComponent,
     TransactionSaveBannerComponent,
+    TransactionFormShellComponent,
   ],
   template: `
-    <form (submit)="submitPurchase(); $event.preventDefault()" class="space-y-4">
+    <app-transaction-form-shell *ngIf="!formShellReady"></app-transaction-form-shell>
+
+    <form
+      *ngIf="formShellReady"
+      (submit)="submitPurchase(); $event.preventDefault()"
+      class="space-y-4">
       <app-transaction-save-banner [message]="saveSuccessMessage"></app-transaction-save-banner>
-      <fieldset [disabled]="readOnly" class="space-y-4 border-0 p-0 m-0 min-w-0">
+      <fieldset [disabled]="readOnly" class="flex flex-col gap-3 sm:gap-4 border-0 p-0 m-0 min-w-0">
       <div *ngIf="showComprobanteSelector" class="min-w-0">
         <label [class]="fieldLabelClass">Tipo de comprobante</label>
         <select
           [(ngModel)]="tipoComprobante"
           name="purchaseTipoComprobante"
           [disabled]="readOnly"
-          [class]="fieldClass + ' bg-white dark:bg-gray-900'">
+          [class]="fieldClass + ' form-control bg-white dark:bg-gray-900'">
           <option *ngFor="let option of comprobanteOptions" [ngValue]="option.id">
             {{ option.label }}
           </option>
@@ -134,32 +142,32 @@ interface PurchaseDraftLine {
           Nota de crédito: la mercadería sale del stock (devolución al proveedor).
         </p>
       </div>
-      <div class="relative z-50 overflow-visible grid grid-cols-[minmax(0,1fr)_8.5rem] sm:grid-cols-[minmax(0,1fr)_10.5rem] lg:grid-cols-[minmax(0,1fr)_minmax(0,14rem)_10.5rem] gap-2 sm:gap-4 items-start">
-        <div class="min-w-0 overflow-visible">
-          <app-transaction-party-field
-            label="Proveedor"
-            [showCreateAction]="!readOnly"
-            createActionLabel="+ Nuevo proveedor"
-            (createClick)="openNewSupplierModal()">
-            <app-transaction-party-search
-              [(ngModel)]="purchaseProveedorId"
-              inputName="purchaseProveedorId"
-              [labeledOptions]="supplierOptions"
-              [fallbackLabel]="readOnly ? (initialPurchase?.proveedor?.trim() || '—') : ''"
-              [creatable]="!readOnly"
-              [disabled]="readOnly"
-              createLabelPrefix="Crear proveedor"
-              (partySelected)="onPurchasePartySelected($event)"
-              (createRequested)="quickCreateSupplier($event)"
-              (searchChange)="pendingSupplierName = $event"
-              placeholder="Buscar proveedor..."
-              emptyOptionsMessage="Escribí al menos 2 letras para buscar proveedores."
-              listHint="Opcional. Escribí para buscar, elegí un proveedor o creá uno nuevo.">
-            </app-transaction-party-search>
-          </app-transaction-party-field>
-        </div>
 
-        <div class="min-w-0 order-3 col-span-2 lg:order-2 lg:col-span-1">
+      <app-transaction-party-field
+        label="Proveedor"
+        [showCreateAction]="!readOnly"
+        createActionLabel="+ Nuevo proveedor"
+        (createClick)="openNewSupplierModal()">
+        <app-transaction-party-search
+          [(ngModel)]="purchaseProveedorId"
+          name="purchaseProveedorId"
+          inputName="purchaseProveedorId"
+          [labeledOptions]="supplierOptions"
+          [fallbackLabel]="pendingSupplierName.trim() || (initialPurchase?.proveedor?.trim() ?? '') || '—'"
+          [creatable]="!readOnly"
+          [disabled]="readOnly"
+          createLabelPrefix="Crear proveedor"
+          (partySelected)="onPurchasePartySelected($event)"
+          (createRequested)="quickCreateSupplier($event)"
+          (searchChange)="pendingSupplierName = $event"
+          placeholder="Buscar proveedor..."
+          emptyOptionsMessage="Escribí al menos 2 letras para buscar proveedores."
+          listHint="Opcional. Escribí para buscar, elegí un proveedor o creá uno nuevo.">
+        </app-transaction-party-search>
+      </app-transaction-party-field>
+
+      <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_10.5rem] gap-2 sm:gap-4 items-start">
+        <div class="min-w-0">
           <label [class]="fieldLabelClass">N° factura del proveedor</label>
           <input
             type="text"
@@ -170,12 +178,12 @@ interface PurchaseDraftLine {
             placeholder="Opcional — ej. 0001-00045678"
             autocomplete="off"
             maxlength="80" />
-          <p *ngIf="!readOnly" class="text-[11px] text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
+          <p *ngIf="!readOnly" class="hidden sm:block text-[11px] text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
             Comprobante de la factura del proveedor. El n° de compra del sistema se asigna al registrar.
           </p>
         </div>
 
-        <div class="min-w-0 order-2 lg:order-3">
+        <div class="min-w-0 sm:col-start-2">
           <app-transaction-date-field
             [date]="purchaseFecha"
             (dateChange)="purchaseFecha = $event"
@@ -255,8 +263,8 @@ interface PurchaseDraftLine {
                   *ngIf="lineIsRealOferta(draftLines[stockLineIndices[index]])"
                   class="text-[10px] sm:text-xs font-semibold text-amber-700">
                   {{ lineOfertaPct(draftLines[stockLineIndices[index]]) }}% menos que tu costo
-                  ({{ '$' + lineOfertaCostoGuardado(draftLines[stockLineIndices[index]]) }}/u)
-                  · ahorro {{ '$' + lineOfertaAhorro(draftLines[stockLineIndices[index]]) }}
+                  ({{ formatMoney(lineOfertaCostoGuardado(draftLines[stockLineIndices[index]])) }}/u)
+                  · ahorro {{ formatMoney(lineOfertaAhorro(draftLines[stockLineIndices[index]])) }}
                 </span>
                 <span
                   *ngIf="!lineIsRealOferta(draftLines[stockLineIndices[index]])"
@@ -446,7 +454,7 @@ interface PurchaseDraftLine {
       <div *ngIf="!hideInlineSummary" class="rounded-lg bg-gray-50 border border-gray-100 p-3 text-sm">
         <div class="flex justify-between gap-4">
           <span class="text-gray-600">Total estimado</span>
-          <span class="font-bold tabular-nums text-teal-700">{{ '$' + draftTotal }}</span>
+          <span class="font-bold tabular-nums text-teal-700">{{ formatMoney(draftTotal) }}</span>
         </div>
       </div>
 
@@ -496,6 +504,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   @Output() saved = new EventEmitter<TransactionFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
+  @Output() formReadyChange = new EventEmitter<boolean>();
 
   readonly saveFeedback = new TransactionSaveFeedback();
 
@@ -550,6 +559,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   private finanzasPagoConfigKey = '';
   private lineCounter = 0;
   private configSub?: Subscription;
+  formShellReady = false;
 
   readonly usesInlineFormPage = prefersInlineFormPage();
 
@@ -790,16 +800,29 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   ngOnInit() {
-    this.loadSuppliers();
     this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
-      this.applyAppConfig(config);
+      if (this.formShellReady) {
+        this.applyAppConfig(config);
+      }
     });
-    this.catalogConfig.getAppConfig().subscribe();
-    if (this.initialPurchase) {
-      this.loadFromPurchase(this.initialPurchase);
-    } else {
-      this.resetForm();
-    }
+
+    forkJoin({
+      config: this.catalogConfig.ensureAppConfigLoaded().pipe(take(1)),
+      suppliers: this.supplierService.getSuppliers().pipe(take(1)),
+    }).subscribe({
+      next: ({ config, suppliers }) => {
+        this.applyAppConfig(config);
+        this.suppliers = suppliers;
+        this.syncSupplierOptions();
+        if (this.initialPurchase) {
+          this.loadFromPurchase(this.initialPurchase);
+        } else {
+          this.resetForm();
+        }
+        this.formShellReady = true;
+        queueMicrotask(() => this.formReadyChange.emit(true));
+      },
+    });
   }
 
   private applyAppConfig(config: AppConfig): void {
@@ -814,8 +837,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       this.finanzasPagoConfigKey = finanzasKey;
     }
     const medioInvalid = !this.mediosPago.some((medio) => medio.id === this.pagoMedioId);
+    const preservingLoadedPurchase = this.draftLines.length > 0;
     if (medioInvalid || finanzasChanged) {
-      this.applyPagoMedioState(medioInvalid ? this.resolveDefaultPagoMedioId() : this.pagoMedioId);
+      this.applyPagoMedioState(
+        medioInvalid && !preservingLoadedPurchase ? this.resolveDefaultPagoMedioId() : this.pagoMedioId,
+        preservingLoadedPurchase ? { preserveCuotas: true, preserveFechaVencimiento: true } : undefined
+      );
     }
   }
 
@@ -839,6 +866,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   ngOnDestroy() {
     this.configSub?.unsubscribe();
     this.saveFeedback.destroy();
+    this.formReadyChange.emit(false);
   }
 
   private resetForm() {
@@ -902,6 +930,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.lineCounter = this.draftLines.length;
     this.syncAddedStockProductIds();
     this.syncPurchaseStockTableLines();
+    this.cdr.markForCheck();
   }
 
   private resolvePurchaseLineTipo(line: Purchase['items'][number]): PurchaseLineTipo {
@@ -1176,11 +1205,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     });
   }
 
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   private formatMoneyShort(value: number): string {
-    return `$${Number(value ?? 0).toLocaleString('es-AR', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    })}`;
+    return formatMoneyValue(value);
   }
 
   private proceedCreatePurchase() {

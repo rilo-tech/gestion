@@ -17,9 +17,18 @@ import {
   TRANSACTION_FORM_CARD_CLASS,
   TransactionFormSaveEvent,
   buildTransactionSaveHeaderState,
+  TransactionFormShellComponent,
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
+
+type PayablesViewTab = 'month' | 'account' | 'obligation';
+
+function parsePayablesViewTab(value: string | null | undefined): PayablesViewTab | null {
+  if (value === 'month' || value === 'account' || value === 'obligation') return value;
+  return null;
+}
 
 @Component({
   selector: 'app-new-purchase',
@@ -31,15 +40,16 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
     TransactionSummaryPanelComponent,
     TransactionSummaryRowComponent,
     RecordActionToolbarComponent,
+    TransactionFormShellComponent,
   ],
   template: `
     <app-transaction-form-page
       [title]="pageTitle"
       [titleBadge]="pageTitleBadge"
       [subtitle]="pageSubtitle"
-      backLabel="Volver a compras"
+      [backLabel]="backLabel"
       backShortLabel="Volver"
-      backAriaLabel="Volver a compras"
+      [backAriaLabel]="backLabel"
       [hasHeaderActions]="hasHeaderActions"
       (backClick)="goBack()">
       <div headerActions *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
@@ -62,7 +72,9 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
         </app-record-action-toolbar>
       </div>
       <section main [class]="formCardClass">
+        <app-transaction-form-shell *ngIf="purchaseLoadPending"></app-transaction-form-shell>
         <app-purchase-form-panel
+          *ngIf="!purchaseLoadPending"
           #purchaseForm
           [pageLayout]="true"
           [hideInlineSummary]="true"
@@ -73,18 +85,19 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
           [editingConfirmedId]="editingConfirmedId"
           (saved)="onSaved($event)"
           (savingChange)="onPurchaseSavingChange($event)"
+          (formReadyChange)="onPurchaseFormReadyChange($event)"
           (cancelled)="goBack()">
         </app-purchase-form-panel>
       </section>
 
-      <app-transaction-summary-panel aside *ngIf="purchaseForm">
+      <app-transaction-summary-panel aside *ngIf="purchaseSummaryReady && !purchaseLoadPending">
         <div class="space-y-2 sm:space-y-3 mb-4">
           <app-transaction-summary-row label="Líneas" [value]="'' + purchaseForm.draftLineCount"></app-transaction-summary-row>
           <app-transaction-summary-row label="Productos (stock)" [value]="'' + purchaseForm.stockLineCount"></app-transaction-summary-row>
           <app-transaction-summary-row label="Gastos / servicios" [value]="'' + purchaseForm.expenseLineCount"></app-transaction-summary-row>
           <app-transaction-summary-row
             label="Total estimado"
-            [value]="'$' + purchaseForm.draftTotal"
+            [value]="formatMoney(purchaseForm.draftTotal)"
             [bold]="true"
             [divider]="true"
             size="md"></app-transaction-summary-row>
@@ -117,11 +130,19 @@ export class NewPurchaseComponent implements OnInit {
   editingConfirmedId: string | null = null;
   readOnlyMode = false;
   loadedPurchase: Purchase | null = null;
+  purchaseLoadPending = false;
+  purchaseSummaryReady = false;
   savedPurchaseLabel = '';
   purchaseSaving = false;
   deletingPurchase = false;
   private purchaseRouteId: string | null = null;
   private duplicateSourceId: string | null = null;
+  private returnTo: 'purchases' | 'payables' = 'purchases';
+  private payablesReturnTab: PayablesViewTab | null = null;
+
+  get backLabel(): string {
+    return this.returnTo === 'payables' ? 'Volver a cuentas a pagar' : 'Volver a compras';
+  }
 
   get pageTitle(): string {
     if (this.readOnlyMode) return 'Detalle de compra';
@@ -189,13 +210,17 @@ export class NewPurchaseComponent implements OnInit {
   duplicateCurrentPurchase() {
     const sourceId = this.currentPurchaseId;
     if (!sourceId || !this.canDuplicateCurrent) return;
-    this.router.navigate(['/purchases/new'], { queryParams: { duplicate: sourceId } });
+    this.router.navigate(['/purchases/new'], {
+      queryParams: { duplicate: sourceId, ...this.returnQueryParams() },
+    });
   }
 
   editCurrentPurchase() {
     const id = this.loadedPurchase?.id;
     if (!id || !this.canEditCurrent) return;
-    this.router.navigate(['/purchases', id, 'edit']);
+    this.router.navigate(['/purchases', id, 'edit'], {
+      queryParams: this.returnQueryParams(),
+    });
   }
 
   confirmDeleteCurrentPurchase() {
@@ -242,10 +267,13 @@ export class NewPurchaseComponent implements OnInit {
       return;
     }
 
+    this.syncReturnContext(this.route.snapshot.queryParamMap);
+
     this.route.paramMap.subscribe((params) => {
       const routeId = params.get('id')?.trim() || null;
       this.purchaseRouteId = routeId;
       if (routeId) {
+        this.purchaseLoadPending = true;
         this.loadPurchaseFromRoute(routeId);
         return;
       }
@@ -253,9 +281,28 @@ export class NewPurchaseComponent implements OnInit {
     });
 
     this.route.queryParamMap.subscribe((params) => {
+      this.syncReturnContext(params);
       if (this.purchaseRouteId) return;
       this.syncNewPurchaseQuery(params);
     });
+  }
+
+  private syncReturnContext(params: { get: (name: string) => string | null }): void {
+    if (params.get('returnTo') === 'payables') {
+      this.returnTo = 'payables';
+      this.payablesReturnTab = parsePayablesViewTab(params.get('tab'));
+      return;
+    }
+    this.returnTo = 'purchases';
+    this.payablesReturnTab = null;
+  }
+
+  private returnQueryParams(): Record<string, string> {
+    if (this.returnTo !== 'payables') return {};
+    return {
+      returnTo: 'payables',
+      ...(this.payablesReturnTab ? { tab: this.payablesReturnTab } : {}),
+    };
   }
 
   private syncNewPurchaseQuery(params: { get: (name: string) => string | null }) {
@@ -270,17 +317,24 @@ export class NewPurchaseComponent implements OnInit {
       this.editingDraftId = null;
       this.duplicateSourceId = null;
       this.loadedPurchase = null;
+      this.purchaseLoadPending = false;
       return;
     }
-    if (this.editingDraftId === draftId && this.loadedPurchase?.id === draftId) return;
+    if (this.editingDraftId === draftId && this.loadedPurchase?.id === draftId) {
+      this.purchaseLoadPending = false;
+      return;
+    }
+    this.purchaseLoadPending = true;
     this.editingDraftId = draftId;
     this.editingConfirmedId = null;
     this.readOnlyMode = false;
     this.purchaseService.getPurchase(draftId).subscribe({
       next: (purchase) => {
         this.loadedPurchase = purchase;
+        this.purchaseLoadPending = false;
       },
       error: () => {
+        this.purchaseLoadPending = false;
         this.editingDraftId = null;
         this.loadedPurchase = null;
         this.dialogService.alert({
@@ -301,6 +355,7 @@ export class NewPurchaseComponent implements OnInit {
     this.editingConfirmedId = null;
     this.readOnlyMode = false;
     this.duplicateSourceId = sourceId;
+    this.purchaseLoadPending = true;
 
     this.purchaseService.getPurchase(sourceId).subscribe({
       next: (purchase) => {
@@ -317,8 +372,10 @@ export class NewPurchaseComponent implements OnInit {
             id: line.id ?? `line_${index + 1}`,
           })),
         };
+        this.purchaseLoadPending = false;
       },
       error: () => {
+        this.purchaseLoadPending = false;
         this.duplicateSourceId = null;
         this.loadedPurchase = null;
         this.dialogService.alert({
@@ -337,9 +394,11 @@ export class NewPurchaseComponent implements OnInit {
       return;
     }
 
+    this.purchaseLoadPending = true;
     this.purchaseService.getPurchase(purchaseId).subscribe({
       next: (purchase) => this.applyLoadedPurchase(purchaseId, purchase),
       error: () => {
+        this.purchaseLoadPending = false;
         this.dialogService.alert({
           title: 'Servidor no disponible',
           message:
@@ -359,8 +418,9 @@ export class NewPurchaseComponent implements OnInit {
 
   private applyLoadedPurchase(purchaseId: string, purchase: Purchase) {
     if (purchase.estado === 'borrador') {
+      this.purchaseLoadPending = true;
       this.router.navigate(['/purchases/new'], {
-        queryParams: { draftId: purchaseId },
+        queryParams: { draftId: purchaseId, ...this.returnQueryParams() },
         replaceUrl: true,
       });
       return;
@@ -372,16 +432,22 @@ export class NewPurchaseComponent implements OnInit {
 
     if (isEditRoute) {
       if (!this.canEditPurchase(purchase)) {
-        this.router.navigate(['/purchases', purchaseId], { replaceUrl: true });
+        this.purchaseLoadPending = false;
+        this.router.navigate(['/purchases', purchaseId], {
+          queryParams: this.returnQueryParams(),
+          replaceUrl: true,
+        });
         return;
       }
       this.readOnlyMode = false;
       this.editingConfirmedId = purchaseId;
+      this.purchaseLoadPending = false;
       return;
     }
 
     this.readOnlyMode = true;
     this.editingConfirmedId = null;
+    this.purchaseLoadPending = false;
   }
 
   private canEditPurchase(purchase: Purchase): boolean {
@@ -398,13 +464,19 @@ export class NewPurchaseComponent implements OnInit {
     });
   }
 
+  onPurchaseFormReadyChange(ready: boolean) {
+    queueMicrotask(() => {
+      this.purchaseSummaryReady = ready;
+    });
+  }
+
   onSaved(event?: TransactionFormSaveEvent) {
     if (event?.draft) {
       this.purchaseSaving = false;
       if (event.id) {
         this.editingDraftId = event.id;
         this.router.navigate(['/purchases/new'], {
-          queryParams: { draftId: event.id },
+          queryParams: { draftId: event.id, ...this.returnQueryParams() },
           replaceUrl: true,
         });
       }
@@ -423,7 +495,10 @@ export class NewPurchaseComponent implements OnInit {
 
         if (this.editingConfirmedId !== id) {
           this.editingConfirmedId = id;
-          this.router.navigate(['/purchases', id, 'edit'], { replaceUrl: true });
+          this.router.navigate(['/purchases', id, 'edit'], {
+            queryParams: this.returnQueryParams(),
+            replaceUrl: true,
+          });
           return;
         }
 
@@ -440,6 +515,16 @@ export class NewPurchaseComponent implements OnInit {
   }
 
   goBack() {
+    if (this.returnTo === 'payables') {
+      void this.router.navigate(['/payables'], {
+        queryParams: this.payablesReturnTab ? { tab: this.payablesReturnTab } : {},
+      });
+      return;
+    }
     this.navigationBack.back(['/purchases']);
+  }
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 }

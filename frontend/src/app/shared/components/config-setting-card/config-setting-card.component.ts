@@ -1,6 +1,7 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
+import { CONFIG_SETTING_DESC_CLASS } from '../config-editable-list/config-editable-list.constants';
 
 @Component({
   selector: 'app-config-setting-card',
@@ -49,7 +50,7 @@ import { LucideAngularModule } from 'lucide-angular';
               {{ listCount }}
             </span>
           </div>
-          <p *ngIf="description" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+          <p *ngIf="description" [class]="descClass">
             {{ description }}
           </p>
         </div>
@@ -67,6 +68,7 @@ import { LucideAngularModule } from 'lucide-angular';
 export class ConfigSettingCardComponent {
   @Input() title = '';
   @Input() description = '';
+  readonly descClass = CONFIG_SETTING_DESC_CLASS;
   @Input() listCount: number | null = null;
   /** Colapsa solo la lista interna (legacy). */
   @Input() collapsibleList = false;

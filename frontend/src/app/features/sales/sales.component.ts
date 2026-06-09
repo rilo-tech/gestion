@@ -1,4 +1,4 @@
-import { Component, DestroyRef, Injector, ViewChild, inject, OnInit } from '@angular/core';
+import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -23,7 +23,6 @@ import {
   clearSalesFormDraft,
   saveSalesFormDraft,
 } from '../../core/utils/form-return-context';
-import { prefersInlineFormPage } from '../../core/utils/responsive-form';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
@@ -32,7 +31,6 @@ import {
   DESKTOP_LIST_SEARCH_WRAP_CLASS,
   FORM_SUBMIT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
-import { SaleCounterFormPanelComponent } from './sale-counter-form-panel.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
@@ -58,14 +56,13 @@ import {
 } from '../../shared/components/transaction-lines-table/transaction-lines-table.component';
 import { TransactionTableLine } from '../../shared/components/transaction-lines-table/transaction-lines-table.types';
 import { TransactionLinesSectionComponent } from '../../shared/components/transaction-lines-section/transaction-lines-section.component';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   TransactionDetailPageComponent,
   TransactionDetailMetadataComponent,
   TransactionDetailMetaItem,
   TransactionSummaryPanelComponent,
   TransactionSummaryRowComponent,
-  TransactionFormSaveEvent,
-  buildTransactionSaveHeaderState,
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent, IconToolbarButtonComponent } from '../../shared/components/icon-toolbar';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
@@ -92,7 +89,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     ListPaginationComponent,
     ModalFormFooterComponent,
     CompactListRowComponent,
-    SaleCounterFormPanelComponent,
     TransactionLinesTableComponent,
     TransactionLinesSectionComponent,
     TransactionDetailPageComponent,
@@ -134,15 +130,15 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Facturado</p>
-          <p class="text-2xl font-bold text-gray-900">{{ '$' + totalFacturado }}</p>
+          <p class="text-2xl font-bold text-gray-900">{{ formatMoney(totalFacturado) }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Cobrado en ventas</p>
-          <p class="text-2xl font-bold text-teal-600">{{ '$' + totalCobradoEnVentas }}</p>
+          <p class="text-2xl font-bold text-teal-600">{{ formatMoney(totalCobradoEnVentas) }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Saldo pendiente</p>
-          <p class="text-2xl font-bold text-orange-500">{{ '$' + totalSaldoPendiente }}</p>
+          <p class="text-2xl font-bold text-orange-500">{{ formatMoney(totalSaldoPendiente) }}</p>
         </div>
       </div>
 
@@ -179,14 +175,14 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
               <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
               <ng-container *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0">
-                · Gan. {{ '$' + (sale.gananciaEstimada || 0) }}
+                · Gan. {{ formatMoney(sale.gananciaEstimada || 0) }}
               </ng-container>
             </div>
             <span
               *ngIf="auth.canViewOrderSalePrice"
               compactTrailing
               class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
-              {{ '$' + (sale.total || 0) }}
+              {{ formatMoney(sale.total || 0) }}
             </span>
             <span
               *ngIf="!auth.canViewOrderSalePrice && auth.canViewAccountBalance"
@@ -194,7 +190,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               class="text-[11px] font-bold tabular-nums shrink-0"
               [class.text-orange-500]="(sale.saldoPendiente || 0) > 0"
               [class.text-gray-500]="!(sale.saldoPendiente || 0)">
-              {{ '$' + (sale.saldoPendiente || 0) }}
+              {{ formatMoney(sale.saldoPendiente || 0) }}
             </span>
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando ventas...</p>
@@ -246,25 +242,25 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
                     Pedido #{{ sale.numeroPedidoLabel || '—' }}
                   </a>
                   <p *ngIf="sale.totalPagadoAnterior" class="text-xs text-gray-400 mt-0.5">
-                    Ya pagado en pedido: {{ '$' + sale.totalPagadoAnterior }}
+                    Ya pagado en pedido: {{ formatMoney(sale.totalPagadoAnterior) }}
                   </p>
                 </ng-container>
                 <span *ngIf="sale.origen !== 'pedido'" class="text-gray-600">Mostrador</span>
               </td>
               <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
-                {{ '$' + (sale.total || 0) }}
+                {{ formatMoney(sale.total || 0) }}
                 <div *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0" class="text-xs font-normal text-gray-400 mt-0.5">
-                  Costo {{ '$' + sale.costoReal }}
-                  · Gan. {{ '$' + (sale.gananciaEstimada || 0) }}
+                  Costo {{ formatMoney(sale.costoReal) }}
+                  · Gan. {{ formatMoney(sale.gananciaEstimada || 0) }}
                 </div>
               </td>
               <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-sm text-right tabular-nums">
-                <div class="font-semibold text-teal-700">{{ '$' + (sale.montoCobrado || 0) }}</div>
+                <div class="font-semibold text-teal-700">{{ formatMoney(sale.montoCobrado || 0) }}</div>
                 <div
                   class="text-xs font-semibold"
                   [class.text-orange-500]="(sale.saldoPendiente || 0) > 0"
                   [class.text-gray-400]="!(sale.saldoPendiente || 0)">
-                  Saldo {{ '$' + (sale.saldoPendiente || 0) }}
+                  Saldo {{ formatMoney(sale.saldoPendiente || 0) }}
                 </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
@@ -319,17 +315,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
       (closed)="closeSaleModal()">
 
         <app-icon-toolbar-button
-          *ngIf="saleModalMode === 'mostrador' || saleModalMode === 'edit'"
-          headerActions
-          class="sm:hidden"
-          [icon]="saleModalHeaderSave.icon"
-          [label]="saleModalHeaderSave.label"
-          [variant]="saleModalHeaderSave.variant"
-          [disabled]="saleModalHeaderSave.disabled"
-          [loading]="saleModalHeaderSave.loading"
-          (clicked)="saleCounterPanel?.submitSale()">
-        </app-icon-toolbar-button>
-        <app-icon-toolbar-button
           *ngIf="saleModalMode === 'pedido'"
           headerActions
           class="sm:hidden"
@@ -378,19 +363,19 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             </div>
             <div class="flex justify-between">
               <span class="text-gray-500">Total pedido</span>
-              <span class="font-bold tabular-nums">{{ '$' + selectedOrder.total }}</span>
+              <span class="font-bold tabular-nums">{{ formatMoney(selectedOrder.total) }}</span>
             </div>
             <div class="flex justify-between">
               <span class="text-gray-500">Ya pagado (seña / cuotas)</span>
-              <span class="font-semibold text-teal-700 tabular-nums">{{ '$' + selectedOrder.totalPagadoAnterior }}</span>
+              <span class="font-semibold text-teal-700 tabular-nums">{{ formatMoney(selectedOrder.totalPagadoAnterior) }}</span>
             </div>
             <div class="flex justify-between border-t border-gray-200 pt-2">
               <span class="text-gray-700 font-medium">Saldo a cobrar</span>
-              <span class="font-bold text-orange-600 tabular-nums">{{ '$' + selectedOrder.saldoPedido }}</span>
+              <span class="font-bold text-orange-600 tabular-nums">{{ formatMoney(selectedOrder.saldoPedido) }}</span>
             </div>
             <div *ngIf="auth.canViewEconomics && selectedOrder.costoReal" class="flex justify-between text-xs text-gray-500">
               <span>Costo registrado en pedido</span>
-              <span class="tabular-nums">{{ '$' + selectedOrder.costoReal }}</span>
+              <span class="tabular-nums">{{ formatMoney(selectedOrder.costoReal) }}</span>
             </div>
             <p *ngIf="selectedOrder.descripcion" class="text-xs text-gray-500 pt-1">
               {{ selectedOrder.descripcion }}
@@ -403,6 +388,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <input
                 type="number"
                 [(ngModel)]="montoCobrado"
+                name="pedidoMontoCobrado"
                 min="0"
                 class="w-full px-4 py-2 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-teal-500"
                 [class.border-red-300]="montoCobradoError"
@@ -425,6 +411,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago</label>
               <select
                 [(ngModel)]="medioPago"
+                name="pedidoMedioPago"
                 class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
                 <option value="efectivo">Efectivo</option>
                 <option value="transferencia">Transferencia</option>
@@ -438,6 +425,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
             <textarea
               [(ngModel)]="saleNotas"
+              name="pedidoSaleNotas"
               rows="2"
               class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
             </textarea>
@@ -454,16 +442,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             (primaryClick)="submitSale()">
           </app-modal-form-footer>
         </ng-container>
-
-        <app-sale-counter-form-panel
-          *ngIf="saleModalOpen && (saleModalMode === 'mostrador' || saleModalMode === 'edit')"
-          #saleCounterPanel
-          [editingSaleId]="saleModalMode === 'edit' ? editingSaleId : null"
-          [pageLayout]="false"
-          (saved)="onCounterSaleSaved($event)"
-          (savingChange)="onCounterSaleSavingChange($event)"
-          (cancelled)="closeSaleModal()">
-        </app-sale-counter-form-panel>
     </app-transaction-modal>
 
     <app-transaction-modal
@@ -476,7 +454,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         <div class="rounded-lg bg-gray-50 border border-gray-100 p-3 text-sm">
           <div class="flex justify-between gap-4">
             <span class="text-gray-500">Saldo pendiente</span>
-            <span class="font-bold tabular-nums text-orange-600">{{ '$' + collectSaldo }}</span>
+            <span class="font-bold tabular-nums text-orange-600">{{ formatMoney(collectSaldo) }}</span>
           </div>
         </div>
         <div>
@@ -484,6 +462,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           <input
             type="number"
             [(ngModel)]="collectMonto"
+            name="collectMonto"
             min="0"
             [max]="collectSaldo"
             class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
@@ -492,6 +471,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           <label class="block text-sm font-medium text-gray-700 mb-1">Medio de pago</label>
           <select
             [(ngModel)]="collectMedio"
+            name="collectMedio"
             class="w-full px-4 py-2 rounded-lg border border-gray-200 bg-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
             <option value="efectivo">Efectivo</option>
             <option value="transferencia">Transferencia</option>
@@ -503,6 +483,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
           <input
             [(ngModel)]="collectNotas"
+            name="collectNotas"
             class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
       </div>
@@ -568,7 +549,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               *ngFor="let cobro of sale.cobros"
               class="flex justify-between gap-4 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm">
               <span class="text-gray-600 dark:text-gray-400">{{ formatDate(cobro.fecha) }} · {{ cobro.medioPago || 'efectivo' }}</span>
-              <span class="font-semibold tabular-nums text-teal-700 dark:text-teal-400">{{ '$' + cobro.monto }}</span>
+              <span class="font-semibold tabular-nums text-teal-700 dark:text-teal-400">{{ formatMoney(cobro.monto) }}</span>
             </div>
           </div>
         </div>
@@ -580,24 +561,24 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
       <app-transaction-summary-panel aside *ngIf="detailSale as sale">
         <div class="space-y-2 sm:space-y-3">
-          <app-transaction-summary-row label="Total venta" [value]="'$' + (sale.total || 0)"></app-transaction-summary-row>
+          <app-transaction-summary-row label="Total venta" [value]="formatMoney(sale.total || 0)"></app-transaction-summary-row>
           <app-transaction-summary-row
             *ngIf="sale.totalPagadoAnterior"
             label="Ya pagado en pedido"
-            [value]="'$' + sale.totalPagadoAnterior"
+            [value]="formatMoney(sale.totalPagadoAnterior)"
             valueTone="teal"></app-transaction-summary-row>
           <app-transaction-summary-row
             label="Cobrado en esta venta"
-            [value]="'$' + (sale.montoCobrado || 0)"
+            [value]="formatMoney(sale.montoCobrado || 0)"
             valueTone="teal"></app-transaction-summary-row>
           <app-transaction-summary-row
             label="Saldo pendiente"
-            [value]="'$' + (sale.saldoPendiente || 0)"
+            [value]="formatMoney(sale.saldoPendiente || 0)"
             [valueTone]="(sale.saldoPendiente || 0) > 0 ? 'orange' : 'default'"></app-transaction-summary-row>
           <app-transaction-summary-row
             *ngIf="auth.canViewEconomics && sale.costoReal != null"
             label="Costo · Ganancia"
-            [value]="'$' + sale.costoReal + ' · $' + (sale.gananciaEstimada || 0)"
+            [value]="formatMoney(sale.costoReal) + ' · ' + formatMoney(sale.gananciaEstimada || 0)"
             [divider]="true"
             size="sm"></app-transaction-summary-row>
         </div>
@@ -606,8 +587,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
   `,
 })
 export class SalesComponent implements OnInit {
-  @ViewChild('saleCounterPanel') saleCounterPanel?: SaleCounterFormPanelComponent;
-
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
@@ -639,8 +618,7 @@ export class SalesComponent implements OnInit {
   loading = true;
 
   saleModalOpen = false;
-  saleModalMode: SaleModalMode = 'mostrador';
-  saleModalSaving = false;
+  saleModalMode: SaleModalMode = 'pedido';
   savingSale = false;
   editingSaleId: string | null = null;
 
@@ -664,38 +642,11 @@ export class SalesComponent implements OnInit {
   saleNotas = '';
 
   get saleModalTitle(): string {
-    if (this.saleModalMode === 'edit') {
-      const sale = this.sales.find((entry) => entry.id === this.editingSaleId);
-      if (sale?.estado === 'borrador') return 'Borrador de venta';
-      return 'Editar venta';
-    }
-    return this.saleModalMode === 'pedido' ? 'Registrar entrega / venta' : 'Venta de mostrador';
+    return 'Registrar entrega / venta';
   }
 
   get saleModalSubtitle(): string {
-    if (this.saleModalMode === 'edit') {
-      const sale = this.sales.find((entry) => entry.id === this.editingSaleId);
-      if (sale?.estado === 'borrador') {
-        return 'Guardá el borrador sin mover stock ni caja. Confirmá cuando esté listo.';
-      }
-      return 'Corregí productos, cantidades o el monto cobrado al registrar la venta.';
-    }
-    return this.saleModalMode === 'pedido'
-      ? 'Acción rápida desde el listado. Solo se registra en caja el saldo que cobrás ahora.'
-      : 'Acción rápida desde el listado. Descuenta stock y registra el cobro en caja.';
-  }
-
-  get saleModalSaveLabel(): string {
-    return this.saleModalMode === 'edit' ? 'Guardar cambios' : 'Registrar venta';
-  }
-
-  get saleModalHeaderSave() {
-    return buildTransactionSaveHeaderState({
-      saving: this.saleModalSaving,
-      successMessage: this.saleCounterPanel?.saveSuccessMessage ?? '',
-      idleLabel: this.saleModalSaveLabel,
-      savingLabel: this.saleModalMode === 'edit' ? 'Guardando...' : 'Registrando...',
-    });
+    return 'Acción rápida desde el listado. Solo se registra en caja el saldo que cobrás ahora.';
   }
 
   get filteredSales(): Sale[] {
@@ -956,7 +907,7 @@ export class SalesComponent implements OnInit {
 
     saveSalesFormDraft({
       saleModalMode: 'mostrador',
-      saleModalOpen: true,
+      saleModalOpen: false,
       saleClienteId: sale.clienteId ?? '',
       pendingClientName: '',
       draftLines: (sale.items ?? []).map((line) => ({
@@ -977,26 +928,7 @@ export class SalesComponent implements OnInit {
     });
 
     this.closeDetailModal();
-
-    if (prefersInlineFormPage()) {
-      this.router.navigate(['/sales/new'], { queryParams: { restoreDraft: '1' } });
-      return;
-    }
-
-    this.stockService.getStock().subscribe((items) => {
-      if (items.length === 0) {
-        clearSalesFormDraft();
-        this.dialogService.alert({
-          title: 'Sin productos',
-          message: 'Cargá productos en Stock antes de duplicar una venta.',
-        });
-        return;
-      }
-      this.saleModalMode = 'mostrador';
-      this.editingSaleId = null;
-      this.saleModalOpen = true;
-      queueMicrotask(() => this.saleCounterPanel?.restoreFromSessionDraft(null));
-    });
+    this.router.navigate(['/sales/new'], { queryParams: { restoreDraft: '1' } });
   }
 
   confirmDeleteFromDetail() {
@@ -1061,6 +993,10 @@ export class SalesComponent implements OnInit {
     return date.toLocaleDateString('es-AR');
   }
 
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   getClientName(clienteId?: string): string {
     if (!clienteId) return 'Sin cliente';
     return this.clients.find((client) => client.id === clienteId)?.nombre ?? 'Cliente';
@@ -1071,8 +1007,8 @@ export class SalesComponent implements OnInit {
     if (!draft) return;
 
     if (
-      prefersInlineFormPage() &&
-      (draft.saleModalMode === 'mostrador' || draft.saleModalMode === 'edit')
+      draft.saleModalMode === 'mostrador' ||
+      draft.saleModalMode === 'edit'
     ) {
       const queryParams: Record<string, string> = { restoreDraft: '1' };
       if (clienteId) queryParams.clienteId = clienteId;
@@ -1109,18 +1045,6 @@ export class SalesComponent implements OnInit {
       }
       return;
     }
-
-    if (!draft.saleModalOpen) {
-      clearSalesFormDraft();
-      return;
-    }
-
-    this.saleModalMode = draft.saleModalMode as SaleModalMode;
-    this.editingSaleId = draft.editingSaleId;
-    this.saleModalOpen = true;
-    queueMicrotask(() => {
-      this.saleCounterPanel?.restoreFromSessionDraft(clienteId);
-    });
   }
 
   useMaxMontoCobrado() {
@@ -1129,28 +1053,6 @@ export class SalesComponent implements OnInit {
 
   openSaleModal(mode: SaleModalMode, preselectedOrderId?: string) {
     if (!this.auth.canCreateSales) return;
-
-    if (mode === 'mostrador' && prefersInlineFormPage()) {
-      this.stockService.getStock().subscribe((items) => {
-        if (items.length === 0) {
-          this.dialogService.alert({
-            title: 'Sin productos',
-            message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
-          });
-          return;
-        }
-        this.router.navigate(['/sales/new']);
-      });
-      return;
-    }
-
-    this.saleModalMode = mode;
-    this.editingSaleId = null;
-    this.selectedOrderId = preselectedOrderId ?? '';
-    this.orderFilterClienteId = '';
-    this.medioPago = 'efectivo';
-    this.saleNotas = '';
-    this.montoCobrado = null;
 
     if (mode === 'mostrador') {
       this.stockService.getStock().subscribe({
@@ -1162,7 +1064,7 @@ export class SalesComponent implements OnInit {
             });
             return;
           }
-          this.saleModalOpen = true;
+          this.router.navigate(['/sales/new']);
         },
         error: () => {
           this.dialogService.alert({
@@ -1174,6 +1076,14 @@ export class SalesComponent implements OnInit {
       });
       return;
     }
+
+    this.saleModalMode = mode;
+    this.editingSaleId = null;
+    this.selectedOrderId = preselectedOrderId ?? '';
+    this.orderFilterClienteId = '';
+    this.medioPago = 'efectivo';
+    this.saleNotas = '';
+    this.montoCobrado = null;
 
     if (mode === 'pedido') {
       this.loadEligibleOrders(undefined, () => {
@@ -1200,30 +1110,6 @@ export class SalesComponent implements OnInit {
   closeSaleModal() {
     this.saleModalOpen = false;
     this.editingSaleId = null;
-    this.saleModalSaving = false;
-  }
-
-  onCounterSaleSavingChange(saving: boolean) {
-    queueMicrotask(() => {
-      this.saleModalSaving = saving;
-    });
-  }
-
-  onCounterSaleSaved(event?: TransactionFormSaveEvent) {
-    if (event?.draft) {
-      this.saleModalMode = 'edit';
-      this.editingSaleId = event.id;
-      this.saleModalSaving = false;
-      this.loadSales();
-      return;
-    }
-    if (event?.id) {
-      this.saleModalMode = 'edit';
-      this.editingSaleId = event.id;
-    }
-    this.saleModalSaving = false;
-    this.loadSales();
-    this.loadEligibleOrders();
   }
 
   canEditSale(sale: Sale): boolean {
@@ -1252,15 +1138,7 @@ export class SalesComponent implements OnInit {
 
   openEditSale(sale: Sale) {
     if (!sale.id || sale.origen !== 'mostrador') return;
-
-    if (prefersInlineFormPage()) {
-      this.router.navigate(['/sales', sale.id, 'edit']);
-      return;
-    }
-
-    this.saleModalMode = 'edit';
-    this.editingSaleId = sale.id;
-    this.saleModalOpen = true;
+    this.router.navigate(['/sales', sale.id, 'edit']);
   }
 
   openCollectModal(sale: Sale) {

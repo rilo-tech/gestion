@@ -12,6 +12,7 @@ import {
   updateConfirmedPurchase,
   repairPurchasePayables,
   deletePurchase,
+  enrichPurchasesForList,
 } from '../utils/purchase-finance.ts';
 import { loadFinanzasConfig } from '../utils/finance-config.ts';
 import { allocatePurchaseNumber, resolvePurchaseLabel } from '../utils/purchase-number.ts';
@@ -58,7 +59,10 @@ router.get('/:businessId', async (req, res) => {
       const snapshot = await query.get();
       const hasMore = snapshot.docs.length > limit;
       const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-      const items = docs.map((doc) => mapPurchaseDoc(doc));
+      const items = await enrichPurchasesForList(
+        businessId,
+        docs.map((doc) => mapPurchaseDoc(doc))
+      );
       const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
       return res.json({ items, nextCursor, hasMore });
     }
@@ -67,7 +71,10 @@ router.get('/:businessId', async (req, res) => {
       .collection(`negocios/${businessId}/compras`)
       .orderBy('fecha', 'desc')
       .get();
-    const purchases = snapshot.docs.map((doc) => mapPurchaseDoc(doc));
+    const purchases = await enrichPurchasesForList(
+      businessId,
+      snapshot.docs.map((doc) => mapPurchaseDoc(doc))
+    );
     res.json(purchases);
   } catch (error) {
     console.error('Error fetching purchases:', error);

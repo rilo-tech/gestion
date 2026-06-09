@@ -8,6 +8,7 @@ import {
   ClientAccountSale,
   ClientService,
 } from '../../core/services/client.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { OrderService } from '../../core/services/order.service';
 import { SalesService } from '../../core/services/sales.service';
 import { DialogService } from '../../core/services/dialog.service';
@@ -94,25 +95,25 @@ type CollectMode = 'client' | 'item';
               class="text-xl sm:text-2xl font-bold tabular-nums"
               [class.text-orange-600]="account.debe"
               [class.text-gray-900]="!account.debe">
-              {{ '$' + account.saldoTotal }}
+              {{ formatMoney(account.saldoTotal) }}
             </p>
           </div>
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Total facturado</p>
             <p class="text-xl sm:text-2xl font-bold tabular-nums text-gray-900">
-              {{ '$' + (account.totalFacturado || 0) }}
+              {{ formatMoney(account.totalFacturado || 0) }}
             </p>
           </div>
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Total cobrado</p>
             <p class="text-xl sm:text-2xl font-bold tabular-nums text-teal-700">
-              {{ '$' + (account.totalCobrado || 0) }}
+              {{ formatMoney(account.totalCobrado || 0) }}
             </p>
           </div>
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm col-span-2 lg:col-span-1">
             <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Desglose deuda</p>
-            <p class="text-sm text-gray-600">Pedidos: {{ '$' + account.saldoPedidos }}</p>
-            <p class="text-sm text-gray-600">Mostrador: {{ '$' + account.saldoVentasMostrador }}</p>
+            <p class="text-sm text-gray-600">Pedidos: {{ formatMoney(account.saldoPedidos) }}</p>
+            <p class="text-sm text-gray-600">Mostrador: {{ formatMoney(account.saldoVentasMostrador) }}</p>
           </div>
         </div>
 
@@ -135,7 +136,7 @@ type CollectMode = 'client' | 'item';
                 <p class="text-xs text-gray-500 truncate group-hover:text-teal-600">{{ entry.detail }}</p>
               </a>
               <div class="flex items-center gap-3 shrink-0">
-                <span class="font-bold tabular-nums text-orange-700">{{ '$' + entry.saldo }}</span>
+                <span class="font-bold tabular-nums text-orange-700">{{ formatMoney(entry.saldo) }}</span>
                 <app-icon-action
                   *ngIf="auth.canAccessCash"
                   label="Cobrar"
@@ -174,7 +175,7 @@ type CollectMode = 'client' | 'item';
                 </p>
               </div>
               <div class="flex items-center gap-3 shrink-0">
-                <span class="font-bold tabular-nums text-teal-700">{{ '$' + pago.monto }}</span>
+                <span class="font-bold tabular-nums text-teal-700">{{ formatMoney(pago.monto) }}</span>
               </div>
             </div>
           </div>
@@ -211,9 +212,9 @@ type CollectMode = 'client' | 'item';
                       <p class="text-xs text-gray-500 truncate">{{ pedido.descripcion || '—' }}</p>
                     </td>
                     <td class="px-4 py-3 text-gray-600">{{ pedido.estado || '—' }}</td>
-                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ '$' + pedido.total }}</td>
+                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ formatMoney(pedido.total) }}</td>
                     <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="pedido.saldo > 0">
-                      {{ '$' + pedido.saldo }}
+                      {{ formatMoney(pedido.saldo) }}
                     </td>
                   </tr>
                   <tr *ngIf="account.pedidos.length === 0">
@@ -264,9 +265,9 @@ type CollectMode = 'client' | 'item';
                       </a>
                       <span *ngIf="venta.origen !== 'pedido'">Mostrador</span>
                     </td>
-                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ '$' + venta.total }}</td>
+                    <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ formatMoney(venta.total) }}</td>
                     <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums font-semibold" [class.text-orange-600]="venta.saldoPendiente > 0">
-                      {{ '$' + venta.saldoPendiente }}
+                      {{ formatMoney(venta.saldoPendiente) }}
                     </td>
                   </tr>
                   <tr *ngIf="account.ventas.length === 0">
@@ -297,7 +298,7 @@ type CollectMode = 'client' | 'item';
             <span class="text-gray-500">
               {{ collectMode === 'client' ? 'Saldo total del cliente' : 'Saldo pendiente' }}
             </span>
-            <span class="font-bold tabular-nums text-orange-600">{{ '$' + collectSaldoMax }}</span>
+            <span class="font-bold tabular-nums text-orange-600">{{ formatMoney(collectSaldoMax) }}</span>
           </div>
           <div *ngIf="collectMode === 'client' && collectAllocationPreview.length" class="pt-2 border-t border-gray-200">
             <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Se aplicará en este orden</p>
@@ -306,7 +307,7 @@ type CollectMode = 'client' | 'item';
                 *ngFor="let row of collectAllocationPreview"
                 class="flex justify-between gap-3 text-xs text-gray-700">
                 <span class="truncate">{{ row.label }}</span>
-                <span class="font-semibold tabular-nums shrink-0">{{ '$' + row.monto }}</span>
+                <span class="font-semibold tabular-nums shrink-0">{{ formatMoney(row.monto) }}</span>
               </div>
             </div>
           </div>
@@ -360,6 +361,10 @@ type CollectMode = 'client' | 'item';
   `,
 })
 export class ClientHistorialComponent implements OnInit {
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly listToolbarRowClass = LIST_TOOLBAR_ROW_CLASS;
   readonly iconToolbarOutlineLinkClass = ICON_TOOLBAR_OUTLINE_LINK_CLASS;

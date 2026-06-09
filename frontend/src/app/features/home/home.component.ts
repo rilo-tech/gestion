@@ -25,12 +25,12 @@ import { Router, RouterLink } from '@angular/router';
         <a
           *ngIf="auth.canViewEconomics && auth.canAccessSales"
           routerLink="/sales"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
-          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
-            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
+          class="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 sm:gap-4 sm:col-span-2 lg:col-span-1 transition-colors hover:border-teal-200 hover:bg-teal-50/30">
+          <div class="w-10 h-10 sm:w-12 sm:h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
+            <i-lucide name="wallet" class="w-5 h-5 sm:w-6 sm:h-6"></i-lucide>
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
+            <p class="text-[10px] sm:text-xs font-bold text-gray-400 uppercase truncate">Ventas · {{ currentMonthLabel }}</p>
 
             <div class="hidden sm:block">
               <p class="text-xl font-bold text-gray-900 tabular-nums">{{ formatMoney(monthlySalesIncome, true) }}</p>
@@ -44,41 +44,43 @@ import { Router, RouterLink } from '@angular/router';
               </p>
             </div>
 
-            <div class="sm:hidden space-y-1">
-              <p class="text-xs font-semibold text-teal-600 tabular-nums">
-                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
-              </p>
+            <button
+              type="button"
+              class="sm:hidden w-full text-left rounded-md -mx-0.5 px-0.5 py-0.5 select-none"
+              (click)="toggleMobileSalesKpiReveal($event)"
+              [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar ventas del mes' : 'Mostrar ventas del mes'"
+              [attr.aria-pressed]="mobileSalesKpiRevealed">
+              <div class="flex items-end gap-4 mt-0.5">
+                <div class="min-w-0">
+                  <p class="text-[9px] font-bold text-gray-400 uppercase leading-none">Fact.</p>
+                  <p class="text-base font-bold text-gray-900 tabular-nums leading-tight">
+                    {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
+                  </p>
+                </div>
+                <div class="min-w-0">
+                  <p class="text-[9px] font-bold text-teal-600 uppercase leading-none">Gan.</p>
+                  <p class="text-base font-bold text-teal-600 tabular-nums leading-tight">
+                    {{ mobileSalesKpiRevealed ? formatMoney(monthlyProfit, true) : maskedMoneyLabel }}
+                  </p>
+                </div>
+              </div>
               <p
-                *ngIf="monthlyOfferBonus > 0"
-                class="text-xs font-semibold text-amber-600 tabular-nums">
-                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+                *ngIf="monthlyOfferBonus > 0 && mobileSalesKpiRevealed"
+                class="text-[10px] font-semibold text-amber-600 tabular-nums mt-0.5">
+                Ofertas {{ formatMoney(monthlyOfferBonus, true) }}
               </p>
-              <button
-                type="button"
-                class="w-full text-left rounded-lg -mx-1 px-1 py-0.5 select-none"
-                (click)="toggleMobileSalesKpiReveal($event)"
-                [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar total de ventas' : 'Mostrar total de ventas'"
-                [attr.aria-pressed]="mobileSalesKpiRevealed">
-                <p class="text-[10px] font-bold text-gray-400 uppercase">Facturado</p>
-                <p class="text-lg font-bold text-gray-900 tabular-nums">
-                  {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
-                </p>
-                <p class="text-[10px] text-gray-400 mt-0.5">
-                  {{ mobileSalesKpiRevealed ? 'Tocá para ocultar ventas' : 'Tocá para ver ventas del mes' }}
-                </p>
-              </button>
-            </div>
+            </button>
           </div>
         </a>
 
         <div
           *ngIf="auth.canViewEconomics && !auth.canAccessSales"
-          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
-          <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
-            <i-lucide name="wallet" class="w-6 h-6"></i-lucide>
+          class="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 sm:gap-4 sm:col-span-2 lg:col-span-1">
+          <div class="w-10 h-10 sm:w-12 sm:h-12 bg-teal-50 text-teal-600 rounded-xl flex items-center justify-center shrink-0">
+            <i-lucide name="wallet" class="w-5 h-5 sm:w-6 sm:h-6"></i-lucide>
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-xs font-bold text-gray-400 uppercase">Ventas · {{ currentMonthLabel }}</p>
+            <p class="text-[10px] sm:text-xs font-bold text-gray-400 uppercase truncate">Ventas · {{ currentMonthLabel }}</p>
 
             <div class="hidden sm:block">
               <p class="text-xl font-bold text-gray-900 tabular-nums">{{ formatMoney(monthlySalesIncome, true) }}</p>
@@ -92,30 +94,32 @@ import { Router, RouterLink } from '@angular/router';
               </p>
             </div>
 
-            <div class="sm:hidden space-y-1">
-              <p class="text-xs font-semibold text-teal-600 tabular-nums">
-                Gan. cobrada {{ formatMoney(monthlyProfit, true) }}
-              </p>
+            <button
+              type="button"
+              class="sm:hidden w-full text-left rounded-md -mx-0.5 px-0.5 py-0.5 select-none"
+              (click)="toggleMobileSalesKpiReveal($event)"
+              [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar ventas del mes' : 'Mostrar ventas del mes'"
+              [attr.aria-pressed]="mobileSalesKpiRevealed">
+              <div class="flex items-end gap-4 mt-0.5">
+                <div class="min-w-0">
+                  <p class="text-[9px] font-bold text-gray-400 uppercase leading-none">Fact.</p>
+                  <p class="text-base font-bold text-gray-900 tabular-nums leading-tight">
+                    {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
+                  </p>
+                </div>
+                <div class="min-w-0">
+                  <p class="text-[9px] font-bold text-teal-600 uppercase leading-none">Gan.</p>
+                  <p class="text-base font-bold text-teal-600 tabular-nums leading-tight">
+                    {{ mobileSalesKpiRevealed ? formatMoney(monthlyProfit, true) : maskedMoneyLabel }}
+                  </p>
+                </div>
+              </div>
               <p
-                *ngIf="monthlyOfferBonus > 0"
-                class="text-xs font-semibold text-amber-600 tabular-nums">
-                Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+                *ngIf="monthlyOfferBonus > 0 && mobileSalesKpiRevealed"
+                class="text-[10px] font-semibold text-amber-600 tabular-nums mt-0.5">
+                Ofertas {{ formatMoney(monthlyOfferBonus, true) }}
               </p>
-              <button
-                type="button"
-                class="w-full text-left rounded-lg -mx-1 px-1 py-0.5 select-none"
-                (click)="toggleMobileSalesKpiReveal($event)"
-                [attr.aria-label]="mobileSalesKpiRevealed ? 'Ocultar total de ventas' : 'Mostrar total de ventas'"
-                [attr.aria-pressed]="mobileSalesKpiRevealed">
-                <p class="text-[10px] font-bold text-gray-400 uppercase">Facturado</p>
-                <p class="text-lg font-bold text-gray-900 tabular-nums">
-                  {{ mobileSalesKpiRevealed ? formatMoney(monthlySalesIncome, true) : maskedMoneyLabel }}
-                </p>
-                <p class="text-[10px] text-gray-400 mt-0.5">
-                  {{ mobileSalesKpiRevealed ? 'Tocá para ocultar ventas' : 'Tocá para ver ventas del mes' }}
-                </p>
-              </button>
-            </div>
+            </button>
           </div>
         </div>
 

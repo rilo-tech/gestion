@@ -30,6 +30,7 @@ import {
   normalizeOrderStockMotivo,
 } from '../../core/constants/stock-movimientos';
 import { DialogService } from '../../core/services/dialog.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { AuthService } from '../../core/services/auth.service';
 import { isDeletableStockMovement } from '../../core/utils/deletion-rules';
 import { PERMISSIONS } from '../../core/constants/permissions';
@@ -304,7 +305,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 {{ controlsStockItem(item) ? (item.stockMinimo || 0) + ' u.' : '—' }}
               </td>
               <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
-                {{ '$' + (item.costo || 0) }}
+                {{ formatMoney(item.costo || 0) }}
               </td>
               <td
                 *ngIf="auth.isAdmin"
@@ -700,6 +701,10 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
   `,
 })
 export class StockComponent implements OnInit, OnDestroy {
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;

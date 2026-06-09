@@ -3,6 +3,19 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
 
+export interface ClientReferenceSummary {
+  ventas: boolean;
+  pedidos: boolean;
+  movimientosCaja: boolean;
+  compromisosPago: boolean;
+}
+
+export interface ClientDeletionGuard {
+  canDelete: boolean;
+  references: ClientReferenceSummary;
+  message: string | null;
+}
+
 export interface Client {
   id?: string;
   nombre: string;
@@ -208,6 +221,12 @@ export class ClientService {
     return this.http.patch<{ id: string }>(
       `/api/clients/${this.businessId}/${clientId}`,
       client
+    );
+  }
+
+  getClientDeletionGuard(clientId: string): Observable<ClientDeletionGuard> {
+    return this.http.get<ClientDeletionGuard>(
+      `/api/clients/${this.businessId}/${clientId}/deletion-guard`
     );
   }
 

@@ -3,6 +3,9 @@ import { normalizeMovementAmbito, resolveCashReversalAmbito } from './caja-ambit
 import { createCashEgresoForAmbitoTotals } from './cash-egreso.ts';
 import { syncPurchasePayablesForCompra } from './card-statements.ts';
 import {
+  enrichPurchasePago,
+  findMedioPagoInConfig,
+  findTarjetaInConfig,
   getCategoriaGastoById,
   getMedioPagoById,
   getTarjetaById,
@@ -12,6 +15,7 @@ import {
   medioPagoRequiereCuentaHija,
   purchaseLineAffectsStock,
   type PurchaseLineTipo,
+  type PurchasePagoShape,
 } from './finance-config.ts';
 import { syncPendingOrdersAfterStockChange } from './order-stock-reservations.ts';
 import { allocatePurchaseNumber, resolvePurchaseLabel } from './purchase-number.ts';
@@ -67,6 +71,8 @@ export interface ParsedPurchaseLine {
 export interface ParsedPurchasePayment {
   medioPagoId: string;
   tarjetaId?: string;
+  tarjetaLabel?: string;
+  medioPagoLabel?: string;
   cuotas: number;
   fechaPrimerVencimiento?: string;
 }
@@ -222,7 +228,7 @@ export async function parsePurchaseInput(
   }
 
   const tarjetaId = String(pagoRaw.tarjetaId ?? body.tarjetaId ?? '').trim() || undefined;
-  const tarjeta = tarjetaId ? getTarjetaById(finanzas.tarjetas, tarjetaId) : undefined;
+  const tarjeta = tarjetaId ? findTarjetaInConfig(finanzas.tarjetas, tarjetaId) : undefined;
 
   let effectiveMedio = medio;
   let effectiveMedioPagoId = medioPagoId;
@@ -269,6 +275,8 @@ export async function parsePurchaseInput(
       pago: {
         medioPagoId: effectiveMedioPagoId,
         tarjetaId,
+        tarjetaLabel: tarjeta?.label?.trim() || undefined,
+        medioPagoLabel: effectiveMedio.label?.trim() || undefined,
         cuotas,
         fechaPrimerVencimiento,
       },
@@ -444,7 +452,8 @@ async function applyPayablesForPurchase(
   compraId: string,
   compraLabel: string,
   input: ParsedPurchaseInput,
-  finanzas: FinanzasConfig
+  finanzas: FinanzasConfig,
+  options?: { allowPaid?: boolean }
 ): Promise<void> {
   const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId);
   if (!medio || !medioPagoGeneratesPayables(medio)) return;
@@ -457,21 +466,25 @@ async function applyPayablesForPurchase(
   for (const [ambito, montoTotal] of totalsByAmbitoFromItems(input.items)) {
     if (montoTotal === 0) continue;
     const ambitoLines = input.items.filter((line) => line.ambito === ambito);
-    const result = await syncPurchasePayablesForCompra(businessId, {
-      compraId,
-      compraLabel,
-      proveedor: input.proveedor,
-      tarjetaId: tarjeta?.id ?? input.pago.tarjetaId ?? '',
-      tarjetaLabel: tarjeta?.label ?? input.proveedor,
-      medioPagoId: input.pago.medioPagoId,
-      ambito,
-      montoTotal,
-      cuotas: input.pago.cuotas,
-      fechaPrimerVencimiento: input.pago.fechaPrimerVencimiento!,
-      lineDescriptions: ambitoLines.map(
-        (line) => line.descripcion || line.categoriaLabel || line.tipoLinea
-      ),
-    });
+    const result = await syncPurchasePayablesForCompra(
+      businessId,
+      {
+        compraId,
+        compraLabel,
+        proveedor: input.proveedor,
+        tarjetaId: tarjeta?.id ?? input.pago.tarjetaId ?? '',
+        tarjetaLabel: tarjeta?.label ?? input.proveedor,
+        medioPagoId: input.pago.medioPagoId,
+        ambito,
+        montoTotal,
+        cuotas: input.pago.cuotas,
+        fechaPrimerVencimiento: input.pago.fechaPrimerVencimiento!,
+        lineDescriptions: ambitoLines.map(
+          (line) => line.descripcion || line.categoriaLabel || line.tipoLinea
+        ),
+      },
+      { allowPaid: options?.allowPaid }
+    );
     created += result.cuotasCreated;
   }
 
@@ -521,13 +534,19 @@ export async function repairPurchasePayables(
 
   const compraLabel = resolvePurchaseLabel({ ...existing, id: compraId });
   const before = await purchaseHasCuotasForCompra(businessId, compraId);
-  await ensurePurchasePayablesFromDocument(
-    businessId,
-    compraId,
-    compraLabel,
-    parsed.input,
-    finanzas
-  );
+
+  if (purchasePaymentKind(parsed.input.pago.medioPagoId, finanzas) === 'payables') {
+    await applyPayablesForPurchase(
+      businessId,
+      compraId,
+      compraLabel,
+      parsed.input,
+      finanzas,
+      { allowPaid: true }
+    );
+  } else if (before) {
+    throw new Error('La compra ya no usa un medio que genere cuotas.');
+  }
 
   const afterSnap = await db
     .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
@@ -535,7 +554,7 @@ export async function repairPurchasePayables(
     .get();
 
   return {
-    cuotasCreated: before ? 0 : afterSnap.size,
+    cuotasCreated: afterSnap.size,
   };
 }
 
@@ -1192,12 +1211,24 @@ export async function updateConfirmedPurchase(
   const payablesAmbitosChanged =
     [...oldTotals.keys()].sort().join('|') !== [...newTotals.keys()].sort().join('|');
 
+  const tarjetaIdChanged =
+    (oldInput.pago.tarjetaId ?? '') !== (input.pago.tarjetaId ?? '');
+  const tarjetaOnlyPayablesChange =
+    tarjetaIdChanged &&
+    !paymentKindChanged &&
+    newPaymentKind === 'payables' &&
+    oldInput.pago.cuotas === input.pago.cuotas &&
+    oldInput.pago.medioPagoId === input.pago.medioPagoId &&
+    (oldInput.pago.fechaPrimerVencimiento ?? '') === (input.pago.fechaPrimerVencimiento ?? '') &&
+    purchaseTotalsSignature(oldInput) === purchaseTotalsSignature(input) &&
+    !payablesAmbitosChanged;
+
   const mustRemovePayables =
     oldPaymentKind === 'payables' &&
     (paymentKindChanged ||
       newPaymentKind !== 'payables' ||
-      payablesStructureChanged ||
-      payablesAmbitosChanged);
+      payablesAmbitosChanged ||
+      (payablesStructureChanged && !tarjetaOnlyPayablesChange));
 
   const hasExistingPayables = await purchaseHasCuotasForCompra(businessId, compraId);
   const mustApplyPayables =
@@ -1220,8 +1251,10 @@ export async function updateConfirmedPurchase(
       subtotal: line.importe,
       productoNombre: line.productoNombre,
     }));
-    if (newPaymentKind === 'payables' && !hasExistingPayables) {
-      await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas);
+    if (newPaymentKind === 'payables' && (tarjetaOnlyPayablesChange || !hasExistingPayables)) {
+      await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas, {
+        allowPaid: hasExistingPayables,
+      });
     }
     await ref.update(
       buildPurchaseDocumentFields(input, normalizedItems, {
@@ -1300,7 +1333,11 @@ export async function updateConfirmedPurchase(
     );
   }
   if (mustApplyPayables) {
-    applyTasks.push(applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas));
+    applyTasks.push(
+      applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas, {
+        allowPaid: hasExistingPayables,
+      })
+    );
   }
 
   if (applyTasks.length > 0) {
@@ -1386,4 +1423,79 @@ export async function deletePurchase(
   scheduleStockMetricsRefresh(businessId);
 
   return { id: compraId, compraLabel };
+}
+
+async function loadTarjetaLabelsByCompraId(
+  businessId: string,
+  compraIds: string[]
+): Promise<Map<string, { tarjetaId?: string; tarjetaLabel: string }>> {
+  const map = new Map<string, { tarjetaId?: string; tarjetaLabel: string }>();
+  const uniqueIds = [...new Set(compraIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+
+  for (let index = 0; index < uniqueIds.length; index += 10) {
+    const chunk = uniqueIds.slice(index, index + 10);
+    const snapshot = await db
+      .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+      .where('compraId', 'in', chunk)
+      .get();
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const compraId = String(data.compraId ?? '').trim();
+      const tarjetaLabel = String(data.tarjetaLabel ?? '').trim();
+      const tarjetaId = String(data.tarjetaId ?? '').trim();
+      if (!compraId || !tarjetaLabel || map.has(compraId)) continue;
+      map.set(compraId, { tarjetaId: tarjetaId || undefined, tarjetaLabel });
+    }
+  }
+
+  return map;
+}
+
+export async function enrichPurchasesForList(
+  businessId: string,
+  purchases: Array<Record<string, unknown>>
+): Promise<Array<Record<string, unknown>>> {
+  if (purchases.length === 0) return purchases;
+
+  const finanzas = await loadFinanzasConfig(businessId);
+  const backfillIds: string[] = [];
+
+  for (const purchase of purchases) {
+    const purchaseId = String(purchase.id ?? '').trim();
+    const pago = purchase.pago as PurchasePagoShape | undefined;
+    const enriched = enrichPurchasePago(pago, finanzas);
+    const medio = findMedioPagoInConfig(finanzas.mediosPago, pago?.medioPagoId);
+
+    if (
+      purchaseId &&
+      enriched &&
+      !enriched.tarjetaLabel &&
+      ((medio && medioPagoRequiereCuentaHija(medio)) || !!String(pago?.tarjetaId ?? '').trim())
+    ) {
+      backfillIds.push(purchaseId);
+    }
+  }
+
+  const tarjetaByCompra = await loadTarjetaLabelsByCompraId(businessId, backfillIds);
+
+  return purchases.map((purchase) => {
+    const pago = purchase.pago as PurchasePagoShape | undefined;
+    const backfill = purchase.id ? tarjetaByCompra.get(String(purchase.id)) : undefined;
+    const mergedPago = backfill
+      ? enrichPurchasePago(
+          {
+            ...pago,
+            tarjetaId: pago?.tarjetaId ?? backfill.tarjetaId,
+            tarjetaLabel: backfill.tarjetaLabel,
+          },
+          finanzas
+        )
+      : enrichPurchasePago(pago, finanzas);
+
+    return {
+      ...purchase,
+      pago: mergedPago ?? pago,
+    };
+  });
 }

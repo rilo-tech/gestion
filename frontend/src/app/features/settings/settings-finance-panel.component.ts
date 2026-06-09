@@ -29,6 +29,7 @@ import {
   CONFIG_EDITABLE_LIST_ROW_BODY_CLASS,
   CONFIG_EDITABLE_LIST_ROW_CHIPS_CLASS,
   CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS,
+  CONFIG_SETTING_DESC_CLASS,
 } from '../../shared/components/config-editable-list/config-editable-list.constants';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -83,16 +84,14 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
               <li
                 *ngFor="let medio of config.finanzas.mediosPago; trackBy: trackMedioId"
                 class="relative rounded-lg border border-gray-100 dark:border-gray-700 p-2.5 space-y-2">
-                <div class="relative w-full sm:flex sm:items-start sm:justify-between sm:gap-2">
-                  <div [class]="configRowBodyClass">
-                    <input
-                      [ngModel]="medio.label"
-                      (ngModelChange)="onMedioLabelChange(medio.id, $event)"
-                      (blur)="persist()"
-                      [name]="'medio_label_' + medio.id"
-                      [disabled]="saving"
-                      class="w-full min-w-0 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-950 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
-                  </div>
+                <div [class]="configRowShellClass">
+                  <input
+                    [ngModel]="medio.label"
+                    (ngModelChange)="onMedioLabelChange(medio.id, $event)"
+                    (blur)="persist()"
+                    [name]="'medio_label_' + medio.id"
+                    [disabled]="saving"
+                    class="flex-1 min-w-0 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-950 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary" />
                   <app-config-list-remove-button
                     [disabled]="saving || (!!removalBusyId && removalBusyId !== medio.id)"
                     [loading]="removalBusyId === medio.id"
@@ -100,7 +99,7 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
                   </app-config-list-remove-button>
                 </div>
 
-                <div class="space-y-2 text-xs text-gray-700 dark:text-gray-300">
+                <div class="flex flex-col gap-2 text-xs text-gray-700 dark:text-gray-300">
                   <label class="flex items-start gap-2 cursor-pointer select-none min-w-0">
                     <input
                       type="checkbox"
@@ -111,28 +110,26 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
                     <span class="leading-snug">Genera egreso de caja al confirmar</span>
                   </label>
 
-                  <div class="flex flex-wrap items-start gap-x-4 gap-y-2 sm:gap-x-6">
-                    <label class="flex items-start gap-2 cursor-pointer select-none min-w-0 shrink-0">
-                      <input
-                        type="checkbox"
-                        [checked]="medio.generaCuentasPagar === true"
-                        (change)="setMedioFlag(medio.id, 'generaCuentasPagar', $any($event.target).checked)"
-                        [disabled]="saving"
-                        class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
-                      <span class="leading-snug">Genera cuentas a pagar</span>
-                    </label>
-                    <label
-                      *ngIf="medio.generaCuentasPagar"
-                      class="flex items-start gap-2 cursor-pointer select-none min-w-0 flex-1">
-                      <input
-                        type="checkbox"
-                        [checked]="medio.requiereCuentaHija === true"
-                        (change)="setMedioFlag(medio.id, 'requiereCuentaHija', $any($event.target).checked)"
-                        [disabled]="saving"
-                        class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
-                      <span class="leading-snug">Requiere elegir cuenta (tarjeta, crédito, etc.)</span>
-                    </label>
-                  </div>
+                  <label class="flex items-start gap-2 cursor-pointer select-none min-w-0">
+                    <input
+                      type="checkbox"
+                      [checked]="medio.generaCuentasPagar === true"
+                      (change)="setMedioFlag(medio.id, 'generaCuentasPagar', $any($event.target).checked)"
+                      [disabled]="saving"
+                      class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+                    <span class="leading-snug">Genera cuentas a pagar</span>
+                  </label>
+                  <label
+                    *ngIf="medio.generaCuentasPagar"
+                    class="flex items-start gap-2 cursor-pointer select-none min-w-0">
+                    <input
+                      type="checkbox"
+                      [checked]="medio.requiereCuentaHija === true"
+                      (change)="setMedioFlag(medio.id, 'requiereCuentaHija', $any($event.target).checked)"
+                      [disabled]="saving"
+                      class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
+                    <span class="leading-snug">Requiere elegir cuenta (tarjeta, crédito, etc.)</span>
+                  </label>
                 </div>
 
                 <p class="text-[10px] text-gray-400 leading-snug m-0">{{ getMedioResumen(medio) }}</p>
@@ -181,9 +178,8 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
                 *ngFor="let tarjeta of config.finanzas.tarjetas; trackBy: trackTarjetaId"
                 class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 overflow-hidden border-l-4"
                 [ngClass]="getTarjetaMedioAccentBorder(tarjeta.medioPagoId)">
-                <div
-                  class="px-3 py-2.5 border-b border-gray-100 dark:border-gray-800 relative w-full sm:flex sm:items-center sm:justify-between sm:gap-2">
-                  <div [class]="configRowBodyClass">
+                <div [class]="configRowShellClass + ' px-3 py-2.5 border-b border-gray-100 dark:border-gray-800'">
+                  <div class="min-w-0 flex-1 space-y-1.5">
                     <div [class]="configRowChipsClass">
                       <span
                         class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide shrink-0"
@@ -299,7 +295,7 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
                 class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
               <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
                 <span class="font-semibold">Nota de crédito</span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">
+                <span [class]="configSettingDescClass">
                   Devoluciones: en compras saca stock y baja el saldo; en ventas reingresa stock y genera saldo a favor del cliente.
                 </span>
               </span>
@@ -313,7 +309,7 @@ type FinanceSectionId = 'medios' | 'tarjetas' | 'categorias';
                 class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
               <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
                 <span class="font-semibold">Nota de débito</span>
-                <span class="block text-xs text-gray-500 dark:text-gray-400">
+                <span [class]="configSettingDescClass">
                   Ajustes que aumentan el saldo. Mueve stock igual que una factura.
                 </span>
               </span>
@@ -352,6 +348,7 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
   readonly sectionsListClass = 'flex flex-col gap-2 w-full min-w-0';
   readonly cardClass =
     'bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-3 sm:p-4 flex flex-col min-w-0';
+  readonly configSettingDescClass = CONFIG_SETTING_DESC_CLASS;
 
   readonly configRowShellClass = CONFIG_EDITABLE_LIST_ROW_SHELL_CLASS;
   readonly configRowBodyClass = CONFIG_EDITABLE_LIST_ROW_BODY_CLASS;
@@ -494,7 +491,6 @@ export class SettingsFinancePanelComponent implements OnInit, OnDestroy {
       ...this.config.comprobantes,
       [flag]: checked,
     };
-    this.persist();
   }
 
   onMedioLabelChange(id: string, label: string) {

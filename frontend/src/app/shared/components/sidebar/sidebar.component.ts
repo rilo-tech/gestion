@@ -23,7 +23,7 @@ interface NavItem {
   imports: [CommonModule, RouterLink, RouterLinkActive, LucideAngularModule],
   template: `
     <aside
-      class="app-sidebar fixed inset-y-0 left-0 z-50 flex h-screen w-[min(18rem,85vw)] shrink-0 flex-col bg-gray-900 text-white transition-transform duration-200 ease-out -translate-x-full lg:static lg:z-auto lg:w-64 lg:translate-x-0"
+      class="app-sidebar fixed inset-y-0 left-0 z-[80] flex h-screen w-[min(18rem,85vw)] shrink-0 flex-col bg-gray-900 text-white transition-transform duration-200 ease-out -translate-x-full lg:static lg:z-auto lg:w-64 lg:translate-x-0"
       [class.translate-x-0]="nav.mobileMenuOpen()">
       <div class="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <div class="min-w-0">

@@ -15,6 +15,7 @@ import {
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 
 @Component({
   selector: 'app-new-sale',
@@ -55,32 +56,33 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
           [editingSaleId]="editingSaleId"
           (saved)="onSaved($event)"
           (savingChange)="onSaleSavingChange($event)"
+          (formReadyChange)="onSaleFormReadyChange($event)"
           (cancelled)="goBack()">
         </app-sale-counter-form-panel>
       </section>
 
-      <app-transaction-summary-panel aside variant="light" *ngIf="saleForm">
+      <app-transaction-summary-panel aside variant="light" *ngIf="saleSummaryReady">
         <div class="space-y-2 sm:space-y-3">
-          <app-transaction-summary-row label="Total venta" [value]="'$' + saleForm.draftTotal"></app-transaction-summary-row>
+          <app-transaction-summary-row label="Total venta" [value]="formatMoney(saleForm.draftTotal)"></app-transaction-summary-row>
           <app-transaction-summary-row
             *ngIf="auth.canViewEconomics"
             label="Costo estimado"
-            [value]="'$' + saleForm.draftCostTotal"></app-transaction-summary-row>
+            [value]="formatMoney(saleForm.draftCostTotal)"></app-transaction-summary-row>
           <app-transaction-summary-row
             *ngIf="auth.canViewEconomics"
             label="Ganancia estimada"
-            [value]="'$' + saleForm.draftProfitTotal"
+            [value]="formatMoney(saleForm.draftProfitTotal)"
             valueTone="teal"></app-transaction-summary-row>
           <app-transaction-summary-row
             label="Monto a cobrar"
-            [value]="'$' + (saleForm.montoCobrado ?? 0)"
+            [value]="formatMoney(saleForm.montoCobrado ?? 0)"
             [bold]="true"
             [divider]="true"
             size="md"></app-transaction-summary-row>
           <app-transaction-summary-row
             *ngIf="saleForm.saldoPendienteEstimado > 0"
             label="Saldo pendiente"
-            [value]="'$' + saleForm.saldoPendienteEstimado"
+            [value]="formatMoney(saleForm.saldoPendienteEstimado)"
             valueTone="orange"></app-transaction-summary-row>
         </div>
       </app-transaction-summary-panel>
@@ -101,6 +103,7 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
 
   editingSaleId: string | null = null;
   saleSaving = false;
+  saleSummaryReady = false;
   private shouldRestoreDraft = false;
   private pendingRestoreClienteId: string | null = null;
 
@@ -165,6 +168,12 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
     });
   }
 
+  onSaleFormReadyChange(ready: boolean) {
+    queueMicrotask(() => {
+      this.saleSummaryReady = ready;
+    });
+  }
+
   onSaved(event: TransactionFormSaveEvent) {
     this.saleSaving = false;
     if (!event?.id) return;
@@ -177,5 +186,9 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
 
   goBack() {
     this.navigationBack.back(['/sales']);
+  }
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 }

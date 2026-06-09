@@ -15,6 +15,7 @@ import {
 } from '../../core/services/catalog-config.service';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { DialogService } from '../../core/services/dialog.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { PERMISSIONS } from '../../core/constants/permissions';
@@ -364,11 +365,11 @@ import {
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-gray-400">Costo de compra</span>
-                <span>{{ '$' + (item.costo || 0) }}</span>
+                <span>{{ formatMoney(item.costo || 0) }}</span>
               </div>
               <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="border-t border-gray-800 pt-4 flex justify-between font-bold text-lg">
                 <span>Valor en stock</span>
-                <span>{{ '$' + inventoryValue }}</span>
+                <span>{{ formatMoney(inventoryValue) }}</span>
               </div>
             </div>
 
@@ -696,6 +697,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
   get inventoryValue(): number {
     if (!this.showInventoryFields) return 0;
     return getStockEnDeposito(this.item) * (this.item.costo || 0);
+  }
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 
   get showInventoryFields(): boolean {

@@ -1,4 +1,5 @@
 import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -9,6 +10,7 @@ import {
   formatPurchaseLabel,
 } from '../../core/services/purchase.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
@@ -35,6 +37,12 @@ import { CompactDataListComponent } from '../../shared/components/compact-list/c
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  AppConfig,
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  resolvePurchasePagoDisplayLabel,
+} from '../../core/services/catalog-config.service';
 
 @Component({
   selector: 'app-purchases',
@@ -86,17 +94,17 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total comprado</p>
-          <p class="text-2xl font-bold text-teal-600">{{ '$' + totalComprado }}</p>
+          <p class="text-2xl font-bold text-teal-600">{{ formatMoney(totalComprado) }}</p>
         </div>
         <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
           <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Este mes</p>
-          <p class="text-2xl font-bold text-gray-900">{{ '$' + totalMes }}</p>
+          <p class="text-2xl font-bold text-gray-900">{{ formatMoney(totalMes) }}</p>
         </div>
         <div
           *ngIf="ahorroOfertasMes > 0"
           class="bg-amber-50 p-6 rounded-xl border border-amber-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
           <p class="text-xs font-semibold text-amber-600 uppercase mb-2">Ahorro por ofertas (mes)</p>
-          <p class="text-2xl font-bold text-amber-700">{{ '$' + ahorroOfertasMes }}</p>
+          <p class="text-2xl font-bold text-amber-700">{{ formatMoney(ahorroOfertasMes) }}</p>
         </div>
       </div>
 
@@ -128,7 +136,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
               <span *ngIf="purchase.numeroComprobante?.trim()"> · Fact. {{ purchase.numeroComprobante }}</span>
             </div>
             <span compactTrailing class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
-              {{ '$' + (purchase.total || 0) }}
+              {{ formatMoney(purchase.total || 0) }}
             </span>
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando compras...</p>
@@ -146,7 +154,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Compra</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Líneas</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Medio de pago</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Acciones</th>
             </tr>
@@ -169,13 +177,16 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
                 <div *ngIf="purchase.numeroComprobante?.trim()" class="text-xs text-gray-500 truncate">
                   Fact. {{ purchase.numeroComprobante }}
                 </div>
-                <div class="text-xs text-gray-400 sm:hidden">{{ purchase.items?.length || 0 }} línea(s)</div>
+                <div class="text-xs text-gray-400 sm:hidden">{{ getPurchasePagoDisplay(purchase) }}</div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600">
-                {{ purchase.items?.length || 0 }} línea(s)
+                <div>{{ getPurchaseMedioPagoLabel(purchase) }}</div>
+                <div *ngIf="purchaseShowsCuotas(purchase)" class="text-xs text-gray-500">
+                  {{ getPurchaseCuotasLabel(purchase) }}
+                </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
-                {{ '$' + (purchase.total || 0) }}
+                {{ formatMoney(purchase.total || 0) }}
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
                 <app-list-row-actions
@@ -241,11 +252,13 @@ export class PurchasesComponent implements OnInit {
 
   private purchaseService = inject(PurchaseService);
   private dialogService = inject(DialogService);
+  private catalogConfig = inject(CatalogConfigService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
 
+  appConfig: AppConfig = DEFAULT_APP_CONFIG;
   purchases: Purchase[] = [];
   loading = true;
   loadingMorePurchases = false;
@@ -318,6 +331,11 @@ export class PurchasesComponent implements OnInit {
       this.router.navigate(['/dashboard']);
       return;
     }
+    this.catalogConfig.appConfig$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((config) => {
+        this.appConfig = config;
+      });
     bindListPageRefreshOnReturn({
       listPath: '/purchases',
       reload: () => this.reloadList(),
@@ -327,11 +345,17 @@ export class PurchasesComponent implements OnInit {
     });
     this.loadPurchases();
 
-    this.route.queryParamMap.subscribe((params) => {
-      const detailId = params.get('detail')?.trim();
-      if (!detailId) return;
-      this.router.navigate(['/purchases', detailId], { replaceUrl: true });
-    });
+    this.route.queryParamMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.tryOpenDetailFromQuery();
+      });
+  }
+
+  private tryOpenDetailFromQuery(): void {
+    const detailId = this.route.snapshot.queryParamMap.get('detail')?.trim();
+    if (!detailId) return;
+    this.router.navigate(['/purchases', detailId], { replaceUrl: true });
   }
 
   get totalComprado(): number {
@@ -382,6 +406,40 @@ export class PurchasesComponent implements OnInit {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '—';
     return date.toLocaleDateString('es-AR');
+  }
+
+  getPurchaseMedioPagoId(purchase: Purchase): string {
+    return String(purchase.pago?.medioPagoId ?? 'efectivo').trim().toLowerCase() || 'efectivo';
+  }
+
+  getPurchaseMedioPagoLabel(purchase: Purchase): string {
+    if (purchase.pago?.displayLabel?.trim()) {
+      return purchase.pago.displayLabel.trim();
+    }
+    return resolvePurchasePagoDisplayLabel(purchase.pago, {
+      mediosPago: this.appConfig.finanzas?.mediosPago,
+      tarjetas: this.appConfig.finanzas?.tarjetas,
+    });
+  }
+
+  purchaseShowsCuotas(purchase: Purchase): boolean {
+    const medioId = this.getPurchaseMedioPagoId(purchase);
+    return medioId !== 'efectivo' && medioId !== 'transferencia';
+  }
+
+  getPurchaseCuotasLabel(purchase: Purchase): string {
+    const cuotas = Math.max(1, Number(purchase.pago?.cuotas) || 1);
+    return cuotas === 1 ? '1 cuota' : `${cuotas} cuotas`;
+  }
+
+  getPurchasePagoDisplay(purchase: Purchase): string {
+    const label = this.getPurchaseMedioPagoLabel(purchase);
+    if (!this.purchaseShowsCuotas(purchase)) return label;
+    return `${label} · ${this.getPurchaseCuotasLabel(purchase)}`;
+  }
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 
   openPurchaseModal() {

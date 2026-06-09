@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { OrderService, Order, formatOrderNumber, resolveOrderBalance } from '../../core/services/order.service';
 import type { Client } from '../../core/services/client.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import { CatalogConfigService, AppConfig, DEFAULT_APP_CONFIG, getOrderStatusLabelFromConfig } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
 import {
@@ -266,13 +267,13 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                 </div>
               </td>
               <td *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4">
-                <div *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold text-gray-900 tabular-nums">{{ '$' + order.total }}</div>
+                <div *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold text-gray-900 tabular-nums">{{ formatMoney(order.total) }}</div>
                 <div
                   *ngIf="auth.canViewAccountBalance"
                   class="text-xs font-semibold tabular-nums"
                   [class.text-orange-500]="getOrderSaldo(order) > 0"
                   [class.text-gray-400]="!(getOrderSaldo(order) > 0)">
-                  Saldo {{ '$' + getOrderSaldo(order) }}
+                  Saldo {{ formatMoney(getOrderSaldo(order)) }}
                 </div>
               </td>
               <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
@@ -791,6 +792,10 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   getOrderSaldo(order: Order): number {
     return resolveOrderBalance(order).saldo;
+  }
+
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
   }
 
   confirmCancelOrder(order: Order) {

@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Client, ClientService } from '../../core/services/client.service';
 import { DialogService } from '../../core/services/dialog.service';
+import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   ICON_ACTION_LINK_CLASS,
   LIST_TABLE_ROW_CLASS,
@@ -25,7 +26,7 @@ import {
 } from './client-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
-import { handleClientDeleteError } from '../../core/utils/client-delete-flow';
+import { confirmClientDeletion } from '../../core/utils/client-delete-flow';
 import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
@@ -104,7 +105,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
               class="text-[11px] font-bold tabular-nums shrink-0"
               [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
               [class.text-gray-500]="!(client.saldoPendiente || 0)">
-              {{ '$' + (client.saldoPendiente || 0) }}
+              {{ formatMoney(client.saldoPendiente || 0) }}
             </span>
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando clientes...</p>
@@ -165,7 +166,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
                   class="text-sm font-bold tabular-nums"
                   [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
                   [class.text-gray-400]="!(client.saldoPendiente || 0)">
-                  {{ '$' + (client.saldoPendiente || 0) }}
+                  {{ formatMoney(client.saldoPendiente || 0) }}
                 </div>
                 <div *ngIf="client.debe" class="text-xs font-semibold text-orange-500">Debe</div>
               </td>
@@ -232,6 +233,10 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
   `,
 })
 export class ClientsComponent implements OnInit {
+  formatMoney(value?: number | null): string {
+    return formatMoneyValue(value);
+  }
+
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
@@ -435,28 +440,12 @@ export class ClientsComponent implements OnInit {
   confirmDeleteClient(client: Client) {
     if (!client.id || !this.auth.canDeleteRecords) return;
 
-    this.dialogService
-      .confirm({
-        title: 'Eliminar cliente',
-        message: `¿Eliminar a ${client.nombre}? Esta acción no se puede deshacer.`,
-        confirmLabel: 'Eliminar',
-        variant: 'danger',
-      })
-      .subscribe((confirmed) => {
-        if (!confirmed) return;
-
-        this.clientService.deleteClient(client.id!).subscribe({
-          next: () => this.loadClients(),
-          error: (err) =>
-            handleClientDeleteError(
-              err,
-              client.id!,
-              client.nombre,
-              this.clientService,
-              this.dialogService,
-              () => this.loadClients()
-            ),
-        });
-      });
+    confirmClientDeletion(
+      client.id,
+      client.nombre,
+      this.clientService,
+      this.dialogService,
+      () => this.loadClients()
+    );
   }
 }

@@ -214,6 +214,7 @@ async function enrichMovements(
 router.get('/:businessId/summary', async (req, res) => {
   try {
     const { businessId } = req.params;
+    await reconcilePayablesAndCashData(businessId);
     const caja = await loadCajaConfig(businessId);
     const ambitos = normalizeCajaAmbitos(caja);
     const ambitoTotals: Record<string, { ingreso: number; egreso: number }> = {};

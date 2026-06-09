@@ -68,6 +68,7 @@ export interface PayCardStatementPayload {
   medioPagoId: string;
   ambito?: string;
   notas?: string;
+  cuotaIds?: string[];
   montoPago?: number;
 }
 
@@ -107,9 +108,25 @@ export class PayablesService {
     return this.tenant.businessId;
   }
 
-  getInstallments(): Observable<PayableInstallment[]> {
+  getInstallments(options?: {
+    mes?: string;
+    scope?: 'month' | 'all';
+    reconcile?: boolean;
+  }): Observable<PayableInstallment[]> {
+    const params: Record<string, string> = {};
+    const mes = String(options?.mes ?? '').trim().slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(mes)) {
+      params.mes = mes;
+    }
+    if (options?.scope) {
+      params.scope = options.scope;
+    }
+    if (options?.reconcile) {
+      params.reconcile = '1';
+    }
     return this.http.get<PayableInstallment[]>(
-      `/api/payables/${this.businessId}/installments`
+      `/api/payables/${this.businessId}/installments`,
+      { params }
     );
   }
 
@@ -179,6 +196,16 @@ export class PayablesService {
       categoriaId: payload.categoriaId,
       origenTipo: 'prestamo',
     });
+  }
+
+  getMensualInstallmentForMonth(
+    obligacionId: string,
+    mes: string
+  ): Observable<PayableInstallment> {
+    return this.http.get<PayableInstallment>(
+      `/api/payables/${this.businessId}/obligations/${obligacionId}/installment`,
+      { params: { mes } }
+    );
   }
 
   setInstallmentPaid(

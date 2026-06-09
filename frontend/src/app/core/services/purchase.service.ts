@@ -43,6 +43,9 @@ export interface Purchase {
   pago?: {
     medioPagoId?: string;
     tarjetaId?: string;
+    tarjetaLabel?: string;
+    medioPagoLabel?: string;
+    displayLabel?: string;
     cuotas?: number;
     fechaPrimerVencimiento?: string;
   };

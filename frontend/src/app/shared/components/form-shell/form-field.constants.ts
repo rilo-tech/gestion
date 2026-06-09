@@ -1,7 +1,7 @@
 /** Inputs, selects y textareas compactos en móvil; tamaño normal desde sm. */
 /** Misma altura que `.form-control` (min-h-8 / sm:min-h-10) para alinear con buscadores y fechas. */
 export const FORM_COMPACT_FIELD_CLASS =
-  'w-full min-h-8 sm:min-h-10 box-border px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+  'form-control w-full min-h-8 sm:min-h-10 box-border px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 /** Valor numérico solo lectura en tarjetas móvil (detalle y formulario). */
 export const FORM_COMPACT_MOBILE_NUMERIC_VALUE_CLASS =
@@ -26,7 +26,7 @@ export const FORM_COMPACT_CHIP_INPUT_WRAP_CLASS =
   'flex flex-wrap items-center gap-1.5 px-2 py-1 sm:px-3 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus-within:ring-2 focus-within:ring-teal-500';
 
 export const FORM_CARD_CLASS =
-  'bg-white dark:bg-gray-900 p-3 sm:p-6 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm';
+  'bg-white dark:bg-gray-900 px-3 pt-2 pb-3 sm:p-6 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm';
 
 /** Contenedor de buscadores picker (proveedor, cliente, cuenta) para que el menú quede sobre bloques siguientes. */
 export const FORM_PICKER_OVERLAY_HOST_CLASS = 'relative z-50 overflow-visible';
