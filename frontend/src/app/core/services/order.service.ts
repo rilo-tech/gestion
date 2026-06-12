@@ -11,6 +11,15 @@ export interface OrderExtraCost {
   total: number;
 }
 
+export interface OrderPhoto {
+  id: string;
+  name: string;
+  storagePath?: string;
+  contentType?: string;
+  url: string;
+  createdAt?: string;
+}
+
 export interface OrderLineExtraCost {
   nombre: string;
   costo: number;
@@ -74,6 +83,9 @@ export interface Order {
   createdAt?: string;
   ventaId?: string;
   entregadoAt?: string;
+  entregaConSaldo?: boolean;
+  /** Total $0: donación; la venta asociada impacta ganancias por el costo. */
+  esDonacion?: boolean;
   stockOperaciones?: Array<{ fecha: string; tipo: string; total: number; detalle: string }>;
   items: OrderLineItem[];
   /** Presente en listado API para búsqueda sin traer líneas completas. */
@@ -81,6 +93,8 @@ export interface Order {
   stockItemId?: string;
   cantidad?: number;
   costosExtra?: OrderExtraCost[];
+  /** Fotos de referencia guardadas en Firebase Storage. */
+  fotos?: OrderPhoto[];
 }
 
 export function formatOrderNumber(order: Pick<Order, 'numeroPedido' | 'numeroPedidoLabel'>): string {
@@ -150,6 +164,7 @@ export interface OrderUpdateResult {
   deliveryPaymentApplied?: boolean;
   saleCreated?: boolean;
   locked?: boolean;
+  entregaConSaldo?: boolean;
   items?: OrderLineItem[];
   estadoStock?: string;
   stockPreparado?: boolean;
@@ -183,6 +198,7 @@ export interface OrderStockPreparationLine {
 export interface OrderStockPreparationView {
   orderId: string;
   orderLabel: string;
+  clienteNombre?: string;
   estado: string;
   estadoStock: string;
   stockPreparado: boolean;
@@ -401,8 +417,20 @@ export class OrderService {
     cantidad: number;
     sourceLineIndex?: number;
     targetLineIndex?: number;
-  }): Observable<{ ok: boolean }> {
-    return this.http.post<{ ok: boolean }>(
+  }): Observable<{
+    ok: boolean;
+    orderId?: string;
+    estadoStock?: string;
+    stockPreparado?: boolean;
+    lines?: OrderStockPreparationLine[];
+  }> {
+    return this.http.post<{
+      ok: boolean;
+      orderId?: string;
+      estadoStock?: string;
+      stockPreparado?: boolean;
+      lines?: OrderStockPreparationLine[];
+    }>(
       `/api/orders/${this.businessId}/${params.sourceOrderId}/stock-transfer`,
       params
     );
@@ -432,5 +460,39 @@ export class OrderService {
     return this.http.get<ReservationTargetOrder[]>(
       `/api/orders/${this.businessId}/stock-reservation-targets?${params}`
     );
+  }
+
+  uploadOrderPhoto(
+    orderId: string,
+    payload: { data: string; contentType: string; name: string }
+  ): Observable<{ id: string; foto: OrderPhoto; fotos: OrderPhoto[] }> {
+    return this.http
+      .post<{ id: string; foto: OrderPhoto; fotos: OrderPhoto[] }>(
+        `/api/orders/${this.businessId}/${orderId}/fotos`,
+        payload
+      )
+      .pipe(
+        tap((result) => {
+          const cached = this.getCachedOrder(orderId);
+          if (cached) {
+            this.cacheOrder({ ...cached, fotos: result.fotos });
+          }
+        })
+      );
+  }
+
+  deleteOrderPhoto(orderId: string, photoId: string): Observable<{ id: string; fotos: OrderPhoto[] }> {
+    return this.http
+      .delete<{ id: string; fotos: OrderPhoto[] }>(
+        `/api/orders/${this.businessId}/${orderId}/fotos/${photoId}`
+      )
+      .pipe(
+        tap((result) => {
+          const cached = this.getCachedOrder(orderId);
+          if (cached) {
+            this.cacheOrder({ ...cached, fotos: result.fotos });
+          }
+        })
+      );
   }
 }

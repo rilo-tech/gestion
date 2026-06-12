@@ -148,7 +148,7 @@ import {
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[640px]'">
+        <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>

@@ -12,7 +12,7 @@ import { FormsModule } from '@angular/forms';
 export type ListSearchMode = 'filter' | 'picker';
 
 /** Altura compartida con botones de toolbar (`app-icon-action`, historial, etc.). */
-export const LIST_TOOLBAR_CONTROL_HEIGHT = 'h-[42px] box-border shrink-0';
+export const LIST_TOOLBAR_CONTROL_HEIGHT = 'h-[36px] box-border shrink-0';
 
 /** Fila buscador + iconos en encabezados y toolbars de listado. */
 export const LIST_TOOLBAR_ROW_CLASS = 'flex items-center gap-2 min-w-0';
@@ -32,7 +32,7 @@ export const LIST_SEARCH_MOBILE_HEADER_CLASS =
 
 /** Contenedor del buscador sobre grillas (desktop). */
 export const LIST_SEARCH_DESKTOP_WRAP_CLASS =
-  'hidden sm:block px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50';
+  'hidden sm:block px-3 sm:px-4 py-2 border-b border-gray-100 bg-gray-50';
 
 /**
  * Campo de búsqueda unificado.

@@ -203,6 +203,47 @@ function renderBalanceFooter(order: Order, options: OrderPrintOptions): string {
   return `<div class="balance-footer">${señaRow}${saldoRow}${totalRow}</div>`;
 }
 
+function orderReferencePhotosEnabled(options?: OrderPrintOptions): boolean {
+  return options?.pedidos?.fotosReferenciaHabilitadas !== false;
+}
+
+function renderOrderPhotosSection(
+  order: Order,
+  client: Client | null,
+  clientName: string,
+  options: OrderPrintOptions,
+  layout: 'full' | 'dual-right' = 'full'
+): string {
+  if (!orderReferencePhotosEnabled(options)) return '';
+
+  const fotos = (order.fotos ?? []).filter((foto) => String(foto.url ?? '').trim());
+  if (!fotos.length) return '';
+
+  const items = fotos
+    .map(
+      (foto) => `<figure class="print-photo-item">
+        <div class="print-photo-item__frame">
+          <img src="${escapeHtml(foto.url)}" alt="${escapeHtml(foto.name || 'Referencia')}" loading="eager" />
+        </div>
+        ${foto.name?.trim() ? `<figcaption>${escapeHtml(foto.name)}</figcaption>` : ''}
+      </figure>`
+    )
+    .join('');
+
+  const layoutClass = layout === 'dual-right' ? ' print-photos-below--dual-right' : '';
+  const orderNumber = formatOrderNumber(order);
+  const orderRef = orderNumber ? `#${orderNumber}` : 'Sin número';
+  const clientLabel = (client?.nombre || clientName || '').trim() || 'Sin cliente';
+
+  return `<section class="print-photos-below${layoutClass}" aria-label="Fotos de referencia">
+    <div class="print-photos-below__header">
+      <h2>Fotos de referencia</h2>
+      <span class="print-photos-below__meta">${escapeHtml(orderRef)} · ${escapeHtml(clientLabel)}</span>
+    </div>
+    <div class="print-photo-grid">${items}</div>
+  </section>`;
+}
+
 function renderOrderSheet(
   order: Order,
   client: Client | null,
@@ -258,12 +299,25 @@ function renderOrderPage(
   clientName: string,
   options: OrderPrintOptions
 ): string {
+  const photosSection = renderOrderPhotosSection(
+    order,
+    client,
+    clientName,
+    options,
+    options.dualCopy ? 'dual-right' : 'full'
+  );
+  const withPhotos = !!photosSection;
+  const pageClass = withPhotos ? ' print-page--with-photos' : '';
+
   if (options.dualCopy) {
     return `
-    <div class="print-page print-page--dual">
-      ${renderOrderSheet(order, client, clientName, options, '1ª vía')}
-      <div class="via-divider via-divider--vertical" aria-hidden="true"></div>
-      ${renderOrderSheet(order, client, clientName, options, '2ª vía')}
+    <div class="print-page print-page--dual${pageClass}">
+      <div class="print-page__sheets">
+        ${renderOrderSheet(order, client, clientName, options, '1ª vía')}
+        <div class="via-divider via-divider--vertical" aria-hidden="true"></div>
+        ${renderOrderSheet(order, client, clientName, options, '2ª vía')}
+      </div>
+      ${photosSection}
     </div>`;
   }
 
@@ -272,8 +326,11 @@ function renderOrderPage(
     : 'print-page print-page--single';
 
   return `
-    <div class="${singleClass}">
-      ${renderOrderSheet(order, client, clientName, options)}
+    <div class="${singleClass}${pageClass}">
+      <div class="print-page__sheets">
+        ${renderOrderSheet(order, client, clientName, options)}
+      </div>
+      ${photosSection}
     </div>`;
 }
 
@@ -289,7 +346,7 @@ function buildPrintStyles(): string {
       print-color-adjust: exact;
     }
     @page { size: A4; margin: 12mm; }
-    @page sheet-portrait-dual { size: A4; margin: 8mm 10mm; }
+    @page sheet-portrait-dual { size: A4; margin: 8mm 5mm; }
     @page sheet-landscape { size: A4 landscape; margin: 10mm; }
     .print-page {
       page-break-after: always;
@@ -320,18 +377,153 @@ function buildPrintStyles(): string {
     .print-page--dual {
       page: sheet-portrait-dual;
       page-break-inside: auto;
-      width: 190mm;
-      max-width: 190mm;
+      width: 200mm;
+      max-width: 200mm;
+      margin-left: auto;
+      margin-right: auto;
+      position: relative;
       display: flex;
-      flex-direction: row;
-      align-items: flex-start;
+      flex-direction: column;
+      align-items: stretch;
       justify-content: flex-start;
       gap: 0;
       padding: 0;
       height: auto;
       min-height: 0;
     }
-    .print-page--dual .sheet {
+    .print-page--dual::before {
+      content: '';
+      position: absolute;
+      left: 100mm;
+      top: 0;
+      bottom: 0;
+      border-left: 2px dashed #6b7280;
+      transform: translateX(-50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .print-page--dual > * {
+      position: relative;
+      z-index: 1;
+    }
+    .print-page__sheets {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 0;
+      flex-shrink: 0;
+      width: 100%;
+    }
+    .print-page--dual.print-page--with-photos .print-page__sheets {
+      padding-bottom: 4mm;
+      border-bottom: 2px dashed #9ca3af;
+    }
+    .print-page--single .print-page__sheets {
+      flex: 1 1 auto;
+      display: block;
+      min-height: inherit;
+    }
+    .print-page--with-photos.print-page--single,
+    .print-page--with-photos.print-page--single .print-page__sheets,
+    .print-page--with-photos.print-page--single .sheet {
+      min-height: 0;
+    }
+    .print-page--with-photos {
+      page-break-inside: avoid;
+    }
+    .print-photos-below {
+      flex-shrink: 0;
+      margin-top: 6mm;
+      padding-top: 4mm;
+      border-top: 2px dashed #9ca3af;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .print-page--dual.print-page--with-photos .print-photos-below {
+      margin-top: 4mm;
+      padding-top: 0;
+      border-top: none;
+    }
+    .print-photos-below h2 {
+      margin: 0;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+    .print-photos-below__header {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 3mm;
+      margin: 0 0 4mm;
+      min-width: 0;
+    }
+    .print-photos-below__meta {
+      font-size: 9px;
+      font-weight: 600;
+      color: #374151;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex-shrink: 1;
+      text-align: right;
+    }
+    .print-photo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2mm;
+      align-items: start;
+    }
+    .print-photo-item {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5mm;
+      min-width: 0;
+    }
+    .print-photo-item__frame {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 42mm;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .print-photo-item__frame img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+    }
+    .print-photo-item--wide {
+      grid-column: 1 / -1;
+    }
+    .print-photo-item figcaption {
+      font-size: 8px;
+      color: #6b7280;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    .print-photos-below--dual-right {
+      margin-left: 105mm;
+      width: 95mm;
+      max-width: 95mm;
+      box-sizing: border-box;
+    }
+    .print-photos-below--dual-right .print-photo-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2mm;
+    }
+    .print-page--dual .print-page__sheets .sheet {
       width: 95mm;
       max-width: 95mm;
       flex: 0 0 95mm;
@@ -345,13 +537,12 @@ function buildPrintStyles(): string {
     .via-divider--vertical {
       flex-shrink: 0;
       position: relative;
-      width: 0;
+      width: 10mm;
       margin: 0;
       padding: 0;
       height: auto;
       align-self: stretch;
       border: none;
-      border-left: 2px dashed #6b7280;
       background: none;
     }
     .via-divider::after {
@@ -686,7 +877,7 @@ function buildPrintStyles(): string {
         max-width: 210mm;
         width: auto;
         min-height: auto;
-        padding: 12mm 10mm;
+        padding: 12mm 5mm;
       }
       .print-page--single-landscape {
         max-width: calc(297mm - 8mm);
@@ -860,10 +1051,43 @@ export class OrderPrintService {
 
     win.onafterprint = cleanup;
 
-    window.setTimeout(() => {
-      win.focus();
-      win.print();
-      window.setTimeout(cleanup, 1500);
-    }, 250);
+    const waitForImages = (): Promise<void> => {
+      const images = Array.from(doc.images ?? []);
+      if (!images.length) return Promise.resolve();
+      return Promise.all(
+        images.map(
+          (image) =>
+            new Promise<void>((resolve) => {
+              if (image.complete) {
+                resolve();
+                return;
+              }
+              image.onload = () => resolve();
+              image.onerror = () => resolve();
+            })
+        )
+      ).then(() => undefined);
+    };
+
+    const classifyPrintPhotos = (): void => {
+      const wideRatio = 1.45;
+      const photoItems = Array.from(doc.querySelectorAll('.print-photo-item img'));
+      for (const node of photoItems) {
+        const img = node as HTMLImageElement;
+        if (!img.naturalWidth || !img.naturalHeight) continue;
+        if (img.naturalWidth / img.naturalHeight >= wideRatio) {
+          img.closest('.print-photo-item')?.classList.add('print-photo-item--wide');
+        }
+      }
+    };
+
+    void waitForImages().then(() => {
+      classifyPrintPhotos();
+      window.setTimeout(() => {
+        win.focus();
+        win.print();
+        window.setTimeout(cleanup, 1500);
+      }, 150);
+    });
   }
 }

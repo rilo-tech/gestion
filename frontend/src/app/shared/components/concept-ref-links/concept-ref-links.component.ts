@@ -14,6 +14,7 @@ import { buildConceptSegments } from '../../utils/concept-ref-links';
         <a
           *ngSwitchCase="'pedido'"
           [routerLink]="['/orders', segment.pedidoId, 'edit']"
+          [queryParams]="pedidoQueryParams"
           (click)="$event.stopPropagation()"
           class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
           {{ segment.ref }}
@@ -36,6 +37,7 @@ export class ConceptRefLinksComponent {
   @Input() ventaId?: string | null;
   @Input() numeroPedidoLabel?: string | null;
   @Input() ventaLabel?: string | null;
+  @Input() pedidoQueryParams: Record<string, string> | null = null;
 
   get segments() {
     return buildConceptSegments(this.text, {

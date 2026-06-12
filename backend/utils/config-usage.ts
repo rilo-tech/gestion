@@ -18,6 +18,7 @@ export type ConfigRemovalKind =
   | 'caja.origenes'
   | 'stock.origenes'
   | 'finanzas.categoriasGasto'
+  | 'finanzas.conceptosIngreso'
   | 'finanzas.mediosPago'
   | 'finanzas.tarjetas'
   | 'colaboradores.tiposExtra';
@@ -168,6 +169,15 @@ export async function getConfigItemUsage(
       }
       return hits;
     }
+    case 'finanzas.conceptosIngreso': {
+      const snap = await loadCollection(businessId, 'movimientos_caja');
+      const count = snap.docs.filter((doc) => {
+        const data = doc.data();
+        if (norm(String(data.tipo ?? '')) !== 'ingreso') return false;
+        return norm(String(data.concepto ?? '')) === norm(trimmed);
+      }).length;
+      return count > 0 ? [{ module: 'cash', label: 'Ingresos de caja', count }] : [];
+    }
     case 'finanzas.mediosPago': {
       const id = trimmed.toLowerCase();
       const [comprasSnap, cuotasSnap, cajaSnap] = await Promise.all([
@@ -268,6 +278,7 @@ type NormalizedConfig = {
   stock: { origenes: { grupo: string; nombre: string }[] };
   finanzas: {
     categoriasGasto: { id: string; label: string }[];
+    conceptosIngreso: { id: string; label: string }[];
     tarjetas: { id: string; label: string }[];
   };
   colaboradores: {
@@ -329,6 +340,19 @@ export function diffConfigRemovals(prev: NormalizedConfig, next: NormalizedConfi
         kind: 'finanzas.categoriasGasto',
         value: cat.id,
         display: cat.label,
+      });
+    }
+  }
+
+  const nextConceptosIngreso = new Set(
+    next.finanzas.conceptosIngreso.map((item) => norm(item.id))
+  );
+  for (const concepto of prev.finanzas.conceptosIngreso) {
+    if (!nextConceptosIngreso.has(norm(concepto.id))) {
+      removals.push({
+        kind: 'finanzas.conceptosIngreso',
+        value: concepto.id,
+        display: concepto.label,
       });
     }
   }

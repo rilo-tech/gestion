@@ -17,8 +17,8 @@ import {
   buildTransactionSaveHeaderState,
 } from '../../shared/components/transaction-form';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import { FormFooterComponent } from '../../shared/components/form-shell';
 import {
-  IconToolbarButtonComponent,
   RecordActionToolbarComponent,
 } from '../../shared/components/icon-toolbar';
 import { formatMonthYearLabel } from '../../core/utils/date-format';
@@ -32,7 +32,7 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
     PayableObligationFormPanelComponent,
     PayableCuotaPayModalComponent,
     RecordActionToolbarComponent,
-    IconToolbarButtonComponent,
+    FormFooterComponent,
   ],
   template: `
     <app-transaction-form-page
@@ -42,38 +42,20 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
       backAriaLabel="Volver a cuentas a pagar"
       [hasHeaderActions]="hasHeaderActions"
       (backClick)="goBack()">
-      <div headerActions *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
+      <div headerActions *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3 lg:hidden">
         <app-record-action-toolbar
           [showSave]="auth.canEditRecords"
           [saveLabel]="obligationHeaderSave.label"
           [saveDisabled]="obligationHeaderSave.disabled"
           [saveLoading]="obligationHeaderSave.loading"
           (saveClick)="obligationForm?.submitForm()"
-          [showDuplicate]="canDuplicateCurrent"
+          [showDuplicate]="canDuplicateCurrent && !isEditingMensual"
           duplicateLabel="Duplicar"
           (duplicateClick)="duplicateCurrentObligation()"
-          [showDelete]="canDeleteCurrent"
+          [showDelete]="canDeleteCurrent && !isEditingMensual"
           deleteLabel="Eliminar"
           [deleteDisabled]="obligationSaving || deletingObligation || togglingActive"
           (deleteClick)="confirmDeleteCurrentObligation()">
-          <app-icon-toolbar-button
-            *ngIf="canPayCurrentMensual"
-            icon="wallet"
-            label="Pagar"
-            variant="teal-outline"
-            [disabled]="payCuotaLoading || obligationSaving || togglingActive"
-            [loading]="payCuotaLoading"
-            (clicked)="openPayCurrentMensual()">
-          </app-icon-toolbar-button>
-          <app-icon-toolbar-button
-            *ngIf="canToggleActiveCurrent"
-            icon="pause-circle"
-            [label]="loadedObligation?.activo ? 'Desactivar' : 'Reactivar'"
-            variant="outline"
-            [disabled]="togglingActive || obligationSaving || deletingObligation"
-            [loading]="togglingActive"
-            (clicked)="toggleCurrentObligationActive()">
-          </app-icon-toolbar-button>
         </app-record-action-toolbar>
       </div>
       <section main [class]="formCardClass">
@@ -82,11 +64,84 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
           [initialAmbito]="initialAmbito"
           [editingObligationId]="editingObligationId"
           [initialObligation]="loadedObligation"
+          [showFooter]="!editingObligationId"
           (saved)="onSaved($event)"
           (savingChange)="onObligationSavingChange($event)"
           (cancelled)="goBack()">
         </app-payable-obligation-form-panel>
       </section>
+
+      <aside *ngIf="editingObligationId" aside class="space-y-3">
+        <div
+          class="rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm p-3 sm:p-4 space-y-3">
+          <h2 class="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 m-0">
+            Acciones
+          </h2>
+
+          <div
+            *ngIf="canPayCurrentMensual"
+            class="rounded-lg border border-teal-100 dark:border-teal-900/50 bg-teal-50/70 dark:bg-teal-950/25 px-3 py-2.5 space-y-2">
+            <div>
+              <p class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0">Pagar este mes</p>
+              <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
+                {{ formatMonthYearLabel(payMes) }} · podés ajustar el monto al confirmar.
+              </p>
+            </div>
+            <button
+              type="button"
+              (click)="openPayCurrentMensual()"
+              [disabled]="payCuotaLoading || obligationSaving || togglingActive"
+              class="w-full inline-flex items-center justify-center rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+              {{ payCuotaLoading ? 'Cargando...' : 'Pagar' }}
+            </button>
+          </div>
+
+          <div class="flex flex-col gap-1.5">
+            <button
+              *ngIf="canToggleActiveCurrent"
+              type="button"
+              (click)="toggleCurrentObligationActive()"
+              [disabled]="togglingActive || obligationSaving || deletingObligation"
+              class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs font-semibold text-teal-700 dark:text-teal-400 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-50">
+              {{ togglingActive ? 'Guardando...' : (loadedObligation?.activo ? 'Desactivar' : 'Reactivar') }}
+            </button>
+            <button
+              *ngIf="canDuplicateCurrent"
+              type="button"
+              (click)="duplicateCurrentObligation()"
+              [disabled]="obligationSaving || deletingObligation || togglingActive"
+              class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-50">
+              Duplicar
+            </button>
+            <button
+              *ngIf="canDeleteCurrent"
+              type="button"
+              (click)="confirmDeleteCurrentObligation()"
+              [disabled]="obligationSaving || deletingObligation || togglingActive"
+              class="w-full text-left rounded-lg border border-red-100 dark:border-red-900/40 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50">
+              {{ deletingObligation ? 'Eliminando...' : 'Eliminar' }}
+            </button>
+          </div>
+
+          <div class="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+            <app-form-footer
+              mode="sidebar"
+              [showCancel]="false"
+              [saveLabel]="obligationHeaderSave.label"
+              [saving]="obligationHeaderSave.loading"
+              [saveDisabled]="obligationHeaderSave.disabled"
+              [successMessage]="obligationForm?.saveSuccessMessage ?? ''"
+              (saveClick)="obligationForm?.submitForm()">
+            </app-form-footer>
+            <button
+              type="button"
+              (click)="goBack()"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60">
+              Volver sin guardar
+            </button>
+          </div>
+        </div>
+      </aside>
     </app-transaction-form-page>
 
     <app-payable-cuota-pay-modal
@@ -136,14 +191,20 @@ export class NewPayableObligationComponent implements OnInit {
     });
   }
 
+  get isEditingMensual(): boolean {
+    return !!this.editingObligationId && this.loadedObligation?.tipo === 'mensual';
+  }
+
   get hasHeaderActions(): boolean {
+    if (!this.editingObligationId) return false;
+    if (this.isEditingMensual) {
+      return this.auth.canEditRecords;
+    }
     return (
-      !!this.editingObligationId &&
-      (this.auth.canEditRecords ||
-        this.canDuplicateCurrent ||
-        this.canDeleteCurrent ||
-        this.canPayCurrentMensual ||
-        this.canToggleActiveCurrent)
+      this.auth.canEditRecords ||
+      this.canDuplicateCurrent ||
+      this.canDeleteCurrent ||
+      this.canToggleActiveCurrent
     );
   }
 
@@ -379,6 +440,8 @@ export class NewPayableObligationComponent implements OnInit {
         });
       });
   }
+
+  formatMonthYearLabel = formatMonthYearLabel;
 
   goBack(): void {
     this.navigationBack.back(['/payables'], { queryParams: { tab: 'obligation' } });

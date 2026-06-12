@@ -1,0 +1,22 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "cuentas_pagar_cuotas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estado", "order": "ASCENDING" },
+        { "fieldPath": "fechaVencimiento", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cuentas_pagar_cuotas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ambito", "order": "ASCENDING" },
+        { "fieldPath": "estado", "order": "ASCENDING" },
+        { "fieldPath": "fechaVencimiento", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

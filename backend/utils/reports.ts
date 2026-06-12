@@ -3,6 +3,7 @@ import {
   buildCollaboratorsPeriodSummary,
   type CollaboratorsPeriodSummary,
 } from './collaborators.ts';
+import { sumLineExtraCosts } from './line-extra-costs.ts';
 
 export type ReportGroupBy = 'product' | 'category' | 'type' | 'size' | 'color' | 'client';
 
@@ -170,12 +171,7 @@ function defaultToDate(): string {
 function lineCost(line: SaleLine): number {
   const qty = Number(line.cantidad ?? 0);
   const unit = Number(line.costoUnitario ?? 0);
-  const fromList = (line.costosExtra ?? []).reduce(
-    (sum, extra) => sum + Number(extra.costo ?? 0),
-    0
-  );
-  const personalization =
-    fromList > 0 ? qty * fromList : Number(line.costoPersonalizacion ?? 0);
+  const personalization = sumLineExtraCosts(qty, line.costosExtra, line.costoPersonalizacion);
   return unit * qty + personalization;
 }
 

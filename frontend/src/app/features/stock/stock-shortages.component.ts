@@ -7,7 +7,7 @@ import { getOrderStockStatusLabel } from '../../core/constants/order-stock-statu
 import { getOrderStatusLabel } from '../../core/constants/order-status';
 import { AuthService } from '../../core/services/auth.service';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
-import { FormBackButtonComponent } from '../../shared/components/form-shell';
+import { FormScreenHeaderComponent } from '../../shared/components/form-shell';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 
 type ShortagesView = 'pedidos' | 'lista';
@@ -15,26 +15,18 @@ type ShortagesView = 'pedidos' | 'lista';
 @Component({
   selector: 'app-stock-shortages',
   standalone: true,
-  imports: [CommonModule, RouterLink, FormBackButtonComponent],
+  imports: [CommonModule, RouterLink, FormScreenHeaderComponent],
   template: `
     <div [class]="pageShellClass">
-      <app-form-back-button
-        class="mb-4"
-        label="Volver al stock"
-        shortLabel="Volver"
-        ariaLabel="Volver al stock"
-        (clicked)="goBack()">
-      </app-form-back-button>
-
-      <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Faltantes de stock</h1>
-          <p class="text-sm text-gray-500 mt-1 desc-lg-only">
-            Mercadería que falta comprar o ingresar para completar pedidos en curso.
-          </p>
-        </div>
-
-        <div *ngIf="!loading && groups.length > 0" class="flex items-center gap-2 shrink-0">
+      <app-form-screen-header
+        title="Faltantes de stock"
+        subtitle="Mercadería que falta comprar o ingresar para completar pedidos en curso."
+        backLabel="Volver al stock"
+        backShortLabel="Volver"
+        backAriaLabel="Volver al stock"
+        [hasHeaderActions]="!loading && groups.length > 0"
+        (backClick)="goBack()">
+        <div headerActions *ngIf="!loading && groups.length > 0" class="flex items-center gap-2 shrink-0">
           <button
             type="button"
             (click)="copyList()"
@@ -48,7 +40,7 @@ type ShortagesView = 'pedidos' | 'lista';
             Imprimir lista
           </button>
         </div>
-      </div>
+      </app-form-screen-header>
 
       <div
         *ngIf="!loading && groups.length > 0"

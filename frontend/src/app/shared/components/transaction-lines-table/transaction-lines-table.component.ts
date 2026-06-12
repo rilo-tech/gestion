@@ -210,7 +210,7 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
       </div>
 
       <!-- Desktop: tabla -->
-      <table class="hidden sm:table w-full table-fixed text-left text-sm">
+      <table class="hidden sm:table app-data-table w-full table-fixed text-left text-sm">
         <thead class="bg-gray-50 dark:bg-gray-800/80 text-xs uppercase text-gray-400 dark:text-gray-500">
           <tr>
             <th

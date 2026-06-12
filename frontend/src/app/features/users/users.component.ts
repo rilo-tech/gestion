@@ -111,7 +111,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:table-fixed sm:min-w-[640px]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <colgroup class="hidden sm:table-column-group">
               <col />
               <col class="w-[8rem]" />

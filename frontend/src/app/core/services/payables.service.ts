@@ -27,6 +27,13 @@ export interface PayableObligation {
   tarjetaLabel?: string;
 }
 
+export interface PayableInstallmentMonthSummary {
+  pendientes: number;
+  vencidas: number;
+  pagadas: number;
+  totalPendiente: number;
+}
+
 export interface PayableInstallment {
   id: string;
   obligacionId: string;
@@ -48,6 +55,11 @@ export interface PayableInstallment {
   cuotaTotal?: number;
   movimientoCajaId?: string;
   medioPagoId?: string;
+}
+
+export interface PayableInstallmentsResponse {
+  items: PayableInstallment[];
+  monthSummary?: PayableInstallmentMonthSummary;
 }
 
 export interface CardStatementSummary {
@@ -112,7 +124,10 @@ export class PayablesService {
     mes?: string;
     scope?: 'month' | 'all';
     reconcile?: boolean;
-  }): Observable<PayableInstallment[]> {
+    displayEstado?: PayableDisplayEstado;
+    ambito?: string;
+    includeMonthSummary?: boolean;
+  }): Observable<PayableInstallmentsResponse> {
     const params: Record<string, string> = {};
     const mes = String(options?.mes ?? '').trim().slice(0, 7);
     if (/^\d{4}-\d{2}$/.test(mes)) {
@@ -124,7 +139,16 @@ export class PayablesService {
     if (options?.reconcile) {
       params.reconcile = '1';
     }
-    return this.http.get<PayableInstallment[]>(
+    if (options?.displayEstado) {
+      params.estado = options.displayEstado;
+    }
+    if (options?.ambito?.trim()) {
+      params.ambito = options.ambito.trim();
+    }
+    if (options?.includeMonthSummary === false) {
+      params.includeMonthSummary = '0';
+    }
+    return this.http.get<PayableInstallmentsResponse>(
       `/api/payables/${this.businessId}/installments`,
       { params }
     );

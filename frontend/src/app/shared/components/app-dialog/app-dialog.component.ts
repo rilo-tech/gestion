@@ -2,7 +2,7 @@ import { Component, HostListener, inject, OnDestroy, OnInit } from '@angular/cor
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription } from 'rxjs';
-import { DialogRequest, DialogService } from '../../../core/services/dialog.service';
+import { DialogRequest, DialogService, DialogVariant } from '../../../core/services/dialog.service';
 
 @Component({
   selector: 'app-dialog',
@@ -61,9 +61,7 @@ import { DialogRequest, DialogService } from '../../../core/services/dialog.serv
             type="button"
             (click)="onChoice(opt.id)"
             class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
-            [ngClass]="opt.variant === 'danger'
-              ? 'bg-red-600 text-white hover:bg-red-700'
-              : 'bg-primary text-white hover:bg-teal-700'">
+            [ngClass]="choiceButtonClass(opt.variant)">
             {{ opt.label }}
           </button>
           <button
@@ -148,6 +146,16 @@ export class AppDialogComponent implements OnInit, OnDestroy {
     return this.isDanger
       ? 'bg-red-600 text-white hover:bg-red-700'
       : 'bg-primary text-white hover:bg-teal-700';
+  }
+
+  choiceButtonClass(variant?: DialogVariant): string {
+    if (variant === 'danger') {
+      return 'bg-red-600 text-white hover:bg-red-700';
+    }
+    if (variant === 'secondary') {
+      return 'border-2 border-sky-300 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/60';
+    }
+    return 'bg-primary text-white hover:bg-teal-700';
   }
 
   onConfirm() {

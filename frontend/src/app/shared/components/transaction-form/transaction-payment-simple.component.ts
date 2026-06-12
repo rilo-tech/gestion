@@ -19,7 +19,7 @@ export interface TransactionPaymentMedioOption {
     <div>
       <p *ngIf="title" class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2 sm:mb-3">{{ title }}</p>
       <div class="space-y-2 sm:space-y-3">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <div class="grid grid-cols-2 gap-2 sm:gap-4">
           <div *ngIf="showAmount">
             <label [class]="labelClass">{{ amountLabel }}</label>
             <input

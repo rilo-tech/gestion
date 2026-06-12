@@ -12,13 +12,16 @@ import {
 import { AppUser } from './user.service';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, from, of, throwError, NEVER } from 'rxjs';
-import { catchError, map, switchMap, tap, timeout } from 'rxjs/operators';
+import { catchError, map, switchMap, tap } from 'rxjs/operators';
 import {
-  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
   signInWithRedirect,
+  type User,
 } from 'firebase/auth';
-import { firebaseAuth, googleAuthProvider } from '../config/firebase';
+import { firebaseAuth, googleAuthProvider, isAuthEmulatorEnabled } from '../config/firebase';
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../constants/google-auth-storage';
+import { getGoogleRedirectResultOnce } from '../utils/google-auth-redirect';
 import { PublicBusinessInfo } from './business.service';
 import {
   AUTH_BUSINESS_STORAGE_KEY,
@@ -284,62 +287,94 @@ export class AuthService {
   loginWithGoogle(businessId: string): Observable<AuthSession> {
     sessionStorage.setItem(GOOGLE_LOGIN_SCOPE_KEY, 'company');
     sessionStorage.setItem(GOOGLE_LOGIN_BUSINESS_KEY, businessId);
-    return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(
-      switchMap(() => NEVER)
+
+    if (this.shouldUseGoogleRedirect()) {
+      return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(switchMap(() => NEVER));
+    }
+
+    return from(signInWithPopup(firebaseAuth, googleAuthProvider)).pipe(
+      catchError((err) => {
+        const code = (err as { code?: string })?.code;
+        if (
+          code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment'
+        ) {
+          return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(switchMap(() => NEVER));
+        }
+        return throwError(() => err);
+      }),
+      switchMap((credential) => {
+        const user = credential.user;
+        if (!user) {
+          return throwError(() => new Error('NO_GOOGLE_USER'));
+        }
+        this.clearGoogleLoginPending();
+        return this.exchangeGoogleUser(user, 'company', businessId);
+      })
     );
   }
 
   loginWithGooglePlatform(): Observable<AuthSession> {
     sessionStorage.setItem(GOOGLE_LOGIN_SCOPE_KEY, 'platform');
     sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-    return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(
-      switchMap(() => NEVER)
+
+    if (this.shouldUseGoogleRedirect()) {
+      return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(switchMap(() => NEVER));
+    }
+
+    return from(signInWithPopup(firebaseAuth, googleAuthProvider)).pipe(
+      catchError((err) => {
+        const code = (err as { code?: string })?.code;
+        if (
+          code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment'
+        ) {
+          return from(signInWithRedirect(firebaseAuth, googleAuthProvider)).pipe(switchMap(() => NEVER));
+        }
+        return throwError(() => err);
+      }),
+      switchMap((credential) => {
+        const user = credential.user;
+        if (!user) {
+          return throwError(() => new Error('NO_GOOGLE_USER'));
+        }
+        this.clearGoogleLoginPending();
+        return this.exchangeGoogleUser(user, 'platform');
+      })
     );
   }
 
   completeGoogleRedirectLogin(): Observable<AuthSession> {
-    return from(firebaseAuth.authStateReady()).pipe(
-      switchMap(() =>
-        from(getRedirectResult(firebaseAuth)).pipe(
-          timeout(10000),
-          catchError((error) => {
-            if (error?.name === 'TimeoutError') {
-              return of(null);
-            }
-            return throwError(() => error);
-          })
-        )
+    const pendingScope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY);
+    const pendingBusiness = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY)?.trim();
+    const hasPendingGoogleLogin = pendingScope === 'platform' || !!pendingBusiness;
+
+    if (!hasPendingGoogleLogin) {
+      return throwError(() => new Error('NO_REDIRECT'));
+    }
+
+    return from(getGoogleRedirectResultOnce()).pipe(
+      switchMap((credential) =>
+        this.resolveFirebaseUserAfterRedirect(credential?.user ?? null, hasPendingGoogleLogin)
       ),
-      switchMap((credential) => {
-        const firebaseUser = credential?.user ?? firebaseAuth.currentUser;
+      switchMap((firebaseUser) => {
         if (!firebaseUser) {
           return throwError(() => new Error('NO_REDIRECT'));
         }
 
-        const scope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY) ?? 'company';
+        const scope = (sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY) ?? 'company') as AuthScope;
         const businessId = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY)?.trim();
-        sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
-        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+        this.clearGoogleLoginPending();
 
         if (scope === 'platform') {
-          return from(firebaseUser.getIdToken()).pipe(
-            switchMap((idToken) =>
-              this.http.post<AuthSession>('/api/auth/google', { idToken, scope: 'platform' })
-            ),
-            tap((session) => this.applySession(session))
-          );
+          return this.exchangeGoogleUser(firebaseUser, 'platform');
         }
 
         if (!businessId) {
           return throwError(() => new Error('Falta el código de empresa. Volvé a intentarlo.'));
         }
 
-        return from(firebaseUser.getIdToken()).pipe(
-          switchMap((idToken) =>
-            this.http.post<AuthSession>('/api/auth/google', { idToken, businessId, scope: 'company' })
-          ),
-          tap((session) => this.applySession(session))
-        );
+        return this.exchangeGoogleUser(firebaseUser, 'company', businessId);
       })
     );
   }
@@ -393,6 +428,66 @@ export class AuthService {
     const user = this.currentUser;
     if (!user || user.activo === false) return false;
     return userHasPermission(user.rol as UserRole, user.permisos, permission);
+  }
+
+  private shouldUseGoogleRedirect(): boolean {
+    return isAuthEmulatorEnabled;
+  }
+
+  private clearGoogleLoginPending(): void {
+    sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+    sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+  }
+
+  private exchangeGoogleUser(
+    firebaseUser: User,
+    scope: AuthScope,
+    businessId?: string
+  ): Observable<AuthSession> {
+    return from(firebaseUser.getIdToken()).pipe(
+      switchMap((idToken) =>
+        this.http.post<AuthSession>(
+          '/api/auth/google',
+          scope === 'platform'
+            ? { idToken, scope: 'platform' }
+            : { idToken, businessId, scope: 'company' }
+        )
+      ),
+      tap((session) => this.applySession(session))
+    );
+  }
+
+  private resolveFirebaseUserAfterRedirect(
+    initialUser: User | null,
+    hasPendingGoogleLogin: boolean
+  ): Observable<User | null> {
+    if (initialUser) return of(initialUser);
+    if (firebaseAuth.currentUser) return of(firebaseAuth.currentUser);
+    if (!hasPendingGoogleLogin) return of(null);
+
+    return new Observable<User | null>((subscriber) => {
+      let settled = false;
+      let unsubscribe = () => {};
+      const finish = (user: User | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+        subscriber.next(user);
+        subscriber.complete();
+      };
+
+      unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+        if (user) finish(user);
+      });
+      const timer = setTimeout(() => finish(firebaseAuth.currentUser), 8000);
+
+      return () => {
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe();
+      };
+    });
   }
 
   private applySession(session: AuthSession) {

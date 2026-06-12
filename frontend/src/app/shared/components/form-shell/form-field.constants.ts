@@ -1,3 +1,7 @@
+/** Grid de pares de pago en móvil (medio+cuenta, cuotas+fecha). */
+export const FORM_PAYMENT_PAIR_GRID_CLASS =
+  'grid grid-cols-2 gap-2 sm:gap-4 items-start';
+
 /** Inputs, selects y textareas compactos en móvil; tamaño normal desde sm. */
 /** Misma altura que `.form-control` (min-h-8 / sm:min-h-10) para alinear con buscadores y fechas. */
 export const FORM_COMPACT_FIELD_CLASS =

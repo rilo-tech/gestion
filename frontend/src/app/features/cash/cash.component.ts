@@ -9,7 +9,6 @@ import {
   DEFAULT_APP_CONFIG,
   findCategoriaGastoByLabel,
   getCashMovementConceptOptions,
-  getCashOrigenes,
   getCashOrigenNombre,
   getCajaAmbitos,
   getDefaultCashAmbitoId,
@@ -20,7 +19,6 @@ import {
   getCashAmbitoLabel,
   CashAmbito,
   CajaAmbitoConfig,
-  CajaOrigen,
 } from '../../core/services/catalog-config.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -28,13 +26,13 @@ import { isDeletableCashMovement } from '../../core/utils/deletion-rules';
 import {
   CalendarMonthRange,
   formatMonthYearLabel,
+  getCalendarMonthRange,
   isIsoDateInRange,
   monthYearQueryParams,
   parseMonthYearQueryParams,
 } from '../../core/utils/calendar-range';
 import {
   computeCashPeriodKpisFromMovements,
-  resolveCashSummaryPeriodRange,
 } from '../../core/utils/cash-period-summary';
 import { SearchableSelectComponent } from '../../shared/components/searchable-select/searchable-select.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
@@ -117,7 +115,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
     <div [class]="pageShellClass">
       <app-module-page-header
         title="Caja"
-        description="Ingresos y egresos del negocio. Pedidos y ventas se registran solos; usá Ingreso o Egreso para movimientos manuales. Ing. y Egr. son del mes; Saldo es acumulado."
+        description="Ingresos y egresos del negocio. Pedidos y ventas se registran solos; usá Ingreso o Egreso para movimientos manuales."
         [showMobileSearch]="true"
         [(searchQuery)]="searchQuery"
         (searchQueryChange)="movementsPage = 1"
@@ -135,20 +133,6 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           </app-icon-action>
         </ng-container>
       </app-module-page-header>
-
-      <div
-        *ngIf="monthFilterLabel"
-        class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-100 bg-teal-50 px-4 py-2.5">
-        <p class="text-sm text-teal-900">
-          Movimientos de <span class="font-semibold">{{ monthFilterLabel }}</span>
-        </p>
-        <button
-          type="button"
-          (click)="clearMonthFilter()"
-          class="text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
-          Ver todos
-        </button>
-      </div>
 
       <div *ngIf="usesAmbitoSeparation" class="mb-3">
         <div class="rounded-lg border border-gray-100 bg-white shadow-sm overflow-hidden">
@@ -228,17 +212,33 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 extraClass="w-full">
               </app-list-search-field>
             </div>
-            <select
-              [(ngModel)]="origenFilter"
-              (ngModelChange)="movementsPage = 1"
-              name="origenFilter"
-              [class]="'hidden sm:block shrink-0 min-w-[10rem] w-44 px-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100 ' + listToolbarControlHeight">
-              <option value="all">Todos</option>
-              <option *ngFor="let origen of cashOrigenes" [value]="origen.grupo">
-                {{ origen.nombre }}
-              </option>
-            </select>
+            <label
+              class="flex flex-col gap-0.5 shrink-0 min-w-[9.5rem]"
+              [class]="'hidden sm:flex ' + listToolbarControlHeight">
+              <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 leading-none">
+                Mes
+              </span>
+              <input
+                type="month"
+                [ngModel]="filterMonthInput"
+                (ngModelChange)="onFilterMonthChange($event)"
+                name="cashFilterMonth"
+                [disabled]="loading"
+                class="h-full min-h-0 px-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100" />
+            </label>
           </div>
+          <label class="flex flex-col gap-0.5 sm:hidden mt-2">
+            <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              Mes
+            </span>
+            <input
+              type="month"
+              [ngModel]="filterMonthInput"
+              (ngModelChange)="onFilterMonthChange($event)"
+              name="cashFilterMonthMobile"
+              [disabled]="loading"
+              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100" />
+          </label>
         </div>
         <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
@@ -248,7 +248,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               {{ getMovementMobileTitle(movement) }}
             </div>
             <div compactSubtitle class="compact-list-subtitle truncate">
-              {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+              {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }}<ng-container *ngIf="getMovementDescripcionDisplay(movement) !== '—'"> · {{ getMovementDescripcionDisplay(movement) }}</ng-container>
             </div>
             <span
               compactTrailing
@@ -267,15 +267,23 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
+        <table [class]="nativeCompactTableClass + ' cash-movements-table table-fixed w-full max-w-full'">
+          <colgroup>
+            <col style="width: 4.75rem" />
+            <col style="width: 18%" />
+            <col style="width: 33%" />
+            <col style="width: 9.5rem" />
+            <col style="width: 7.25rem" />
+            <col style="width: 5.25rem" />
+          </colgroup>
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Concepto</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Medio</th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Monto</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
+              <th class="hidden sm:table-cell px-3 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
+              <th class="px-3 sm:px-4 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Concepto</th>
+              <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Descripción</th>
+              <th class="hidden sm:table-cell px-2 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Origen</th>
+              <th class="px-3 sm:px-4 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Monto</th>
+              <th class="hidden sm:table-cell px-2 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -283,11 +291,11 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               *ngFor="let movement of paginatedFilteredMovements"
               (click)="onMovementRowClick(movement)"
               [class]="listTableRowClass">
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell px-3 py-4 text-xs text-gray-500 whitespace-nowrap tabular-nums">
                 {{ formatDate(movement.fecha) }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div class="font-medium text-gray-900 text-sm">
+              <td class="px-3 sm:px-4 py-3 sm:py-4 max-w-0">
+                <div class="text-xs font-medium text-gray-700 truncate">
                   <app-concept-ref-links
                     [text]="getMovementConceptoDisplay(movement)"
                     [pedidoId]="movement.pedidoId"
@@ -297,26 +305,32 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   </app-concept-ref-links>
                 </div>
                 <div class="text-xs text-gray-400 mt-0.5 sm:hidden">
-                  {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }} · {{ movement.medio || '—' }}
+                  {{ formatDate(movement.fecha) }} · {{ getOrigenLabel(movement) }}<ng-container *ngIf="getMovementDescripcionDisplay(movement) !== '—'"> · {{ getMovementDescripcionDisplay(movement) }}</ng-container>
                 </div>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4">
+              <td class="hidden sm:table-cell px-4 py-4 text-sm font-semibold text-gray-900 dark:text-gray-100 max-w-0">
                 <span
-                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  class="block truncate leading-snug"
+                  [class.text-gray-400]="getMovementDescripcionDisplay(movement) === '—'"
+                  [class.font-normal]="getMovementDescripcionDisplay(movement) === '—'"
+                  [title]="getMovementDescripcionDisplay(movement)">
+                  {{ getMovementDescripcionDisplay(movement) }}
+                </span>
+              </td>
+              <td class="hidden sm:table-cell px-2 py-4 text-center whitespace-nowrap">
+                <span
+                  class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-medium max-w-full truncate"
                   [ngClass]="getOrigenBadgeClass(movement)">
                   {{ getOrigenLabel(movement) }}
                 </span>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-500 capitalize">
-                {{ movement.medio || '—' }}
-              </td>
               <td
-                class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-right tabular-nums"
+                class="px-3 sm:px-4 py-3 sm:py-4 text-sm font-semibold text-right tabular-nums whitespace-nowrap"
                 [class.text-teal-600]="movement.tipo === 'ingreso'"
                 [class.text-red-500]="movement.tipo === 'egreso'">
                 {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ formatMoney(movement.monto || 0) }}
               </td>
-              <td class="hidden sm:table-cell px-4 py-3 text-sm font-medium whitespace-nowrap" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell px-2 py-3 text-sm font-medium whitespace-nowrap text-right" (click)="$event.stopPropagation()">
                 <app-list-row-actions
                   *ngIf="showDesktopMovementRowActions"
                   [showDuplicate]="auth.canEditRecords"
@@ -353,7 +367,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
         </app-list-pagination>
         <app-list-load-more
           listFooter
-          [hasMore]="hasMoreMovements && !monthFilterRange"
+          [hasMore]="false"
           [loading]="loadingMoreMovements || loading"
           label="Cargar más movimientos"
           loadingLabel="Cargando más..."
@@ -392,6 +406,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 name="movementConcepto"
                 [options]="conceptOptions"
                 [allowCustomValue]="true"
+                [showDropdownOnTypeOnly]="true"
                 [disabled]="movementFormDisabled"
                 [placeholder]="movementConceptPickerPlaceholder"
                 [plainPlaceholder]="movementConceptPlainPlaceholder">
@@ -610,10 +625,9 @@ export class CashComponent implements OnInit, OnDestroy {
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   movements: CashMovement[] = [];
   cashSummary: CashSummary | null = null;
-  monthFilterRange: CalendarMonthRange | null = null;
+  monthFilterRange: CalendarMonthRange = getCalendarMonthRange();
   searchQuery = '';
   movementsPage = 1;
-  origenFilter: 'all' | string = 'all';
   activeAmbitoTab = '';
   loading = true;
 
@@ -656,10 +670,14 @@ export class CashComponent implements OnInit, OnDestroy {
     this.configService.getAppConfig().subscribe();
 
     this.routeSub = this.route.queryParamMap.subscribe((params) => {
-      this.monthFilterRange = parseMonthYearQueryParams(
-        params.get('mes'),
-        params.get('anio')
-      );
+      const parsed = parseMonthYearQueryParams(params.get('mes'), params.get('anio'));
+      if (!parsed) {
+        const current = getCalendarMonthRange();
+        const { mes, anio } = monthYearQueryParams(current);
+        this.router.navigate(['/cash'], { queryParams: { mes, anio }, replaceUrl: true });
+        return;
+      }
+      this.monthFilterRange = parsed;
       this.movementsPage = 1;
       this.loadCashSummary();
       this.reloadMovements();
@@ -672,29 +690,31 @@ export class CashComponent implements OnInit, OnDestroy {
     this.movementSaveFeedback.destroy();
   }
 
-  get monthFilterLabel(): string {
-    if (!this.monthFilterRange) return '';
-    return formatMonthYearLabel(this.monthFilterRange.label);
+  get filterMonthInput(): string {
+    const range = this.summaryPeriodRange;
+    const month = String(range.month + 1).padStart(2, '0');
+    return `${range.year}-${month}`;
   }
 
-  /** Mes al que corresponden Ing. y Egr. (mes actual o filtro de URL). */
+  /** Mes al que corresponden Ing. y Egr. */
   get kpiPeriodMonthLabel(): string {
     return formatMonthYearLabel(this.summaryPeriodRange.label);
   }
 
   get periodMovements(): CashMovement[] {
-    if (!this.monthFilterRange) return this.movements;
     return this.movements.filter((movement) =>
-      isIsoDateInRange(movement.fecha, this.monthFilterRange!.start, this.monthFilterRange!.end)
+      isIsoDateInRange(movement.fecha, this.monthFilterRange.start, this.monthFilterRange.end)
     );
   }
 
-  clearMonthFilter() {
-    this.router.navigate(['/cash']);
-  }
-
-  get cashOrigenes(): CajaOrigen[] {
-    return getCashOrigenes(this.appConfig.caja.origenes);
+  onFilterMonthChange(value: string) {
+    if (!value) return;
+    const [yearStr, monthStr] = value.split('-');
+    const mes = Number(monthStr);
+    const anio = Number(yearStr);
+    if (!Number.isFinite(mes) || mes < 1 || mes > 12) return;
+    if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return;
+    this.router.navigate(['/cash'], { queryParams: { mes, anio } });
   }
 
   get cajaAmbitos(): CajaAmbitoConfig[] {
@@ -752,10 +772,6 @@ export class CashComponent implements OnInit, OnDestroy {
 
   get filteredMovements(): CashMovement[] {
     let list = this.periodMovements;
-
-    if (this.origenFilter !== 'all') {
-      list = list.filter((movement) => this.resolveOrigenGrupo(movement) === this.origenFilter);
-    }
 
     if (this.usesAmbitoSeparation) {
       list = list.filter(
@@ -947,6 +963,13 @@ export class CashComponent implements OnInit, OnDestroy {
     let display = concepto;
     if (tipo === 'colaborador_pago') {
       display = concepto.replace(/^Pago colaborador · /i, '').trim() || concepto;
+    } else if (tipo === 'tarjeta_resumen') {
+      display =
+        concepto
+          .replace(/^Pago parcial resumen\s+/i, 'Pago parcial · ')
+          .replace(/^Resumen\s+/i, '')
+          .replace(/\s·\s\d{4}-\d{2}(-\d{2})?$/i, '')
+          .trim() || concepto;
     } else if (tipo === 'cuenta_pagar' && movement.origenGrupo !== 'compra') {
       if (!/^Préstamo ·/i.test(concepto) && !/^Cuota \d/i.test(concepto)) {
         const first = concepto.split(' · ')[0]?.trim();
@@ -955,6 +978,11 @@ export class CashComponent implements OnInit, OnDestroy {
     }
 
     return formatIsoDatesInText(display);
+  }
+
+  getMovementDescripcionDisplay(movement: CashMovement): string {
+    const descripcion = String(movement.descripcion ?? '').trim();
+    return descripcion || '—';
   }
 
   /** Título corto en celular: «Pago Despues» sin categoría ni cuota. */
@@ -1052,7 +1080,7 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private get summaryPeriodRange(): CalendarMonthRange {
-    return resolveCashSummaryPeriodRange(this.monthFilterRange);
+    return this.monthFilterRange;
   }
 
   private getGlobalPeriodKpis() {
@@ -1580,11 +1608,7 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private reloadMovements(showLoading = true) {
-    if (this.monthFilterRange) {
-      this.loadAllMovements(showLoading);
-      return;
-    }
-    this.loadMovements(showLoading);
+    this.loadAllMovements(showLoading);
   }
 
   private loadAllMovements(showLoading = true) {

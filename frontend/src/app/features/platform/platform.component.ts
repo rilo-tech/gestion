@@ -171,7 +171,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             </app-list-search-field>
           </div>
           <div [class]="tableScrollClass">
-            <table class="w-full sm:min-w-[720px] text-left border-collapse sm:table-fixed">
+            <table class="app-data-table w-full max-w-full text-left border-collapse sm:table-fixed">
               <colgroup class="hidden sm:table-column-group">
                 <col class="w-[10rem]" />
                 <col class="w-[6rem]" />
@@ -346,7 +346,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             </app-list-search-field>
           </div>
           <div [class]="tableScrollClass">
-            <table class="w-full sm:min-w-[880px] text-left border-collapse">
+            <table class="app-data-table w-full max-w-full text-left border-collapse sm:table-fixed">
               <thead>
                 <tr class="bg-gray-50 border-b border-gray-100">
                   <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Empresa</th>

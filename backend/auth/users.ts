@@ -165,8 +165,18 @@ export async function findUserByEmail(
     .where('email', '==', normalized)
     .limit(1)
     .get();
-  if (snapshot.empty) return null;
-  return mapStoredUser(snapshot.docs[0].id, snapshot.docs[0].data());
+  if (!snapshot.empty) {
+    return mapStoredUser(snapshot.docs[0].id, snapshot.docs[0].data());
+  }
+
+  // Compat: emails guardados antes de normalizar a minúsculas en Firestore.
+  const all = await usersCollection(businessId).get();
+  for (const doc of all.docs) {
+    const user = mapStoredUser(doc.id, doc.data());
+    if (user.email === normalized) return user;
+  }
+
+  return null;
 }
 
 export async function linkGoogleId(

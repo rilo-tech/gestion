@@ -574,8 +574,26 @@ export interface ListPayableInstallmentsOptions {
   /** YYYY-MM; con scope=month filtra vencimientos del mes. */
   mes?: string;
   scope?: PayableInstallmentsScope;
-  /** Corrección de datos (costosa); solo en escrituras o reconcile explícito. */
+  /** Corrección de datos (costosa); solo en refresh explícito. */
   reconcile?: boolean;
+  /** Filtro de estado en scope=month (reduce lecturas). */
+  displayEstado?: PayableDisplayEstado;
+  /** Filtra por ámbito de caja (Rilo / Personal). */
+  ambito?: string;
+  /** KPIs del mes en scope=month (consultas livianas en paralelo). */
+  includeMonthSummary?: boolean;
+}
+
+export interface PayableInstallmentMonthSummary {
+  pendientes: number;
+  vencidas: number;
+  pagadas: number;
+  totalPendiente: number;
+}
+
+export interface ListPayableInstallmentsResult {
+  items: Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>;
+  monthSummary?: PayableInstallmentMonthSummary;
 }
 
 function monthDateBounds(mes: string): { start: string; end: string } | null {
@@ -586,6 +604,119 @@ function monthDateBounds(mes: string): { start: string; end: string } | null {
   return {
     start: `${raw}-01`,
     end: `${raw}-${String(lastDay).padStart(2, '0')}`,
+  };
+}
+
+function dayBeforeIso(iso: string): string {
+  const date = new Date(`${iso}T12:00:00`);
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function applyCuotaAmbitoFilter(
+  query: FirebaseFirestore.Query,
+  ambito?: string
+): FirebaseFirestore.Query {
+  const normalized = String(ambito ?? '').trim();
+  if (!normalized) return query;
+  return query.where('ambito', '==', normalized);
+}
+
+async function queryCuotasByMonthAndEstado(
+  businessId: string,
+  bounds: { start: string; end: string },
+  displayEstado: PayableDisplayEstado,
+  ambito?: string
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const today = todayIso();
+
+  if (displayEstado === 'pagada') {
+    let query = cuotasCollection(businessId)
+      .where('estado', '==', 'pagada')
+      .where('fechaVencimiento', '>=', bounds.start)
+      .where('fechaVencimiento', '<=', bounds.end);
+    query = applyCuotaAmbitoFilter(query, ambito);
+    return (await query.get()).docs;
+  }
+
+  if (displayEstado === 'pendiente') {
+    const start = bounds.start > today ? bounds.start : today;
+    if (start > bounds.end) return [];
+    let query = cuotasCollection(businessId)
+      .where('estado', '==', 'pendiente')
+      .where('fechaVencimiento', '>=', start)
+      .where('fechaVencimiento', '<=', bounds.end);
+    query = applyCuotaAmbitoFilter(query, ambito);
+    return (await query.get()).docs;
+  }
+
+  const end = bounds.end < today ? bounds.end : dayBeforeIso(today);
+  if (bounds.start > end) return [];
+  let query = cuotasCollection(businessId)
+    .where('estado', '==', 'pendiente')
+    .where('fechaVencimiento', '>=', bounds.start)
+    .where('fechaVencimiento', '<=', end);
+  query = applyCuotaAmbitoFilter(query, ambito);
+  return (await query.get()).docs;
+}
+
+async function computePayableInstallmentMonthSummary(
+  businessId: string,
+  bounds: { start: string; end: string },
+  ambito?: string
+): Promise<PayableInstallmentMonthSummary> {
+  const today = todayIso();
+  const pendStart = bounds.start > today ? bounds.start : today;
+  const vencEnd = bounds.end < today ? bounds.end : dayBeforeIso(today);
+
+  const pagadaQuery = applyCuotaAmbitoFilter(
+    cuotasCollection(businessId)
+      .where('estado', '==', 'pagada')
+      .where('fechaVencimiento', '>=', bounds.start)
+      .where('fechaVencimiento', '<=', bounds.end),
+    ambito
+  );
+
+  const pendienteQuery =
+    pendStart <= bounds.end
+      ? applyCuotaAmbitoFilter(
+          cuotasCollection(businessId)
+            .where('estado', '==', 'pendiente')
+            .where('fechaVencimiento', '>=', pendStart)
+            .where('fechaVencimiento', '<=', bounds.end),
+          ambito
+        )
+      : null;
+
+  const vencidaQuery =
+    bounds.start <= vencEnd
+      ? applyCuotaAmbitoFilter(
+          cuotasCollection(businessId)
+            .where('estado', '==', 'pendiente')
+            .where('fechaVencimiento', '>=', bounds.start)
+            .where('fechaVencimiento', '<=', vencEnd),
+          ambito
+        )
+      : null;
+
+  const [pagadasSnap, pendientesSnap, vencidasSnap] = await Promise.all([
+    pagadaQuery.get(),
+    pendienteQuery ? pendienteQuery.get() : Promise.resolve(null),
+    vencidaQuery ? vencidaQuery.get() : Promise.resolve(null),
+  ]);
+
+  const pendientes = pendientesSnap?.docs ?? [];
+  const vencidas = vencidasSnap?.docs ?? [];
+  const totalPendiente = [...pendientes, ...vencidas].reduce(
+    (sum, doc) => sum + (Number(doc.data().monto) || 0),
+    0
+  );
+
+  return {
+    pendientes: pendientes.length,
+    vencidas: vencidas.length,
+    pagadas: pagadasSnap.docs.length,
+    totalPendiente: roundPayableMoney(totalPendiente),
   };
 }
 
@@ -619,7 +750,7 @@ export function schedulePayablesDataRepair(businessId: string): void {
 export async function listPayableInstallments(
   businessId: string,
   options?: ListPayableInstallmentsOptions
-): Promise<Array<PayableCuotaRecord & { displayEstado: PayableDisplayEstado }>> {
+): Promise<ListPayableInstallmentsResult> {
   if (options?.reconcile) {
     await preparePayablesData(businessId);
   }
@@ -627,20 +758,34 @@ export async function listPayableInstallments(
   const scope: PayableInstallmentsScope =
     options?.scope ?? (options?.mes ? 'month' : 'all');
   const mes = String(options?.mes ?? '').trim().slice(0, 7);
+  const ambito = String(options?.ambito ?? '').trim() || undefined;
+  const displayEstado = options?.displayEstado;
 
   if (scope === 'month') {
     const bounds = monthDateBounds(mes);
-    if (!bounds) return [];
+    if (!bounds) return { items: [] };
 
-    const snapshot = await cuotasCollection(businessId)
-      .where('fechaVencimiento', '>=', bounds.start)
-      .where('fechaVencimiento', '<=', bounds.end)
-      .get();
-    return mapInstallmentDocs(snapshot.docs);
+    const fetchDocs = (): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> =>
+      displayEstado
+        ? queryCuotasByMonthAndEstado(businessId, bounds, displayEstado, ambito)
+        : cuotasCollection(businessId)
+            .where('fechaVencimiento', '>=', bounds.start)
+            .where('fechaVencimiento', '<=', bounds.end)
+            .get()
+            .then((snapshot) => snapshot.docs);
+
+    const [docs, monthSummary] = await Promise.all([
+      fetchDocs(),
+      options?.includeMonthSummary === false
+        ? Promise.resolve(undefined)
+        : computePayableInstallmentMonthSummary(businessId, bounds, ambito),
+    ]);
+
+    return { items: mapInstallmentDocs(docs), monthSummary };
   }
 
   const snapshot = await cuotasCollection(businessId).get();
-  return mapInstallmentDocs(snapshot.docs);
+  return { items: mapInstallmentDocs(snapshot.docs) };
 }
 
 export async function createPayableObligation(
@@ -1467,6 +1612,13 @@ export async function reconcilePayablesAndCashData(
     }
   }
   lastReconcileAt.set(businessId, now);
+
+  try {
+    const { syncMissingPurchasePayablesForBusiness } = await import('./purchase-finance.ts');
+    await syncMissingPurchasePayablesForBusiness(businessId);
+  } catch (error) {
+    console.error('Missing purchase payables sync failed:', error);
+  }
 
   await reconcilePurchaseCuotaTarjetas(businessId);
   await reconcileOverSplitInstallmentRecovery(businessId);

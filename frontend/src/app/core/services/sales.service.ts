@@ -41,6 +41,8 @@ export interface Sale {
   saldoPendiente: number;
   medioPago?: string;
   notas?: string;
+  /** Total $0: donación; gananciaEstimada refleja el costo en negativo. */
+  esDonacion?: boolean;
   fecha: string;
   movimientoCajaId?: string;
   cobros?: Array<{
@@ -156,6 +158,8 @@ export class SalesService {
     totalFacturado: number;
     totalGanancia: number;
     bonificacionOfertas?: number;
+    donacionesCount?: number;
+    donacionesCosto?: number;
   }> {
     const params = new URLSearchParams({
       mes: String(mes),
@@ -168,6 +172,8 @@ export class SalesService {
       totalFacturado: number;
       totalGanancia: number;
       bonificacionOfertas?: number;
+      donacionesCount?: number;
+      donacionesCosto?: number;
     }>(`/api/sales/${this.businessId}/monthly-summary?${params}`);
   }
 

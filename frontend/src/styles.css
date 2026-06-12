@@ -403,18 +403,43 @@ html.dark .disabled\:text-gray-500:disabled {
   color: rgb(107 114 128) !important;
 }
 
-/* Formularios móviles: targets táctiles, sin zoom iOS, acciones sticky */
+/* Formularios móviles: campos compactos uniformes (misma altura en todo el sistema) */
 @media (max-width: 639px) {
   app-transaction-modal input:not([type='checkbox']):not([type='radio']),
   app-transaction-modal select,
   app-transaction-modal textarea,
   main form input:not([type='checkbox']):not([type='radio']),
   main form select,
+  main form textarea,
+  app-searchable-select .searchable-select-input {
+    box-sizing: border-box;
+    min-height: 2rem !important;
+    height: 2rem !important;
+    max-height: 2rem !important;
+    font-size: 0.75rem !important;
+    line-height: 1.25 !important;
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem !important;
+  }
+
+  app-transaction-modal textarea,
   main form textarea {
-    min-height: 2.75rem;
-    font-size: 16px !important;
-    border-radius: 0.75rem;
-    padding: 0.625rem 1rem;
+    min-height: 4rem !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  app-transaction-modal input[type='date'],
+  app-transaction-modal input[type='datetime-local'],
+  app-transaction-modal input[type='time'],
+  main form input[type='date'],
+  main form input[type='datetime-local'],
+  main form input[type='time'] {
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 2rem !important;
+    max-height: 2rem !important;
+    height: 2rem !important;
   }
 
   app-transaction-modal select,
@@ -422,8 +447,8 @@ html.dark .disabled\:text-gray-500:disabled {
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 0.75rem center;
-    padding-right: 2.5rem;
+    background-position: right 0.5rem center;
+    padding-right: 2rem;
   }
 
   app-transaction-modal form.space-y-4 > *,
@@ -440,9 +465,9 @@ html.dark .disabled\:text-gray-500:disabled {
 
   app-transaction-modal label.block,
   main form label.block {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin-bottom: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-bottom: 0.125rem;
   }
 
   .form-actions {
@@ -856,6 +881,118 @@ html.dark .form-label {
   padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
+/* Contenedor de tablas: sin scroll horizontal hasta expandir columnas */
+.app-table-scroll-host {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+.app-table-scroll-host[data-table-scroll-expanded='true'] {
+  overflow-x: auto;
+}
+
+@media (min-width: 640px) {
+  .app-table-scroll-host table.app-data-table,
+  .app-table-scroll-host table.module-data-table-layout,
+  table.app-data-table[data-resizable-table-bound],
+  table.module-data-table-layout[data-resizable-table-bound] {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  table.stock-products-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  table.stock-products-table th,
+  table.stock-products-table td {
+    overflow: hidden;
+  }
+
+  table.stock-products-table th.stock-products-actions,
+  table.stock-products-table td.stock-products-actions {
+    overflow: hidden;
+    text-align: right !important;
+    vertical-align: middle;
+  }
+
+  table.stock-products-table td.stock-products-actions app-list-row-actions {
+    display: inline-flex !important;
+    width: auto !important;
+    max-width: 100%;
+    vertical-align: middle;
+  }
+
+  table.stock-products-table td.stock-products-actions app-list-row-actions > div {
+    display: inline-flex !important;
+    width: auto !important;
+    justify-content: flex-end !important;
+    flex-wrap: nowrap;
+  }
+}
+
+/* Redimensionar columnas con el mouse (solo pantallas grandes) */
+@media (min-width: 1024px) {
+  table.app-data-table thead th,
+  table.module-data-table-layout thead th {
+    position: relative;
+  }
+
+  .app-col-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    width: 6px;
+    height: 100%;
+    margin-right: -3px;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .app-col-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 18%;
+    bottom: 18%;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: rgb(209 213 219 / 0.9);
+    transition: background-color 0.15s ease, width 0.15s ease;
+  }
+
+  .app-col-resize-handle:hover::after,
+  .app-col-resize-handle.is-active::after {
+    width: 2px;
+    background: rgb(13 148 136 / 0.85);
+  }
+
+  html.dark .app-col-resize-handle::after {
+    background: rgb(75 85 99 / 0.9);
+  }
+
+  html.dark .app-col-resize-handle:hover::after,
+  html.dark .app-col-resize-handle.is-active::after {
+    background: rgb(45 212 191 / 0.85);
+  }
+
+  body.app-col-resizing {
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+
+  body.app-col-resizing * {
+    cursor: col-resize !important;
+  }
+}
+
 /* Tablas de listado: layout de grilla real (thead/tbody/tr/td) */
 table.module-data-table-layout {
   border-collapse: collapse;
@@ -880,19 +1017,30 @@ table.module-data-table-layout td {
   vertical-align: middle;
 }
 
-/* Tablas de listado: altura de fila uniforme en desktop (referencia: reservas stock) */
+/* Tablas de listado: filas compactas en desktop */
 @media (min-width: 640px) {
   table.app-data-table thead th {
-    padding-top: 0.75rem !important;
-    padding-bottom: 0.75rem !important;
+    padding: 0.375rem 0.75rem !important;
     vertical-align: middle;
+    font-size: 0.625rem !important;
+    line-height: 1.2 !important;
+    letter-spacing: 0.04em;
+  }
+
+  table.app-data-table thead th button {
+    font: inherit;
+    font-size: inherit !important;
+    font-weight: inherit !important;
+    letter-spacing: inherit !important;
+    line-height: inherit !important;
+    text-transform: inherit !important;
   }
 
   table.app-data-table.module-data-table-layout thead th[app-module-table-head-cell] {
-    font-size: 0.6875rem !important;
+    font-size: 0.625rem !important;
     font-weight: 600 !important;
-    line-height: 1.25 !important;
-    letter-spacing: 0.05em !important;
+    line-height: 1.2 !important;
+    letter-spacing: 0.04em !important;
     text-transform: uppercase !important;
     color: rgb(107 114 128) !important;
   }
@@ -902,22 +1050,34 @@ table.module-data-table-layout td {
   }
 
   table.app-data-table tbody td {
-    padding-top: 0.75rem !important;
-    padding-bottom: 0.75rem !important;
+    padding: 0.375rem 0.75rem !important;
     vertical-align: middle;
+    font-size: 0.8125rem !important;
+    line-height: 1.25 !important;
+  }
+
+  table.app-data-table tbody td button[type='button'] {
+    padding: 0.25rem !important;
+  }
+
+  table.app-data-table tbody td[colspan] {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1.5rem !important;
+    font-size: 0.8125rem !important;
   }
 
   table.module-table-nested.app-data-table tbody td {
-    padding-top: 0.5rem !important;
-    padding-bottom: 0.5rem !important;
-    font-size: 0.8125rem;
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.75rem !important;
+    line-height: 1.2 !important;
   }
 
   table.module-table-nested.app-data-table thead th {
-    font-size: 0.625rem !important;
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.5625rem !important;
     font-weight: 600 !important;
-    line-height: 1.25 !important;
-    letter-spacing: 0.05em !important;
+    line-height: 1.2 !important;
+    letter-spacing: 0.04em !important;
     text-transform: uppercase !important;
     color: rgb(107 114 128) !important;
     vertical-align: middle;
@@ -939,8 +1099,10 @@ table.module-data-table-layout td {
   }
 
   .native-compact-table tbody td {
-    padding: 0.375rem 0.75rem !important;
+    padding: 0.25rem 0.5rem !important;
     vertical-align: middle;
+    font-size: 0.8125rem !important;
+    line-height: 1.25 !important;
   }
 
   .native-compact-table tbody td:first-child {
@@ -949,8 +1111,8 @@ table.module-data-table-layout td {
   }
 
   .native-compact-list .compact-list-title {
-    font-size: 0.875rem;
-    line-height: 1.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
     font-weight: 500;
     color: rgb(17 24 39);
   }
@@ -960,10 +1122,10 @@ table.module-data-table-layout td {
   }
 
   .native-compact-list .compact-list-subtitle {
-    font-size: 0.6875rem;
-    line-height: 1rem;
+    font-size: 0.625rem;
+    line-height: 0.875rem;
     color: rgb(107 114 128);
-    margin-top: 0.125rem;
+    margin-top: 0.0625rem;
   }
 
   html.dark .native-compact-list .compact-list-subtitle {

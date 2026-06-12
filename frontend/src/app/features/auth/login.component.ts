@@ -6,6 +6,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/config/firebase';
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
+import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   API_HTML_RESPONSE_MESSAGE,
@@ -184,6 +185,10 @@ export class LoginComponent implements OnInit {
       this.errorMessage = '';
     }
 
+    if (!hasPendingGoogleLogin()) {
+      return;
+    }
+
     this.auth.completeGoogleRedirectLogin().subscribe({
       next: () => {
         this.googleRedirectPending = false;
@@ -194,13 +199,15 @@ export class LoginComponent implements OnInit {
         if (err?.message === 'NO_REDIRECT') {
           if (pendingBusinessId) {
             this.errorMessage =
-              'No se pudo completar el ingreso con Google. Verificá que tu email esté cargado y activo en tu usuario de esta empresa.';
+              'Google no devolvió la sesión al volver. Probá de nuevo (debería abrirse una ventana de Google). Si persiste, ingresá con usuario y contraseña.';
           }
           sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+          sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
           return;
         }
         sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-        this.errorMessage = mapGoogleAuthError(err);
+        sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+        this.errorMessage = this.mapLoginError(err) || mapGoogleAuthError(err);
       },
     });
   }
@@ -250,10 +257,13 @@ export class LoginComponent implements OnInit {
 
     this.errorMessage = '';
     this.auth.loginWithGoogle(this.businessCode.trim().toLowerCase()).subscribe({
+      next: () => {
+        this.router.navigate([this.auth.homeRoute]);
+      },
       error: (err) => {
         this.googleRedirectPending = false;
         sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-        this.errorMessage = mapGoogleAuthError(err);
+        this.errorMessage = this.mapLoginError(err) || mapGoogleAuthError(err);
       },
     });
   }

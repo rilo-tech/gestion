@@ -29,7 +29,7 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
         </button>
         <p
           *ngIf="successMessage"
-          [class]="sidebarSuccessClass"
+          [class]="successMessageClass || sidebarSuccessClass"
           role="status"
           aria-live="polite">
           {{ successMessage }}
@@ -124,6 +124,8 @@ export class FormFooterComponent {
 
   /** Mensaje breve tras guardar (sidebar o inline). */
   @Input() successMessage = '';
+  /** Clases opcionales del mensaje en modo sidebar (reemplaza el estilo por defecto). */
+  @Input() successMessageClass = '';
   @Input() fullWidth = true;
   @Input() centerOnLarge = false;
   @Input() theme: 'light' | 'dark' = 'light';

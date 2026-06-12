@@ -5,6 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import {
   PayableDisplayEstado,
   PayableInstallment,
+  PayableInstallmentMonthSummary,
   PayableObligation,
   PayablesService,
   CardStatementSummary,
@@ -166,7 +167,7 @@ interface PayableObligationGroupEntry {
         activityModule="payables"
         [showRefresh]="true"
         [refreshing]="loadingInstallments"
-        (refreshClick)="reloadList()">
+        (refreshClick)="reloadList(true)">
         <p
           headerExtra
           class="hidden lg:block text-[11px] xl:text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-tight max-w-2xl">
@@ -247,25 +248,34 @@ interface PayableObligationGroupEntry {
       </div>
 
       <div class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-8">
-        <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
+        <button
+          type="button"
+          (click)="setEstadoFilterFromKpi('pendiente')"
+          [class]="kpiEstadoCardClass('pendiente', 'border-gray-100 dark:border-gray-700')">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ kpiScopePrefix }}Pendientes
           </p>
           <p class="text-xl sm:text-2xl font-bold text-amber-600 tabular-nums">{{ countPendientes }}</p>
-        </div>
-        <div class="bg-white p-4 sm:p-5 rounded-xl border border-red-100 shadow-sm">
+        </button>
+        <button
+          type="button"
+          (click)="setEstadoFilterFromKpi('vencida')"
+          [class]="kpiEstadoCardClass('vencida', 'border-red-100 dark:border-red-900/50')">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ kpiScopePrefix }}Vencidas
           </p>
           <p class="text-xl sm:text-2xl font-bold text-red-600 tabular-nums">{{ countVencidas }}</p>
-        </div>
-        <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
+        </button>
+        <button
+          type="button"
+          (click)="setEstadoFilterFromKpi('pagada')"
+          [class]="kpiEstadoCardClass('pagada', 'border-gray-100 dark:border-gray-700')">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ kpiScopePrefix }}Pagadas
           </p>
           <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums">{{ countPagadas }}</p>
-        </div>
-        <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm col-span-2 lg:col-span-1">
+        </button>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm col-span-2 lg:col-span-1">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">
             {{ kpiScopePrefix }}Total pendiente
           </p>
@@ -450,13 +460,8 @@ interface PayableObligationGroupEntry {
               *ngFor="let row of monthViewInstallments"
               (activate)="openInstallmentEdit(row)"
               [disabled]="!canOpenInstallmentEdit(row) || savingCuotaId === row.id">
-              <div compactTitle class="compact-list-title font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5 min-w-0">
-                <span class="truncate min-w-0">{{ installmentCuentaLabel(row) }}</span>
-                <span
-                  class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
-                  [ngClass]="estadoBadgeClass(row.displayEstado)">
-                  {{ estadoLabel(row.displayEstado) }}
-                </span>
+              <div compactTitle class="compact-list-title font-medium text-gray-900 dark:text-gray-100 min-w-0">
+                <span class="block truncate min-w-0">{{ installmentCuentaLabel(row) }}</span>
               </div>
               <div compactSubtitle class="compact-list-subtitle truncate">
                 {{ formatDate(row.fechaVencimiento) }} · {{ cuotaLabel(row) }} · {{ installmentDetalleDisplayLabel(row) }}
@@ -547,13 +552,8 @@ interface PayableObligationGroupEntry {
                     *ngFor="let row of card.currentMonth?.rows ?? []"
                     (activate)="onAccountCurrentMonthRowActivate(row)"
                     [disabled]="savingCuotaId === row.id">
-                    <div compactTitle class="compact-list-title text-gray-800 dark:text-gray-200 flex items-center gap-1.5 min-w-0">
-                      <span class="truncate min-w-0">{{ accountCurrentMonthRowTitle(row) }}</span>
-                      <span
-                        class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
-                        [ngClass]="estadoBadgeClass(row.displayEstado)">
-                        {{ estadoLabel(row.displayEstado) }}
-                      </span>
+                    <div compactTitle class="compact-list-title text-gray-800 dark:text-gray-200 min-w-0">
+                      <span class="block truncate min-w-0">{{ accountCurrentMonthRowTitle(row) }}</span>
                     </div>
                     <div compactSubtitle class="compact-list-subtitle truncate">
                       {{ installmentCuotaCompraLabel(row) }} · vence {{ formatDate(row.fechaVencimiento) }}
@@ -677,7 +677,7 @@ interface PayableObligationGroupEntry {
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
           <app-module-data-table
             *ngIf="viewTab === 'month'"
-            minWidthClass="min-w-[52rem]">
+            minWidthClass="max-w-full">
             <colgroup>
               <col style="width: 3.25rem" />
               <col style="width: 10rem" />
@@ -761,7 +761,7 @@ interface PayableObligationGroupEntry {
 
           <app-module-data-table
             *ngIf="viewTab === 'account'"
-            minWidthClass="min-w-[920px]">
+            minWidthClass="max-w-full">
             <colgroup>
               <col class="w-[2.5rem]" />
               <col class="w-[10rem]" />
@@ -930,7 +930,7 @@ interface PayableObligationGroupEntry {
 
           <app-module-data-table
             *ngIf="viewTab === 'obligation'"
-            minWidthClass="min-w-[760px]">
+            minWidthClass="max-w-full">
             <colgroup>
               <col class="w-[2.5rem]" />
               <col class="w-[11rem]" />
@@ -1070,7 +1070,7 @@ interface PayableObligationGroupEntry {
           <p class="text-xs text-gray-500 mt-1">Sueldos, servicios y otros pagos que se repiten cada mes.</p>
         </div>
         <div [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:min-w-[560px]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Beneficiario</th>
@@ -1099,35 +1099,14 @@ interface PayableObligationGroupEntry {
                   </span>
                 </td>
                 <td class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
-                  <div class="inline-flex flex-wrap gap-x-2 gap-y-1 justify-end">
-                    <button
-                      *ngIf="item.activo"
-                      type="button"
-                      (click)="payMensualObligation(item, $event)"
-                      [disabled]="payingMensualObligationId === item.id"
-                      class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-50 whitespace-nowrap">
-                      Pagar
-                    </button>
-                    <button
-                      type="button"
-                      (click)="toggleObligationActive(item)"
-                      [disabled]="savingObligationId === item.id"
-                      class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-50 whitespace-nowrap">
-                      {{ item.activo ? 'Desactivar' : 'Reactivar' }}
-                    </button>
-                    <button
-                      type="button"
-                      (click)="duplicateMensualObligation(item, $event)"
-                      class="text-xs font-semibold text-gray-600 dark:text-gray-300 hover:underline whitespace-nowrap">
-                      Duplicar
-                    </button>
-                    <button
-                      type="button"
-                      (click)="confirmDeleteObligation(item)"
-                      class="text-xs font-semibold text-red-600 hover:underline whitespace-nowrap">
-                      Eliminar
-                    </button>
-                  </div>
+                  <button
+                    *ngIf="item.activo"
+                    type="button"
+                    (click)="payMensualObligation(item, $event)"
+                    [disabled]="payingMensualObligationId === item.id"
+                    class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-50 whitespace-nowrap">
+                    Pagar
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -1369,6 +1348,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
   payCuotaDetalle = '';
   loadingInstallments = true;
   private allInstallmentsCache: PayableInstallment[] | null = null;
+  private monthInstallmentsCacheKey = '';
+  private monthInstallmentsCache: PayableInstallment[] | null = null;
+  monthInstallmentSummary: PayableInstallmentMonthSummary | null = null;
 
   readonly payCardSave = new TransactionSaveFeedback();
   readonly payCuotaSave = new TransactionSaveFeedback();
@@ -1388,6 +1370,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
   searchQuery = '';
   mesFilter = '';
   mesEstadoFilter: PayableDisplayEstado = 'pendiente';
+  /** Filtro por estado activado desde las tarjetas KPI (cuenta / préstamos). */
+  private estadoKpiFilterActive = false;
   cuentaFilter = '';
   obligacionFilter = '';
   viewTab: PayablesViewTab = 'month';
@@ -1409,6 +1393,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
   totalPendiente = 0;
 
   private payablesViewCacheKey = '';
+  /** Tras registrar un pago en modal, recargar la grilla al cerrar (no al guardar). */
+  private pendingGridReloadAfterPayment = false;
   payablesCreateMenuOpen = false;
 
   readonly payablesCreateMenuButtonClass =
@@ -1451,20 +1437,6 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.payCuotaSave.destroy();
   }
 
-  private finishModalSave(
-    feedback: TransactionSaveFeedback,
-    message: string,
-    close: () => void,
-    afterClose?: () => void
-  ): void {
-    feedback.showSuccess(message);
-    window.setTimeout(() => {
-      feedback.clearSuccess();
-      close();
-      afterClose?.();
-    }, 1400);
-  }
-
   get cajaAmbitos(): CajaAmbitoConfig[] {
     return getCajaAmbitos(this.appConfig);
   }
@@ -1492,6 +1464,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   private getScopedInstallments(): PayableInstallment[] {
     if (!this.usesAmbitoSeparation) return this.installments;
+    // En «Por cuenta» el filtro es la tarjeta; no ocultar cuotas de otro ámbito (ej. Personal/casa).
+    if (this.viewTab === 'account') return this.installments;
     return this.installments.filter(
       (row) => resolveCashAmbito(row, this.appConfig) === this.activeAmbitoTab
     );
@@ -1508,6 +1482,22 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.expandedAccountCardKeys = {};
     this.expandedAccountMonthKeys = {};
     this.expandedAccountPurchaseKeys = {};
+
+    if (this.cuentaFilter && this.usesAmbitoSeparation) {
+      const sample = this.installments.find((row) => row.tarjetaId === this.cuentaFilter);
+      if (sample) {
+        const ambito = resolveCashAmbito(sample, this.appConfig);
+        if (ambito !== this.activeAmbitoTab) {
+          this.activeAmbitoTab = ambito;
+          this.monthInstallmentsCacheKey = '';
+          if (this.viewTab === 'month') {
+            this.loadInstallmentsForCurrentView();
+            return;
+          }
+        }
+      }
+    }
+
     this.syncPayablesView();
   }
 
@@ -1558,6 +1548,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
   setActiveAmbito(id: string): void {
     if (this.activeAmbitoTab === id) return;
     this.activeAmbitoTab = id;
+    this.monthInstallmentsCacheKey = '';
+    if (this.viewTab === 'month') {
+      this.loadInstallmentsForCurrentView();
+      return;
+    }
     this.syncPayablesView();
   }
 
@@ -1593,28 +1588,39 @@ export class PayablesComponent implements OnInit, OnDestroy {
     if (key === this.payablesViewCacheKey) return;
     this.payablesViewCacheKey = key;
 
-    this.tarjetaFilterOptions = this.buildTarjetaFilterOptions();
     this.monthViewInstallments = this.sortInstallments(
       this.rowsMatchingFilters({ applyMes: true })
     );
-    this.accountViewCards = this.buildAccountCardEntries(
-      this.sortInstallments(this.rowsMatchingFilters({ applyCuenta: true }))
-    );
-    this.obligationViewGroups = this.buildObligationGroupEntries(
-      this.sortInstallments(this.rowsMatchingFilters({ applyObligacion: true }))
-    );
-    this.obligacionFilterOptions = this.buildObligacionFilterOptions();
-    this.syncAccountViewAutoExpand();
-    this.mensualObligations = this.buildMensualObligations();
+
+    if (this.viewTab === 'account') {
+      this.tarjetaFilterOptions = this.buildTarjetaFilterOptions();
+      this.accountViewCards = this.buildAccountCardEntries(
+        this.sortInstallments(this.rowsMatchingFilters({ applyCuenta: true }))
+      );
+      this.syncAccountViewAutoExpand();
+    } else if (this.viewTab === 'obligation') {
+      this.obligationViewGroups = this.buildObligationGroupEntries(
+        this.sortInstallments(this.rowsMatchingFilters({ applyObligacion: true }))
+      );
+      this.obligacionFilterOptions = this.buildObligacionFilterOptions();
+      this.mensualObligations = this.buildMensualObligations();
+    }
 
     const kpiScope = this.buildKpiScopeInstallments();
     this.kpiScopePrefix = this.buildKpiScopePrefix();
-    this.countPendientes = kpiScope.filter((row) => row.displayEstado === 'pendiente').length;
-    this.countVencidas = kpiScope.filter((row) => row.displayEstado === 'vencida').length;
-    this.countPagadas = kpiScope.filter((row) => row.displayEstado === 'pagada').length;
-    this.totalPendiente = kpiScope
-      .filter((row) => row.displayEstado === 'pendiente' || row.displayEstado === 'vencida')
-      .reduce((sum, row) => sum + row.monto, 0);
+    if (this.viewTab === 'month' && this.monthInstallmentSummary) {
+      this.countPendientes = this.monthInstallmentSummary.pendientes;
+      this.countVencidas = this.monthInstallmentSummary.vencidas;
+      this.countPagadas = this.monthInstallmentSummary.pagadas;
+      this.totalPendiente = this.monthInstallmentSummary.totalPendiente;
+    } else {
+      this.countPendientes = kpiScope.filter((row) => row.displayEstado === 'pendiente').length;
+      this.countVencidas = kpiScope.filter((row) => row.displayEstado === 'vencida').length;
+      this.countPagadas = kpiScope.filter((row) => row.displayEstado === 'pagada').length;
+      this.totalPendiente = kpiScope
+        .filter((row) => row.displayEstado === 'pendiente' || row.displayEstado === 'vencida')
+        .reduce((sum, row) => sum + row.monto, 0);
+    }
   }
 
   private rowsMatchingFilters(opts: {
@@ -1625,6 +1631,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
     const query = this.searchQuery.trim().toLowerCase();
     const mes = this.mesFilter.trim();
     return this.getScopedInstallments().filter((row) => {
+      if (this.viewTab !== 'month' && this.estadoKpiFilterActive) {
+        if (row.displayEstado !== this.mesEstadoFilter) return false;
+      }
       if (opts.applyMes) {
         if (!mes) return false;
         if (this.installmentMesKey(row) !== mes) return false;
@@ -2051,6 +2060,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
       this.loadCardStatements();
       return;
     }
+    if (tab === 'account') {
+      this.loadInstallmentsForCurrentView(true);
+      this.loadCardStatements();
+      return;
+    }
     if (this.allInstallmentsCache) {
       this.installments = this.allInstallmentsCache;
       this.syncPayablesView();
@@ -2238,12 +2252,17 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   closePayCardModal(): void {
+    const shouldReload = this.pendingGridReloadAfterPayment;
     this.payCardModalOpen = false;
     this.payCardTarget = null;
     this.payCardPendingRows = [];
     this.payCardMonto = null;
     this.payCardSave.clearSuccess();
     this.payCardSave.endSave();
+    this.pendingGridReloadAfterPayment = false;
+    if (shouldReload) {
+      this.reloadList(true);
+    }
   }
 
   submitPayCardStatement(): void {
@@ -2267,12 +2286,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
             result.saldoPendiente > 0
               ? ` · saldo pendiente $${result.saldoPendiente}`
               : '';
-          this.finishModalSave(
-            this.payCardSave,
-            `Pago registrado · $${result.total}${parcial}`,
-            () => this.closePayCardModal(),
-            () => this.loadData()
-          );
+          this.payCardSave.showSuccess(`Pago registrado · $${result.total}${parcial}`);
+          this.pendingGridReloadAfterPayment = true;
         },
         error: (err) => {
           this.dialog.alert({
@@ -2299,8 +2314,29 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   onMesEstadoFilterChange(): void {
+    this.estadoKpiFilterActive = true;
     this.payablesViewCacheKey = '';
+    this.monthInstallmentsCacheKey = '';
+    if (this.viewTab === 'month') {
+      this.loadInstallmentsForCurrentView();
+      return;
+    }
     this.syncPayablesView();
+  }
+
+  setEstadoFilterFromKpi(estado: PayableDisplayEstado): void {
+    this.mesEstadoFilter = estado;
+    this.onMesEstadoFilterChange();
+  }
+
+  kpiEstadoCardClass(estado: PayableDisplayEstado, borderClass: string): string {
+    const active =
+      this.mesEstadoFilter === estado &&
+      (this.viewTab === 'month' || this.estadoKpiFilterActive);
+    const base =
+      'w-full text-left bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border shadow-sm transition-colors cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50';
+    const ring = active ? ' ring-2 ring-teal-500 ring-offset-2 dark:ring-offset-gray-950' : '';
+    return `${base} ${borderClass}${ring}`;
   }
 
   isAccountCardExpanded(key: string): boolean {
@@ -2488,6 +2524,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
             item.id === updated.id ? updated : item
           );
           this.payablesViewCacheKey = '';
+          this.invalidateInstallmentsCache();
           this.syncPayablesView();
           this.savingCuotaId = null;
         },
@@ -2507,12 +2544,17 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   closePayCuotaModal(): void {
+    const shouldReload = this.pendingGridReloadAfterPayment;
     this.payCuotaModalOpen = false;
     this.payCuotaTarget = null;
     this.payCuotaMonto = null;
     this.payCuotaDetalle = '';
     this.payCuotaSave.clearSuccess();
     this.payCuotaSave.endSave();
+    this.pendingGridReloadAfterPayment = false;
+    if (shouldReload) {
+      this.reloadList(true);
+    }
   }
 
   get canSubmitPayCuota(): boolean {
@@ -2540,19 +2582,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
       .pipe(finalize(() => this.payCuotaSave.endSave()))
       .subscribe({
         next: (updated) => {
-          this.installments = this.installments.map((item) =>
-            item.id === updated.id ? updated : item
-          );
-          this.payablesViewCacheKey = '';
-          this.syncPayablesView();
-          this.finishModalSave(
-            this.payCuotaSave,
-            `Cuota pagada · $${updated.monto}`,
-            () => this.closePayCuotaModal(),
-            () => {
-              this.loadData();
-            }
-          );
+          this.payCuotaSave.showSuccess(`Cuota pagada · $${updated.monto}`);
+          this.pendingGridReloadAfterPayment = true;
         },
         error: (err) => {
           this.dialog.alert({
@@ -2627,8 +2658,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
           row.id === updated.id ? updated : row
         );
         this.savingObligationId = null;
-        this.allInstallmentsCache = null;
-        this.loadInstallmentsForCurrentView(true);
+        this.invalidateInstallmentsCache();
+        this.loadInstallmentsForCurrentView(false);
       },
       error: () => {
         this.savingObligationId = null;
@@ -2730,13 +2761,20 @@ export class PayablesComponent implements OnInit, OnDestroy {
     }
   }
 
-  reloadList(): void {
+  reloadList(reconcile = false): void {
     this.payablesViewCacheKey = '';
-    this.allInstallmentsCache = null;
-    this.loadData();
+    this.invalidateInstallmentsCache();
+    this.loadData(reconcile);
   }
 
-  private loadData(): void {
+  private invalidateInstallmentsCache(): void {
+    this.allInstallmentsCache = null;
+    this.monthInstallmentsCacheKey = '';
+    this.monthInstallmentsCache = null;
+    this.monthInstallmentSummary = null;
+  }
+
+  private loadData(reconcile = false): void {
     this.loadCardStatements();
     this.payables.getObligations().subscribe({
       next: (obligations) => {
@@ -2747,42 +2785,78 @@ export class PayablesComponent implements OnInit, OnDestroy {
         this.obligations = [];
       },
     });
-    this.loadInstallmentsForCurrentView(true);
+    this.loadInstallmentsForCurrentView(reconcile);
   }
 
   private installmentsScopeForView(): 'month' | 'all' {
     return this.viewTab === 'month' ? 'month' : 'all';
   }
 
-  private loadInstallmentsForCurrentView(force = false): void {
+  private installmentsQueryAmbito(): string | undefined {
+    if (!this.usesAmbitoSeparation) return undefined;
+    return this.activeAmbitoTab.trim() || undefined;
+  }
+
+  private monthInstallmentsCacheToken(): string {
+    return [
+      this.mesFilter.trim(),
+      this.mesEstadoFilter,
+      this.installmentsQueryAmbito() ?? '',
+    ].join('|');
+  }
+
+  private loadInstallmentsForCurrentView(reconcile = false): void {
     const scope = this.installmentsScopeForView();
     const mes = scope === 'month' ? this.mesFilter.trim() : undefined;
+    const cacheToken = scope === 'month' ? this.monthInstallmentsCacheToken() : 'all';
 
-    if (scope === 'all' && this.allInstallmentsCache && !force) {
+    if (scope === 'month' && !reconcile && this.monthInstallmentsCache && this.monthInstallmentsCacheKey === cacheToken) {
+      this.installments = this.monthInstallmentsCache;
+      this.loadingInstallments = false;
+      this.syncPayablesView();
+      return;
+    }
+
+    if (scope === 'all' && this.allInstallmentsCache && !reconcile) {
       this.installments = this.allInstallmentsCache;
+      this.monthInstallmentSummary = null;
       this.loadingInstallments = false;
       this.syncPayablesView();
       return;
     }
 
     this.loadingInstallments = true;
-    this.payables.getInstallments({ mes, scope, reconcile: force }).subscribe({
-      next: (installments) => {
-        this.installments = installments;
-        if (scope === 'all') {
-          this.allInstallmentsCache = installments;
-        }
-        this.loadingInstallments = false;
-        this.syncPayablesView();
-      },
-      error: () => {
-        this.installments = [];
-        this.loadingInstallments = false;
-        this.payablesViewCacheKey = '';
-        this.syncPayablesView();
-        this.dialog.alert({ message: 'No se pudieron cargar los vencimientos.' });
-      },
-    });
+    this.payables
+      .getInstallments({
+        mes,
+        scope,
+        reconcile,
+        displayEstado: scope === 'month' ? this.mesEstadoFilter : undefined,
+        ambito: scope === 'month' ? this.installmentsQueryAmbito() : undefined,
+      })
+      .subscribe({
+        next: (response) => {
+          this.installments = response.items ?? [];
+          if (scope === 'month') {
+            this.monthInstallmentSummary = response.monthSummary ?? null;
+            this.monthInstallmentsCache = this.installments;
+            this.monthInstallmentsCacheKey = cacheToken;
+          } else {
+            this.monthInstallmentSummary = null;
+            this.allInstallmentsCache = this.installments;
+          }
+          this.loadingInstallments = false;
+          this.syncPayablesView();
+        },
+        error: () => {
+          this.installments = [];
+          this.monthInstallmentSummary = null;
+          this.loadingInstallments = false;
+          this.payablesViewCacheKey = '';
+          this.syncPayablesView();
+          this.dialog.alert({ message: 'No se pudieron cargar los vencimientos.' });
+        },
+      });
   }
 
   loadCardStatements(): void {

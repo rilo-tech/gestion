@@ -43,7 +43,8 @@ export class IconToolbarButtonComponent {
   }
 
   get iconClass(): string {
-    const base = 'w-4 h-4 shrink-0';
+    const sizeClass = this.size === 'row' ? 'w-3.5 h-3.5' : 'w-4 h-4';
+    const base = `${sizeClass} shrink-0`;
     return this.loading ? `${base} animate-pulse` : base;
   }
 
@@ -54,15 +55,15 @@ export class IconToolbarButtonComponent {
 
     if (this.size === 'row') {
       const rowVariants: Record<IconToolbarVariant, string> = {
-        primary: 'p-2 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        success: 'p-2 text-green-600 hover:bg-green-50',
-        outline: 'p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-        danger: 'p-2 text-red-500 hover:bg-red-50 hover:text-red-700',
-        'teal-outline': 'p-2 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        'orange-outline': 'p-2 text-orange-600 hover:bg-orange-50 hover:text-orange-800',
-        'ghost-teal': 'p-2 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        'ghost-gray': 'p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-        'ghost-red': 'p-2 text-red-500 hover:bg-red-50 hover:text-red-700',
+        primary: 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
+        success: 'p-1.5 text-green-600 hover:bg-green-50',
+        outline: 'p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+        danger: 'p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700',
+        'teal-outline': 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
+        'orange-outline': 'p-1.5 text-orange-600 hover:bg-orange-50 hover:text-orange-800',
+        'ghost-teal': 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
+        'ghost-gray': 'p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+        'ghost-red': 'p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700',
       };
       return `${rowBase} ${rowVariants[this.variant]}`;
     }

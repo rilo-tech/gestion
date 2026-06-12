@@ -6,6 +6,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled } from '../../core/config/firebase';
 import { GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
+import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 
 @Component({
   selector: 'app-platform-login',
@@ -98,6 +99,10 @@ export class PlatformLoginComponent implements OnInit {
       this.errorMessage = '';
     }
 
+    if (!hasPendingGoogleLogin()) {
+      return;
+    }
+
     this.auth.completeGoogleRedirectLogin().subscribe({
       next: () => {
         this.googleRedirectPending = false;
@@ -140,6 +145,9 @@ export class PlatformLoginComponent implements OnInit {
   submitGoogleLogin() {
     this.errorMessage = '';
     this.auth.loginWithGooglePlatform().subscribe({
+      next: () => {
+        this.router.navigate(['/platform']);
+      },
       error: (err) => {
         this.googleRedirectPending = false;
         sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);

@@ -17,10 +17,11 @@ import {
   getOrderStatusCardTitleClass,
   getOrderStatusCardValueClass,
   orderMatchesStatusCardFilter,
+  orderHasEntregaConSaldo,
   ORDER_STATUS_OPTIONS,
-  canRegisterSaleFromOrder,
 } from '../../core/constants/order-status';
 import type { OrderEstadoConfig } from '../../core/constants/order-config';
+import { normalizeOrderEstadoValue } from '../../core/constants/order-config';
 import {
   getOrderStockStatusBadgeClass,
   getOrderStockStatusLabel,
@@ -35,6 +36,8 @@ import {
 import { CompactListRowComponent } from '../../shared/components/compact-list/compact-list-row.component';
 import {
   COMPACT_LIST_EMPTY_CLASS,
+  DESKTOP_TABLE_TD_CLASS,
+  DESKTOP_TABLE_TH_CLASS,
   NATIVE_COMPACT_LIST_CLASS,
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
@@ -98,7 +101,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
           (click)="setStatusCardFilter(card.value, $event)"
           [class]="statusCardClass(card.value, getOrderStatusCardBorderClass(i))">
           <p class="text-xs font-bold uppercase mb-1" [ngClass]="getOrderStatusCardTitleClass(i)">
-            {{ card.label }}
+            {{ getOrderEstadoCardLabel(card.value) }}
           </p>
           <p class="text-xl font-bold tabular-nums" [ngClass]="getOrderStatusCardValueClass(i)">
             {{ statusCounts[card.value] ?? 0 }}
@@ -180,10 +183,19 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[920px]'">
+        <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
+          <colgroup class="hidden sm:table-column-group">
+            <col class="w-[5.5rem]" />
+            <col class="w-[4.75rem]" />
+            <col />
+            <col class="w-[5.5rem]" />
+            <col class="w-[8.5rem]" />
+            <col *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="w-[7rem]" />
+            <col class="w-[5.5rem]" />
+          </colgroup>
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="hidden sm:table-cell px-6 py-4">
+              <th class="hidden sm:table-cell" [class]="desktopThClass">
                 <button type="button" (click)="toggleSort('fecha')" [class]="sortHeaderClass('fecha')">
                   Fecha
                   <i-lucide
@@ -192,7 +204,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                     class="w-3.5 h-3.5"></i-lucide>
                 </button>
               </th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4">
+              <th [class]="desktopThClass">
                 <button type="button" (click)="toggleSort('pedido')" [class]="sortHeaderClass('pedido')">
                   Pedido
                   <i-lucide
@@ -201,8 +213,8 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                     class="w-3.5 h-3.5"></i-lucide>
                 </button>
               </th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
-              <th class="hidden sm:table-cell px-6 py-4">
+              <th [class]="desktopThClass">Cliente</th>
+              <th class="hidden sm:table-cell" [class]="desktopThClass">
                 <button type="button" (click)="toggleSort('entrega')" [class]="sortHeaderClass('entrega')">
                   Entrega
                   <i-lucide
@@ -211,7 +223,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                     class="w-3.5 h-3.5"></i-lucide>
                 </button>
               </th>
-              <th class="px-4 sm:px-6 py-3 sm:py-4">
+              <th [class]="desktopThClass">
                 <button type="button" (click)="toggleSort('estado')" [class]="sortHeaderClass('estado')">
                   Estado
                   <i-lucide
@@ -220,10 +232,13 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                     class="w-3.5 h-3.5"></i-lucide>
                 </button>
               </th>
-              <th *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+              <th
+                *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance"
+                class="hidden sm:table-cell"
+                [class]="desktopThClass">
                 {{ auth.canViewOrderSalePrice && auth.canViewAccountBalance ? 'Total / Saldo' : (auth.canViewOrderSalePrice ? 'Total' : 'Saldo') }}
               </th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Acciones</th>
+              <th class="hidden sm:table-cell text-right" [class]="desktopThClass">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -231,31 +246,31 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
               *ngFor="let order of paginatedDisplayOrders; trackBy: trackOrder"
               (click)="openEditOrder(order)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell whitespace-nowrap text-gray-600" [class]="desktopTdClass">
                 {{ getOrderDate(order) ? (getOrderDate(order) | date:'dd/MM/yyyy') : '—' }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700 whitespace-nowrap">
+              <td class="font-semibold text-teal-700 whitespace-nowrap" [class]="desktopTdClass">
                 {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : '—' }}
-                <div class="text-xs font-normal text-gray-400 sm:hidden">
+                <div class="text-[10px] font-normal text-gray-400 sm:hidden">
                   {{ getOrderDate(order) ? (getOrderDate(order) | date:'dd/MM/yyyy') : '—' }}
                 </div>
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4">
+              <td class="min-w-0" [class]="desktopTdClass">
                 <div class="font-medium text-gray-900 truncate">{{ getClientName(order) }}</div>
-                <div class="text-xs text-gray-400 sm:hidden">
+                <div class="text-[10px] text-gray-400 sm:hidden">
                   Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
                 </div>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+              <td class="hidden sm:table-cell whitespace-nowrap text-gray-600" [class]="desktopTdClass">
                 {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4">
+              <td [class]="desktopTdClass">
                 <div class="flex items-center gap-1 flex-nowrap">
                   <span
                     class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold"
                     [title]="getOrderStatusLabelFor(order.estado)"
                     [ngClass]="getOrderStatusBadgeClass(order.estado)">
-                    {{ getOrderStatusListLabel(order.estado) }}
+                    {{ getOrderStatusListLabel(order) }}
                   </span>
                   <span
                     *ngIf="order.stockPreparado || order.estadoStock"
@@ -266,17 +281,22 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                   </span>
                 </div>
               </td>
-              <td *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4">
-                <div *ngIf="auth.canViewOrderSalePrice" class="text-sm font-bold text-gray-900 tabular-nums">{{ formatMoney(order.total) }}</div>
+              <td
+                *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance"
+                class="hidden sm:table-cell"
+                [class]="desktopTdClass">
+                <div *ngIf="auth.canViewOrderSalePrice" class="font-semibold text-gray-900 tabular-nums">
+                  {{ formatMoney(order.total) }}
+                </div>
                 <div
                   *ngIf="auth.canViewAccountBalance"
-                  class="text-xs font-semibold tabular-nums"
+                  class="text-[10px] font-medium tabular-nums"
                   [class.text-orange-500]="getOrderSaldo(order) > 0"
                   [class.text-gray-400]="!(getOrderSaldo(order) > 0)">
                   Saldo {{ formatMoney(getOrderSaldo(order)) }}
                 </div>
               </td>
-              <td class="hidden sm:table-cell px-6 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
+              <td class="hidden sm:table-cell text-right" [class]="desktopTdClass" (click)="$event.stopPropagation()">
                 <app-list-row-actions
                   [editIcon]="auth.canEditRecords ? 'pencil' : 'clipboard-list'"
                   [editLabel]="isCancelledOrder(order) ? 'Ver pedido' : (auth.canEditRecords ? 'Editar' : 'Ver pedido')"
@@ -289,10 +309,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                   [showDelete]="auth.canEditRecords"
                   [deleteDisabled]="isCancelledOrder(order)"
                   deleteLabel="Cancelar pedido"
-                  (deleteClick)="confirmCancelOrder(order)"
-                  [showRegisterSale]="auth.canCreateSales"
-                  [registerSaleDisabled]="!canRegisterSale(order)"
-                  (registerSaleClick)="registerSaleFromOrder(order)">
+                  (deleteClick)="confirmCancelOrder(order)">
                 </app-list-row-actions>
               </td>
             </tr>
@@ -344,6 +361,8 @@ export class OrderListComponent implements OnInit, OnDestroy {
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
+  readonly desktopThClass = DESKTOP_TABLE_TH_CLASS;
+  readonly desktopTdClass = DESKTOP_TABLE_TD_CLASS;
   readonly nativeCompactListClass = NATIVE_COMPACT_LIST_CLASS;
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
@@ -366,20 +385,25 @@ export class OrderListComponent implements OnInit, OnDestroy {
     return getOrderStatusLabel(estado, this.appConfig.pedidos);
   }
   /** Etiqueta compacta para la grilla (evita que los badges salten de línea). */
-  getOrderStatusListLabel(estado?: string): string {
-    const normalized = normalizeOrderStatus(estado, this.appConfig.pedidos);
+  getOrderStatusListLabel(order: Order): string {
+    const normalized = normalizeOrderStatus(order.estado, this.appConfig.pedidos);
+    if (orderHasEntregaConSaldo(order.estado, order)) {
+      return 'Entr. c/saldo';
+    }
     if (normalized === 'entregado') return 'Entregado';
-    if (normalized === 'entregado_con_saldo') return 'Entr. c/saldo';
-    return this.getOrderStatusLabelFor(estado);
+    return this.getOrderStatusLabelFor(order.estado);
   }
   getOrderEstadoCardLabel(value: string): string {
+    const normalized = normalizeOrderEstadoValue(value);
+    if (normalized === 'entregado' || normalized === 'entregado_con_saldo') {
+      return 'Entregado';
+    }
     return getOrderStatusLabelFromConfig(value, this.appConfig.pedidos);
   }
   readonly normalizeOrderStatus = normalizeOrderStatus;
   readonly getOrderStatusCardBorderClass = getOrderStatusCardBorderClass;
   readonly getOrderStatusCardTitleClass = getOrderStatusCardTitleClass;
   readonly getOrderStatusCardValueClass = getOrderStatusCardValueClass;
-  readonly canRegisterSale = canRegisterSaleFromOrder;
   readonly getOrderStockStatusLabel = getOrderStockStatusLabel;
   readonly getOrderStockStatusShortLabel = getOrderStockStatusShortLabel;
   readonly getOrderStockStatusBadgeClass = getOrderStockStatusBadgeClass;
@@ -429,11 +453,11 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   sortHeaderClass(column: OrderSortColumn): string {
     const base =
-      'inline-flex items-center gap-1 uppercase tracking-wider font-semibold text-xs transition-colors';
+      'inline-flex items-center gap-1 font-inherit text-inherit leading-inherit tracking-inherit uppercase transition-colors';
     if (this.sortColumn === column) {
-      return `${base} text-teal-600`;
+      return `${base} text-teal-600 dark:text-teal-400`;
     }
-    return `${base} text-gray-400 hover:text-gray-600`;
+    return `${base} text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300`;
   }
 
   toggleSort(column: OrderSortColumn) {
@@ -767,11 +791,6 @@ export class OrderListComponent implements OnInit, OnDestroy {
     event.stopPropagation();
     if (!order.id || !this.auth.canEditRecords) return;
     this.router.navigate(['/orders/new'], { queryParams: { duplicate: order.id } });
-  }
-
-  registerSaleFromOrder(order: Order) {
-    if (!order.id || !canRegisterSaleFromOrder(order)) return;
-    this.router.navigate(['/sales'], { queryParams: { pedidoId: order.id } });
   }
 
   printOrder(order: Order) {

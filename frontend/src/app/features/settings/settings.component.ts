@@ -12,13 +12,10 @@ import {
   DEFAULT_APP_CONFIG,
   FieldInputMode,
   CatalogConfigService,
-  CajaConcepto,
-  CajaConceptoTipo,
   getPrefijoForCategoria,
   findCategoriaByPrefijo,
   validateUniquePrefijos,
   normalizeProductosCodigo,
-  getCajaConceptoTipoLabel,
   slugifyOrigenGrupo,
   DEFAULT_STOCK_TIPOS,
   normalizeCajaAmbitos,
@@ -35,6 +32,7 @@ import {
   normalizeDescuentoFisicoPorEstado,
   normalizeEstadosExigenStockCompleto,
   normalizeOrderPedidosConfig,
+  normalizeOrderPhotoRetentionDays,
   getOrderPhysicalStockScopeLabel,
   ORDER_STATUS_CARD_LIMIT,
   canRemoveOrderEstado,
@@ -179,7 +177,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         <div [class]="configSectionsListClass">
             <app-config-setting-card
               title="Estados del pedido"
-              description="Orden del flujo. Los primeros cinco nombres se muestran como tarjetas en Pedidos. Borrador y Cancelado no se pueden quitar."
+              description="Seis estados fijos del flujo. Solo podés personalizar los nombres; no se pueden agregar ni quitar."
               [listCount]="config.pedidos.estados.length"
               [sectionCollapse]="true"
               [listExpanded]="isConfigSectionOpen('pedidos.estados')"
@@ -190,13 +188,10 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                 [items]="pedidoEstadoListItems"
                 labelMode="input"
                 [showIndex]="true"
-                addPlaceholder="Nuevo estado"
+                [showAdd]="false"
                 listMaxHeightClass=""
                 [disabled]="savingPedidos"
-                inputName="pedidoEstadoDraft"
                 [footer]="'Las tarjetas del listado usan los estados 1 a ' + orderStatusCardPreviewCount + ' en este orden.'"
-                (add)="addPedidoEstadoFromList($event)"
-                (remove)="removePedidoEstadoById($event)"
                 (labelChange)="onPedidoEstadoLabelChange($event)"
                 (labelBlur)="onPedidoEstadoLabelBlurById($event)">
               </app-config-editable-list>
@@ -334,6 +329,69 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                     </span>
                   </span>
                 </label>
+              </div>
+            </app-config-setting-card>
+
+            <app-config-setting-card
+              title="Fotos de referencia"
+              description="Adjuntar imágenes al pedido, imprimirlas y limpieza automática."
+              [listCount]="null"
+              [sectionCollapse]="true"
+              [listExpanded]="isConfigSectionOpen('pedidos.fotos')"
+              (listExpandedChange)="onConfigSectionOpenChange('pedidos.fotos', $event)"
+              [cardClass]="configCardClass">
+              <div configList class="space-y-2">
+                <label class="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    [(ngModel)]="config.pedidos.fotosReferenciaHabilitadas"
+                    name="pedidosFotosReferenciaHabilitadas"
+                    [disabled]="savingPedidos"
+                    (change)="onFotosReferenciaSettingsChange()"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary mt-0.5">
+                  <span>
+                    <span class="block text-xs font-medium text-gray-900">Usar fotos en pedidos</span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      Muestra el botón para adjuntar fotos al pedido y las incluye en el imprimible.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  *ngIf="config.pedidos.fotosReferenciaHabilitadas"
+                  class="flex items-start gap-2 cursor-pointer pl-5">
+                  <input
+                    type="checkbox"
+                    [(ngModel)]="config.pedidos.fotosEliminacionAutomatica"
+                    name="pedidosFotosEliminacionAutomatica"
+                    [disabled]="savingPedidos"
+                    (change)="onFotosRetencionSettingsChange()"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary mt-0.5">
+                  <span>
+                    <span class="block text-xs font-medium text-gray-900">Eliminar fotos automáticamente</span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      Un proceso diario borra las fotos más viejas que el plazo indicado (Storage y referencia en el pedido).
+                    </span>
+                  </span>
+                </label>
+                <div
+                  *ngIf="config.pedidos.fotosReferenciaHabilitadas && config.pedidos.fotosEliminacionAutomatica"
+                  class="pl-5 flex flex-wrap items-center gap-2">
+                  <label class="text-xs font-medium text-gray-700" for="pedidosFotosRetencionDias">
+                    Conservar durante
+                  </label>
+                  <input
+                    id="pedidosFotosRetencionDias"
+                    type="number"
+                    min="7"
+                    max="365"
+                    step="1"
+                    [(ngModel)]="config.pedidos.fotosRetencionDias"
+                    name="pedidosFotosRetencionDias"
+                    [disabled]="savingPedidos"
+                    (change)="onFotosRetencionSettingsChange()"
+                    class="w-20 px-2 py-1 rounded-md border border-gray-200 text-xs tabular-nums">
+                  <span class="text-xs text-gray-500">días (mín. 7, máx. 365)</span>
+                </div>
               </div>
             </app-config-setting-card>
 
@@ -488,73 +546,6 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             (remove)="removeCajaAmbitoById($event)"
             (labelChange)="onCajaAmbitoLabelChange($event)"
             (labelBlur)="onCajaAmbitoLabelBlur()">
-          </app-config-editable-list>
-        </app-config-setting-card>
-
-        <app-config-setting-card
-          title="Orígenes"
-          description="Etiquetas del combobox de filtro. Por defecto: Ventas, Pedidos y Compra."
-          [listCount]="config.caja.origenes.length"
-          [sectionCollapse]="true"
-              [listExpanded]="isConfigSectionOpen('caja.origenes')"
-          (listExpandedChange)="onConfigSectionOpenChange('caja.origenes', $event)"
-          [cardClass]="configCardClass">
-          <app-config-editable-list
-            configList
-            [items]="cajaOrigenListItems"
-            labelMode="input"
-            addPlaceholder="Ej. Gastos fijos"
-            [disabled]="isSavingCajaOrigenes"
-            inputName="cajaOrigenDraft"
-            (add)="addCajaOrigenFromList($event)"
-            (remove)="removeCajaOrigenById($event)"
-            (labelChange)="onCajaOrigenLabelChange($event)"
-            (labelBlur)="onCajaOrigenLabelBlur()">
-          </app-config-editable-list>
-        </app-config-setting-card>
-
-        <app-config-setting-card
-          title="Conceptos"
-          description="Ingresos y egresos puntuales. Los gastos frecuentes se configuran en Finanzas → Categorías de gasto."
-          [listCount]="config.caja.conceptos.length"
-          [sectionCollapse]="true"
-              [listExpanded]="isConfigSectionOpen('caja.conceptos')"
-          (listExpandedChange)="onConfigSectionOpenChange('caja.conceptos', $event)"
-          [cardClass]="configCardClass">
-          <app-config-editable-list
-            configList
-            [items]="cajaConceptoListItems"
-            labelMode="input"
-            [useCustomAdd]="true"
-            [disabled]="isSavingCajaConceptos"
-            (remove)="removeCajaConceptoById($event)"
-            (labelChange)="onCajaConceptoLabelChange($event)"
-            (labelBlur)="onCajaConceptoLabelBlur($event)">
-            <div configListAdd class="flex flex-col gap-2">
-              <select
-                [(ngModel)]="cajaConceptoTipoDraft"
-                name="cajaConceptoTipoDraft"
-                [disabled]="isSavingCajaConceptos"
-                class="w-full min-w-0 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-gray-50 bg-white dark:bg-gray-950 dark:text-gray-100 dark:border-gray-600">
-                <option value="ingreso">Ingreso</option>
-                <option value="egreso">Egreso</option>
-                <option value="ambos">Ambos</option>
-              </select>
-              <input
-                [(ngModel)]="cajaConceptoDraft"
-                name="cajaConceptoDraft"
-                placeholder="Ej. Diferencia"
-                [disabled]="isSavingCajaConceptos"
-                (keyup.enter)="addCajaConcepto()"
-                [class]="configInputClass">
-              <button
-                type="button"
-                (click)="addCajaConcepto()"
-                [disabled]="isSavingCajaConceptos || !cajaConceptoDraft.trim()"
-                [class]="configAddButtonClass + ' w-full sm:w-auto'">
-                Agregar
-              </button>
-            </div>
           </app-config-editable-list>
         </app-config-setting-card>
         </div>
@@ -843,8 +834,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
   saveSuccessMessage = '';
   optionDrafts: Record<string, string> = {};
   savingFields = new Set<string>();
-  savingCajaConceptos = false;
-  savingCajaOrigenes = false;
   savingCajaAmbito = false;
   savingStockTipos = false;
   savingStockOrigenes = false;
@@ -865,11 +854,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private prefijoEditDrafts: Record<string, string> = {};
   private savedPrefijosSnapshot: Record<string, string> = {};
 
-  cajaConceptoDraft = '';
-  cajaOrigenDraft = '';
   cajaAmbitoDraft = '';
   stockOrigenDraft = '';
-  cajaConceptoTipoDraft: CajaConceptoTipo = 'ingreso';
   pedidoExtraCostPresetNombre = '';
   pedidoExtraCostPresetCosto: number | null = null;
   pedidoEstadoDraft = '';
@@ -880,7 +866,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
   orderStockScopeEstadoOptionsList: OrderEstadoConfig[] = [];
   pedidoStockRuleRows: PedidoStockRuleRow[] = [];
   pedidosStockModeSummary = '';
-  getCajaConceptoTipoLabel = getCajaConceptoTipoLabel;
   readonly isSystemCashAmbito = isSystemCashAmbito;
 
   get extraCajaAmbitosCount(): number {
@@ -976,14 +961,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
     {
       id: 'caja',
       title: 'Caja',
-      description: 'Conceptos, orígenes y ámbitos en la grilla de caja.',
+      description: 'Ámbitos en la grilla de caja.',
       sections: [],
     },
     {
       id: 'finanzas',
       title: 'Finanzas',
       description:
-        'Medios de pago, cuentas vinculadas y categorías de gasto.',
+        'Medios de pago, cuentas vinculadas, conceptos de ingreso y categorías de gasto.',
       sections: [],
     },
     {
@@ -1122,7 +1107,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return this.config.pedidos.estados.map((estado) => ({
       id: estado.value,
       label: estado.label,
-      removable: this.canRemovePedidoEstado(estado),
+      removable: false,
     }));
   }
 
@@ -1134,23 +1119,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
       hint: isSystemCashAmbito(ambito)
         ? 'Principal · movimientos automáticos · solo podés cambiar el nombre'
         : undefined,
-    }));
-  }
-
-  get cajaOrigenListItems(): ConfigEditableListItem[] {
-    return this.config.caja.origenes.map((origen) => ({
-      id: origen.grupo,
-      label: origen.nombre,
-      removable: true,
-    }));
-  }
-
-  get cajaConceptoListItems(): ConfigEditableListItem[] {
-    return this.config.caja.conceptos.map((concepto) => ({
-      id: concepto.nombre,
-      label: concepto.nombre,
-      badge: getCajaConceptoTipoLabel(concepto.tipo),
-      removable: true,
     }));
   }
 
@@ -1240,55 +1208,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.persistCajaAmbitos();
   }
 
-  addCajaOrigenFromList(nombre: string) {
-    this.cajaOrigenDraft = nombre;
-    this.addCajaOrigen();
-  }
-
-  removeCajaOrigenById(grupo: string) {
-    const origen = this.config.caja.origenes.find((item) => item.grupo === grupo);
-    if (origen) this.removeCajaOrigen(origen);
-  }
-
-  onCajaOrigenLabelChange(event: { id: string; label: string }) {
-    const row = this.config.caja.origenes.find((item) => item.grupo === event.id);
-    if (row) row.nombre = event.label;
-  }
-
-  onCajaOrigenLabelBlur() {
-    this.persistCajaOrigenes();
-  }
-
-  removeCajaConceptoById(nombre: string) {
-    const concepto = this.config.caja.conceptos.find((item) => item.nombre === nombre);
-    if (concepto) this.removeCajaConcepto(concepto);
-  }
-
-  onCajaConceptoLabelChange(event: { id: string; label: string }) {
-    const row = this.config.caja.conceptos.find((item) => item.nombre === event.id);
-    if (row) row.nombre = event.label;
-  }
-
-  onCajaConceptoLabelBlur(event: { id: string; label: string }) {
-    const row = this.config.caja.conceptos.find((item) => item.nombre === event.id);
-    if (!row || this.isSavingCajaConceptos) return;
-    const trimmed = event.label.trim();
-    if (!trimmed) {
-      row.nombre = event.id;
-      return;
-    }
-    if (
-      this.config.caja.conceptos.some(
-        (item) => item.nombre !== event.id && item.nombre.toLowerCase() === trimmed.toLowerCase()
-      )
-    ) {
-      row.nombre = event.id;
-      return;
-    }
-    row.nombre = trimmed;
-    this.persistCajaConceptos();
-  }
-
   onStringListLabelChange(key: ConfigFieldKey, event: { id: string; label: string }) {
     // Guardamos la edición en un draft sin tocar la lista guardada, así
     // conservamos el valor original para detectar el renombre al perder foco.
@@ -1364,48 +1283,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   addPedidoEstado() {
-    const label = this.pedidoEstadoDraft.trim();
-    if (!label || this.savingPedidos) return;
-
-    let value = slugifyOrderEstadoValue(label);
-    const existing = new Set(this.config.pedidos.estados.map((item) => item.value));
-    if (existing.has(value)) {
-      let suffix = 2;
-      while (existing.has(`${value}_${suffix}`)) suffix++;
-      value = `${value}_${suffix}`;
-    }
-
-    const canceladoIndex = this.config.pedidos.estados.findIndex((item) => item.value === 'cancelado');
-    const row: OrderEstadoConfig = { value, label, sistema: false };
-    if (canceladoIndex >= 0) {
-      this.config.pedidos.estados.splice(canceladoIndex, 0, row);
-    } else {
-      this.config.pedidos.estados.push(row);
-    }
-
-    this.pedidoEstadoDraft = '';
-    this.refreshPedidosViewState();
-    this.schedulePedidosPersist();
+    return;
   }
 
-  removePedidoEstado(estado: OrderEstadoConfig) {
-    if (!this.canRemovePedidoEstado(estado) || this.savingPedidos) return;
-
-    this.dialogService
-      .confirm({
-        title: 'Quitar estado',
-        message: `¿Quitar «${estado.label}» del flujo de pedidos? Los pedidos que ya lo usan conservan el valor interno.`,
-        confirmLabel: 'Quitar',
-        variant: 'danger',
-      })
-      .subscribe((confirmed) => {
-        if (!confirmed) return;
-        const index = this.config.pedidos.estados.findIndex((item) => item.value === estado.value);
-        if (index < 0) return;
-        this.config.pedidos.estados.splice(index, 1);
-        this.refreshPedidosViewState();
-        this.schedulePedidosPersist();
-      });
+  removePedidoEstado(_estado: OrderEstadoConfig) {
+    return;
   }
 
   onPedidoEstadoLabelBlur(index: number) {
@@ -1585,14 +1467,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return this.modules.find((module) => module.id === 'productos')?.sections ?? [];
   }
 
-  get isSavingCajaConceptos(): boolean {
-    return this.savingCajaConceptos;
-  }
-
-  get isSavingCajaOrigenes(): boolean {
-    return this.savingCajaOrigenes;
-  }
-
   get isSavingStockTipos(): boolean {
     return this.savingStockTipos;
   }
@@ -1608,128 +1482,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return `${tone} desc-lg-only`;
   }
 
-  getCajaConceptosHint(): string {
-    const count = this.config.caja.conceptos.length;
-    if (count > 0) {
-      return `${count} opción${count === 1 ? '' : 'es'} · buscador activo en Caja`;
-    }
-    return 'Sin opciones · texto libre en Caja';
-  }
-
-  addCajaConcepto() {
-    const nombre = this.cajaConceptoDraft.trim();
-    if (!nombre || this.savingCajaConceptos) return;
-
-    const exists = this.config.caja.conceptos.some(
-      (concepto) => concepto.nombre.toLowerCase() === nombre.toLowerCase()
-    );
-    if (exists) {
-      this.cajaConceptoDraft = '';
-      return;
-    }
-
-    this.config.caja.conceptos = [
-      ...this.config.caja.conceptos,
-      { nombre, tipo: this.cajaConceptoTipoDraft },
-    ].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-    this.syncCajaConceptosMode();
-    this.cajaConceptoDraft = '';
-    this.persistCajaConceptos();
-  }
-
-  removeCajaConcepto(concepto: CajaConcepto) {
-    if (this.savingCajaConceptos) return;
-
-    this.confirmConfigRemoval(
-      'caja.conceptos',
-      concepto.nombre,
-      () => {
-        this.config.caja.conceptos = this.config.caja.conceptos.filter(
-          (item) => item !== concepto
-        );
-        this.syncCajaConceptosMode();
-      },
-      (confirm) => this.persistCajaConceptos(confirm)
-    );
-  }
-
   private syncCajaConceptosMode() {
     this.config.caja.modo.conceptos =
       this.config.caja.conceptos.length > 0 ? 'lista' : 'texto';
-  }
-
-  private persistCajaConceptos(confirmConfigRemovals = false) {
-    this.savingCajaConceptos = true;
-    this.syncCajaConceptosMode();
-
-    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
-      next: (config) => {
-        this.config = config;
-        this.syncCajaConceptosMode();
-        this.savingCajaConceptos = false;
-      },
-      error: (error) => {
-        this.savingCajaConceptos = false;
-        this.handleConfigSaveError(error, () => this.persistCajaConceptos(true));
-      },
-    });
-  }
-
-  addCajaOrigen() {
-    const nombre = this.cajaOrigenDraft.trim();
-    if (!nombre || this.savingCajaOrigenes) return;
-
-    let grupo = slugifyOrigenGrupo(nombre);
-    if (this.config.caja.origenes.some((item) => item.grupo === grupo)) {
-      let suffix = 2;
-      while (this.config.caja.origenes.some((item) => item.grupo === `${grupo}_${suffix}`)) {
-        suffix += 1;
-      }
-      grupo = `${grupo}_${suffix}`;
-    }
-
-    this.config.caja.origenes = [
-      ...this.config.caja.origenes,
-      { grupo, nombre },
-    ].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-    this.cajaOrigenDraft = '';
-    this.persistCajaOrigenes();
-  }
-
-  removeCajaOrigen(origen: { grupo: string; nombre: string }) {
-    if (this.savingCajaOrigenes) return;
-
-    this.confirmConfigRemoval(
-      'caja.origenes',
-      origen.nombre,
-      () => {
-        this.config.caja.origenes = this.config.caja.origenes.filter((item) => item !== origen);
-      },
-      (confirm) => this.persistCajaOrigenes(confirm),
-      origen.grupo
-    );
-  }
-
-  persistCajaOrigenes(confirmConfigRemovals = false) {
-    this.savingCajaOrigenes = true;
-    this.config.caja.origenes = this.config.caja.origenes
-      .map((item) => ({
-        grupo: item.grupo.trim().toLowerCase(),
-        nombre: item.nombre.trim(),
-      }))
-      .filter((item) => item.grupo && item.nombre)
-      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-
-    this.catalogConfigService.updateAppConfig(this.config, { confirmConfigRemovals }).subscribe({
-      next: (config) => {
-        this.config = config;
-        this.savingCajaOrigenes = false;
-      },
-      error: (error) => {
-        this.savingCajaOrigenes = false;
-        this.handleConfigSaveError(error, () => this.persistCajaOrigenes(true));
-      },
-    });
   }
 
   persistCajaAmbitos(confirmConfigRemovals = false) {
@@ -2594,6 +2349,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   onImpresionDosViasChange() {
+    this.persistPedidosSettings();
+  }
+
+  onFotosReferenciaSettingsChange() {
+    if (!this.config.pedidos.fotosReferenciaHabilitadas) {
+      this.config.pedidos.fotosEliminacionAutomatica = false;
+    }
+    this.persistPedidosSettings();
+  }
+
+  onFotosRetencionSettingsChange() {
+    this.config.pedidos.fotosRetencionDias = normalizeOrderPhotoRetentionDays(
+      this.config.pedidos.fotosRetencionDias
+    );
     this.persistPedidosSettings();
   }
 

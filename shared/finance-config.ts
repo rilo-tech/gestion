@@ -38,6 +38,33 @@ export interface CategoriaGastoConfig {
   afectaReporteNegocio: boolean;
 }
 
+export interface ConceptoIngresoConfig {
+  id: string;
+  label: string;
+}
+
+export const DEFAULT_CONCEPTOS_INGRESO: ConceptoIngresoConfig[] = [];
+
+export function normalizeConceptosIngreso(raw: unknown): ConceptoIngresoConfig[] {
+  if (!Array.isArray(raw)) return [];
+
+  const byId = new Map<string, ConceptoIngresoConfig>();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const label = String(obj.label ?? '').trim();
+    if (!label) continue;
+    const id = String(obj.id ?? label)
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_');
+    if (!id) continue;
+    byId.set(id, { id, label });
+  }
+
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b, 'es'));
+}
+
 export const DEFAULT_MEDIOS_PAGO: MedioPagoConfig[] = [
   {
     id: 'efectivo',

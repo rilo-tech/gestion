@@ -42,6 +42,12 @@ import { Router, RouterLink } from '@angular/router';
                 class="text-xs font-semibold text-amber-600 mt-0.5 tabular-nums">
                 Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
               </p>
+              <p
+                *ngIf="monthlyDonationsCount > 0"
+                class="text-xs font-semibold text-amber-700 mt-0.5 tabular-nums">
+                Donaciones {{ monthlyDonationsCount }}
+                <span *ngIf="monthlyDonationsCost > 0"> · −{{ formatMoney(monthlyDonationsCost, true) }} costo</span>
+              </p>
             </div>
 
             <button
@@ -68,6 +74,12 @@ import { Router, RouterLink } from '@angular/router';
                 *ngIf="monthlyOfferBonus > 0 && mobileSalesKpiRevealed"
                 class="text-[10px] font-semibold text-amber-600 tabular-nums mt-0.5">
                 Ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+              <p
+                *ngIf="monthlyDonationsCount > 0 && mobileSalesKpiRevealed"
+                class="text-[10px] font-semibold text-amber-700 tabular-nums mt-0.5">
+                Donaciones {{ monthlyDonationsCount }}
+                <span *ngIf="monthlyDonationsCost > 0"> · −{{ formatMoney(monthlyDonationsCost, true) }}</span>
               </p>
             </button>
           </div>
@@ -92,6 +104,12 @@ import { Router, RouterLink } from '@angular/router';
                 class="text-xs font-semibold text-amber-600 mt-0.5 tabular-nums">
                 Bonif. ofertas {{ formatMoney(monthlyOfferBonus, true) }}
               </p>
+              <p
+                *ngIf="monthlyDonationsCount > 0"
+                class="text-xs font-semibold text-amber-700 mt-0.5 tabular-nums">
+                Donaciones {{ monthlyDonationsCount }}
+                <span *ngIf="monthlyDonationsCost > 0"> · −{{ formatMoney(monthlyDonationsCost, true) }} costo</span>
+              </p>
             </div>
 
             <button
@@ -118,6 +136,12 @@ import { Router, RouterLink } from '@angular/router';
                 *ngIf="monthlyOfferBonus > 0 && mobileSalesKpiRevealed"
                 class="text-[10px] font-semibold text-amber-600 tabular-nums mt-0.5">
                 Ofertas {{ formatMoney(monthlyOfferBonus, true) }}
+              </p>
+              <p
+                *ngIf="monthlyDonationsCount > 0 && mobileSalesKpiRevealed"
+                class="text-[10px] font-semibold text-amber-700 tabular-nums mt-0.5">
+                Donaciones {{ monthlyDonationsCount }}
+                <span *ngIf="monthlyDonationsCost > 0"> · −{{ formatMoney(monthlyDonationsCost, true) }}</span>
               </p>
             </button>
           </div>
@@ -272,6 +296,8 @@ export class HomeComponent implements OnInit {
   monthlySalesIncome = 0;
   monthlyProfit = 0;
   monthlyOfferBonus = 0;
+  monthlyDonationsCount = 0;
+  monthlyDonationsCost = 0;
   currentMonthLabel = '';
   recentOrders: Order[] = [];
   totalRecentOrders = 0;
@@ -308,6 +334,8 @@ export class HomeComponent implements OnInit {
       this.monthlySalesIncome = summary.totalFacturado;
       this.monthlyProfit = summary.totalGanancia;
       this.monthlyOfferBonus = summary.bonificacionOfertas ?? 0;
+      this.monthlyDonationsCount = summary.donacionesCount ?? 0;
+      this.monthlyDonationsCost = summary.donacionesCost ?? 0;
     });
   }
 

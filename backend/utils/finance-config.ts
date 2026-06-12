@@ -3,9 +3,13 @@ import { BUSINESS_CASH_AMBITO_ID } from './caja-ambitos.ts';
 import {
   DEFAULT_CATEGORIAS_GASTO,
   DEFAULT_MEDIOS_PAGO,
+  findMedioPagoInConfig,
+  findTarjetaInConfig,
   medioPagoRequiereCuentaHija,
+  normalizeConceptosIngreso,
   syncMedioPagoFlags,
   type CategoriaGastoConfig,
+  type ConceptoIngresoConfig,
   type MedioPagoComportamiento,
   type MedioPagoConfig,
   type TarjetaConfig,
@@ -13,6 +17,7 @@ import {
 
 export type {
   CategoriaGastoConfig,
+  ConceptoIngresoConfig,
   MedioPagoComportamiento,
   MedioPagoConfig,
   PurchaseLineTipo,
@@ -178,6 +183,7 @@ export function normalizeFinanzasConfig(raw: Record<string, unknown> = {}) {
     mediosPago,
     tarjetas: normalizeTarjetas(raw.tarjetas, mediosPago),
     categoriasGasto: normalizeCategoriasGasto(raw.categoriasGasto),
+    conceptosIngreso: normalizeConceptosIngreso(raw.conceptosIngreso),
   };
 }
 
@@ -185,18 +191,18 @@ export function getMedioPagoById(
   medios: MedioPagoConfig[],
   id: string | undefined | null
 ): MedioPagoConfig | undefined {
-  const key = String(id ?? '').trim().toLowerCase();
-  if (!key) return undefined;
-  return medios.find((m) => m.id === key && m.activo !== false);
+  const medio = findMedioPagoInConfig(medios, id);
+  if (!medio || medio.activo === false) return undefined;
+  return medio;
 }
 
 export function getTarjetaById(
   tarjetas: TarjetaConfig[],
   id: string | undefined | null
 ): TarjetaConfig | undefined {
-  const key = String(id ?? '').trim().toLowerCase();
-  if (!key) return undefined;
-  return tarjetas.find((t) => t.id === key && t.activa !== false);
+  const tarjeta = findTarjetaInConfig(tarjetas, id);
+  if (!tarjeta || tarjeta.activa === false) return undefined;
+  return tarjeta;
 }
 
 export function getCategoriaGastoById(

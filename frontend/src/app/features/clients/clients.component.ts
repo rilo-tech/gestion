@@ -17,7 +17,6 @@ import {
   DEFAULT_LIST_PAGE_SIZE,
   ListPaginationComponent,
   paginateSlice,
-  totalListPages,
 } from '../../shared/components/list-pagination/list-pagination.component';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
@@ -117,7 +116,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[640px] sm:table-fixed'">
+        <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
           <colgroup class="hidden sm:table-column-group">
             <col class="w-[9rem]" />
             <col class="w-[7.5rem]" />
@@ -208,10 +207,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
           [page]="clientsPage"
           [pageSize]="listPageSize"
           [totalItems]="filteredClients.length"
-          [canFetchMore]="clientsHasMore && !searchQuery.trim()"
-          [loadingMore]="loadingMoreClients"
-          (pageChange)="clientsPage = $event"
-          (fetchMore)="loadMoreClients()">
+          (pageChange)="clientsPage = $event">
         </app-list-pagination>
       </app-compact-data-list>
     </div>
@@ -257,9 +253,6 @@ export class ClientsComponent implements OnInit {
 
   clients: Client[] = [];
   loading = true;
-  loadingMoreClients = false;
-  clientsHasMore = false;
-  clientsCursor: string | null = null;
   searchQuery = '';
   clientsPage = 1;
   clientModalOpen = false;
@@ -371,18 +364,16 @@ export class ClientsComponent implements OnInit {
 
   reloadList() {
     this.clientsPage = 1;
-    this.clientsCursor = null;
     this.loadClients();
   }
 
   loadClients() {
     this.loading = true;
-    this.clientsPage = 1;
-    this.clientService.getClientsPage(this.listPageSize).subscribe({
+    this.clientService.getClients().subscribe({
       next: (clients) => {
-        this.clients = clients.items;
-        this.clientsHasMore = clients.hasMore;
-        this.clientsCursor = clients.nextCursor;
+        this.clients = [...clients].sort((a, b) =>
+          (a.nombre ?? '').localeCompare(b.nombre ?? '', 'es', { sensitivity: 'base' })
+        );
         this.loading = false;
       },
       error: () => {
@@ -391,30 +382,6 @@ export class ClientsComponent implements OnInit {
           title: 'Error',
           message: 'No se pudieron cargar los clientes.',
         });
-      },
-    });
-  }
-
-  loadMoreClients() {
-    if (!this.clientsHasMore || this.loadingMoreClients || this.searchQuery.trim()) return;
-    const pageBefore = this.clientsPage;
-    const totalPagesBefore = totalListPages(this.filteredClients.length, this.listPageSize);
-    this.loadingMoreClients = true;
-    this.clientService.getClientsPage(this.listPageSize, this.clientsCursor ?? undefined).subscribe({
-      next: (page) => {
-        this.clients = [...this.clients, ...page.items];
-        this.clientsHasMore = page.hasMore;
-        this.clientsCursor = page.nextCursor;
-        this.loadingMoreClients = false;
-        if (pageBefore >= totalPagesBefore) {
-          this.clientsPage = Math.min(
-            pageBefore + 1,
-            totalListPages(this.filteredClients.length, this.listPageSize)
-          );
-        }
-      },
-      error: () => {
-        this.loadingMoreClients = false;
       },
     });
   }

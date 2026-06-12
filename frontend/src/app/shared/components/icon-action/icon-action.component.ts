@@ -32,7 +32,7 @@ export class IconActionComponent {
 
   get buttonClass(): string {
     const base =
-      `inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold w-[42px] p-0 sm:w-auto sm:min-h-[42px] sm:px-4 sm:py-2 sm:min-w-0 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
+      `inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold w-[36px] p-0 sm:w-auto sm:min-h-[36px] sm:px-3 sm:py-1.5 sm:min-w-0 transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
     const variants: Record<IconActionVariant, string> = {
       primary: 'bg-teal-600 text-white hover:bg-teal-700',
       secondary: 'border border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100',
@@ -48,11 +48,11 @@ export class IconActionComponent {
 
 /** Shared classes for routerLink / anchor primary actions on list pages. */
 export const ICON_ACTION_LINK_CLASS =
-  `inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold w-[42px] p-0 sm:w-auto sm:min-h-[42px] sm:px-4 sm:py-2 sm:min-w-0 transition-colors bg-teal-600 text-white hover:bg-teal-700 ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
+  `inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold w-[36px] p-0 sm:w-auto sm:min-h-[36px] sm:px-3 sm:py-1.5 sm:min-w-0 transition-colors bg-teal-600 text-white hover:bg-teal-700 ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
 
 /** Botón secundario con borde en filas de toolbar (misma altura que el buscador). */
 export const ICON_TOOLBAR_OUTLINE_LINK_CLASS =
-  `inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 w-[42px] p-0 sm:w-auto sm:px-3 sm:py-2 ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
+  `inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 w-[36px] p-0 sm:w-auto sm:px-2.5 sm:py-1.5 ${LIST_TOOLBAR_CONTROL_HEIGHT} sm:h-auto`;
 
 export const PAGE_SHELL_CLASS = 'p-4 sm:p-6 lg:p-8 w-full min-w-0';
 
@@ -73,12 +73,12 @@ export const LIST_TABLE_ROW_CLASS = 'hover:bg-gray-50 transition-colors cursor-p
 /** Oculto en celular (<640px); usar junto con `grid` en filas de KPIs/resumen. */
 export const MODULE_SUMMARY_KPIS_CLASS = 'module-summary-kpis';
 
-export const TABLE_SCROLL_CLASS = 'overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0';
+export const TABLE_SCROLL_CLASS = 'app-table-scroll-host -mx-4 sm:mx-0 px-4 sm:px-0';
 
 /** Añadir a tablas de listado: filas bajas y sin thead en celular. */
 export { NATIVE_COMPACT_TABLE_CLASS };
 
-export const TABLE_MIN_WIDTH_CLASS = NATIVE_COMPACT_TABLE_CLASS + ' sm:min-w-[640px]';
+export const TABLE_MIN_WIDTH_CLASS = NATIVE_COMPACT_TABLE_CLASS + ' w-full max-w-full';
 
 export const FORM_CONTROL_CLASS =
   'form-control w-full outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-400';

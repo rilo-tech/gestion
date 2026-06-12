@@ -70,7 +70,7 @@ export interface SearchableSelectOption {
         </div>
 
         <div
-          *ngIf="open && !visibleDropdownItems.length && !showCreateOption"
+          *ngIf="open && !visibleDropdownItems.length && !showCreateOption && !showDropdownOnTypeOnly"
           class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-500 shadow-lg">
           {{ emptyListMessage }}
         </div>
@@ -113,6 +113,8 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
   @Input() creatable = false;
   /** En modo lista de strings: conserva texto libre al salir del campo si no hay coincidencia exacta. */
   @Input() allowCustomValue = false;
+  /** Solo abre el menú al escribir y solo si hay coincidencias (sin listar todo al foco). */
+  @Input() showDropdownOnTypeOnly = false;
   @Input() createLabelPrefix = 'Crear';
   @Input() embedded = false;
   /** Misma altura que `app-transaction-date-field` y demás campos compactos del formulario. */
@@ -212,11 +214,20 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
 
   onInputFocus(event: FocusEvent) {
     this.inputFocused = true;
-    this.browseAllOnOpen = true;
     this.syncDisplayTextFromValue();
-    this.open = true;
-    this.refreshDropdownItems();
     this.onTouched();
+
+    if (this.showDropdownOnTypeOnly) {
+      this.browseAllOnOpen = false;
+      this.refreshDropdownItems();
+      this.open =
+        !!this.searchText.trim() &&
+        (this.visibleDropdownItems.length > 0 || this.showCreateOption);
+    } else {
+      this.browseAllOnOpen = true;
+      this.open = true;
+      this.refreshDropdownItems();
+    }
 
     const input = event.target as HTMLInputElement;
     queueMicrotask(() => {
@@ -235,8 +246,12 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     this.browseAllOnOpen = false;
     this.searchText = input.value;
     this.searchChange.emit(this.searchText);
-    this.open = true;
     this.refreshDropdownItems();
+    if (this.showDropdownOnTypeOnly) {
+      this.open = this.visibleDropdownItems.length > 0 || this.showCreateOption;
+    } else {
+      this.open = true;
+    }
     this.cdr.markForCheck();
   }
 

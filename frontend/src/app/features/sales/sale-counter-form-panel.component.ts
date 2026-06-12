@@ -85,6 +85,7 @@ import {
   todayDateInputValue,
   toDateInputValue,
 } from '../../core/utils/transaction-date';
+import { sumLineExtraCosts } from '../../core/utils/line-extra-costs';
 
 interface SaleDraftLine {
   stockItemId: string;
@@ -296,7 +297,7 @@ interface SaleDraftLine {
         [presets]="saleExtraCostPresets"
         [initialCosts]="modalLine.costosExtra"
         inputNamePrefix="saleExtraCost"
-        priceLabel="Costo"
+        priceLabel="Costo/u."
         totalLabel="Total extras"
         (accepted)="acceptExtraCostsModal($event)">
       </app-transaction-extra-costs-form>
@@ -859,12 +860,8 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     return item?.nombre ?? 'Producto';
   }
 
-  getLineCustomizationTotal(line: SaleDraftLine): number {
-    return (line.costosExtra ?? []).reduce((acc, extra) => acc + (Number(extra.costo) || 0), 0);
-  }
-
   getLinePersTotal(line: SaleDraftLine): number {
-    return (Number(line.cantidad) || 0) * this.getLineCustomizationTotal(line);
+    return sumLineExtraCosts(Number(line.cantidad) || 0, line.costosExtra);
   }
 
   openExtraCostsModal(lineIndex: number) {
@@ -894,16 +891,42 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
 
     this.saveFeedback.clearSuccess();
 
-    if (this.isDraftSale && this.draftId) {
-      this.confirmDraft();
+    this.confirmDonationIfNeeded(() => {
+      if (this.isDraftSale && this.draftId) {
+        this.confirmDraft();
+        return;
+      }
+
+      if (this.isEditing) {
+        this.submitEditSale();
+        return;
+      }
+      this.submitNewSale();
+    });
+  }
+
+  private get isDonationSale(): boolean {
+    const hasItems = this.draftLines.some((line) => (Number(line.cantidad) || 0) > 0);
+    return hasItems && this.draftTotal === 0;
+  }
+
+  private confirmDonationIfNeeded(onConfirm: () => void): void {
+    if (!this.isDonationSale) {
+      onConfirm();
       return;
     }
 
-    if (this.isEditing) {
-      this.submitEditSale();
-      return;
-    }
-    this.submitNewSale();
+    this.dialogService
+      .confirm({
+        title: 'Registrar como donación',
+        message:
+          'El total es $0. Se descontará stock y la venta quedará en Ventas con ganancia negativa: el costo de los productos se resta de tus ganancias. ¿Continuar?',
+        confirmLabel: 'Sí, es donación',
+        cancelLabel: 'Volver',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) onConfirm();
+      });
   }
 
   saveDraft() {

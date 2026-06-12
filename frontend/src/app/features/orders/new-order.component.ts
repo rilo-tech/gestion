@@ -25,6 +25,7 @@ import {
   OrderStockDiscountPreview,
   OrderPhysicalStockScope,
   resolveOrderBalance,
+  OrderPhoto,
 } from '../../core/services/order.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
 import { DialogService } from '../../core/services/dialog.service';
@@ -33,7 +34,6 @@ import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
-  getOrderWorkflowStatusOptions,
   getOrderStatusLabelFromConfig,
   validateOrderEstadoTransition,
   orderConfigUsesReservedStock,
@@ -46,6 +46,8 @@ import {
   orderStockFullyConsumed,
   getOrderPhysicalStockScopeLabel,
   resolveOrderPhysicalStockScope,
+  getOrderWorkflowStatusOptionsForSelect,
+  type OrderEntregaModo,
 } from '../../core/constants/order-config';
 import { PERMISSIONS } from '../../core/constants/permissions';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
@@ -55,16 +57,18 @@ import {
   getOrderStatusBadgeClass,
   getOrderStatusLabel,
   normalizeOrderStatus,
-  canRegisterSaleFromOrder,
   orderIsLockedForEdit,
   isOrderDeliveryEstado,
+  orderHasEntregaConSaldo,
 } from '../../core/constants/order-status';
 import {
   getOrderStockStatusBadgeClass,
   getOrderStockStatusLabel,
 } from '../../core/constants/order-stock-status';
 import { OrderStockPreparationPanelComponent } from './order-stock-preparation-panel.component';
+import { OrderPhotoAttachmentsComponent } from './order-photo-attachments.component';
 import { buildSuggestedStockAllocations } from '../../core/utils/order-stock-prep';
+import { sumLineExtraCosts } from '../../core/utils/line-extra-costs';
 import {
   saveOrderFormDraft,
   readOrderFormDraft,
@@ -116,15 +120,15 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, OrderPhotoAttachmentsComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
   template: `
     <app-transaction-form-page
       [title]="orderPageTitle"
       [titleBadge]="orderPageTitleBadge"
       [subtitle]="orderPageSubtitle"
-      backLabel="Volver a pedidos"
+      [backLabel]="orderBackLabel"
       backShortLabel="Volver"
-      backAriaLabel="Volver a pedidos"
+      [backAriaLabel]="orderBackLabel"
       (backClick)="goBack()"
       [hasHeaderActions]="hasOrderHeaderActions">
       <div headerActions *ngIf="hasOrderHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
@@ -142,34 +146,66 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           (printClick)="printCurrentOrder()"
           [showDelete]="isEditing && !isReadOnlyOrder && auth.canEditRecords && !isCancelledOrder && !isLockedOrder"
           deleteLabel="Cancelar pedido"
-          (deleteClick)="confirmCancelCurrentOrder()"
-          [showRegisterSale]="canRegisterSale && auth.canCreateSales"
-          (registerSaleClick)="registerSaleFromOrder()">
+          (deleteClick)="confirmCancelCurrentOrder()">
         </app-record-action-toolbar>
       </div>
 
       <ng-container main *ngIf="orderPageReady; else orderPageLoading">
-      <app-transaction-save-banner [message]="orderSaveBannerText"></app-transaction-save-banner>
+      <app-transaction-save-banner
+        *ngIf="showOrderSaveBanner"
+        [message]="orderSaveBannerText">
+      </app-transaction-save-banner>
 
       <div
-        *ngIf="isDeliveryPendingSave"
-        class="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        Elegiste <span class="font-semibold">{{ getOrderStatusLabelFor(order.estado) }}</span>.
-        Guardá el pedido para {{ deliveryPendingSaveHint }} y cerrarlo (después no se podrá editar).
+        *ngIf="showDeliveryBalanceNotice"
+        class="mb-6 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-500 dark:bg-sky-600 dark:text-white flex items-start gap-2.5"
+        role="status">
+        <i-lucide name="wallet" class="w-5 h-5 shrink-0 text-sky-600 dark:text-sky-100 mt-0.5"></i-lucide>
+        <span>
+          <ng-container *ngIf="isDeliveryPendingSave; else persistedDeliveryBalanceNotice">
+            Elegiste <span class="font-semibold">Entregado</span>.
+            <ng-container *ngIf="pendingEntregaModo === 'con_saldo'">
+              Guardá el pedido para registrar la venta dejando un saldo pendiente de
+              <span class="font-semibold">{{ formatMoney(pendingOrderSaldo) }}</span>.
+              El estado y los movimientos de caja se aplican al guardar.
+            </ng-container>
+            <ng-container *ngIf="pendingEntregaModo !== 'con_saldo' && pendingOrderSaldo > 0">
+              Guardá el pedido para cobrar
+              <span class="font-semibold">{{ formatMoney(pendingOrderSaldo) }}</span>,
+              registrar la venta y cerrarlo. Todo se confirma al guardar.
+            </ng-container>
+            <ng-container *ngIf="pendingEntregaModo !== 'con_saldo' && pendingOrderSaldo <= 0">
+              Guardá el pedido para registrar la venta y cerrarlo. Todo se confirma al guardar.
+            </ng-container>
+            Hasta guardar podés cambiar el estado.
+          </ng-container>
+          <ng-template #persistedDeliveryBalanceNotice>
+            Pedido entregado con saldo pendiente de
+            <span class="font-semibold">{{ formatMoney(order.saldo || 0) }}</span>.
+            Podés seguir registrando pagos desde el botón «Registrar pago».
+          </ng-template>
+        </span>
       </div>
 
       <div
         *ngIf="isLockedOrder && !isCancelledOrder"
-        class="mb-6 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-        Pedido en estado <span class="font-semibold">Entregado total</span>. Montos, productos y estado no se modifican.
-        Podés actualizar la <span class="font-semibold">descripción del trabajo</span>.
-        Registrá pagos pendientes desde caja, el saldo del cliente o la venta asociada.
+        class="mb-6 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-800 dark:border-teal-600 dark:bg-teal-950/55 dark:text-teal-50 flex items-start gap-2.5"
+        role="status">
+        <i-lucide name="circle-check" class="w-5 h-5 shrink-0 text-teal-600 dark:text-teal-300 mt-0.5"></i-lucide>
+        <span>
+          Pedido entregado y cerrado. Montos, productos y estado no se modifican.
+          Podés actualizar la <span class="font-semibold">descripción del trabajo</span>.
+        </span>
       </div>
 
       <div
         *ngIf="isCancelledOrder"
-        class="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-        Pedido en estado <span class="font-semibold">Cancelado</span>. No podés editarlo, cambiar el estado ni registrar pagos.
+        class="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/50 dark:text-red-100 flex items-start gap-2.5"
+        role="status">
+        <i-lucide name="alert-circle" class="w-5 h-5 shrink-0 text-red-600 dark:text-red-300 mt-0.5"></i-lucide>
+        <span>
+          Pedido en estado <span class="font-semibold">Cancelado</span>. No podés editarlo, cambiar el estado ni registrar pagos.
+        </span>
       </div>
 
       <div class="space-y-4">
@@ -237,7 +273,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   <span
                     *ngIf="isReadOnlyOrder"
                     class="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold shrink-0"
-                    [ngClass]="getOrderStatusBadgeClass(order.estado)">
+                    [ngClass]="getOrderStatusBadgeClass(order.estado, appConfig.pedidos, { saldo: order.saldo, entregaConSaldo: order.entregaConSaldo })">
                     {{ getOrderStatusLabelFor(order.estado) }}
                   </span>
                 </div>
@@ -287,6 +323,13 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 class="w-full px-4 py-2 rounded-lg border border-gray-200 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 max-lg:min-h-[5.5rem]">
               </textarea>
             </div>
+
+            <app-order-photo-attachments
+              *ngIf="orderPhotosEnabled"
+              [orderId]="editingOrderId"
+              [canEdit]="canEditOrderPhotos"
+              [photos]="orderPhotos"
+              (photosChange)="onOrderPhotosChange($event)" />
           </section>
 
           <div
@@ -395,7 +438,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
         </app-form-footer>
 
         <app-form-footer
-          *ngIf="isReadOnlyOrder && canDuplicateOrder"
+          *ngIf="showReadOnlyOrderFooterActions"
           mode="inline"
           [showSave]="false"
           cancelLabel="Volver"
@@ -433,7 +476,15 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               </div>
               <div class="text-right">
                 <p class="text-[10px] uppercase text-gray-500">Ganancia</p>
-                <p class="font-semibold text-green-600 tabular-nums">{{ formatMoney(order.gananciaEstimada || 0) }}</p>
+                <p
+                  class="font-semibold tabular-nums"
+                  [class.text-green-600]="displayOrderGanancia >= 0"
+                  [class.text-red-600]="displayOrderGanancia < 0">
+                  {{ formatMoney(displayOrderGanancia) }}
+                </p>
+                <p *ngIf="donationProfitPending" class="text-[9px] text-amber-600 leading-tight mt-0.5">
+                  Al entregar
+                </p>
               </div>
               <div class="col-span-2 flex justify-between pt-1 border-t border-gray-100">
                 <span class="text-[10px] uppercase text-gray-500">Margen</span>
@@ -513,9 +564,17 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             </div>
 
             <div class="hidden sm:block space-y-2 mb-6 text-sm">
-              <div class="flex justify-between">
-                <span class="text-gray-500">Ganancia est.</span>
-                <span class="text-green-600 font-bold tabular-nums">{{ formatMoney(order.gananciaEstimada || 0) }}</span>
+              <div class="flex justify-between items-baseline gap-2">
+                <span class="text-gray-500">
+                  Ganancia est.
+                  <span *ngIf="donationProfitPending" class="text-amber-600 font-normal text-xs"> (al entregar)</span>
+                </span>
+                <span
+                  class="font-bold tabular-nums"
+                  [class.text-green-600]="displayOrderGanancia >= 0"
+                  [class.text-red-600]="displayOrderGanancia < 0">
+                  {{ formatMoney(displayOrderGanancia) }}
+                </span>
               </div>
               <div class="flex justify-between">
                 <span class="text-gray-500">Margen</span>
@@ -530,7 +589,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
-            <div *ngIf="isReadOnlyOrder && canDuplicateOrder" class="space-y-2 sm:space-y-3">
+            <div *ngIf="showReadOnlyOrderFooterActions" class="space-y-2 sm:space-y-3">
               <p class="text-xs sm:text-sm text-gray-500 hidden sm:block">
                 Este pedido no se puede modificar. Podés duplicarlo para crear uno nuevo con los mismos datos.
               </p>
@@ -596,7 +655,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
-            <div *ngIf="isReadOnlyOrder && canDuplicateOrder" class="space-y-2 sm:space-y-3">
+            <div *ngIf="showReadOnlyOrderFooterActions" class="space-y-2 sm:space-y-3">
               <p class="text-xs sm:text-sm text-gray-500 hidden sm:block">
                 Este pedido no se puede modificar. Podés duplicarlo para crear uno nuevo con los mismos datos.
               </p>
@@ -908,6 +967,8 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
     <app-order-stock-preparation-panel
       [open]="stockPrepOpen"
       [orderId]="editingOrderId ?? ''"
+      [orderLabel]="orderPageTitleBadge"
+      [clientName]="selectedClientLabel || order.clienteNombre || ''"
       (closed)="onStockPrepClosed()"
       (confirmed)="onStockPrepConfirmed($event)">
     </app-order-stock-preparation-panel>
@@ -940,7 +1001,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return this.orderStatusOptionsCache;
     }
     this.orderStatusOptionsKey = key;
-    this.orderStatusOptionsCache = getOrderWorkflowStatusOptions(this.appConfig.pedidos);
+    this.orderStatusOptionsCache = getOrderWorkflowStatusOptionsForSelect(this.appConfig.pedidos);
     return this.orderStatusOptionsCache;
   }
   readonly controlsStockForCatalogItem = (item: StockItem) =>
@@ -953,6 +1014,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderStatusOptionsKey = '';
   selectedClientLabel = '';
   pendingClientName = '';
+  private orderReturnTo: 'orders' | 'stock' = 'orders';
+  private orderReturnStockTab: 'productos' | 'movimientos' | 'reservas' = 'movimientos';
   creatingClient = false;
   clientModalOpen = false;
   clientModalPrefillNombre = '';
@@ -971,6 +1034,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderTableColumnsKey = '';
   private catalogPriceOptionsCache = new Map<string, Array<{ label: string; price: number }>>();
   private loadOrderRequestId = 0;
+  orderPhotos: OrderPhoto[] = [];
   priceCatalogEntries: PriceCatalogEntry[] = [];
   extraCostsModalIndex: number | null = null;
   paymentModalOpen = false;
@@ -981,6 +1045,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   orderSaveState: 'idle' | 'saving' | 'success' = 'idle';
   orderSaveAction: 'draft' | 'submit' | null = null;
   orderSaveBannerText = '';
+  private lockedDescriptionSave = false;
   private orderSaveFeedbackTimeout?: ReturnType<typeof setTimeout>;
   private savedOrderEstado = '';
   private orderFormLocked = false;
@@ -990,6 +1055,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   stockDiscountSelectedScope: OrderPhysicalStockScope = 'solo_reservado';
   private pendingEstadoForStockDiscount: string | null = null;
   private pendingSaveEstado: string | null = null;
+  pendingEntregaModo: OrderEntregaModo | null = null;
   readonly getOrderPhysicalStockScopeLabel = getOrderPhysicalStockScopeLabel;
   private pendingEstadoChange: string | null = null;
   private stockPrepFromEstadoChange = false;
@@ -1163,11 +1229,15 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return !!this.editingOrderId;
   }
 
+  get orderBackLabel(): string {
+    return this.orderReturnTo === 'stock' ? 'Volver a stock' : 'Volver a pedidos';
+  }
+
   get orderPageTitle(): string {
     if (this.isCancelledOrder) return 'Pedido cancelado';
-    if (this.isLockedOrder) return 'Pedido entregado total';
+    if (this.isLockedOrder) return 'Pedido entregado';
     if (this.isEditing) return 'Editar pedido';
-    return 'Nuevo pedido personalizado';
+    return 'Nuevo pedido';
   }
 
   get orderPageTitleBadge(): string {
@@ -1193,7 +1263,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   goBack() {
+    if (this.orderReturnTo === 'stock') {
+      void this.router.navigate(['/stock'], {
+        queryParams: {
+          tab:
+            this.orderReturnStockTab !== 'productos' ? this.orderReturnStockTab : null,
+        },
+      });
+      return;
+    }
     this.navigationBack.back(['/orders']);
+  }
+
+  get showOrderSaveBanner(): boolean {
+    if (this.isLockedOrder && !this.isCancelledOrder) return false;
+    return !!this.orderSaveBannerText?.trim();
   }
 
   get isDraft(): boolean {
@@ -1221,7 +1305,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get primaryButtonLabel(): string {
     if (this.orderSaveState === 'saving' && this.orderSaveAction === 'submit') return 'Guardando...';
     if (this.orderSaveState === 'success' && this.orderSaveAction === 'submit') {
-      if (this.isLockedOrder) return 'Descripción guardada';
+      if (this.lockedDescriptionSave) return 'Descripción guardada';
       return this.isEditing && !this.isDraftOrder ? 'Guardado' : 'Pedido confirmado';
     }
     if (this.canSaveLockedDescription) return 'Guardar descripción';
@@ -1230,6 +1314,14 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   get canEditOrderDescription(): boolean {
     return !this.isCancelledOrder && this.auth.canEditRecords;
+  }
+
+  get canEditOrderPhotos(): boolean {
+    return this.canEditOrderDescription;
+  }
+
+  get orderPhotosEnabled(): boolean {
+    return this.appConfig.pedidos?.fotosReferenciaHabilitadas !== false;
   }
 
   get hasPendingDescriptionChange(): boolean {
@@ -1258,10 +1350,17 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return isOrderDeliveryEstado(current) && current !== saved;
   }
 
-  get deliveryPendingSaveHint(): string {
-    return normalizeOrderStatus(this.order.estado) === 'entregado'
-      ? 'registrar la venta y el cobro del saldo'
-      : 'registrar la venta';
+  get showDeliveryBalanceNotice(): boolean {
+    return this.isDeliveryPendingSave || this.isDeliveredWithBalance;
+  }
+
+  get isDeliveredWithBalance(): boolean {
+    if (!this.isEditing || this.isLockedOrder || this.isCancelledOrder || this.isDeliveryPendingSave) {
+      return false;
+    }
+    const saved = normalizeOrderStatus(this.savedOrderEstado);
+    if (!isOrderDeliveryEstado(saved)) return false;
+    return orderHasEntregaConSaldo(saved, this.order);
   }
 
   get isReadOnlyOrder(): boolean {
@@ -1274,14 +1373,18 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return this.isEditing && !!this.editingOrderId && this.auth.canEditRecords;
   }
 
+  /** Pie y panel lateral: duplicar/volver abajo solo si el pedido no está cerrado (arriba ya hay volver y duplicar). */
+  get showReadOnlyOrderFooterActions(): boolean {
+    return this.isReadOnlyOrder && this.canDuplicateOrder && !this.isLockedOrder;
+  }
+
   /** Hay al menos una acción para mostrar arriba a la derecha (guardar/duplicar/imprimir/etc.). */
   get hasOrderHeaderActions(): boolean {
     return (
       !this.isReadOnlyOrder ||
       this.canSaveLockedDescription ||
       this.canDuplicateOrder ||
-      (this.isEditing && this.auth.canPrintOrders) ||
-      (this.canRegisterSale && this.auth.canCreateSales)
+      (this.isEditing && this.auth.canPrintOrders)
     );
   }
 
@@ -1290,12 +1393,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get canRegisterOrderPayment(): boolean {
-    if (
-      !this.editingOrderId ||
-      !this.auth.canAccessCash ||
-      this.isCancelledOrder ||
-      this.isLockedOrder
-    ) {
+    if (!this.editingOrderId || !this.auth.canAccessCash || this.isCancelledOrder) {
       return false;
     }
     return this.pendingOrderSaldo > 0;
@@ -1303,6 +1401,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   get orderEstadoDisplay(): string {
     const normalized = normalizeOrderStatus(this.order.estado);
+    if (normalized === 'entregado_con_saldo') return 'entregado';
     return normalized === 'otro' ? 'pendiente' : normalized;
   }
 
@@ -1336,12 +1435,22 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
     if (normalizeOrderStatus(this.savedOrderEstado) === 'cancelado') return;
 
-    const previous = normalizeOrderStatus(this.order.estado);
+    const saved = normalizeOrderStatus(this.savedOrderEstado);
+    const current = normalizeOrderStatus(this.order.estado);
     const next = normalizeOrderStatus(newEstado);
-    if (next === previous) return;
+    if (next === current) return;
+
+    const unpersistedDelivery = isOrderDeliveryEstado(current) && current !== saved;
+    const transitionPrevious = unpersistedDelivery ? saved : current;
+
+    if (next === transitionPrevious) {
+      this.pendingEntregaModo = null;
+      this.order.estado = newEstado;
+      return;
+    }
 
     const transition = validateOrderEstadoTransition({
-      previousEstado: previous,
+      previousEstado: transitionPrevious,
       nextEstado: next,
       triggerEstado: this.appConfig.pedidos.estadoDescuentaStock,
       stockDescontado: this.order.stockDescontado,
@@ -1349,7 +1458,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     });
 
     if (!transition.allowed) {
-      this.order.estado = previous;
+      this.order.estado = unpersistedDelivery
+        ? String(current)
+        : this.savedOrderEstado || String(current);
       this.dialogService.alert({
         title: 'Estado del pedido',
         message: transition.error ?? 'No podés retroceder el estado del pedido.',
@@ -1357,7 +1468,66 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
+    if (!isOrderDeliveryEstado(next)) {
+      this.pendingEntregaModo = null;
+    }
+
+    const isDeliveryTarget = next === 'entregado' || next === 'entregado_con_saldo';
+    if (isDeliveryTarget) {
+      const revertEstado =
+        this.savedOrderEstado ||
+        (transitionPrevious === 'otro' ? 'pendiente' : String(transitionPrevious));
+      this.promptEntregaModo(
+        () => {
+          this.order.estado = 'entregado';
+        },
+        () => {
+          this.pendingEntregaModo = null;
+          this.order.estado = revertEstado;
+        }
+      );
+      return;
+    }
+
     this.order.estado = newEstado;
+  }
+
+  private promptEntregaModo(onChosen: () => void, onCancel: () => void) {
+    const saldo = this.resolveCurrentOrderBalance().saldo;
+    if (saldo <= 0) {
+      this.pendingEntregaModo = 'completa';
+      onChosen();
+      return;
+    }
+
+    this.dialogService
+      .choose({
+        title: 'Registrar entrega',
+        message:
+          `Saldo pendiente: ${formatMoneyValue(saldo)}.\n\n` +
+          '¿Cobrás el total ahora o entregás dejando saldo pendiente?',
+        options: [
+          {
+            id: 'completa',
+            label: `Cobrar todo (${formatMoneyValue(saldo)})`,
+            variant: 'default',
+          },
+          {
+            id: 'con_saldo',
+            label: 'Entregar con saldo pendiente',
+            variant: 'secondary',
+          },
+        ],
+        cancelLabel: 'Cancelar',
+      })
+      .subscribe((choice) => {
+        if (!choice) {
+          onCancel();
+          return;
+        }
+        this.pendingEntregaModo = choice as OrderEntregaModo;
+        onChosen();
+      });
   }
 
   confirmStockDiscountDialog() {
@@ -1465,11 +1635,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (result.estadoStock) this.order.estadoStock = result.estadoStock;
     if (result.stockPreparado !== undefined) this.order.stockPreparado = result.stockPreparado;
     if (result.stockDescontado !== undefined) this.order.stockDescontado = result.stockDescontado;
-    if (result.locked) this.orderFormLocked = true;
+    if (result.entregaConSaldo !== undefined) this.order.entregaConSaldo = result.entregaConSaldo;
+    if (result.locked) {
+      this.orderFormLocked = true;
+    } else if (result.estado || result.saldo !== undefined) {
+      this.orderFormLocked = orderIsLockedForEdit(this.order.estado, this.order);
+    }
     if (result.items) {
       this.orderLines = result.items.map((line) => this.normalizeOrderLine(line));
       this.order.items = result.items;
-      this.enrichOrderLinesWithStock();
+      this.enrichOrderLinesWithStock({ debounceMs: 300 });
     }
     this.calculateTotals();
 
@@ -1525,18 +1700,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     );
   }
 
-  get canRegisterSale(): boolean {
-    if (!this.editingOrderId || this.isReadOnlyOrder) return false;
-    return canRegisterSaleFromOrder({
-      estado: this.order.estado,
-      ventaId: this.order.ventaId,
-      seniaBloqueada: this.order.seniaBloqueada,
-      movimientoSeniaId: this.order.movimientoSeniaId,
-      pagos: this.order.pagos,
-      stockDescontado: this.order.stockDescontado,
-    });
-  }
-
   get fechaEntregaInput(): string {
     return toDateInputValue(this.order.fechaEntrega);
   }
@@ -1553,6 +1716,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (this.extraCostsModalIndex === null) return null;
     return this.orderLines[this.extraCostsModalIndex] ?? null;
   }
+
+  @ViewChild(OrderPhotoAttachmentsComponent) orderPhotoAttachments?: OrderPhotoAttachmentsComponent;
 
   @HostListener('document:keydown.escape')
   onEscapeKey() {
@@ -1637,6 +1802,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private syncRouteState(): void {
+    this.syncOrderReturnNavigation();
+
     const duplicateId = this.route.snapshot.queryParamMap.get('duplicate');
     const orderId = this.route.snapshot.paramMap.get('id');
     const restoreDraft = this.route.snapshot.queryParamMap.get('restoreDraft') === '1';
@@ -1662,6 +1829,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     } else {
       this.resetForm();
     }
+  }
+
+  private syncOrderReturnNavigation(): void {
+    const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
+    if (returnTo === 'stock') {
+      this.orderReturnTo = 'stock';
+      const tab = this.route.snapshot.queryParamMap.get('stockTab');
+      this.orderReturnStockTab =
+        tab === 'movimientos' || tab === 'reservas' || tab === 'productos'
+          ? tab
+          : 'movimientos';
+      return;
+    }
+    this.orderReturnTo = 'orders';
+    this.orderReturnStockTab = 'movimientos';
   }
 
   private readOrderPreview(orderId: string): Order | null {
@@ -1865,6 +2047,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private resetForm() {
     this.order = this.emptyOrder();
     this.orderLines = [];
+    this.orderPhotos = [];
     this.pendingClientName = '';
     this.selectedClientLabel = '';
     this.isDraftOrder = false;
@@ -1884,11 +2067,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.mergeClientOption(event.id, event.client.nombre ?? '');
     this.refreshClients();
     this.closeClientModal();
-  }
-
-  registerSaleFromOrder() {
-    if (!this.editingOrderId || !this.canRegisterSale || !this.auth.canCreateSales) return;
-    this.router.navigate(['/sales'], { queryParams: { pedidoId: this.editingOrderId } });
   }
 
   duplicateOrder() {
@@ -1961,6 +2139,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         controlaStock: line.controlaStock,
         stockDisponible: line.stockDisponible,
       })),
+      fotos: this.orderPhotos.length ? this.orderPhotos : this.loadedOrderSnapshot.fotos,
     };
 
     const clientsById = new Map(
@@ -2084,7 +2263,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   getLinePersTotal(line: OrderLineItem): number {
-    return (Number(line.cantidad) || 0) * this.getLineCustomizationTotal(line);
+    return sumLineExtraCosts(
+      Number(line.cantidad) || 0,
+      line.costosExtra,
+      line.costoPersonalizacion
+    );
   }
 
   getLineSaleTotal(line: OrderLineItem): number {
@@ -2236,8 +2419,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         : Number(this.order.costoReal) ||
           Number(this.loadedOrderSnapshot?.costoReal) ||
           0;
-    const nextGanancia = nextTotal - nextCostoReal;
-    const nextMargen = nextTotal ? nextGanancia / nextTotal : 0;
+    const donationPendingDelivery =
+      nextTotal === 0 && !isOrderDeliveryEstado(this.order.estado);
+    const nextGanancia = donationPendingDelivery ? 0 : nextTotal - nextCostoReal;
+    const nextMargen = nextTotal && !donationPendingDelivery ? nextGanancia / nextTotal : 0;
 
     let changed = false;
     if (this.baseProductCost !== baseProductCost) {
@@ -2424,6 +2609,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           this.order.saldo = result.saldo;
           this.order.seniaBloqueada = true;
           this.syncOrderBalance();
+          if (
+            (result.saldo ?? this.order.saldo) <= 0 &&
+            isOrderDeliveryEstado(this.order.estado)
+          ) {
+            this.orderFormLocked = true;
+          }
           if (this.loadedOrderSnapshot) {
             this.loadedOrderSnapshot = {
               ...this.loadedOrderSnapshot,
@@ -2466,29 +2657,110 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!this.validateClient()) return;
     if (!this.validateProducts()) return;
 
-    this.confirmDonationIfNeeded(() => this.proceedSubmitOrder());
+    this.lockedDescriptionSave = false;
+    this.confirmBeforeOrderSubmit(() => this.finalizeOrderSubmit());
   }
 
-  private proceedSubmitOrder() {
-    const estado =
-      !this.isEditing || this.isDraftOrder ? 'pendiente' : this.order.estado || 'pendiente';
+  private resolveSubmitEstado(): string {
+    if (!this.isEditing || this.isDraftOrder) return 'pendiente';
+    const normalized = normalizeOrderStatus(this.order.estado, this.appConfig.pedidos);
+    if (typeof normalized === 'string' && normalized !== 'otro') {
+      return normalized;
+    }
+    return this.order.estado?.trim() || 'pendiente';
+  }
 
-    if (this.isEditing && this.isDeliveryPendingSave) {
-      const nextLabel = getOrderStatusLabelFromConfig(estado, this.appConfig.pedidos);
+  private confirmBeforeOrderSubmit(onConfirm: () => void): void {
+    const donation = this.isDonationOrder;
+    const delivery = this.isEditing && this.isDeliveryPendingSave;
+    const estado = this.resolveSubmitEstado();
+
+    if (donation && delivery) {
+      const label = getOrderStatusLabelFromConfig(estado, this.appConfig.pedidos);
       this.dialogService
         .confirm({
-          title: 'Cerrar pedido',
-          message: `Al guardar, el pedido pasará a «${nextLabel}» y quedará cerrado (no podrás editarlo después). ¿Continuar?`,
-          confirmLabel: 'Guardar y cerrar',
-          cancelLabel: 'Cancelar',
+          title: 'Donación y cierre del pedido',
+          message:
+            `El total es $0 (donación). Al guardar como «${label}»:\n\n` +
+            '• Se descontará el stock de los productos.\n' +
+            '• Se registrará la venta en Ventas (sin movimiento de caja).\n' +
+            '• El costo se restará de «Gan. cobrada» en el inicio y del contador de donaciones del mes.\n' +
+            '• El pedido quedará cerrado.\n\n' +
+            '¿Continuar?',
+          confirmLabel: 'Sí, guardar',
+          cancelLabel: 'Volver',
         })
         .subscribe((confirmed) => {
-          if (!confirmed) return;
-          if (!this.beginOrderSave('submit')) return;
-          this.persistOrder(estado);
+          if (confirmed) onConfirm();
         });
       return;
     }
+
+    if (donation) {
+      this.dialogService
+        .confirm({
+          title: 'Guardar como donación',
+          message:
+            'El precio de venta es $0. No genera cobro ni movimiento de caja.\n\n' +
+            'El costo de los productos se descontará de tus ganancias cuando marques el pedido como Entregado. ¿Continuar?',
+          confirmLabel: 'Sí, es donación',
+          cancelLabel: 'Volver',
+        })
+        .subscribe((confirmed) => {
+          if (confirmed) onConfirm();
+        });
+      return;
+    }
+
+    if (delivery) {
+      const saldo = this.pendingOrderSaldo;
+      const modo = this.pendingEntregaModo ?? (saldo > 0 ? null : 'completa');
+
+      if (modo === 'con_saldo') {
+        this.dialogService
+          .confirm({
+            title: 'Entregar con saldo',
+            message:
+              `Al guardar quedará entregado con saldo pendiente de ${formatMoneyValue(saldo)}. ` +
+              'Podrás seguir registrando pagos. ¿Continuar?',
+            confirmLabel: 'Sí, entregar',
+            cancelLabel: 'Cancelar',
+          })
+          .subscribe((confirmed) => {
+            if (confirmed) onConfirm();
+          });
+        return;
+      }
+
+      if (modo === 'completa') {
+        this.dialogService
+          .confirm({
+            title: 'Entregar pedido',
+            message:
+              saldo > 0
+                ? `Al guardar se registrará la venta y el cobro de ${formatMoneyValue(saldo)} en caja. El pedido quedará cerrado. ¿Continuar?`
+                : 'Al guardar el pedido quedará entregado y cerrado. ¿Continuar?',
+            confirmLabel: saldo > 0 ? 'Entregar y cobrar' : 'Entregar',
+            cancelLabel: 'Cancelar',
+          })
+          .subscribe((confirmed) => {
+            if (confirmed) onConfirm();
+          });
+        return;
+      }
+
+      this.promptEntregaModo(
+        () => onConfirm(),
+        () => undefined
+      );
+      return;
+    }
+
+    onConfirm();
+  }
+
+  private finalizeOrderSubmit(): void {
+    const estado = this.resolveSubmitEstado();
 
     if (!this.beginOrderSave('submit')) {
       if (this.orderSaveState === 'saving') return;
@@ -2555,22 +2827,14 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return totalVenta === 0;
   }
 
-  private confirmDonationIfNeeded(onConfirm: () => void): void {
-    if (!this.isDonationOrder) {
-      onConfirm();
-      return;
-    }
-    this.dialogService
-      .confirm({
-        title: 'Guardar como donación',
-        message:
-          'El precio de venta es $0. ¿Querés registrar este pedido como donación? No genera saldo a cobrar y la ganancia queda en negativo por el costo.',
-        confirmLabel: 'Sí, es donación',
-        cancelLabel: 'Volver',
-      })
-      .subscribe((confirmed) => {
-        if (confirmed) onConfirm();
-      });
+  /** Ganancia visible: en donaciones pendientes de entrega no se descuenta todavía. */
+  get displayOrderGanancia(): number {
+    if (this.donationProfitPending) return 0;
+    return Number(this.order.gananciaEstimada) || 0;
+  }
+
+  get donationProfitPending(): boolean {
+    return this.isDonationOrder && !isOrderDeliveryEstado(this.order.estado);
   }
 
   private beginOrderSave(action: 'draft' | 'submit'): boolean {
@@ -2589,11 +2853,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderSaveState = 'idle';
     this.orderSaveAction = null;
     this.orderSaveBannerText = '';
+    this.lockedDescriptionSave = false;
   }
 
   private resolveOrderSaveBannerText(): string {
     if (this.orderSaveAction === 'draft') return 'Borrador guardado';
-    if (this.isLockedOrder) return 'Descripción guardada';
+    if (this.lockedDescriptionSave) return 'Descripción guardada';
     if (this.isEditing && !this.isDraftOrder) return 'Pedido guardado correctamente';
     return 'Pedido confirmado';
   }
@@ -2609,6 +2874,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private saveLockedOrderDescription() {
     if (!this.editingOrderId || !this.canSaveLockedDescription) return;
     if (!this.beginOrderSave('submit')) return;
+    this.lockedDescriptionSave = true;
 
     this.orderService
       .updateOrder(this.editingOrderId, {
@@ -2664,8 +2930,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             this.finishOrderSaveSuccess();
           },
           error: (err: HttpErrorResponse) => {
-            this.orderSaveState = 'idle';
-            this.orderSaveAction = null;
             this.dialogService
               .alert({
                 title: 'Revisá el stock',
@@ -2754,18 +3018,19 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (transition.requiresStockRestore) {
+    if (transition.isBackward) {
       const nextLabel = getOrderStatusLabelFromConfig(next, this.appConfig.pedidos);
       this.dialogService
         .confirm({
           title: 'Retroceder estado',
-          message: `Al guardar en «${nextLabel}», se devolverá el stock al depósito (entrada de stock). ¿Continuar?`,
-          confirmLabel: 'Sí, guardar',
+          message: this.buildBackwardEstadoConfirmMessage(nextLabel, transition.requiresStockRestore),
+          confirmLabel: 'Sí, volver atrás',
           cancelLabel: 'Cancelar',
-          variant: 'danger',
+          variant: transition.requiresStockRestore ? 'danger' : 'default',
         })
         .subscribe((confirmed) => {
           if (!confirmed) {
+            this.order.estado = this.savedOrderEstado || this.order.estado;
             this.resetOrderSaveState();
             this.pendingSaveEstado = null;
             return;
@@ -2776,6 +3041,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     this.continuePreSaveStockDiscountCheck(targetEstado, onReady);
+  }
+
+  private buildBackwardEstadoConfirmMessage(nextLabel: string, restoresStock: boolean): string {
+    const stockNote = restoresStock
+      ? 'Se devolverá al depósito el stock que se descontó con el estado anterior.'
+      : 'No se mueve stock automáticamente, pero conviene revisar la preparación del pedido.';
+    return (
+      `Al guardar en «${nextLabel}», ${stockNote}\n\n` +
+      'Revisá el stock del pedido para confirmar que quedó todo correcto. ¿Querés volver atrás?'
+    );
   }
 
   private continuePreSaveStockDiscountCheck(targetEstado: string, onReady: () => void) {
@@ -2844,7 +3119,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.calculateTotals();
 
     const firstLine = this.orderLines[0];
-    const payload: Partial<Order> & { descuentoFisicoAlcance?: OrderPhysicalStockScope } = {
+    const orderTotal = Number(this.order.total) || 0;
+    const payload: Partial<Order> & {
+      descuentoFisicoAlcance?: OrderPhysicalStockScope;
+      esDonacion?: boolean;
+      entregaModo?: OrderEntregaModo;
+    } = {
       clienteId: this.order.clienteId!,
       // Guardamos el nombre denormalizado para que la grilla no tenga que
       // resolver cada cliente contra Firestore al listar pedidos.
@@ -2853,9 +3133,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       estado,
       fechaEntrega: this.order.fechaEntrega || new Date().toISOString(),
       createdAt: this.order.createdAt || new Date().toISOString(),
-      total: Number(this.order.total) || 0,
+      total: orderTotal,
       costoReal: Number(this.order.costoReal) || 0,
       gananciaEstimada: Number(this.order.gananciaEstimada) || 0,
+      esDonacion: orderTotal === 0,
       margen: Number(this.order.margen) || 0,
       saldo: Number(this.order.saldo) || 0,
       items: this.orderLines.map((line) => {
@@ -2889,6 +3170,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       payload.descuentoFisicoAlcance = descuentoFisicoAlcance;
     }
 
+    if (this.pendingEntregaModo && isOrderDeliveryEstado(estado)) {
+      payload.entregaModo = this.pendingEntregaModo;
+    }
+
     const request = this.editingOrderId
       ? this.orderService.updateOrder(this.editingOrderId, payload)
       : this.orderService.createOrder(payload as Order);
@@ -2896,6 +3181,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     request.subscribe({
       next: (result) => {
         this.pendingSaveEstado = null;
+        this.pendingEntregaModo = null;
         const createdId = 'id' in result ? result.id : undefined;
         const wasNew = !this.editingOrderId;
         if (createdId && wasNew) {
@@ -2905,7 +3191,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.applyOrderUpdateResult(result as OrderUpdateResult);
         this.isDraftOrder = estado === 'borrador';
         this.savedOrderEstado = this.order.estado ?? estado;
-        if (orderIsLockedForEdit(this.order.estado) || !!(result as OrderUpdateResult).locked) {
+        if (orderIsLockedForEdit(this.order.estado, this.order) || !!(result as OrderUpdateResult).locked) {
           this.orderFormLocked = true;
           if (this.loadedOrderSnapshot) {
             this.loadedOrderSnapshot = {
@@ -2926,15 +3212,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           !!this.editingOrderId &&
           orderConfigUsesReservedStock(this.appConfig);
 
+        this.finishOrderSaveSuccess();
+        this.flushPendingOrderPhotosInBackground();
+
         if (shouldAutoReserve) {
           this.autoReserveStockForOrder(this.editingOrderId!);
-          return;
         }
-
-        this.finishOrderSaveSuccess();
       },
       error: (err: HttpErrorResponse) => {
         this.pendingSaveEstado = null;
+        this.pendingEntregaModo = null;
         this.resetOrderSaveState();
         const serverMessage =
           typeof err.error?.error === 'string' ? err.error.error : '';
@@ -2980,6 +3267,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.isDraftOrder = false;
     this.savedOrderEstado = 'pendiente';
     this.orderFormLocked = false;
+    this.orderPhotos = [];
 
     this.order = {
       ...this.emptyOrder(),
@@ -3119,10 +3407,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       stockPreparado: order.stockPreparado,
       estadoStock: order.estadoStock,
       ventaId: order.ventaId,
+      entregaConSaldo: order.entregaConSaldo,
       items: order.items ?? [],
     };
+    this.orderPhotos = order.fotos ?? [];
     this.savedOrderEstado = this.order.estado ?? 'pendiente';
-    this.orderFormLocked = orderIsLockedForEdit(order.estado);
+    this.orderFormLocked = orderIsLockedForEdit(order.estado, order);
 
     if (!includeLines) {
       this.calculateTotals();
@@ -3323,8 +3613,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private ensureEditable(action: string): boolean {
     if (this.isLockedOrder) {
       this.dialogService.alert({
-        title: 'Pedido entregado total',
-        message: `Este pedido fue entregado total y no se puede ${action}.`,
+        title: 'Pedido entregado',
+        message: `Este pedido fue entregado y cerrado. No se puede ${action}.`,
       });
       return false;
     }
@@ -3345,14 +3635,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       });
       return false;
     }
-    if (this.isLockedOrder) {
-      this.dialogService.alert({
-        title: 'Pedido entregado total',
-        message:
-          'Este pedido fue entregado total. Registrá el pago desde caja, el saldo del cliente o la venta asociada.',
-      });
-      return false;
-    }
     if (!this.editingOrderId) {
       this.dialogService.alert({
         title: 'Guardá el pedido',
@@ -3368,6 +3650,24 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return false;
     }
     return true;
+  }
+
+  onOrderPhotosChange(fotos: OrderPhoto[]) {
+    this.orderPhotos = fotos;
+    this.syncOrderPhotosSnapshot(fotos);
+  }
+
+  private syncOrderPhotosSnapshot(fotos: OrderPhoto[]) {
+    if (this.loadedOrderSnapshot) {
+      this.loadedOrderSnapshot = { ...this.loadedOrderSnapshot, fotos };
+    }
+  }
+
+  private flushPendingOrderPhotosInBackground() {
+    const orderId = this.editingOrderId;
+    const attachments = this.orderPhotoAttachments;
+    if (!orderId || !attachments) return;
+    void attachments.flushPendingUploads(orderId).catch(() => undefined);
   }
 
   private emptyOrder(): Partial<Order> {

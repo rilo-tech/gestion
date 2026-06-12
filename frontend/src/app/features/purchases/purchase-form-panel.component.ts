@@ -22,6 +22,7 @@ import {
   getMedioPagoConfig,
   getMediosPagoActivos,
   getTarjetasForMedio,
+  buildFinanzasPagoConfigKey,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
@@ -38,7 +39,6 @@ import {
   CreatePurchasePayload,
   Purchase,
   PurchaseService,
-  formatPurchaseNumberBadge,
 } from '../../core/services/purchase.service';
 import { Supplier, SupplierService } from '../../core/services/supplier.service';
 import { StockItem, StockService } from '../../core/services/stock.service';
@@ -78,6 +78,7 @@ import {
   TRANSACTION_COMPACT_LABEL_CLASS,
   TRANSACTION_COMPACT_LABEL_INLINE_CLASS,
   TRANSACTION_COMPACT_LABEL_ROW_CLASS,
+  TRANSACTION_PAYMENT_PAIR_GRID_CLASS,
 } from '../../shared/components/transaction-form/transaction-form.constants';
 import { todayDateInputValue, toDateInputValue } from '../../core/utils/transaction-date';
 
@@ -194,14 +195,6 @@ interface PurchaseDraftLine {
         </div>
       </div>
 
-      <div *ngIf="purchaseSystemNumberLabel" class="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 items-start">
-        <div class="min-w-0">
-          <label [class]="fieldLabelClass">N° compra (sistema)</label>
-          <p class="mt-1 text-sm font-semibold text-teal-700 dark:text-teal-400 tabular-nums">
-            #{{ purchaseSystemNumberLabel }}
-          </p>
-        </div>
-      </div>
 
       <app-transaction-lines-section
         title="Productos"
@@ -231,7 +224,7 @@ interface PurchaseDraftLine {
           (removeLine)="onPurchaseStockRemove($event)">
           <ng-template #metaRow let-line let-index="index">
             <div *ngIf="usesAmbitoSeparation" class="flex flex-wrap items-center gap-1.5 mt-0.5">
-              <span class="text-gray-400">Ámbito:</span>
+              <span class="text-gray-400">Ámbito <span class="text-red-500">*</span>:</span>
               <button
                 *ngFor="let ambito of cajaAmbitos; trackBy: trackCajaAmbitoId"
                 type="button"
@@ -295,51 +288,73 @@ interface PurchaseDraftLine {
           <div
             *ngIf="line.tipoLinea !== 'stock'"
             class="px-3 sm:px-4 py-2.5 sm:py-3">
-            <div class="flex items-start gap-2">
-              <div class="flex-1 min-w-0 space-y-2">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <span class="text-[10px] font-semibold uppercase text-gray-400">Gasto / servicio</span>
-                  <span class="text-[10px] font-semibold uppercase text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">No mueve stock</span>
+            <div class="space-y-2">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[10px] font-semibold uppercase text-gray-400">Gasto / servicio</span>
+                <span class="text-[10px] font-semibold uppercase text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">No mueve stock</span>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 sm:gap-3 items-end">
+                <div class="col-span-1 sm:col-span-4">
+                  <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Concepto</label>
+                  <select
+                    [(ngModel)]="line.categoriaId"
+                    (ngModelChange)="onLineCategoriaChange(line)"
+                    [name]="'cat_' + i"
+                    [class]="lineInputClass + ' bg-white'">
+                    <option *ngFor="let cat of categoriasGasto" [ngValue]="cat.id">{{ cat.label }}</option>
+                  </select>
                 </div>
-                <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 sm:gap-3 items-end">
-                  <div class="col-span-1 sm:col-span-4">
-                    <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Concepto</label>
-                    <select
-                      [(ngModel)]="line.categoriaId"
-                      (ngModelChange)="onLineCategoriaChange(line)"
-                      [name]="'cat_' + i"
-                      [class]="lineInputClass + ' bg-white'">
-                      <option *ngFor="let cat of categoriasGasto" [ngValue]="cat.id">{{ cat.label }}</option>
-                    </select>
-                  </div>
-                  <div class="col-span-1 sm:col-span-3">
-                    <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
-                      Importe
-                      <span class="font-normal text-gray-400">(− crédito)</span>
-                    </label>
-                    <input
-                      type="number"
-                      [(ngModel)]="line.importe"
-                      [name]="'importe_' + i"
-                      [class]="lineInputClass"
-                      placeholder="Ej. −7524">
-                  </div>
-                  <div class="hidden sm:block sm:col-span-4">
-                    <label *ngIf="isFirstVisibleLine(i)" class="block text-xs font-medium text-gray-500 mb-1">Descripción</label>
-                    <input
-                      [(ngModel)]="line.descripcion"
-                      [name]="'desc_' + i"
-                      placeholder="Detalle opcional"
-                      [class]="lineInputClass">
-                  </div>
+                <div class="col-span-1 sm:col-span-3">
+                  <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
+                    Importe
+                    <span class="font-normal text-gray-400">(− crédito)</span>
+                  </label>
+                  <input
+                    type="number"
+                    [(ngModel)]="line.importe"
+                    [name]="'importe_' + i"
+                    [class]="lineInputClass"
+                    placeholder="Ej. −7524">
                 </div>
+                <div class="hidden sm:block sm:col-span-4">
+                  <label *ngIf="isFirstVisibleLine(i)" class="block text-xs font-medium text-gray-500 mb-1">Descripción</label>
+                  <input
+                    [(ngModel)]="line.descripcion"
+                    [name]="'desc_' + i"
+                    placeholder="Detalle opcional"
+                    [class]="lineInputClass">
+                </div>
+                <div
+                  *ngIf="!readOnly && canRemoveExpenseLine(line)"
+                  class="hidden sm:flex sm:col-span-1 items-end justify-end">
+                  <button
+                    type="button"
+                    (click)="removeLine(i)"
+                    class="shrink-0 p-1.5 sm:p-2 rounded-lg text-red-500 hover:bg-red-50"
+                    aria-label="Quitar línea">
+                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                  </button>
+                </div>
+              </div>
+              <div class="sm:hidden flex items-center gap-2">
                 <input
                   [(ngModel)]="line.descripcion"
                   [name]="'desc_m_' + i"
                   placeholder="Detalle opcional"
-                  class="sm:hidden w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:ring-2 focus:ring-primary">
-                <div *ngIf="usesAmbitoSeparation">
-                  <span class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Ámbito</span>
+                  class="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:ring-2 focus:ring-primary">
+                <button
+                  *ngIf="!readOnly && canRemoveExpenseLine(line)"
+                  type="button"
+                  (click)="removeLine(i)"
+                  class="shrink-0 p-1.5 rounded-lg text-red-500 hover:bg-red-50"
+                  aria-label="Quitar línea">
+                  <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                </button>
+              </div>
+              <div *ngIf="usesAmbitoSeparation">
+                  <span class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
+                    Ámbito <span class="text-red-500">*</span>
+                  </span>
                   <div
                     class="grid gap-1.5"
                     [ngClass]="cajaAmbitos.length > 1 ? 'grid-cols-2 max-w-xs' : 'grid-cols-1 max-w-[10rem]'">
@@ -358,23 +373,14 @@ interface PurchaseDraftLine {
                     </button>
                   </div>
                 </div>
-              </div>
-              <button
-                *ngIf="!readOnly && canRemoveExpenseLine(line)"
-                type="button"
-                (click)="removeLine(i)"
-                class="shrink-0 p-1.5 sm:p-2 rounded-lg text-red-500 hover:bg-red-50 mt-5 sm:mt-0"
-                aria-label="Quitar línea">
-                <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
-              </button>
             </div>
           </div>
         </ng-container>
       </app-transaction-lines-section>
 
       <div class="space-y-2">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 items-start">
-          <div class="min-w-0">
+        <div [class]="paymentPairGridClass">
+          <div class="min-w-0" [class.col-span-2]="!pagoRequiereCuentaVisible">
             <div [class]="paymentLabelRowClass">
               <label [class]="paymentInlineLabelClass">Medio de pago</label>
             </div>
@@ -600,6 +606,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   readonly fieldClass = TRANSACTION_COMPACT_FIELD_CLASS;
   readonly fieldLabelClass = TRANSACTION_COMPACT_LABEL_CLASS;
   readonly paymentFieldClass = TRANSACTION_COMPACT_FIELD_CLASS;
+  readonly paymentPairGridClass = TRANSACTION_PAYMENT_PAIR_GRID_CLASS;
 
   readonly lineAmbitoBtnClass =
     'inline-flex items-center justify-center rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[34px] sm:min-h-[40px] truncate bg-white touch-manipulation select-none';
@@ -732,10 +739,6 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return !!this.editingConfirmedId && !this.isDraftMode;
   }
 
-  /** Número interno de compra (no es la factura del proveedor). */
-  get purchaseSystemNumberLabel(): string {
-    return formatPurchaseNumberBadge(this.initialPurchase);
-  }
 
   get primarySaveLabel(): string {
     if (this.isEditingConfirmed) return 'Guardar cambios';
@@ -820,6 +823,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
           this.resetForm();
         }
         this.formShellReady = true;
+        this.applyAppConfig(this.catalogConfig.appConfig);
         queueMicrotask(() => this.formReadyChange.emit(true));
       },
     });
@@ -831,7 +835,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     if (!this.comprobanteOptions.some((option) => option.id === this.tipoComprobante)) {
       this.tipoComprobante = 'factura';
     }
-    const finanzasKey = this.buildFinanzasPagoConfigKey();
+    const finanzasKey = buildFinanzasPagoConfigKey(config);
     const finanzasChanged = finanzasKey !== this.finanzasPagoConfigKey;
     if (finanzasChanged) {
       this.finanzasPagoConfigKey = finanzasKey;
@@ -904,7 +908,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         return {
           id: line.id ?? `line_${index + 1}`,
           tipoLinea: 'stock' as PurchaseLineTipo,
-          ambito: line.ambito ?? this.defaultAmbito,
+          ambito: this.resolveLoadedLineAmbito(line.ambito),
           productoId: line.productoId,
           productoNombre: line.productoNombre,
           cantidad: line.cantidad ?? 0,
@@ -918,7 +922,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       return {
         id: line.id ?? `line_${index + 1}`,
         tipoLinea,
-        ambito: line.ambito ?? this.defaultAmbito,
+        ambito: this.resolveLoadedLineAmbito(line.ambito),
         categoriaId: line.categoriaId,
         descripcion: line.descripcion,
         importe: line.importe ?? line.subtotal ?? 0,
@@ -1036,21 +1040,6 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return '';
   }
 
-  private buildFinanzasPagoConfigKey(): string {
-    const medios = this.appConfig.finanzas?.mediosPago ?? [];
-    const tarjetas = this.appConfig.finanzas?.tarjetas ?? [];
-    const medioPart = medios
-      .map(
-        (medio) =>
-          `${medio.id}:${medio.activo === false ? 0 : 1}:${medio.generaEgresoCaja ? 1 : 0}:${medio.generaCuentasPagar ? 1 : 0}:${medio.requiereCuentaHija ? 1 : 0}`
-      )
-      .join('|');
-    const tarjetaPart = tarjetas
-      .map((tarjeta) => `${tarjeta.id}:${tarjeta.medioPagoId}:${tarjeta.activa === false ? 0 : 1}`)
-      .join('|');
-    return `${medioPart}\u0001${tarjetaPart}`;
-  }
-
   private resolveDefaultPagoMedioId(): string {
     if (this.mediosPago.some((medio) => medio.id === 'efectivo')) {
       return 'efectivo';
@@ -1064,14 +1053,53 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return importe !== 0 || descripcion.length > 0;
   }
 
+  private lineContributesToPurchase(line: PurchaseDraftLine): boolean {
+    if (line.tipoLinea === 'stock') {
+      const cantidad = Number(line.cantidad) || 0;
+      return !!line.productoId && cantidad > 0;
+    }
+    const importe = Number(line.importe) || 0;
+    return importe !== 0 && !!line.categoriaId;
+  }
+
+  private isValidPurchaseLineAmbito(ambito?: string): boolean {
+    if (!this.usesAmbitoSeparation) return true;
+    const id = String(ambito ?? '').trim().toLowerCase();
+    return !!id && this.cajaAmbitos.some((entry) => entry.id === id);
+  }
+
+  private resolveLoadedLineAmbito(ambito?: string): string {
+    if (this.isValidPurchaseLineAmbito(ambito)) {
+      return String(ambito ?? '').trim().toLowerCase();
+    }
+    return this.usesAmbitoSeparation ? '' : this.defaultAmbito;
+  }
+
+  private getPurchaseLinesMissingAmbito(): PurchaseDraftLine[] {
+    if (!this.usesAmbitoSeparation) return [];
+    return this.draftLines.filter(
+      (line) => this.lineContributesToPurchase(line) && !this.isValidPurchaseLineAmbito(line.ambito)
+    );
+  }
+
+  private formatAmbitoOptionsHint(): string {
+    return this.cajaAmbitos.map((ambito) => ambito.label).join(' / ');
+  }
+
   addExpenseLine() {
     const categoria = this.categoriasGasto[0];
+    const categoriaAmbito = String(categoria?.ambitoDefault ?? '').trim().toLowerCase();
     this.draftLines = [
       ...this.draftLines,
       {
         id: this.nextLineId(),
         tipoLinea: this.deriveTipoLineaFromCategoria(categoria?.id),
-        ambito: categoria?.ambitoDefault ?? this.defaultAmbito,
+        ambito:
+          this.usesAmbitoSeparation && this.isValidPurchaseLineAmbito(categoriaAmbito)
+            ? categoriaAmbito
+            : this.usesAmbitoSeparation
+              ? ''
+              : this.defaultAmbito,
         categoriaId: categoria?.id,
         descripcion: '',
         importe: null,
@@ -1093,8 +1121,11 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
 
   onLineCategoriaChange(line: PurchaseDraftLine) {
     const categoria = this.categoriasGasto.find((cat) => cat.id === line.categoriaId);
-    if (categoria?.ambitoDefault) {
-      line.ambito = categoria.ambitoDefault;
+    const categoriaAmbito = String(categoria?.ambitoDefault ?? '').trim().toLowerCase();
+    if (this.usesAmbitoSeparation) {
+      line.ambito = this.isValidPurchaseLineAmbito(categoriaAmbito) ? categoriaAmbito : '';
+    } else if (categoriaAmbito) {
+      line.ambito = categoriaAmbito;
     }
     line.tipoLinea = this.deriveTipoLineaFromCategoria(line.categoriaId);
   }
@@ -1114,7 +1145,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       {
         id: this.nextLineId(),
         tipoLinea: 'stock',
-        ambito: this.defaultAmbito,
+        ambito: this.usesAmbitoSeparation ? '' : this.defaultAmbito,
         productoId: item.id,
         productoNombre: item.nombre,
         cantidad: 1,
@@ -1224,6 +1255,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       .subscribe({
         next: (result) => {
           this.refreshStockCostsAfterPurchase();
+          this.ensurePayablesAfterSave(result.id);
           this.saveFeedback.showSuccessWithDetail('Compra registrada', result.compraLabel);
           this.saved.emit({ id: result.id, label: result.compraLabel, freshSave: true });
         },
@@ -1306,6 +1338,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
           .subscribe({
             next: (result) => {
               this.refreshStockCostsAfterPurchase();
+              this.ensurePayablesAfterSave(result.id);
               this.saveFeedback.showSuccessWithDetail('Compra actualizada', result.compraLabel);
               this.reloadConfirmedPurchase();
               this.saved.emit({ id: result.id, label: result.compraLabel });
@@ -1344,6 +1377,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
             next: (result) => {
               this.editingDraftId = null;
               this.refreshStockCostsAfterPurchase();
+              this.ensurePayablesAfterSave(result.id);
               this.saveFeedback.showSuccessWithDetail('Compra registrada', result.compraLabel);
               this.saved.emit({ id: result.id, label: result.compraLabel, freshSave: true });
             },
@@ -1412,6 +1446,15 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         title: 'Datos incompletos',
         message:
           'Agregá al menos una línea con concepto e importe distinto de cero (usá importe negativo para un crédito o devolución en cuotas).',
+      });
+      return null;
+    }
+
+    const missingAmbitoLines = this.getPurchaseLinesMissingAmbito();
+    if (missingAmbitoLines.length > 0) {
+      this.dialogService.alert({
+        title: 'Ámbito requerido',
+        message: `Seleccioná el ámbito (${this.formatAmbitoOptionsHint()}) en cada línea de la compra antes de guardar.`,
       });
       return null;
     }
@@ -1524,6 +1567,17 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     if (!this.editingConfirmedId) return;
     this.purchaseService.getPurchase(this.editingConfirmedId).subscribe({
       next: (purchase) => this.loadFromPurchase(purchase),
+    });
+  }
+
+  /** Tras guardar compra a crédito/cuotas, asegura las cuotas en Cuentas a pagar. */
+  private ensurePayablesAfterSave(compraId: string | undefined): void {
+    const id = String(compraId ?? '').trim();
+    if (!id || !this.pagoGeneraCuotasVisible) return;
+    this.purchaseService.repairPurchasePayables(id).subscribe({
+      error: () => {
+        /* El backend también las genera al guardar/abrir; no bloquear al usuario. */
+      },
     });
   }
 

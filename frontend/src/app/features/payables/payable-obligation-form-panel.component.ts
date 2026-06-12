@@ -22,6 +22,7 @@ import {
   getMedioPagoConfig,
   getMediosPagoActivos,
   getTarjetasForMedio,
+  buildFinanzasPagoConfigKey,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
@@ -44,7 +45,12 @@ import {
   TransactionFormSaveEvent,
 } from '../../shared/components/transaction-form';
 import { TRANSACTION_COMPACT_FIELD_CLASS } from '../../shared/components/transaction-form/transaction-form.constants';
-import { SegmentedControlComponent } from '../../shared/components/segmented-control/segmented-control.component';
+import {
+  FORM_COMPACT_LABEL_CLASS,
+  FORM_COMPACT_LABEL_ROW_CLASS,
+  FORM_PAYMENT_PAIR_GRID_CLASS,
+} from '../../shared/components/form-shell/form-field.constants';
+import { SegmentedControlComponent, SegmentedOption } from '../../shared/components/segmented-control/segmented-control.component';
 import { Subscription, finalize } from 'rxjs';
 
 @Component({
@@ -58,83 +64,76 @@ import { Subscription, finalize } from 'rxjs';
     SegmentedControlComponent,
   ],
   template: `
-    <form (submit)="submit(); $event.preventDefault()" class="space-y-4">
+    <form (submit)="submit(); $event.preventDefault()" class="space-y-3 sm:space-y-4">
       <app-transaction-save-banner [message]="saveFeedback.successMessage"></app-transaction-save-banner>
 
       <p
         *ngIf="editingObligationId"
-        class="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-2 leading-snug m-0">
-        Podés corregir nombre, monto total o cuotas. Las cuotas ya pagadas conservan su estado;
-        si ajustás el monto por cuota, se actualizan también el importe pagado y el egreso en caja vinculado.
+        class="text-[11px] text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-1.5 leading-snug m-0">
+        Podés corregir nombre, monto o cuotas. Las ya pagadas conservan su estado; si cambiás el monto por cuota,
+        se actualiza también el egreso en caja vinculado.
       </p>
 
-      <div *ngIf="usesAmbitoSeparation">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Etiqueta</label>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2 leading-snug">
-          Al pagar el gasto, el egreso en caja se registra en el ámbito elegido (Rilo o Personal).
-        </p>
+      <div
+        *ngIf="usesAmbitoSeparation"
+        class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,11rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,12rem)] sm:items-end gap-2 sm:gap-4">
+        <div class="min-w-0">
+          <span [class]="compactLabelUpperClass">Etiqueta</span>
+          <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-0 leading-snug hidden sm:block">
+            Egreso en caja según ámbito al pagar.
+          </p>
+        </div>
         <app-segmented-control
           ariaLabel="Ámbito"
+          size="sm"
           [options]="cajaAmbitos"
           [(value)]="formAmbito">
         </app-segmented-control>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Categoría (opcional)</label>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <div class="min-w-0">
+          <label [class]="compactLabelClass">Categoría (opcional)</label>
           <select
             [(ngModel)]="form.categoriaId"
             name="categoriaId"
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+            [class]="fieldClass">
             <option value="">Sin categoría</option>
             <option *ngFor="let cat of categoriasGasto" [ngValue]="cat.id">{{ cat.label }}</option>
           </select>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Concepto / beneficiario</label>
+        <div class="min-w-0">
+          <label [class]="compactLabelClass">Concepto / beneficiario</label>
           <input
             [(ngModel)]="form.beneficiario"
             name="beneficiario"
             required
             placeholder="Ej: Sueldo María, VPS DigitalOcean, EDESUR..."
-            class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+            [class]="fieldClass">
         </div>
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tipo de pago</label>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label
-            class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
-            [class.border-teal-500]="form.tipo === 'mensual'"
-            [class.bg-teal-50]="form.tipo === 'mensual'"
-            [class.border-gray-200]="form.tipo !== 'mensual'">
-            <input type="radio" [(ngModel)]="form.tipo" name="tipo" value="mensual" class="mt-1">
-            <span>
-              <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Mensual recurrente</span>
-              <span class="block text-xs text-gray-500 mt-0.5">Se repite cada mes hasta desactivarlo.</span>
-            </span>
-          </label>
-          <label
-            class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
-            [class.border-teal-500]="form.tipo === 'unico'"
-            [class.bg-teal-50]="form.tipo === 'unico'"
-            [class.border-gray-200]="form.tipo !== 'unico'">
-            <input type="radio" [(ngModel)]="form.tipo" name="tipo" value="unico" class="mt-1">
-            <span>
-              <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Pago único / en cuotas</span>
-              <span class="block text-xs text-gray-500 mt-0.5">Una vez o N cuotas (tarjeta, transferencia, etc.).</span>
-            </span>
-          </label>
+      <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] sm:items-end gap-2 sm:gap-4">
+        <div class="min-w-0">
+          <span [class]="compactLabelUpperClass">Tipo de pago</span>
+          <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
+            {{ form.tipo === 'mensual' ? 'Se repite cada mes.' : 'Una vez o en cuotas.' }}
+          </p>
         </div>
+        <app-segmented-control
+          ariaLabel="Tipo de pago"
+          size="sm"
+          [options]="tipoOptions"
+          [value]="form.tipo"
+          (valueChange)="onTipoChange($event)">
+        </app-segmented-control>
       </div>
 
       <div *ngIf="form.tipo === 'unico'" class="space-y-2">
-        <p class="text-sm font-medium text-gray-700 dark:text-gray-300">Forma de pago</p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 items-start">
-          <div class="min-w-0">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Medio de pago</label>
+        <p [class]="compactLabelClass + ' mb-1'">Forma de pago</p>
+        <div [class]="paymentPairGridClass">
+          <div class="min-w-0" [class.col-span-2]="!pagoRequiereCuentaVisible">
+            <label class="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-0.5">Medio de pago</label>
             <select
               [ngModel]="pagoMedioId"
               (ngModelChange)="onPagoMedioChange($event)"
@@ -144,7 +143,7 @@ import { Subscription, finalize } from 'rxjs';
             </select>
           </div>
           <div *ngIf="pagoRequiereCuentaVisible" class="min-w-0">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Cuenta / tarjeta</label>
+            <label class="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-0.5">Cuenta / tarjeta</label>
             <select
               [(ngModel)]="pagoTarjetaId"
               [name]="'pagoCuenta_' + pagoMedioId"
@@ -165,23 +164,33 @@ import { Subscription, finalize } from 'rxjs';
         </p>
       </div>
 
-      <div
-        class="grid grid-cols-1 gap-4"
-        [ngClass]="form.tipo === 'unico' ? 'sm:grid-cols-2' : 'sm:grid-cols-2'">
-        <div *ngIf="form.tipo === 'unico'" class="min-w-0">
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Cantidad de pagos / cuotas</label>
-          <input
-            [(ngModel)]="form.cantidadCuotas"
-            name="cantidadCuotas"
-            type="number"
-            min="1"
-            max="120"
-            required
-            [class]="fieldClass">
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">1 = un solo pago.</p>
-        </div>
+      <div *ngIf="form.tipo === 'unico'" class="min-w-0">
+        <label [class]="compactLabelClass">Cantidad de pagos / cuotas</label>
+        <input
+          [(ngModel)]="form.cantidadCuotas"
+          name="cantidadCuotas"
+          type="number"
+          min="1"
+          max="120"
+          required
+          [class]="fieldClass + ' sm:max-w-[10rem]'">
+        <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">1 = un solo pago.</p>
+      </div>
+
+      <div *ngIf="showsMontoModoSelector" class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)] sm:items-end gap-2 sm:gap-4">
+        <span [class]="compactLabelUpperClass">¿Qué monto ingresás?</span>
+        <app-segmented-control
+          ariaLabel="Modo de monto"
+          size="sm"
+          [options]="montoModoOptions"
+          [value]="montoModo"
+          (valueChange)="onMontoModoChange($event)">
+        </app-segmented-control>
+      </div>
+
+      <div [class]="paymentPairGridClass">
         <div class="min-w-0">
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Primer vencimiento</label>
+          <label [class]="compactLabelClass">Primer vencimiento</label>
           <input
             [(ngModel)]="form.fechaPrimerVencimiento"
             name="fechaPrimerVencimiento"
@@ -189,58 +198,33 @@ import { Subscription, finalize } from 'rxjs';
             required
             [class]="fieldClass">
         </div>
-      </div>
-
-      <div *ngIf="showsMontoModoSelector" class="space-y-2">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">¿Qué monto vas a ingresar?</label>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label
-            class="flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors"
-            [class.border-teal-500]="montoModo === 'cuota'"
-            [class.bg-teal-50]="montoModo === 'cuota'"
-            [class.border-gray-200]="montoModo !== 'cuota'">
-            <input type="radio" [(ngModel)]="montoModo" name="montoModo" value="cuota" class="mt-0.5">
-            <span>
-              <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Monto por cuota</span>
-              <span class="block text-xs text-gray-500 mt-0.5">Cada vencimiento tiene el mismo importe.</span>
-            </span>
-          </label>
-          <label
-            class="flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-colors"
-            [class.border-teal-500]="montoModo === 'total'"
-            [class.bg-teal-50]="montoModo === 'total'"
-            [class.border-gray-200]="montoModo !== 'total'">
-            <input type="radio" [(ngModel)]="montoModo" name="montoModo" value="total" class="mt-0.5">
-            <span>
-              <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">Monto total</span>
-              <span class="block text-xs text-gray-500 mt-0.5">El sistema divide el total entre las cuotas.</span>
-            </span>
-          </label>
+        <div class="min-w-0">
+          <label [class]="compactLabelClass">{{ montoFieldLabel }}</label>
+          <input
+            [(ngModel)]="form.monto"
+            name="monto"
+            type="number"
+            step="0.01"
+            required
+            [class]="fieldClass">
+          <p *ngIf="montoFieldHint" class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+            {{ montoFieldHint }}
+          </p>
         </div>
       </div>
 
       <div class="min-w-0">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ montoFieldLabel }}</label>
-        <input
-          [(ngModel)]="form.monto"
-          name="monto"
-          type="number"
-          step="0.01"
-          required
-          [class]="fieldClass">
-        <p *ngIf="montoFieldHint" class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ montoFieldHint }}</p>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notas (opcional)</label>
-        <input
+        <label [class]="compactLabelClass">Notas (opcional)</label>
+        <textarea
           [(ngModel)]="form.notas"
           name="notas"
+          rows="3"
           placeholder="Referencia, CBU, nº de factura..."
-          class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
+          [class]="fieldClass + ' resize-y min-h-[4.5rem]'"></textarea>
       </div>
 
       <app-form-footer
+        *ngIf="showFooter"
         mode="inline"
         [showCancel]="true"
         [saveLabel]="footerSaveLabel"
@@ -257,12 +241,28 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
   @Input() initialAmbito = '';
   @Input() editingObligationId: string | null = null;
   @Input() initialObligation: PayableObligation | null = null;
+  @Input() showFooter = true;
 
   @Output() saved = new EventEmitter<TransactionFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
 
   readonly fieldClass = TRANSACTION_COMPACT_FIELD_CLASS;
+  readonly paymentPairGridClass = FORM_PAYMENT_PAIR_GRID_CLASS;
+  readonly compactLabelClass = FORM_COMPACT_LABEL_CLASS;
+  readonly compactLabelUpperClass =
+    FORM_COMPACT_LABEL_ROW_CLASS +
+    ' text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400';
+
+  readonly tipoOptions: SegmentedOption[] = [
+    { id: 'mensual', label: 'Mensual' },
+    { id: 'unico', label: 'Único / cuotas' },
+  ];
+
+  readonly montoModoOptions: SegmentedOption[] = [
+    { id: 'cuota', label: 'Por cuota' },
+    { id: 'total', label: 'Total' },
+  ];
 
   private payables = inject(PayablesService);
   private catalogConfig = inject(CatalogConfigService);
@@ -273,6 +273,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   formAmbito = '';
+  private finanzasPagoConfigKey = '';
   private configSub?: Subscription;
 
   pagoMedioId = 'efectivo';
@@ -381,18 +382,29 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
       (this.usesAmbitoSeparation ? getDefaultCashAmbitoId(this.appConfig) : '');
 
     this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
-      this.appConfig = config;
-      if (!this.formAmbito && this.usesAmbitoSeparation) {
-        this.formAmbito = getDefaultCashAmbitoId(config);
-      }
-      const medioInvalid = !this.mediosPago.some((m) => m.id === this.pagoMedioId);
-      if (medioInvalid) {
-        this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
-      }
-      this.cdr.markForCheck();
+      this.applyAppConfig(config);
     });
     this.catalogConfig.getAppConfig().subscribe();
     this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
+  }
+
+  private applyAppConfig(config: AppConfig): void {
+    this.appConfig = config;
+    if (!this.formAmbito && this.usesAmbitoSeparation) {
+      this.formAmbito = getDefaultCashAmbitoId(config);
+    }
+    const finanzasKey = buildFinanzasPagoConfigKey(config);
+    const finanzasChanged = finanzasKey !== this.finanzasPagoConfigKey;
+    if (finanzasChanged) {
+      this.finanzasPagoConfigKey = finanzasKey;
+    }
+    const medioInvalid = !this.mediosPago.some((m) => m.id === this.pagoMedioId);
+    if (medioInvalid || finanzasChanged) {
+      this.applyPagoMedioState(
+        medioInvalid ? this.resolveDefaultPagoMedioId() : this.pagoMedioId
+      );
+    }
+    this.cdr.markForCheck();
   }
 
   ngOnDestroy(): void {
@@ -403,6 +415,18 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
   onPagoMedioChange(medioId: string): void {
     if (medioId === this.pagoMedioId) return;
     this.applyPagoMedioState(medioId);
+  }
+
+  onTipoChange(value: string): void {
+    if (value !== 'mensual' && value !== 'unico') return;
+    this.form.tipo = value;
+    this.cdr.markForCheck();
+  }
+
+  onMontoModoChange(value: string): void {
+    if (value !== 'cuota' && value !== 'total') return;
+    this.montoModo = value;
+    this.cdr.markForCheck();
   }
 
   submitForm(): void {

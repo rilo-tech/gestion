@@ -2,7 +2,7 @@ import { Component, DestroyRef, Injector, inject, OnDestroy, OnInit } from '@ang
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Subscription } from 'rxjs';
+import { Subscription, finalize } from 'rxjs';
 import {
   StockItem,
   StockMovement,
@@ -102,84 +102,57 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </a>
       </app-module-page-header>
 
-      <div
-        *ngIf="!auth.canViewStockCosts"
-        class="module-summary-kpis module-summary-kpis--3 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
-          <p class="text-2xl font-bold">{{ totalItemsCount }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
-          <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
-          <p class="text-2xl font-bold">{{ movementsThisMonthLabel }}</p>
-        </div>
-      </div>
+      <div class="mb-4 border-b border-gray-100 dark:border-gray-800">
+        <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+          <div class="flex min-w-0 gap-2 order-2 sm:order-1 overflow-x-auto">
+            <button
+              type="button"
+              (click)="setTab('productos')"
+              class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap"
+              [class.border-teal-600]="activeTab === 'productos'"
+              [class.text-teal-700]="activeTab === 'productos'"
+              [class.border-transparent]="activeTab !== 'productos'"
+              [class.text-gray-500]="activeTab !== 'productos'">
+              Productos
+            </button>
+            <button
+              type="button"
+              (click)="setTab('movimientos')"
+              class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap"
+              [class.border-teal-600]="activeTab === 'movimientos'"
+              [class.text-teal-700]="activeTab === 'movimientos'"
+              [class.border-transparent]="activeTab !== 'movimientos'"
+              [class.text-gray-500]="activeTab !== 'movimientos'">
+              Movimientos
+            </button>
+            <button
+              type="button"
+              (click)="setTab('reservas')"
+              class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors whitespace-nowrap"
+              [class.border-teal-600]="activeTab === 'reservas'"
+              [class.text-teal-700]="activeTab === 'reservas'"
+              [class.border-transparent]="activeTab !== 'reservas'"
+              [class.text-gray-500]="activeTab !== 'reservas'">
+              Reservas
+              <span
+                *ngIf="reservationRows.length > 0"
+                class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                {{ reservationRows.length }}
+              </span>
+            </button>
+          </div>
 
-      <div
-        *ngIf="auth.canViewStockCosts"
-        class="module-summary-kpis module-summary-kpis--4 grid gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total items</p>
-          <p class="text-2xl font-bold">{{ totalItemsCount }}</p>
+          <div class="order-1 sm:order-2 w-full sm:w-auto sm:ml-auto shrink-0 pb-2 sm:pb-2.5">
+            <app-compact-inline-stats
+              class="block w-full sm:w-auto"
+              variant="strip"
+              density="compact"
+              align="end"
+              [items]="stockSummaryKpiItems"
+              ariaLabel="Resumen de stock">
+            </app-compact-inline-stats>
+          </div>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Con stock bajo</p>
-          <p class="text-2xl font-bold text-orange-500">{{ lowStockCount }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p
-            class="text-xs font-semibold text-gray-400 uppercase mb-2"
-            title="Costo × unidades en depósito (disponible + reservado, sin duplicar)">
-            Valor estimado
-          </p>
-          <p class="text-2xl font-bold text-teal-600">{{ formatStockMoney(estimatedStockValue) }}</p>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Movimientos mes</p>
-          <p class="text-2xl font-bold">{{ movementsThisMonthLabel }}</p>
-        </div>
-      </div>
-
-      <div class="mb-4 flex gap-2 border-b border-gray-100">
-        <button
-          type="button"
-          (click)="setTab('productos')"
-          class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors"
-          [class.border-teal-600]="activeTab === 'productos'"
-          [class.text-teal-700]="activeTab === 'productos'"
-          [class.border-transparent]="activeTab !== 'productos'"
-          [class.text-gray-500]="activeTab !== 'productos'">
-          Productos
-        </button>
-        <button
-          type="button"
-          (click)="setTab('movimientos')"
-          class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors"
-          [class.border-teal-600]="activeTab === 'movimientos'"
-          [class.text-teal-700]="activeTab === 'movimientos'"
-          [class.border-transparent]="activeTab !== 'movimientos'"
-          [class.text-gray-500]="activeTab !== 'movimientos'">
-          Movimientos
-        </button>
-        <button
-          type="button"
-          (click)="setTab('reservas')"
-          class="px-4 py-2 text-sm font-semibold border-b-2 transition-colors"
-          [class.border-teal-600]="activeTab === 'reservas'"
-          [class.text-teal-700]="activeTab === 'reservas'"
-          [class.border-transparent]="activeTab !== 'reservas'"
-          [class.text-gray-500]="activeTab !== 'reservas'">
-          Reservas
-          <span
-            *ngIf="reservationRows.length > 0"
-            class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
-            {{ reservationRows.length }}
-          </span>
-        </button>
       </div>
 
       <div
@@ -235,31 +208,64 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </p>
         </div>
 
-        <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[820px]'">
+        <div listDesktop>
+        <table [class]="nativeCompactTableClass + ' stock-products-table sm:table-fixed w-full max-w-full'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
-              <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Item</th>
-              <th *ngIf="showCodigoColumn" class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Código</th>
-              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
-              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Unidades en depósito">
-                Depósito
+              <th
+                data-col-weight="28"
+                class="px-2 sm:px-3 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Item
               </th>
-              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Apartadas para pedidos">
-                Reservado
+              <th
+                *ngIf="showCodigoColumn"
+                data-col-weight="5"
+                class="px-1 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap">
+                Cód.
               </th>
-              <th class="px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center" title="Libre para usar en pedidos nuevos">
-                Disponible
+              <th data-col-weight="13" class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
+              <th
+                data-col-weight="6"
+                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                title="Unidades en depósito">
+                Dep.
               </th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center">Mín. stock</th>
-              <th *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Costo ref.</th>
+              <th
+                data-col-weight="6"
+                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                title="Apartadas para pedidos">
+                Res.
+              </th>
+              <th
+                data-col-weight="6"
+                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                title="Libre para usar en pedidos nuevos">
+                Disp.
+              </th>
+              <th
+                data-col-weight="4"
+                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                title="Mínimo de stock">
+                Mín.
+              </th>
+              <th
+                *appHasPermission="permissions.STOCK_VIEW_COSTS"
+                data-col-weight="7"
+                class="hidden xl:table-cell px-2 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">
+                Costo ref.
+              </th>
               <th
                 *ngIf="auth.isAdmin"
-                class="hidden lg:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right"
+                data-col-weight="7"
+                class="hidden xl:table-cell px-2 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap"
                 title="Costo × unidades en depósito">
-                Valor estimado
+                Valor est.
               </th>
-              <th class="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th
+                data-col-weight="9"
+                class="stock-products-actions px-1 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">
+                Acciones
+              </th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -267,7 +273,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               *ngFor="let item of paginatedFilteredItems"
               (click)="openEditItem(item)"
               class="hover:bg-gray-50 transition-colors cursor-pointer">
-              <td class="px-4 sm:px-6 py-3 sm:py-4">
+              <td class="px-2 sm:px-3 py-3 max-w-0">
                 <a
                   *ngIf="item.id; else stockItemNamePlain"
                   [routerLink]="['/stock', item.id, 'edit']"
@@ -284,38 +290,44 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   Servicio
                 </span>
               </td>
-              <td *ngIf="showCodigoColumn" class="px-4 py-4 text-sm tabular-nums text-gray-700">
+              <td *ngIf="showCodigoColumn" class="px-1 py-3 text-xs tabular-nums text-gray-700 text-center whitespace-nowrap">
                 {{ item.codigo || '—' }}
               </td>
-              <td class="px-4 py-4">
-                <span class="px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700">
+              <td class="px-1.5 py-3">
+                <span
+                  class="inline-flex w-fit max-w-full truncate px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-teal-50 text-teal-700"
+                  [title]="item.categoria || ''">
                   {{ item.categoria || '—' }}
                 </span>
               </td>
-              <td class="px-4 py-4 text-center text-sm tabular-nums" [class]="stockTotalClass(item)">
-                {{ controlsStockItem(item) ? item.stockActual + ' u.' : '—' }}
+              <td class="px-0.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockTotalClass(item)">
+                {{ stockUnitsLabel(item, 'actual') }}
               </td>
-              <td class="px-4 py-4 text-center text-sm tabular-nums" [class]="stockReservedClass(item)">
-                {{ controlsStockItem(item) ? (item.stockReservado || 0) + ' u.' : '—' }}
+              <td class="px-0.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockReservedClass(item)">
+                {{ stockUnitsLabel(item, 'reservado') }}
               </td>
-              <td class="px-4 py-4 text-center text-sm tabular-nums font-bold" [class]="stockAvailableClass(item)">
-                {{ controlsStockItem(item) ? getStockDisponible(item) + ' u.' : '—' }}
+              <td class="px-0.5 py-3 text-center text-xs tabular-nums font-bold whitespace-nowrap" [class]="stockAvailableClass(item)">
+                {{ stockUnitsLabel(item, 'disponible') }}
               </td>
-              <td class="px-6 py-4 text-sm text-gray-600 tabular-nums text-center">
-                {{ controlsStockItem(item) ? (item.stockMinimo || 0) + ' u.' : '—' }}
+              <td class="px-0.5 py-3 text-xs text-gray-600 tabular-nums text-center whitespace-nowrap">
+                {{ stockUnitsLabel(item, 'minimo') }}
               </td>
-              <td *appHasPermission="permissions.STOCK_VIEW_COSTS" class="px-6 py-4 text-sm text-gray-600">
+              <td
+                *appHasPermission="permissions.STOCK_VIEW_COSTS"
+                class="hidden xl:table-cell px-2 py-3 text-sm text-gray-600 tabular-nums whitespace-nowrap">
                 {{ formatMoney(item.costo || 0) }}
               </td>
               <td
                 *ngIf="auth.isAdmin"
-                class="hidden lg:table-cell px-6 py-4 text-sm text-right tabular-nums"
+                class="hidden xl:table-cell px-2 py-3 text-sm text-right tabular-nums whitespace-nowrap"
                 [class.text-teal-700]="itemValorEstimado(item) > 0"
                 [class.font-medium]="itemValorEstimado(item) > 0"
                 [class.text-gray-400]="itemValorEstimado(item) <= 0">
                 {{ itemValorEstimadoLabel(item) }}
               </td>
-              <td class="px-6 py-4 text-sm font-medium" (click)="$event.stopPropagation()">
+              <td
+                class="stock-products-actions px-1 py-3 text-right text-sm font-medium"
+                (click)="$event.stopPropagation()">
                 <app-list-row-actions
                   [showEdit]="auth.canEditRecords"
                   (editClick)="openEditItem(item)"
@@ -362,6 +374,16 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
       </app-compact-data-list>
 
       <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
+        <p
+          *ngIf="deletingMovementId"
+          class="px-3 py-2 sm:px-6 text-xs sm:text-sm font-medium text-amber-800 bg-amber-50 border-b border-amber-100 flex items-center gap-2"
+          role="status"
+          aria-live="polite">
+          <span
+            class="inline-block w-3.5 h-3.5 rounded-full border-2 border-amber-300 border-t-amber-700 animate-spin shrink-0"
+            aria-hidden="true"></span>
+          Eliminando movimiento…
+        </p>
         <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50 space-y-1.5 sm:space-y-2">
           <div class="grid grid-cols-1 gap-2 sm:flex sm:flex-row sm:items-center sm:gap-3">
             <app-list-search-field
@@ -370,7 +392,8 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               (queryChange)="onMovementsSearchChange()"
               name="movementSearchQuery"
               placeholder="Buscar por producto o motivo..."
-              extraClass="hidden sm:block sm:max-w-md">
+              [constrainWidth]="false"
+              extraClass="hidden sm:block sm:flex-1 sm:min-w-0 sm:max-w-3xl">
             </app-list-search-field>
             <div class="grid grid-cols-2 gap-2 sm:contents">
               <select
@@ -409,7 +432,9 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
             </span>
           </app-compact-list-row>
-          <p *ngIf="loadingMovements" [class]="compactListEmptyClass">Cargando movimientos...</p>
+          <p *ngIf="loadingMovements" [class]="compactListEmptyClass">
+            {{ deletingMovementId ? 'Eliminando movimiento…' : 'Cargando movimientos...' }}
+          </p>
           <p *ngIf="!loadingMovements && movements.length === 0" [class]="compactListEmptyClass">
             Todavía no hay movimientos de stock.
           </p>
@@ -420,7 +445,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </p>
         </div>
         <div class="hidden sm:block" [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:min-w-[860px]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -467,40 +492,53 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   </span>
                   {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
                 </td>
-                <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-700">
-                  <ng-container *ngIf="movement.pedidoId || movement.ventaId; else motivoFallback">
-                    <app-concept-ref-links
-                      [text]="getMovementMotivoText(movement)"
-                      [pedidoId]="movement.pedidoId"
-                      [ventaId]="movement.ventaId"
-                      [numeroPedidoLabel]="movement.numeroPedidoLabel"
-                      [ventaLabel]="movement.ventaLabel">
-                    </app-concept-ref-links>
-                    <p
-                      *ngIf="movement.clienteNombre && !isReservationStockMovement(movement)"
-                      class="text-xs text-gray-500 mt-0.5">
-                      Cliente: {{ movement.clienteNombre }}
-                    </p>
-                  </ng-container>
-                  <ng-template #motivoFallback>
-                    <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
-                      {{ link.before }}                      <button
-                        *ngIf="link.kind === 'pedido'"
-                        type="button"
-                        (click)="openOrder(movement); $event.stopPropagation()"
-                        class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
-                        {{ link.ref }}
-                      </button><a
-                        *ngIf="link.kind === 'compra'"
-                        routerLink="/purchases"
-                        [queryParams]="movement.compraId ? { detail: movement.compraId } : null"
-                        (click)="$event.stopPropagation()"
-                        class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
-                        {{ link.ref }}
-                      </a>{{ link.after }}
+                <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-700 max-w-[12rem] lg:max-w-[16rem]">
+                  <div class="leading-snug" [title]="getMovementMotivoTooltip(movement)">
+                    <ng-container *ngIf="movement.pedidoId; else nonPedidoMotivo">
+                      <app-concept-ref-links
+                        [text]="getMovementPedidoMotivoLabel(movement)"
+                        [pedidoId]="movement.pedidoId"
+                        [numeroPedidoLabel]="movement.numeroPedidoLabel"
+                        [pedidoQueryParams]="stockOrderReturnQueryParams()">
+                      </app-concept-ref-links>
+                      <div *ngIf="movement.clienteNombre?.trim()" class="text-xs text-gray-500 mt-0.5 truncate">
+                        {{ movement.clienteNombre }}
+                      </div>
                     </ng-container>
-                    <ng-template #plainMotivo>{{ getMovementMotivoText(movement) }}</ng-template>
-                  </ng-template>
+                    <ng-template #nonPedidoMotivo>
+                      <div class="line-clamp-2 break-words">
+                        <ng-container *ngIf="movement.ventaId; else motivoFallback">
+                          <app-concept-ref-links
+                            [text]="getMovementMotivoText(movement)"
+                            [ventaId]="movement.ventaId"
+                            [ventaLabel]="movement.ventaLabel">
+                          </app-concept-ref-links>
+                          <span *ngIf="movement.clienteNombre?.trim()" class="text-gray-500">
+                            · {{ movement.clienteNombre }}
+                          </span>
+                        </ng-container>
+                        <ng-template #motivoFallback>
+                          <ng-container *ngIf="getMotivoLink(movement) as link; else plainMotivo">
+                            {{ link.before }}                      <button
+                              *ngIf="link.kind === 'pedido'"
+                              type="button"
+                              (click)="openOrder(movement); $event.stopPropagation()"
+                              class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
+                              {{ link.ref }}
+                            </button><a
+                              *ngIf="link.kind === 'compra'"
+                              routerLink="/purchases"
+                              [queryParams]="movement.compraId ? { detail: movement.compraId } : null"
+                              (click)="$event.stopPropagation()"
+                              class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
+                              {{ link.ref }}
+                            </a>{{ link.after }}
+                          </ng-container>
+                          <ng-template #plainMotivo>{{ getMovementMotivoText(movement) }}</ng-template>
+                        </ng-template>
+                      </div>
+                    </ng-template>
+                  </div>
                 </td>
                 <td class="hidden sm:table-cell px-6 py-4">
                   <span
@@ -515,13 +553,24 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                     type="button"
                     (click)="confirmDeleteMovement(movement)"
                     title="Eliminar movimiento"
-                    class="p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700">
-                    <i-lucide name="trash-2" class="w-4 h-4"></i-lucide>
+                    [disabled]="!!deletingMovementId"
+                    [attr.aria-busy]="deletingMovementId === movement.id"
+                    class="inline-flex items-center justify-center p-2 rounded-lg text-red-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+                    <span
+                      *ngIf="deletingMovementId === movement.id"
+                      class="w-4 h-4 rounded-full border-2 border-red-300 border-t-red-600 animate-spin"
+                      aria-hidden="true"></span>
+                    <i-lucide
+                      *ngIf="deletingMovementId !== movement.id"
+                      name="trash-2"
+                      class="w-4 h-4"></i-lucide>
                   </button>
                 </td>
               </tr>
               <tr *ngIf="loadingMovements">
-                <td colspan="7" class="px-6 py-12 text-center text-gray-400">Cargando movimientos...</td>
+                <td colspan="7" class="px-6 py-12 text-center text-gray-400">
+                  {{ deletingMovementId ? 'Eliminando movimiento…' : 'Cargando movimientos...' }}
+                </td>
               </tr>
               <tr *ngIf="!loadingMovements && movements.length === 0">
                 <td colspan="7" class="px-6 py-12 text-center text-gray-400">
@@ -581,7 +630,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           </p>
         </div>
         <div class="hidden sm:block" [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' sm:min-w-[760px]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Producto</th>
@@ -603,6 +652,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 <td class="px-4 sm:px-6 py-3 text-sm">
                   <a
                     [routerLink]="['/orders', row.orderId, 'edit']"
+                    [queryParams]="stockOrderReturnQueryParams('reservas')"
                     (click)="$event.stopPropagation()"
                     class="font-semibold text-teal-700 hover:text-teal-900 hover:underline">
                     #{{ row.orderLabel }}
@@ -788,6 +838,7 @@ export class StockComponent implements OnInit, OnDestroy {
   private productsLoadMorePageBefore = 0;
   private productsLoadMoreTotalPagesBefore = 0;
   loadingMovements = false;
+  deletingMovementId: string | null = null;
   loadingReservations = false;
   private movementsLoaded = false;
   private reservationsLoaded = false;
@@ -1027,6 +1078,25 @@ export class StockComponent implements OnInit, OnDestroy {
     return this.stockMetrics.valorDepositoEstimado;
   }
 
+  get stockSummaryKpiItems(): CompactInlineStat[] {
+    const items: CompactInlineStat[] = [
+      { label: 'Total items', value: String(this.totalItemsCount) },
+      {
+        label: 'Con stock bajo',
+        value: String(this.lowStockCount),
+        tone: this.lowStockCount > 0 ? 'warning' : 'default',
+      },
+    ];
+    if (this.auth.canViewStockCosts) {
+      items.push({
+        label: 'Valor estimado',
+        value: this.formatStockMoney(this.estimatedStockValue),
+        tone: 'success',
+      });
+    }
+    return items;
+  }
+
   formatStockMoney(value: number): string {
     const amount = Number(value) || 0;
     return new Intl.NumberFormat('es-AR', {
@@ -1135,6 +1205,22 @@ export class StockComponent implements OnInit, OnDestroy {
 
   controlsStockItem(item: StockItem): boolean {
     return itemControlsStock(item);
+  }
+
+  stockUnitsLabel(
+    item: StockItem,
+    field: 'actual' | 'reservado' | 'disponible' | 'minimo'
+  ): string {
+    if (!this.controlsStockItem(item)) return '—';
+    const value =
+      field === 'actual'
+        ? item.stockActual
+        : field === 'reservado'
+          ? item.stockReservado || 0
+          : field === 'disponible'
+            ? this.getStockDisponible(item)
+            : item.stockMinimo || 0;
+    return `${value}u`;
   }
 
   get showCodigoColumn(): boolean {
@@ -1289,9 +1375,40 @@ export class StockComponent implements OnInit, OnDestroy {
     return clientIdx > 0 ? motivo.slice(0, clientIdx) : motivo;
   }
 
+  getMovementPedidoMotivoLabel(movement: StockMovement): string {
+    const label = movement.numeroPedidoLabel?.trim();
+    if (label) return `Pedido #${label}`;
+    const hash = (movement.motivo ?? '').match(/(#\S+)/)?.[1];
+    return hash ? `Pedido ${hash}` : 'Pedido';
+  }
+
+  getMovementMotivoTooltip(movement: StockMovement): string {
+    const motivo = (movement.motivo ?? '').trim();
+    if (motivo) return motivo;
+    if (movement.pedidoId) {
+      const parts = [this.getMovementPedidoMotivoLabel(movement)];
+      if (movement.clienteNombre?.trim()) parts.push(movement.clienteNombre.trim());
+      return parts.join(' · ');
+    }
+    const parts = [this.getMovementMotivoText(movement)];
+    if (movement.clienteNombre?.trim()) {
+      parts.push(movement.clienteNombre.trim());
+    }
+    return parts.filter((part) => part && part !== '—').join(' · ');
+  }
+
   openOrder(movement: StockMovement) {
     if (!movement.pedidoId) return;
-    this.router.navigate(['/orders', movement.pedidoId, 'edit']);
+    this.router.navigate(['/orders', movement.pedidoId, 'edit'], {
+      queryParams: this.stockOrderReturnQueryParams(),
+    });
+  }
+
+  stockOrderReturnQueryParams(tab: StockTab = this.activeTab): Record<string, string> {
+    return {
+      returnTo: 'stock',
+      stockTab: tab,
+    };
   }
 
   openMovementRow(movement: StockMovement) {
@@ -1314,7 +1431,9 @@ export class StockComponent implements OnInit, OnDestroy {
 
   openReservationRow(row: StockReservationRow) {
     if (!row.orderId) return;
-    this.router.navigate(['/orders', row.orderId, 'edit']);
+    this.router.navigate(['/orders', row.orderId, 'edit'], {
+      queryParams: this.stockOrderReturnQueryParams('reservas'),
+    });
   }
 
   openEditItem(item: StockItem) {
@@ -1353,7 +1472,7 @@ export class StockComponent implements OnInit, OnDestroy {
   }
 
   confirmDeleteMovement(movement: StockMovement) {
-    if (!movement.id) return;
+    if (!movement.id || !this.auth.canDeleteRecords || this.deletingMovementId) return;
 
     if (!isDeletableStockMovement(movement)) {
       this.dialogService.alert({
@@ -1376,16 +1495,19 @@ export class StockComponent implements OnInit, OnDestroy {
       .subscribe((confirmed) => {
         if (!confirmed || !movement.id) return;
 
+        this.deletingMovementId = movement.id;
         this.stockService.deleteMovement(movement.id).subscribe({
           next: () => {
             this.loadMovements();
             this.refreshStockData();
           },
-          error: (err) =>
+          error: (err) => {
+            this.deletingMovementId = null;
             this.dialogService.alert({
               title: 'No se puede eliminar',
               message: err?.error?.error || 'No se pudo eliminar el movimiento.',
-            }),
+            });
+          },
         });
       });
   }
@@ -1532,7 +1654,9 @@ export class StockComponent implements OnInit, OnDestroy {
 
   private loadMovements() {
     this.loadingMovements = true;
-    this.stockService.getMovements().subscribe({
+    this.stockService.getMovements().pipe(finalize(() => {
+      this.deletingMovementId = null;
+    })).subscribe({
       next: (movements) => {
         this.movements = movements;
         this.movementsLoaded = true;

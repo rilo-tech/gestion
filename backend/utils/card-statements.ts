@@ -422,11 +422,9 @@ export async function payCardStatement(
     }
   }
 
-  const mesLabel = input.mes;
-  const conceptoBase =
-    isFullResumenPayment
-      ? `Resumen ${tarjeta.label} · ${mesLabel}`
-      : `Pago parcial resumen ${tarjeta.label} · ${mesLabel}`;
+  const conceptoBase = isFullResumenPayment
+    ? String(tarjeta.label ?? '').trim() || 'Tarjeta'
+    : `Pago parcial · ${String(tarjeta.label ?? '').trim() || 'Tarjeta'}`;
 
   const normalizedEgress = normalizeResumenEgress(
     egressByAmbito,

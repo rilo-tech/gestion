@@ -22,7 +22,7 @@ import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
         *ngIf="showSave"
         icon="save"
         [label]="saveLabel"
-        variant="outline"
+        variant="primary"
         [loading]="saveLoading"
         [disabled]="saveDisabled"
         (clicked)="saveClick.emit($event)">
@@ -45,15 +45,6 @@ import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
         variant="danger"
         [disabled]="deleteDisabled"
         (clicked)="deleteClick.emit($event)">
-      </app-icon-toolbar-button>
-
-      <app-icon-toolbar-button
-        *ngIf="showRegisterSale"
-        icon="truck"
-        [label]="registerSaleLabel"
-        variant="teal-outline"
-        [disabled]="registerSaleDisabled"
-        (clicked)="registerSaleClick.emit($event)">
       </app-icon-toolbar-button>
 
       <app-icon-toolbar-button
@@ -99,10 +90,6 @@ export class RecordActionToolbarComponent {
   @Input() deleteLabel = 'Eliminar';
   @Input() deleteDisabled = false;
 
-  @Input() showRegisterSale = false;
-  @Input() registerSaleLabel = 'Registrar venta / entrega';
-  @Input() registerSaleDisabled = false;
-
   @Input() showCollect = false;
   @Input() collectLabel = 'Cobrar saldo';
   @Input() collectDisabled = false;
@@ -115,7 +102,6 @@ export class RecordActionToolbarComponent {
   @Output() saveClick = new EventEmitter<Event>();
   @Output() printClick = new EventEmitter<Event>();
   @Output() deleteClick = new EventEmitter<Event>();
-  @Output() registerSaleClick = new EventEmitter<Event>();
   @Output() collectClick = new EventEmitter<Event>();
   @Output() editClick = new EventEmitter<Event>();
 }

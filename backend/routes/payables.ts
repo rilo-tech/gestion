@@ -42,12 +42,22 @@ router.get('/:businessId/installments', async (req, res) => {
     const mes = String(req.query.mes ?? '').trim().slice(0, 7);
     const scopeRaw = String(req.query.scope ?? '').trim().toLowerCase();
     const scope = scopeRaw === 'all' ? 'all' : mes ? 'month' : 'all';
-    const installments = await listPayableInstallments(req.params.businessId, {
+    const estadoRaw = String(req.query.estado ?? '').trim().toLowerCase();
+    const displayEstado =
+      estadoRaw === 'pendiente' || estadoRaw === 'pagada' || estadoRaw === 'vencida'
+        ? (estadoRaw as 'pendiente' | 'pagada' | 'vencida')
+        : undefined;
+    const ambito = String(req.query.ambito ?? '').trim() || undefined;
+    const includeMonthSummary = req.query.includeMonthSummary !== '0';
+    const result = await listPayableInstallments(req.params.businessId, {
       mes: /^\d{4}-\d{2}$/.test(mes) ? mes : undefined,
       scope,
       reconcile: req.query.reconcile === '1',
+      displayEstado: scope === 'month' ? displayEstado : undefined,
+      ambito,
+      includeMonthSummary: scope === 'month' ? includeMonthSummary : false,
     });
-    res.json(installments);
+    res.json(result);
   } catch (error) {
     console.error('Error listing payables installments:', error);
     res.status(500).json({ error: 'No se pudieron cargar los vencimientos.' });

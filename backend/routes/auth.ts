@@ -209,9 +209,9 @@ router.post('/google', async (req, res) => {
       await linkGoogleId(businessId, user.id, googleId);
       user = (await getStoredUser(businessId, user.id)) ?? user;
     } else if (user.googleId !== googleId) {
-      return res.status(403).json({
-        error: 'Esta cuenta de Google no coincide con el usuario registrado.',
-      });
+      // Mismo email verificado por Google: permitir re-vincular (emulador vs producción, etc.).
+      await linkGoogleId(businessId, user.id, googleId);
+      user = (await getStoredUser(businessId, user.id)) ?? user;
     }
 
     const business = await toSessionBusinessInfo(businessId, businessRecord);

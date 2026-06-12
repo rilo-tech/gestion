@@ -13,9 +13,9 @@ import { NATIVE_COMPACT_TABLE_CLASS } from '../compact-list/compact-list.constan
   `,
 })
 export class ModuleDataTableComponent implements OnChanges {
-  @Input() minWidthClass = 'sm:min-w-[640px]';
+  @Input() minWidthClass = 'w-full max-w-full';
 
-  tableClass = `${NATIVE_COMPACT_TABLE_CLASS} module-data-table-layout w-full sm:min-w-[640px]`;
+  tableClass = `${NATIVE_COMPACT_TABLE_CLASS} module-data-table-layout w-full max-w-full`;
 
   ngOnChanges(): void {
     this.tableClass = `${NATIVE_COMPACT_TABLE_CLASS} module-data-table-layout w-full ${this.minWidthClass}`;

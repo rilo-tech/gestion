@@ -78,7 +78,7 @@ export function getApiBootstrapState(): 'idle' | 'running' | 'ready' | 'failed' 
 export function createApiApp(): express.Express {
   const app = express();
   app.use(cors({ origin: true }));
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({

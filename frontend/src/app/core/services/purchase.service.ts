@@ -163,4 +163,11 @@ export class PurchaseService {
       `/api/purchases/${this.businessId}/${compraId}`
     );
   }
+
+  repairPurchasePayables(compraId: string): Observable<{ cuotasCreated: number }> {
+    return this.http.post<{ cuotasCreated: number }>(
+      `/api/purchases/${this.businessId}/${compraId}/repair-payables`,
+      {}
+    );
+  }
 }

@@ -635,15 +635,53 @@ export function collectStockProductIdsFromOrderLines(
   return [...ids];
 }
 
+function aggregateOrderStockQuantities(items: OrderLineStock[] | undefined): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const line of normalizeOrderItemsStock(items ?? [])) {
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) continue;
+    map.set(stockItemId, (map.get(stockItemId) ?? 0) + (Number(line.cantidad) || 0));
+  }
+  return map;
+}
+
+/** Mismos productos y cantidades pedidas (ignora precios, costos y metadatos). */
+export function orderStockItemsEquivalent(
+  before: OrderLineStock[] | undefined,
+  after: OrderLineStock[] | undefined
+): boolean {
+  const beforeMap = aggregateOrderStockQuantities(before);
+  const afterMap = aggregateOrderStockQuantities(after);
+  if (beforeMap.size !== afterMap.size) return false;
+  for (const [stockItemId, qty] of beforeMap) {
+    if (afterMap.get(stockItemId) !== qty) return false;
+  }
+  return true;
+}
+
+export function collectChangedStockProductIds(
+  before: OrderLineStock[] | undefined,
+  after: OrderLineStock[] | undefined
+): string[] {
+  const beforeMap = aggregateOrderStockQuantities(before);
+  const afterMap = aggregateOrderStockQuantities(after);
+  const ids = new Set<string>([...beforeMap.keys(), ...afterMap.keys()]);
+  const changed: string[] = [];
+  for (const stockItemId of ids) {
+    if (beforeMap.get(stockItemId) !== afterMap.get(stockItemId)) {
+      changed.push(stockItemId);
+    }
+  }
+  return changed;
+}
+
 /** Tras una entrada de stock, reserva en pedidos pendientes y actualiza faltantes. */
 export async function syncPendingOrdersAfterStockChange(
   businessId: string,
   stockItemIds: Iterable<string>
 ): Promise<void> {
   const unique = [...new Set([...stockItemIds].map((id) => String(id ?? '').trim()).filter(Boolean))];
-  for (const stockItemId of unique) {
-    await autoReserveIncomingStockForProduct(businessId, stockItemId);
-  }
+  await Promise.all(unique.map((stockItemId) => autoReserveIncomingStockForProduct(businessId, stockItemId)));
 }
 
 export async function loadNormalizedOrderItems(
@@ -685,17 +723,37 @@ export async function buildStockPreparationView(
   businessId: string,
   order: OrderStockRecord
 ): Promise<StockPreparationLine[]> {
-  const lines: StockPreparationLine[] = [];
+  const items = order.items ?? [];
+  const indexedLines: Array<{ lineIndex: number; rawLine: OrderLineStock }> = [];
 
-  for (let lineIndex = 0; lineIndex < (order.items ?? []).length; lineIndex++) {
-    const rawLine = order.items![lineIndex];
-    const line = computeLineStockFields(rawLine);
+  for (let lineIndex = 0; lineIndex < items.length; lineIndex++) {
+    const rawLine = items[lineIndex];
     const stockItemId = String(rawLine.stockItemId ?? '').trim();
     const cantidadPedida = Number(rawLine.cantidad) || 0;
     if (!stockItemId || cantidadPedida <= 0) continue;
+    indexedLines.push({ lineIndex, rawLine });
+  }
 
-    const itemSnap = await db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get();
-    const data = (itemSnap.data() ?? {}) as Record<string, unknown>;
+  if (indexedLines.length === 0) return [];
+
+  const uniqueStockIds = [...new Set(indexedLines.map(({ rawLine }) => String(rawLine.stockItemId ?? '').trim()))];
+  const stockSnaps = await Promise.all(
+    uniqueStockIds.map((stockItemId) =>
+      db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get()
+    )
+  );
+  const stockById = new Map<string, Record<string, unknown>>();
+  uniqueStockIds.forEach((stockItemId, index) => {
+    stockById.set(stockItemId, (stockSnaps[index].data() ?? {}) as Record<string, unknown>);
+  });
+
+  const lines: StockPreparationLine[] = [];
+
+  for (const { lineIndex, rawLine } of indexedLines) {
+    const line = computeLineStockFields(rawLine);
+    const stockItemId = String(rawLine.stockItemId ?? '').trim();
+    const cantidadPedida = Number(rawLine.cantidad) || 0;
+    const data = stockById.get(stockItemId) ?? {};
     const stockReal = Number(data.stockActual) || 0;
     const stockReservadoGlobal = Number(data.stockReservado) || 0;
     const stockDisponible = getStockDisponible(stockReal, stockReservadoGlobal);

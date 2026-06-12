@@ -183,7 +183,7 @@ const EXPANDED_DETAIL_PRICE_CLASS =
 
           <table
             *ngIf="!loading && filteredRows.length > 0"
-            [class]="nativeCompactTableClass + ' sm:min-w-[520px] sm:table-fixed'">
+            [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <colgroup class="hidden sm:table-column-group">
               <col class="w-[2.5rem]" />
               <col class="w-[min(38%,14rem)]" />

@@ -14,8 +14,7 @@ export const ORDER_STATUS_OPTIONS = [
   { value: 'pendiente', label: 'Pendiente' },
   { value: 'en_produccion', label: 'En producción' },
   { value: 'listo', label: 'Listo' },
-  { value: 'entregado', label: 'Entregado total' },
-  { value: 'entregado_con_saldo', label: 'Entregado con saldo' },
+  { value: 'entregado', label: 'Entregado' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 
@@ -126,8 +125,21 @@ export function orderMatchesStatusCardFilter(
   return normalizeOrderEstadoValue(String(status)) === normalizeOrderEstadoValue(cardValue);
 }
 
-export function getOrderStatusBadgeClass(estado?: string, pedidos?: OrderPedidosConfigShape): string {
-  switch (normalizeOrderStatus(estado, pedidos)) {
+export function getOrderStatusBadgeClass(
+  estado?: string,
+  pedidos?: OrderPedidosConfigShape,
+  options?: { saldo?: number; entregaConSaldo?: boolean }
+): string {
+  const status = normalizeOrderStatus(estado, pedidos);
+  if (
+    (status === 'entregado' || status === 'entregado_con_saldo') &&
+    (status === 'entregado_con_saldo' ||
+      options?.entregaConSaldo === true ||
+      (options?.saldo != null && options.saldo > 0))
+  ) {
+    return 'bg-orange-50 text-orange-700';
+  }
+  switch (status) {
     case 'borrador':
       return 'bg-gray-100 text-gray-700';
     case 'pendiente':
@@ -147,57 +159,26 @@ export function getOrderStatusBadgeClass(estado?: string, pedidos?: OrderPedidos
   }
 }
 
-export function orderIsConfirmedForSale(order: {
-  seniaBloqueada?: boolean;
-  movimientoSeniaId?: string;
-  pagos?: unknown[];
-  stockDescontado?: boolean;
-  stockPreparado?: boolean;
-  numeroPedido?: number;
-  numeroPedidoLabel?: string;
-}): boolean {
-  return !!(
-    order.stockPreparado ||
-    order.stockDescontado ||
-    order.seniaBloqueada ||
-    order.movimientoSeniaId ||
-    (order.pagos?.length ?? 0) > 0 ||
-    order.numeroPedido ||
-    order.numeroPedidoLabel
-  );
+export function orderIsLockedForEdit(
+  estado?: string,
+  order?: { entregaConSaldo?: boolean; saldo?: number; seniaBloqueada?: boolean }
+): boolean {
+  if (!isOrderDeliveryEstado(estado)) return false;
+  const saldo = Number(order?.saldo);
+  if (Number.isFinite(saldo) && saldo > 0) return false;
+  return true;
 }
 
-export function canRegisterSaleFromOrder(order: {
-  estado?: string;
-  ventaId?: string;
-  seniaBloqueada?: boolean;
-  movimientoSeniaId?: string;
-  pagos?: unknown[];
-  stockDescontado?: boolean;
-  stockPreparado?: boolean;
-  numeroPedido?: number;
-  numeroPedidoLabel?: string;
-}): boolean {
-  if (order.ventaId) return false;
-
-  const status = normalizeOrderStatus(order.estado);
-  if (
-    status === 'cancelado' ||
-    status === 'borrador' ||
-    status === 'entregado' ||
-    status === 'entregado_con_saldo' ||
-    status === 'otro'
-  ) {
-    return false;
-  }
-
-  if (!orderIsConfirmedForSale(order)) return false;
-
-  return status === 'listo' || status === 'en_produccion' || status === 'pendiente';
-}
-
-export function orderIsLockedForEdit(estado?: string): boolean {
-  return normalizeOrderStatus(estado) === 'entregado';
+export function orderHasEntregaConSaldo(
+  estado?: string,
+  order?: { entregaConSaldo?: boolean; saldo?: number }
+): boolean {
+  const status = normalizeOrderStatus(estado);
+  if (status === 'entregado_con_saldo') return true;
+  if (status !== 'entregado') return false;
+  if (order?.entregaConSaldo === true) return true;
+  const saldo = Number(order?.saldo);
+  return Number.isFinite(saldo) && saldo > 0;
 }
 
 export function isOrderDeliveryEstado(estado?: string): boolean {

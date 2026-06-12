@@ -14,10 +14,13 @@ export const DEFAULT_ORDER_ESTADOS: OrderEstadoConfig[] = [
   { value: 'pendiente', label: 'Pendiente', sistema: true },
   { value: 'en_produccion', label: 'En producción', sistema: true },
   { value: 'listo', label: 'Listo', sistema: true },
-  { value: 'entregado', label: 'Entregado total', sistema: true },
-  { value: 'entregado_con_saldo', label: 'Entregado con saldo', sistema: true },
+  { value: 'entregado', label: 'Entregado', sistema: true },
   { value: 'cancelado', label: 'Cancelado', sistema: true },
 ];
+
+export const FIXED_ORDER_ESTADO_VALUES = DEFAULT_ORDER_ESTADOS.map((item) => item.value);
+
+const PROTECTED_ORDER_ESTADO_VALUES = new Set(FIXED_ORDER_ESTADO_VALUES);
 
 export type OrderExtraCostPreset = {
   nombre: string;
@@ -41,6 +44,12 @@ export type OrderPedidosConfig = {
   costosExtraPredeterminados: OrderExtraCostPreset[];
   /** Si es true (default), pedidos y descuentos pueden dejar stock negativo. */
   permitirStockNegativo: boolean;
+  /** Permite adjuntar fotos de referencia en pedidos e imprimirlas. */
+  fotosReferenciaHabilitadas: boolean;
+  /** Elimina fotos de pedido más viejas que fotosRetencionDias (job diario). */
+  fotosEliminacionAutomatica: boolean;
+  /** Días de retención cuando fotosEliminacionAutomatica está activa (7–365). */
+  fotosRetencionDias: number;
 };
 
 export const DEFAULT_ORDER_PEDIDOS_CONFIG: OrderPedidosConfig = {
@@ -58,6 +67,10 @@ export const DEFAULT_ORDER_PEDIDOS_CONFIG: OrderPedidosConfig = {
   permitirElegirAlcanceDescuento: true,
   estadosExigenStockCompleto: ['listo'],
   costosExtraPredeterminados: [],
+  permitirStockNegativo: true,
+  fotosReferenciaHabilitadas: true,
+  fotosEliminacionAutomatica: false,
+  fotosRetencionDias: 30,
 };
 
 const STOCK_TRIGGER_EXCLUDED = new Set([
@@ -87,8 +100,7 @@ export function normalizeOrderEstadoValue(estado?: string): string {
 
 export function normalizeOrderEstados(raw: unknown): OrderEstadoConfig[] {
   const saved = Array.isArray(raw) ? raw : [];
-  const result: OrderEstadoConfig[] = [];
-  const seen = new Set<string>();
+  const labelByValue = new Map<string, string>();
 
   for (const entry of saved) {
     if (!entry || typeof entry !== 'object') continue;
@@ -98,35 +110,27 @@ export function normalizeOrderEstados(raw: unknown): OrderEstadoConfig[] {
 
     let value = normalizeOrderEstadoValue(String(obj.value ?? ''));
     if (!value) value = slugifyOrderEstadoValue(label);
-    if (seen.has(value)) continue;
+    if (value === 'entregado_con_saldo') value = 'entregado';
+    if (!PROTECTED_ORDER_ESTADO_VALUES.has(value)) continue;
 
-    seen.add(value);
-    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
-    result.push({
-      value,
+    labelByValue.set(value, label);
+  }
+
+  return DEFAULT_ORDER_ESTADOS.map((defaults) => {
+    const savedLabel = labelByValue.get(defaults.value);
+    let label = savedLabel ?? defaults.label;
+    if (defaults.value === 'entregado' && savedLabel) {
+      const lower = savedLabel.toLowerCase();
+      if (lower.includes('saldo') || lower.includes('total')) {
+        label = defaults.label;
+      }
+    }
+    return {
+      ...defaults,
       label,
-      sistema: obj.sistema === true || defaults?.sistema === true,
-    });
-  }
-
-  if (result.length === 0) {
-    return DEFAULT_ORDER_ESTADOS.map((item) => ({ ...item }));
-  }
-
-  const ensure = (value: string, position: 'start' | 'end') => {
-    if (seen.has(value)) return;
-    const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === value);
-    if (!defaults) return;
-    const row = { ...defaults };
-    if (position === 'start') result.unshift(row);
-    else result.push(row);
-    seen.add(value);
-  };
-
-  ensure('borrador', 'start');
-  ensure('cancelado', 'end');
-
-  return result;
+      sistema: true,
+    };
+  });
 }
 
 const STOCK_CONSUME_EXCLUDED = new Set(['borrador', 'cancelado']);
@@ -199,6 +203,16 @@ export function normalizeEstadosExigenStockCompleto(
   return [...DEFAULT_ORDER_PEDIDOS_CONFIG.estadosExigenStockCompleto];
 }
 
+export const MIN_ORDER_PHOTO_RETENTION_DAYS = 7;
+export const MAX_ORDER_PHOTO_RETENTION_DAYS = 365;
+export const DEFAULT_ORDER_PHOTO_RETENTION_DAYS = 30;
+
+export function normalizeOrderPhotoRetentionDays(raw: unknown): number {
+  const parsed = Math.round(Number(raw));
+  if (!Number.isFinite(parsed)) return DEFAULT_ORDER_PHOTO_RETENTION_DAYS;
+  return Math.min(MAX_ORDER_PHOTO_RETENTION_DAYS, Math.max(MIN_ORDER_PHOTO_RETENTION_DAYS, parsed));
+}
+
 export function normalizeOrderPedidosConfig(pedidos: Record<string, unknown> = {}): OrderPedidosConfig {
   const estados = normalizeOrderEstados(pedidos.estados);
   const modoStock: OrderStockMode = pedidos.modoStock === 'directo' ? 'directo' : 'reservado';
@@ -229,6 +243,11 @@ export function normalizeOrderPedidosConfig(pedidos: Record<string, unknown> = {
     estadosExigenStockCompleto: normalizeEstadosExigenStockCompleto(pedidos.estadosExigenStockCompleto, estados),
     costosExtraPredeterminados: normalizeOrderExtraCostPresets(pedidos.costosExtraPredeterminados),
     permitirStockNegativo: pedidos.permitirStockNegativo !== false,
+    fotosReferenciaHabilitadas: pedidos.fotosReferenciaHabilitadas !== false,
+    fotosEliminacionAutomatica: pedidos.fotosEliminacionAutomatica === true,
+    fotosRetencionDias: normalizeOrderPhotoRetentionDays(
+      pedidos.fotosRetencionDias ?? DEFAULT_ORDER_PHOTO_RETENTION_DAYS
+    ),
   };
 }
 
@@ -417,6 +436,7 @@ export function shouldRestoreStockOnStatusChange(params: {
 export type OrderEstadoTransitionValidation = {
   allowed: boolean;
   requiresStockRestore: boolean;
+  isBackward?: boolean;
   error?: string;
 };
 
@@ -447,13 +467,9 @@ export function validateOrderEstadoTransition(params: {
     };
   }
 
-  if (shouldRestoreStockOnStatusChange(params)) {
-    return { allowed: true, requiresStockRestore: true };
-  }
-
   return {
-    allowed: false,
-    requiresStockRestore: false,
-    error: 'No podés retroceder a un estado anterior del flujo del pedido.',
+    allowed: true,
+    requiresStockRestore: shouldRestoreStockOnStatusChange(params),
+    isBackward: true,
   };
 }

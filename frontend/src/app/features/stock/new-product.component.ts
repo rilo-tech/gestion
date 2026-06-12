@@ -1,4 +1,4 @@
-import { Component, inject, OnDestroy, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -22,9 +22,8 @@ import { PERMISSIONS } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
-import { FormFooterComponent } from '../../shared/components/form-shell';
+import { FormFooterComponent, FormScreenHeaderComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
-import { FormBackButtonComponent } from '../../shared/components/form-shell';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
 import {
@@ -35,41 +34,33 @@ import {
 @Component({
   selector: 'app-new-product',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, HasPermissionDirective, SelectOnFocusDirective, FormFooterComponent, RecordActionToolbarComponent, FormBackButtonComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, HasPermissionDirective, SelectOnFocusDirective, FormFooterComponent, RecordActionToolbarComponent, FormScreenHeaderComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
-      <div class="mb-6 sm:mb-8 grid grid-cols-[1fr_auto] gap-x-3 sm:gap-x-4 gap-y-2 items-start">
-        <h1 class="min-w-0 text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
-          {{ isEditing ? 'Editar Producto' : 'Nuevo Producto' }}
-        </h1>
-        <div class="flex items-center justify-end shrink-0 gap-1.5 sm:gap-4">
-          <app-record-action-toolbar
-            *ngIf="!formReadOnly || isEditing"
-            [showSave]="!formReadOnly"
-            [saveLabel]="isEditing ? 'Guardar' : 'Guardar producto'"
-            [saveDisabled]="saving"
-            [saveSuccess]="!!saveSuccessMessage"
-            (saveClick)="submitProduct()"
-            [showDuplicate]="isEditing && !formReadOnly"
-            duplicateLabel="Duplicar producto"
-            (duplicateClick)="duplicateProduct()"
-            [showDelete]="isEditing && auth.canDeleteRecords"
-            deleteLabel="Eliminar producto"
-            (deleteClick)="confirmDeleteProduct()">
-          </app-record-action-toolbar>
-          <app-form-back-button
-            [label]="backLabel"
-            shortLabel="Volver"
-            [ariaLabel]="backLabel"
-            (clicked)="onBackClick()">
-          </app-form-back-button>
-        </div>
-        <div class="min-w-0 col-start-1">
-          <p *ngIf="!isEditing" class="text-gray-500 text-sm sm:text-base">
-            Cargá un producto o insumo para sumarlo al inventario.
-          </p>
-        </div>
-      </div>
+      <app-form-screen-header
+        [title]="isEditing ? 'Editar Producto' : 'Nuevo Producto'"
+        [subtitle]="isEditing ? '' : 'Cargá un producto o insumo para sumarlo al inventario.'"
+        [backLabel]="backLabel"
+        backShortLabel="Volver"
+        [backAriaLabel]="backLabel"
+        [hasHeaderActions]="!formReadOnly || isEditing"
+        (backClick)="onBackClick()">
+        <app-record-action-toolbar
+          headerActions
+          *ngIf="!formReadOnly || isEditing"
+          [showSave]="!formReadOnly"
+          [saveLabel]="isEditing ? 'Guardar' : 'Guardar producto'"
+          [saveDisabled]="saving"
+          [saveSuccess]="!!saveSuccessMessage"
+          (saveClick)="submitProduct()"
+          [showDuplicate]="isEditing && !formReadOnly"
+          duplicateLabel="Duplicar producto"
+          (duplicateClick)="duplicateProduct()"
+          [showDelete]="isEditing && auth.canDeleteRecords"
+          deleteLabel="Eliminar producto"
+          (deleteClick)="confirmDeleteProduct()">
+        </app-record-action-toolbar>
+      </app-form-screen-header>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div class="lg:col-span-2 space-y-6">
@@ -226,6 +217,13 @@ import {
                     {{ adjustingStock ? 'Guardando…' : 'Guardar' }}
                   </button>
                 </div>
+                <p
+                  *ngIf="stockAdjustmentSuccessMessage"
+                  [class]="stockAdjustmentMovementMessageClass"
+                  role="status"
+                  aria-live="polite">
+                  {{ stockAdjustmentSuccessMessage }}
+                </p>
               </div>
 
               <div class="grid grid-cols-3 gap-2">
@@ -379,7 +377,8 @@ import {
                 mode="sidebar"
                 [saveLabel]="isEditing ? 'Guardar' : 'Guardar producto'"
                 [saving]="saving"
-                [successMessage]="saveSuccessMessage"
+                [successMessage]="sidebarSuccessMessage"
+                [successMessageClass]="stockAdjustmentFooterMessageClass"
                 theme="dark"
                 (saveClick)="submitProduct()">
               </app-form-footer>
@@ -399,6 +398,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private navigationBack = inject(NavigationBackService);
+  private cdr = inject(ChangeDetectorRef);
   readonly auth = inject(AuthService);
   readonly permissions = PERMISSIONS;
   private configSub?: Subscription;
@@ -414,7 +414,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private returnOrderId: string | null = null;
   saving = false;
   saveSuccessMessage = '';
+  stockAdjustmentSuccessMessage = '';
+  stockAdjustmentIsDecrease = false;
   private saveSuccessTimeout?: ReturnType<typeof setTimeout>;
+  private stockAdjustmentSuccessTimeout?: ReturnType<typeof setTimeout>;
   nombreBase = '';
   controlaStock = true;
   permitirStockNegativo = false;
@@ -545,6 +548,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.previewSub?.unsubscribe();
     this.codigoCheckSub?.unsubscribe();
     if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
+    if (this.stockAdjustmentSuccessTimeout) clearTimeout(this.stockAdjustmentSuccessTimeout);
   }
 
   get usesCodigoAutomatico(): boolean {
@@ -752,6 +756,23 @@ export class NewProductComponent implements OnInit, OnDestroy {
     }
   }
 
+  get sidebarSuccessMessage(): string {
+    return this.stockAdjustmentSuccessMessage || this.saveSuccessMessage;
+  }
+
+  get stockAdjustmentMovementMessageClass(): string {
+    return this.stockAdjustmentIsDecrease
+      ? 'text-xs font-semibold text-red-600 dark:text-red-400 leading-snug'
+      : 'text-xs font-semibold text-teal-800 dark:text-teal-300 leading-snug';
+  }
+
+  get stockAdjustmentFooterMessageClass(): string {
+    if (!this.stockAdjustmentSuccessMessage) return '';
+    return this.stockAdjustmentIsDecrease
+      ? 'text-center text-xs font-semibold text-red-400'
+      : 'text-center text-xs font-semibold text-teal-300';
+  }
+
   get canSubmitStockAdjustment(): boolean {
     const delta = Math.floor(Number(this.stockAdjustmentQty) || 0);
     return delta !== 0;
@@ -791,10 +812,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.stockService.adjustStock(this.editingItemId, delta, motivo).subscribe({
       next: (result: { newStock?: number }) => {
         this.adjustingStock = false;
-        this.item.stockActual = Number(result?.newStock ?? (this.item.stockActual || 0) + delta) || 0;
+        const fallbackStock = (this.item.stockActual || 0) + delta;
+        const resolvedStock = result?.newStock ?? fallbackStock;
+        this.item.stockActual = Number.isFinite(Number(resolvedStock))
+          ? Number(resolvedStock)
+          : fallbackStock;
         this.persistedStockActual = this.item.stockActual;
         this.stockAdjustmentQty = null;
         this.stockAdjustmentReason = '';
+        this.showStockAdjustmentSuccess(delta);
         this.stockService.notifyCatalogChanged({
           item: {
             id: this.editingItemId,
@@ -805,7 +831,6 @@ export class NewProductComponent implements OnInit, OnDestroy {
             controlaStock: this.controlaStock,
           } as StockItem,
         });
-        this.showSaveSuccess(`Stock actualizado (${delta > 0 ? '+' : ''}${delta} u.).`);
       },
       error: (err: HttpErrorResponse) => {
         this.adjustingStock = false;
@@ -1028,7 +1053,29 @@ export class NewProductComponent implements OnInit, OnDestroy {
     if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
     this.saveSuccessTimeout = setTimeout(() => {
       this.saveSuccessMessage = '';
+      this.cdr.markForCheck();
     }, 3500);
+    this.cdr.markForCheck();
+  }
+
+  private showStockAdjustmentSuccess(delta: number) {
+    const sign = delta > 0 ? '+' : '−';
+    const amount = Math.abs(delta);
+    const message = `Stock actualizado (${sign}${amount} u.).`;
+    this.stockAdjustmentIsDecrease = delta < 0;
+    this.stockAdjustmentSuccessMessage = message;
+    this.saveSuccessMessage = message;
+    if (this.stockAdjustmentSuccessTimeout) clearTimeout(this.stockAdjustmentSuccessTimeout);
+    if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
+    this.stockAdjustmentSuccessTimeout = setTimeout(() => {
+      this.stockAdjustmentSuccessMessage = '';
+      this.stockAdjustmentIsDecrease = false;
+      if (this.saveSuccessMessage === message) {
+        this.saveSuccessMessage = '';
+      }
+      this.cdr.markForCheck();
+    }, 4000);
+    this.cdr.markForCheck();
   }
 
   confirmDeleteProduct() {

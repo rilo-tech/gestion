@@ -267,7 +267,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                   [disabled]="payingLiquidation"
                   class="text-xs font-semibold text-teal-700 hover:underline disabled:opacity-50"
                   (click)="openPayBalance(row, $event)">
-                  Pagar saldo
+                  Pagar
                 </button>
               </div>
               <div *ngIf="isSummaryExpanded(row.colaboradorId)" class="px-3 pb-3 bg-gray-50/80 border-t border-gray-100">
@@ -316,7 +316,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
         </div>
 
         <div class="hidden sm:block" [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' min-w-[56rem]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="w-10 px-3 py-3"></th>
@@ -369,7 +369,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                       [disabled]="payingLiquidation"
                       class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                       (click)="openPayBalance(row, $event)">
-                      Pagar saldo
+                      Pagar
                     </button>
                     <span *ngIf="!canPayBalance(row)" class="text-xs text-gray-400">—</span>
                   </td>
@@ -492,7 +492,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
           <p *ngIf="!filteredMovements.length" [class]="compactListEmptyClass">Sin movimientos.</p>
         </div>
         <div listDesktop [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' min-w-[48rem]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Fecha</th>
@@ -578,7 +578,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
           <p *ngIf="!collaborators.length" [class]="compactListEmptyClass">Todavía no cargaste colaboradores.</p>
         </div>
         <div listDesktop [class]="tableScrollClass">
-          <table [class]="nativeCompactTableClass + ' min-w-[40rem]'">
+          <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
               <tr class="bg-gray-50 border-b border-gray-100">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Nombre</th>

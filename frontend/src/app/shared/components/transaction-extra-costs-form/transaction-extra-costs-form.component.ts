@@ -161,7 +161,7 @@ export class TransactionExtraCostsFormComponent implements OnChanges {
   @Input() presets: OrderExtraCostPreset[] = [];
   @Input() initialCosts: TransactionExtraCost[] = [];
   @Input() inputNamePrefix = 'extraCost';
-  @Input() priceLabel = 'Precio';
+  @Input() priceLabel = 'Precio/u.';
   @Input() totalLabel = 'Total personalización';
 
   @Output() accepted = new EventEmitter<TransactionExtraCost[]>();

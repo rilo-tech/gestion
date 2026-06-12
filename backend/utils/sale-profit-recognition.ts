@@ -1,3 +1,5 @@
+import { sumLineExtraCosts } from './line-extra-costs.ts';
+
 type SaleLineExtraCost = { costo?: number };
 type SaleLine = {
   cantidad?: number;
@@ -13,11 +15,11 @@ type OrderPayment = {
 };
 
 function sumLinePersonalizationCost(line: SaleLine): number {
-  const qty = Math.max(0, Number(line.cantidad) || 0);
-  const extras = Array.isArray(line.costosExtra) ? line.costosExtra : [];
-  const fromList = extras.reduce((acc, extra) => acc + (Number(extra?.costo) || 0), 0);
-  if (fromList > 0) return qty * fromList;
-  return Number(line.costoPersonalizacion) || 0;
+  return sumLineExtraCosts(
+    Number(line.cantidad) || 0,
+    line.costosExtra,
+    line.costoPersonalizacion
+  );
 }
 
 export function calculateSaleCostFromItems(items: SaleLine[]): number {
@@ -37,7 +39,16 @@ export function resolveSaleCostoReal(
   return Math.max(stored, calculated);
 }
 
+export function isDonationSale(sale: Record<string, unknown>): boolean {
+  if (sale.esDonacion === true) return true;
+  return (Number(sale.total) || 0) <= 0;
+}
+
 export function resolveSaleGananciaEstimada(sale: Record<string, unknown>): number {
+  const stored = Number(sale.gananciaEstimada);
+  if (Number.isFinite(stored)) {
+    return Math.round(stored * 100) / 100;
+  }
   const total = Number(sale.total) || 0;
   const costoReal = resolveSaleCostoReal(sale);
   return Math.round((total - costoReal) * 100) / 100;
@@ -122,6 +133,12 @@ export function isSaleProfitRecognizedInMonth(
   anio: number,
   order?: Record<string, unknown> | null
 ): boolean {
+  if (isDonationSale(sale)) {
+    const deliveredAt = String(sale.fecha ?? '').trim();
+    if (!deliveredAt) return false;
+    return isIsoDateInCalendarMonth(deliveredAt, mes, anio);
+  }
+
   const fullyPaidAt = resolveSaleFullyPaidAt(sale, order);
   if (!fullyPaidAt) return false;
   return isIsoDateInCalendarMonth(fullyPaidAt, mes, anio);

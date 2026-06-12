@@ -11,6 +11,7 @@ import {
   confirmPurchaseDraft,
   updateConfirmedPurchase,
   repairPurchasePayables,
+  ensurePurchasePayablesForCompraId,
   deletePurchase,
   enrichPurchasesForList,
 } from '../utils/purchase-finance.ts';
@@ -28,6 +29,19 @@ function mapPurchaseDoc(doc: { id: string; data: () => Record<string, unknown> |
     ...data,
     compraLabel: resolvePurchaseLabel({ ...data, id: doc.id }),
   };
+}
+
+async function attachPurchasePayablesCount<T extends { id: string }>(
+  businessId: string,
+  result: T
+): Promise<T & { cuotasCount?: number }> {
+  try {
+    const { cuotasCount } = await ensurePurchasePayablesForCompraId(businessId, result.id);
+    return { ...result, cuotasCount };
+  } catch (error) {
+    console.error(`Error ensuring payables for compra ${result.id}:`, error);
+    return result;
+  }
 }
 
 router.get('/:businessId', async (req, res) => {
@@ -204,6 +218,11 @@ router.get('/:businessId/:compraId', async (req, res) => {
     if (!snap.exists) {
       return res.status(404).json({ error: 'Compra no encontrada.' });
     }
+    try {
+      await ensurePurchasePayablesForCompraId(businessId, compraId);
+    } catch (error) {
+      console.error(`Error ensuring payables for compra ${compraId}:`, error);
+    }
     res.json(mapPurchaseDoc(snap));
   } catch (error) {
     console.error('Error fetching purchase:', error);
@@ -275,7 +294,7 @@ router.put(
         throw err;
       }
 
-      res.json(result);
+      res.json(await attachPurchasePayablesCount(businessId, result));
 
       void logActivityFromRequest(req as AuthenticatedRequest, businessId, {
         module: 'purchases',
@@ -322,7 +341,7 @@ router.post('/:businessId/:compraId/confirm', async (req, res) => {
       summary: `Confirmó compra #${result.compraLabel}`,
     });
 
-    res.status(200).json(result);
+    res.status(200).json(await attachPurchasePayablesCount(businessId, result));
   } catch (error) {
     console.error('Error confirming purchase:', error);
     res.status(500).json({ error: 'Error confirming purchase' });
@@ -404,7 +423,7 @@ router.post('/:businessId', async (req, res) => {
       summary: `Registró compra #${result.compraLabel} por $${parsed.input.total}${parsed.input.proveedor ? ` · ${parsed.input.proveedor}` : ''}`,
     });
 
-    res.status(201).json(result);
+    res.status(201).json(await attachPurchasePayablesCount(businessId, result));
   } catch (error) {
     console.error('Error creating purchase:', error);
     res.status(500).json({ error: 'Error creating purchase' });

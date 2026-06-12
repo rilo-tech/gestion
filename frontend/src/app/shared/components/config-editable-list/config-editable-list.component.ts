@@ -283,10 +283,12 @@ export class ConfigEditableListComponent {
   }
 
   onSelectChange(item: ConfigEditableListItem, value: string) {
+    if (value === item.selectValue) return;
     this.selectChange.emit({ id: item.id, value });
   }
 
   onSelect2Change(item: ConfigEditableListItem, value: string) {
+    if (value === item.select2Value) return;
     this.select2Change.emit({ id: item.id, value });
   }
 }

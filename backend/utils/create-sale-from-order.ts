@@ -2,11 +2,13 @@ import { db } from '../firebase.ts';
 import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
 import { resolveOrderLabel } from './order-number.ts';
 import { allocateSaleNumber } from './sale-number.ts';
+import {
+  normalizeLineExtraCosts,
+  sumLineExtraCosts,
+  type LineExtraCost,
+} from './line-extra-costs.ts';
 
-type SaleLineExtraCost = {
-  nombre: string;
-  costo: number;
-};
+type SaleLineExtraCost = LineExtraCost;
 
 type SaleLine = {
   stockItemId: string;
@@ -38,48 +40,15 @@ export type OrderForSale = {
   numeroPedidoLabel?: string;
 };
 
-function normalizeSaleLineExtraCosts(
-  raw: unknown,
-  legacyPersonalizacion?: number
-): SaleLineExtraCost[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map((entry) => {
-        if (!entry || typeof entry !== 'object') return null;
-        const data = entry as Record<string, unknown>;
-        const nombre = String(data.nombre ?? '').trim();
-        const costo = Number(data.costo) || 0;
-        if (!nombre && costo <= 0) return null;
-        return { nombre: nombre || 'Costo extra', costo };
-      })
-      .filter((entry): entry is SaleLineExtraCost => entry !== null);
-  }
-
-  const legacy = Number(legacyPersonalizacion) || 0;
-  return legacy > 0 ? [{ nombre: 'Personalización', costo: legacy }] : [];
-}
-
-function sumLinePersonalizationCost(line: {
-  costosExtra?: SaleLineExtraCost[];
-  costoPersonalizacion?: number;
-  cantidad?: number;
-}): number {
-  const fromList = (line.costosExtra ?? []).reduce(
-    (acc, extra) => acc + (Number(extra.costo) || 0),
-    0
-  );
-  if (fromList > 0) {
-    const qty = Math.max(0, Number(line.cantidad) || 0);
-    return qty * fromList;
-  }
-  return Number(line.costoPersonalizacion) || 0;
-}
-
 function calculateSaleCost(items: SaleLine[]): number {
   return items.reduce((acc, line) => {
     const cantidad = Number(line.cantidad) || 0;
     const base = cantidad * (Number(line.costoUnitario) || 0);
-    const personalizacion = sumLinePersonalizationCost(line);
+    const personalizacion = sumLineExtraCosts(
+      cantidad,
+      line.costosExtra,
+      line.costoPersonalizacion
+    );
     return acc + base + personalizacion;
   }, 0);
 }
@@ -87,12 +56,16 @@ function calculateSaleCost(items: SaleLine[]): number {
 function buildSaleLineFromOrderLine(line: OrderLineForSale): SaleLine {
   const cantidad = Number(line.cantidad) || 0;
   const precioUnitario = Number(line.precioVenta) || 0;
-  const costosExtra = normalizeSaleLineExtraCosts(line.costosExtra, line.costoPersonalizacion);
-  const costoPersonalizacion = sumLinePersonalizationCost({
-    costosExtra,
-    costoPersonalizacion: line.costoPersonalizacion,
+  const costosExtra = normalizeLineExtraCosts(
+    line.costosExtra,
+    line.costoPersonalizacion,
+    cantidad
+  );
+  const costoPersonalizacion = sumLineExtraCosts(
     cantidad,
-  });
+    costosExtra,
+    line.costoPersonalizacion
+  );
 
   return {
     stockItemId: String(line.stockItemId ?? ''),
@@ -185,6 +158,13 @@ export async function createSaleFromOrder(
   const medioPago = String(options.medioPago ?? 'efectivo').trim() || 'efectivo';
 
   const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
+  const esDonacion = total === 0;
+  const notasBase = String(options.notas ?? '').trim();
+  const notas = esDonacion
+    ? notasBase
+      ? `${notasBase} · Donación`
+      : 'Donación'
+    : notasBase;
 
   const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
     origen: 'pedido',
@@ -202,7 +182,8 @@ export async function createSaleFromOrder(
     montoCobrado,
     saldoPendiente: Math.max(0, total - totalPagadoAnterior - montoCobrado),
     medioPago,
-    notas: options.notas ?? '',
+    notas,
+    esDonacion,
     fecha: timestamp,
     negocioId: businessId,
   });

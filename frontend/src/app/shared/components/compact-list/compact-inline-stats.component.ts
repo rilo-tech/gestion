@@ -22,6 +22,7 @@ export interface CompactInlineStat {
       [class.gap-x-2]="isCompact"
       [class.gap-y-0.5]="isCompact"
       [class.text-[10px]]="isCompact"
+      [class.sm:justify-end]="align === 'end'"
       role="list"
       [attr.aria-label]="ariaLabel">
       <div class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 min-w-0" [class.gap-x-2]="isCompact">
@@ -81,6 +82,8 @@ export class CompactInlineStatsComponent {
   @Input() centerCaption = '';
   /** `compact` reduce tipografía en celular (p. ej. resumen de Caja). */
   @Input() density: 'default' | 'compact' = 'default';
+  /** Alineación horizontal en variante strip (desktop). */
+  @Input() align: 'start' | 'end' = 'start';
 
   get isCompact(): boolean {
     return this.density === 'compact';

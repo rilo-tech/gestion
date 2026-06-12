@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
 
-export type DialogVariant = 'danger' | 'default';
+export type DialogVariant = 'danger' | 'default' | 'secondary';
 
 export interface ConfirmDialogOptions {
   title?: string;

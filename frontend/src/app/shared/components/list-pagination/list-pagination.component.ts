@@ -24,31 +24,31 @@ export function paginateSlice<T>(items: T[], page: number, pageSize: number): T[
   template: `
     <div
       *ngIf="showPagination"
-      class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50 text-sm">
+      class="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between px-3 sm:px-4 py-2 border-t border-gray-100 bg-gray-50 text-xs">
       <span class="text-gray-500 tabular-nums">{{ rangeLabel }}</span>
       <div class="flex items-center justify-end gap-1">
         <button
           type="button"
           (click)="goPrevious()"
           [disabled]="!canGoPrevious"
-          class="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label="Página anterior">
-          <i-lucide name="chevron-left" class="w-4 h-4 shrink-0"></i-lucide>
+          <i-lucide name="chevron-left" class="w-3.5 h-3.5 shrink-0"></i-lucide>
         </button>
-        <span class="min-w-[4.5rem] text-center text-gray-600 tabular-nums">{{ page }} / {{ totalPages }}</span>
+        <span class="min-w-[4rem] text-center text-gray-600 tabular-nums">{{ page }} / {{ totalPages }}</span>
         <button
           type="button"
           (click)="goNext()"
           [disabled]="!canGoNext"
-          class="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           [attr.aria-label]="canFetchMore && page >= totalPages ? 'Cargar más' : 'Página siguiente'">
           <i-lucide
             *ngIf="!loadingMore"
             name="chevron-right"
-            class="w-4 h-4 shrink-0"></i-lucide>
+            class="w-3.5 h-3.5 shrink-0"></i-lucide>
           <span
             *ngIf="loadingMore"
-            class="w-4 h-4 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin"
+            class="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-gray-600 animate-spin"
             aria-hidden="true"></span>
         </button>
       </div>

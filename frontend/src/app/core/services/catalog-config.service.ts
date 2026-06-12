@@ -33,11 +33,13 @@ import {
 } from '../constants/order-config';
 import {
   DEFAULT_CATEGORIAS_GASTO,
+  DEFAULT_CONCEPTOS_INGRESO,
   DEFAULT_MEDIOS_PAGO,
   enrichPurchasePago,
   findMedioPagoInConfig,
   findTarjetaInConfig,
   type CategoriaGastoConfig,
+  type ConceptoIngresoConfig,
   type MedioPagoComportamiento,
   type MedioPagoConfig,
   type PurchaseLineTipo,
@@ -48,6 +50,7 @@ import {
   medioPagoRequiereCuentaHija,
   normalizeMedioPagoLookupId,
   resolvePurchasePagoDisplayLabel,
+  normalizeConceptosIngreso,
   syncMedioPagoFlags,
 } from '../../../../../shared/finance-config.ts';
 import {
@@ -106,6 +109,7 @@ export { DEFAULT_STOCK_ORIGENES, DEFAULT_STOCK_TIPOS };
 
 export type {
   CategoriaGastoConfig,
+  ConceptoIngresoConfig,
   MedioPagoComportamiento,
   MedioPagoConfig,
   PurchaseLineTipo,
@@ -114,6 +118,7 @@ export type {
 };
 export {
   DEFAULT_CATEGORIAS_GASTO,
+  DEFAULT_CONCEPTOS_INGRESO,
   DEFAULT_MEDIOS_PAGO,
   enrichPurchasePago,
   findMedioPagoInConfig,
@@ -137,6 +142,7 @@ export type ConfigRemovalKind =
   | 'caja.origenes'
   | 'stock.origenes'
   | 'finanzas.categoriasGasto'
+  | 'finanzas.conceptosIngreso'
   | 'finanzas.mediosPago'
   | 'finanzas.tarjetas'
   | 'colaboradores.tiposExtra';
@@ -216,6 +222,11 @@ export interface AppConfig {
     costosExtraPredeterminados: OrderExtraCostPreset[];
     /** Si es true (default), pedidos y descuentos pueden dejar stock negativo. */
     permitirStockNegativo: boolean;
+    /** Permite adjuntar fotos de referencia en pedidos e imprimirlas. */
+    fotosReferenciaHabilitadas: boolean;
+    /** Elimina fotos de pedido más viejas que fotosRetencionDias (job diario). */
+    fotosEliminacionAutomatica: boolean;
+    fotosRetencionDias: number;
   };
   stock: {
     tipos: StockTipoMovimiento[];
@@ -225,6 +236,7 @@ export interface AppConfig {
     mediosPago: MedioPagoConfig[];
     tarjetas: TarjetaConfig[];
     categoriasGasto: CategoriaGastoConfig[];
+    conceptosIngreso: ConceptoIngresoConfig[];
   };
   colaboradores: {
     tiposExtra: CollaboratorExtraTipoConfig[];
@@ -278,6 +290,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     estadoDescuentaStock: 'en_produccion',
     costosExtraPredeterminados: [],
     permitirStockNegativo: true,
+    fotosReferenciaHabilitadas: true,
+    fotosEliminacionAutomatica: false,
+    fotosRetencionDias: 30,
   },
   stock: {
     tipos: [...DEFAULT_STOCK_TIPOS],
@@ -287,6 +302,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     mediosPago: [...DEFAULT_MEDIOS_PAGO],
     tarjetas: [],
     categoriasGasto: [...DEFAULT_CATEGORIAS_GASTO],
+    conceptosIngreso: [...DEFAULT_CONCEPTOS_INGRESO],
   },
   colaboradores: {
     tiposExtra: DEFAULT_COLLABORATOR_EXTRA_TIPOS.map((item) => ({ ...item })),
@@ -365,6 +381,10 @@ export function usesOrderPrintLineCheckboxes(config: AppConfig): boolean {
   return config.pedidos?.impresionCasillasProductos === true;
 }
 
+export function usesOrderReferencePhotos(config: AppConfig): boolean {
+  return config.pedidos?.fotosReferenciaHabilitadas !== false;
+}
+
 export function getOrderPedidosSettings(config: AppConfig) {
   return normalizeOrderPedidosConfig(config.pedidos);
 }
@@ -377,7 +397,7 @@ export function usesCashConceptList(config: AppConfig): boolean {
   return config.caja?.modo?.conceptos === 'lista' && (config.caja?.conceptos?.length ?? 0) > 0;
 }
 
-/** Opciones de egreso definidas solo en Caja (legacy), sin depender del modo lista. */
+/** Opciones de egreso legacy en Caja (sin depender del modo lista). */
 function getLegacyCajaEgresoConceptNames(config: AppConfig): string[] {
   return (config.caja?.conceptos ?? [])
     .filter(
@@ -385,6 +405,18 @@ function getLegacyCajaEgresoConceptNames(config: AppConfig): string[] {
     )
     .map((concepto) => concepto.nombre.trim())
     .filter((nombre) => nombre.length > 0);
+}
+
+/** Ingresos legacy configurados antes en Caja. */
+function getLegacyCajaIngresoConceptNames(config: AppConfig): string[] {
+  return (config.caja?.conceptos ?? [])
+    .filter((concepto) => concepto.tipo === 'ingreso' || concepto.tipo === 'ambos')
+    .map((concepto) => concepto.nombre.trim())
+    .filter((nombre) => nombre.length > 0);
+}
+
+export function getConceptosIngreso(config: AppConfig): ConceptoIngresoConfig[] {
+  return config.finanzas?.conceptosIngreso ?? DEFAULT_CONCEPTOS_INGRESO;
 }
 
 export function findCategoriaGastoByLabel(
@@ -406,25 +438,25 @@ export function resolveCategoriaIdForCashConcept(
 }
 
 /**
- * Conceptos del popup de Caja: ingresos desde lista de Caja; egresos desde categorías de Finanzas
+ * Conceptos del popup de Caja: ingresos desde Finanzas; egresos desde categorías de Finanzas
  * más conceptos de egreso legacy en Caja.
  */
 export function getCashMovementConceptOptions(
   config: AppConfig,
   movementTipo: 'ingreso' | 'egreso'
 ): string[] {
-  if (movementTipo === 'egreso') {
+  if (movementTipo === 'ingreso') {
     const seen = new Set<string>();
     const merged: string[] = [];
-    for (const cat of getCategoriasGasto(config)) {
-      const label = cat.label.trim();
+    for (const concepto of getConceptosIngreso(config)) {
+      const label = concepto.label.trim();
       if (!label) continue;
       const key = label.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
       merged.push(label);
     }
-    for (const nombre of getLegacyCajaEgresoConceptNames(config)) {
+    for (const nombre of getLegacyCajaIngresoConceptNames(config)) {
       const key = nombre.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -432,7 +464,24 @@ export function getCashMovementConceptOptions(
     }
     return merged.sort((a, b) => a.localeCompare(b, 'es'));
   }
-  return getCashConceptOptions(config, 'ingreso');
+
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const cat of getCategoriasGasto(config)) {
+    const label = cat.label.trim();
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(label);
+  }
+  for (const nombre of getLegacyCajaEgresoConceptNames(config)) {
+    const key = nombre.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(nombre);
+  }
+  return merged.sort((a, b) => a.localeCompare(b, 'es'));
 }
 
 export function usesCashMovementConceptPicker(
@@ -515,6 +564,22 @@ export function getTarjetasForMedio(config: AppConfig, medioPagoId: string): Tar
   );
 }
 
+/** Firma de medios y cuentas de pago para detectar cambios en selectores de compras/gastos. */
+export function buildFinanzasPagoConfigKey(config: AppConfig): string {
+  const medios = config.finanzas?.mediosPago ?? [];
+  const tarjetas = config.finanzas?.tarjetas ?? [];
+  const medioPart = medios
+    .map(
+      (medio) =>
+        `${medio.id}:${medio.activo === false ? 0 : 1}:${medio.generaEgresoCaja ? 1 : 0}:${medio.generaCuentasPagar ? 1 : 0}:${medio.requiereCuentaHija ? 1 : 0}`
+    )
+    .join('|');
+  const tarjetaPart = tarjetas
+    .map((tarjeta) => `${tarjeta.id}:${tarjeta.medioPagoId}:${tarjeta.activa === false ? 0 : 1}`)
+    .join('|');
+  return `${medioPart}\u0001${tarjetaPart}`;
+}
+
 export function getCashConceptOptions(
   config: AppConfig,
   movementTipo: 'ingreso' | 'egreso'
@@ -577,7 +642,7 @@ export class CatalogConfigService {
   getAppConfig(): Observable<AppConfig> {
     return this.http
       .get<AppConfig>(`/api/config/${this.businessId}`)
-      .pipe(tap((config) => this.appConfigSubject.next(config)));
+      .pipe(tap((config) => this.publishAppConfig(config)));
   }
 
   updateAppConfig(
@@ -602,7 +667,17 @@ export class CatalogConfigService {
     };
     return this.http
       .patch<AppConfig>(`/api/config/${this.businessId}`, body)
-      .pipe(tap((config) => this.appConfigSubject.next(config)));
+      .pipe(tap((config) => this.publishAppConfig(config)));
+  }
+
+  private publishAppConfig(config: AppConfig): void {
+    this.appConfigSubject.next(config);
+    const businessId = this.businessId;
+    if (!businessId) return;
+    this.configLoadCache.set(
+      businessId,
+      of(structuredClone(config)).pipe(shareReplay({ bufferSize: 1, refCount: false }))
+    );
   }
 
   checkConfigUsage(
@@ -641,6 +716,10 @@ export class CatalogConfigService {
 
   usesOrderPrintLineCheckboxes(config: AppConfig = this.appConfigSubject.value): boolean {
     return usesOrderPrintLineCheckboxes(config);
+  }
+
+  usesOrderReferencePhotos(config: AppConfig = this.appConfigSubject.value): boolean {
+    return usesOrderReferencePhotos(config);
   }
 
   orderUsesReservedStock(config: AppConfig = this.appConfigSubject.value): boolean {

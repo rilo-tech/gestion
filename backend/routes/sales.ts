@@ -10,6 +10,7 @@ import { logActivityFromRequest } from '../utils/activity-log.ts';
 import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
 import {
   calculateSaleCostFromItems,
+  isDonationSale,
   isSaleProfitRecognizedInMonth,
   resolveSaleCostoReal,
   resolveSaleGananciaEstimada,
@@ -24,6 +25,10 @@ import {
   consumeOrderStockOnDelivery,
   orderHasPendingPhysicalStock,
 } from '../utils/order-stock-reservations.ts';
+import {
+  normalizeLineExtraCosts,
+  sumLineExtraCosts,
+} from '../utils/line-extra-costs.ts';
 import {
   comprobanteStockDireccion,
   esNotaCredito,
@@ -184,41 +189,16 @@ function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   return clean;
 }
 
-function normalizeSaleLineExtraCosts(
-  raw: unknown,
-  legacyPersonalizacion?: number
-): SaleLineExtraCost[] {
-  if (Array.isArray(raw)) {
-    return raw
-      .map((entry) => {
-        if (!entry || typeof entry !== 'object') return null;
-        const data = entry as Record<string, unknown>;
-        const nombre = String(data.nombre ?? '').trim();
-        const costo = Number(data.costo) || 0;
-        if (!nombre && costo <= 0) return null;
-        return { nombre: nombre || 'Costo extra', costo };
-      })
-      .filter((entry): entry is SaleLineExtraCost => entry !== null);
-  }
-
-  const legacy = Number(legacyPersonalizacion) || 0;
-  return legacy > 0 ? [{ nombre: 'Personalización', costo: legacy }] : [];
-}
-
 function sumLinePersonalizationCost(line: {
   costosExtra?: SaleLineExtraCost[];
   costoPersonalizacion?: number;
   cantidad?: number;
 }): number {
-  const fromList = (line.costosExtra ?? []).reduce(
-    (acc, extra) => acc + (Number(extra.costo) || 0),
-    0
+  return sumLineExtraCosts(
+    Number(line.cantidad) || 0,
+    line.costosExtra,
+    line.costoPersonalizacion
   );
-  if (fromList > 0) {
-    const qty = Math.max(0, Number(line.cantidad) || 0);
-    return qty * fromList;
-  }
-  return Number(line.costoPersonalizacion) || 0;
 }
 
 function calculateSaleCost(items: SaleLine[]): number {
@@ -228,7 +208,11 @@ function calculateSaleCost(items: SaleLine[]): number {
 function buildSaleLineFromOrderLine(line: OrderLine): SaleLine {
   const cantidad = Number(line.cantidad) || 0;
   const precioUnitario = Number(line.precioVenta) || 0;
-  const costosExtra = normalizeSaleLineExtraCosts(line.costosExtra, line.costoPersonalizacion);
+  const costosExtra = normalizeLineExtraCosts(
+    line.costosExtra,
+    line.costoPersonalizacion,
+    cantidad
+  );
   const costoPersonalizacion = sumLinePersonalizationCost({
     costosExtra,
     costoPersonalizacion: line.costoPersonalizacion,
@@ -794,7 +778,11 @@ async function buildMostradorItemsFromBody(
     const itemData = itemSnap.data() ?? {};
     const subtotal = line.cantidad * line.precioUnitario;
     total += subtotal;
-    const costosExtra = normalizeSaleLineExtraCosts(line.costosExtra, line.costoPersonalizacion);
+    const costosExtra = normalizeLineExtraCosts(
+    line.costosExtra,
+    line.costoPersonalizacion,
+    cantidad
+  );
     const costoPersonalizacion = sumLinePersonalizationCost({
       costosExtra,
       costoPersonalizacion: line.costoPersonalizacion,
@@ -920,6 +908,8 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
     }
 
     let totalGanancia = 0;
+    let donacionesCount = 0;
+    let donacionesCosto = 0;
     for (const doc of allSalesSnapshot.docs) {
       const data = doc.data();
       if (String(data.estado ?? '') === 'borrador') continue;
@@ -929,6 +919,12 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
       if (!isSaleProfitRecognizedInMonth(data, mes, anio, order)) continue;
 
       totalGanancia += resolveSaleGananciaEstimada(data);
+
+      if (isDonationSale(data)) {
+        donacionesCount += 1;
+        const items = (Array.isArray(data.items) ? data.items : []) as SaleLine[];
+        donacionesCosto += resolveSaleCostoReal(data, items);
+      }
     }
 
     let bonificacionOfertas = 0;
@@ -954,6 +950,8 @@ router.get('/:businessId/monthly-summary', async (req, res) => {
       totalCosto: Math.round(totalCosto),
       totalGanancia: Math.round(totalGanancia),
       bonificacionOfertas: Math.round(bonificacionOfertas),
+      donacionesCount,
+      donacionesCosto: Math.round(donacionesCosto),
     });
   } catch (error) {
     console.error('Error fetching monthly sales summary:', error);
@@ -1376,6 +1374,7 @@ router.post('/:businessId', async (req, res) => {
 
     const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
 
+    const esDonacion = total === 0;
     const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
       origen: 'mostrador',
       pedidoId: null,
@@ -1392,7 +1391,8 @@ router.post('/:businessId', async (req, res) => {
       montoCobrado,
       saldoPendiente: Math.max(0, total - montoCobrado),
       medioPago,
-      notas,
+      notas: esDonacion ? (notas?.trim() ? `${notas.trim()} · Donación` : 'Donación') : notas,
+      esDonacion,
       fecha: timestamp,
       negocioId: businessId,
     });

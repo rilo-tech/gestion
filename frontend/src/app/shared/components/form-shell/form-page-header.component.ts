@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBackButtonComponent } from './form-back-button.component';
+import { FormScreenHeaderComponent } from './form-screen-header.component';
 
 /**
  * Encabezado estándar de formularios: título, subtítulo opcional y botón volver.
@@ -8,32 +8,22 @@ import { FormBackButtonComponent } from './form-back-button.component';
 @Component({
   selector: 'app-form-page-header',
   standalone: true,
-  imports: [CommonModule, FormBackButtonComponent],
+  imports: [CommonModule, FormScreenHeaderComponent],
   template: `
-    <div class="mb-6 sm:mb-8 flex flex-col gap-3 sm:gap-4">
-      <div class="flex items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight">{{ title }}</h1>
-          <p
-            *ngIf="subtitle"
-            class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mt-1"
-            [class.desc-lg-only]="hideSubtitleOnMobile">
-            {{ subtitle }}
-          </p>
-          <ng-content select="[headerExtra]"></ng-content>
-        </div>
-        <app-form-back-button
-          [label]="backLabel"
-          [shortLabel]="backShortLabel"
-          [ariaLabel]="backAriaLabel"
-          [routerLink]="backRouterLink"
-          (clicked)="backClick.emit()">
-        </app-form-back-button>
-      </div>
-      <div *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2">
-        <ng-content select="[headerActions]"></ng-content>
-      </div>
-    </div>
+    <app-form-screen-header
+      [title]="title"
+      [subtitle]="subtitle"
+      [backLabel]="backLabel"
+      [backShortLabel]="backShortLabel"
+      [backAriaLabel]="backAriaLabel"
+      [backRouterLink]="backRouterLink"
+      [hideSubtitleOnMobile]="hideSubtitleOnMobile"
+      [hasHeaderActions]="hasHeaderActions"
+      [hasHeaderExtra]="hasHeaderExtra"
+      (backClick)="backClick.emit()">
+      <ng-content select="[headerExtra]" headerExtra></ng-content>
+      <ng-content select="[headerActions]" headerActions></ng-content>
+    </app-form-screen-header>
   `,
 })
 export class FormPageHeaderComponent {
@@ -45,6 +35,7 @@ export class FormPageHeaderComponent {
   @Input() backRouterLink: string | readonly unknown[] | null = null;
   @Input() hideSubtitleOnMobile = true;
   @Input() hasHeaderActions = false;
+  @Input() hasHeaderExtra = false;
 
   @Output() backClick = new EventEmitter<void>();
 }

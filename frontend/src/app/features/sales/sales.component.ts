@@ -174,7 +174,8 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             <div compactSubtitle class="compact-list-subtitle truncate">
               <ng-container *ngIf="sale.origen === 'pedido'">Pedido #{{ sale.numeroPedidoLabel || '—' }}</ng-container>
               <ng-container *ngIf="sale.origen !== 'pedido'">Mostrador</ng-container>
-              <ng-container *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0">
+              <ng-container *ngIf="isDonationSale(sale)"> · Donación</ng-container>
+              <ng-container *ngIf="auth.canViewEconomics && shouldShowSaleProfit(sale)">
                 · Gan. {{ formatMoney(sale.gananciaEstimada || 0) }}
               </ng-container>
             </div>
@@ -202,7 +203,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
           </p>
         </div>
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
-        <table [class]="nativeCompactTableClass + ' sm:min-w-[720px]'">
+        <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
           <thead>
             <tr class="bg-gray-50 border-b border-gray-100">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
@@ -211,7 +212,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Origen</th>
               <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Total</th>
               <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right">Cobrado / Saldo</th>
-              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Acciones</th>
+              <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
@@ -249,9 +250,9 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               </td>
               <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-6 py-4 text-sm font-semibold text-right tabular-nums text-gray-900">
                 {{ formatMoney(sale.total || 0) }}
-                <div *ngIf="auth.canViewEconomics && sale.costoReal != null && sale.costoReal > 0" class="text-xs font-normal text-gray-400 mt-0.5">
-                  Costo {{ formatMoney(sale.costoReal) }}
-                  · Gan. {{ formatMoney(sale.gananciaEstimada || 0) }}
+                <div *ngIf="isDonationSale(sale)" class="text-xs font-normal text-amber-600 mt-0.5">Donación</div>
+                <div *ngIf="auth.canViewEconomics && shouldShowSaleProfit(sale)" class="text-xs font-normal text-gray-400 mt-0.5">
+                  Gan. {{ formatMoney(sale.gananciaEstimada || 0) }}
                 </div>
               </td>
               <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-sm text-right tabular-nums">
@@ -576,9 +577,9 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             [value]="formatMoney(sale.saldoPendiente || 0)"
             [valueTone]="(sale.saldoPendiente || 0) > 0 ? 'orange' : 'default'"></app-transaction-summary-row>
           <app-transaction-summary-row
-            *ngIf="auth.canViewEconomics && sale.costoReal != null"
-            label="Costo · Ganancia"
-            [value]="formatMoney(sale.costoReal) + ' · ' + formatMoney(sale.gananciaEstimada || 0)"
+            *ngIf="auth.canViewEconomics && shouldShowSaleProfit(sale)"
+            label="Ganancia"
+            [value]="formatMoney(sale.gananciaEstimada || 0)"
             [divider]="true"
             size="sm"></app-transaction-summary-row>
         </div>
@@ -599,6 +600,15 @@ export class SalesComponent implements OnInit {
   readonly formSubmitClass = FORM_SUBMIT_CLASS;
 
   formatSaleLabel = formatSaleLabel;
+
+  isDonationSale(sale: Pick<Sale, 'esDonacion' | 'total'>): boolean {
+    return !!sale.esDonacion || (Number(sale.total) || 0) === 0;
+  }
+
+  shouldShowSaleProfit(sale: Pick<Sale, 'costoReal' | 'esDonacion' | 'total'>): boolean {
+    if (this.isDonationSale(sale)) return sale.costoReal != null;
+    return sale.costoReal != null && sale.costoReal > 0;
+  }
 
   private salesService = inject(SalesService);
   private clientService = inject(ClientService);
@@ -787,21 +797,6 @@ export class SalesComponent implements OnInit {
         this.tryRestoreSalesFormDraft(params.get('clienteId'));
         this.clearSalesQueryParam('restoreDraft');
         this.clearSalesQueryParam('clienteId');
-        return;
-      }
-
-      const pedidoId = params.get('pedidoId');
-      if (pedidoId) {
-        if (!this.auth.canCreateSales) {
-          this.dialogService.alert({
-            title: 'Sin acceso',
-            message: 'No tenés permiso para registrar ventas.',
-          });
-          this.clearSalesQueryParam('pedidoId');
-          return;
-        }
-        this.openSaleModal('pedido', pedidoId);
-        this.clearSalesQueryParam('pedidoId');
         return;
       }
 

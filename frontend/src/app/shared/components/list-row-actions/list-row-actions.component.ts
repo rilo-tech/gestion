@@ -7,8 +7,16 @@ import { IconToolbarButtonComponent } from '../icon-toolbar/icon-toolbar-button.
   selector: 'app-list-row-actions',
   standalone: true,
   imports: [CommonModule, LucideAngularModule, IconToolbarButtonComponent],
+  host: {
+    '[class.inline-flex]': 'alignStart',
+    '[class.shrink-0]': 'alignStart',
+    '[class.max-w-full]': 'alignStart',
+  },
   template: `
-    <div class="flex items-center justify-end gap-1">
+    <div
+      class="flex items-center gap-1"
+      [class.justify-start]="alignStart"
+      [class.justify-end]="!alignStart">
       <ng-content select="[rowActionStart]"></ng-content>
 
       <app-icon-toolbar-button
@@ -53,45 +61,37 @@ import { IconToolbarButtonComponent } from '../icon-toolbar/icon-toolbar-button.
         (clicked)="onDelete($event)">
       </app-icon-toolbar-button>
 
-      <app-icon-toolbar-button
-        *ngIf="showRegisterSale"
-        icon="truck"
-        [label]="registerSaleLabel"
-        variant="ghost-teal"
-        size="row"
-        [disabled]="registerSaleDisabled"
-        (clicked)="onRegisterSale($event)">
-      </app-icon-toolbar-button>
-
       <ng-content></ng-content>
     </div>
   `,
 })
 export class ListRowActionsComponent {
+  @Input() align: 'start' | 'end' = 'end';
+
   @Input() showEdit = true;
   @Input() showDelete = false;
   @Input() showDuplicate = false;
   @Input() showPrint = false;
-  @Input() showRegisterSale = false;
   @Input() editLabel = 'Editar';
   @Input() editIcon = 'pencil';
   @Input() deleteLabel = 'Eliminar';
   @Input() duplicateLabel = 'Duplicar';
   @Input() printLabel = 'Imprimir';
-  @Input() registerSaleLabel = 'Registrar venta / entrega';
   @Input() editDisabled = false;
   @Input() deleteDisabled = false;
   @Input() deleteLoading = false;
   @Input() duplicateDisabled = false;
   @Input() printDisabled = false;
   @Input() printLoading = false;
-  @Input() registerSaleDisabled = false;
 
   @Output() editClick = new EventEmitter<Event>();
   @Output() deleteClick = new EventEmitter<Event>();
   @Output() duplicateClick = new EventEmitter<Event>();
   @Output() printClick = new EventEmitter<Event>();
-  @Output() registerSaleClick = new EventEmitter<Event>();
+
+  get alignStart(): boolean {
+    return this.align === 'start';
+  }
 
   onEdit(event: Event) {
     event.stopPropagation();
@@ -111,10 +111,5 @@ export class ListRowActionsComponent {
   onPrint(event: Event) {
     event.stopPropagation();
     this.printClick.emit(event);
-  }
-
-  onRegisterSale(event: Event) {
-    event.stopPropagation();
-    this.registerSaleClick.emit(event);
   }
 }

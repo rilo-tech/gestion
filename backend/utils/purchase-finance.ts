@@ -424,11 +424,55 @@ function purchasePaymentKind(
   medioPagoId: string,
   finanzas: FinanzasConfig
 ): 'payables' | 'cash' | 'none' {
-  const medio = getMedioPagoById(finanzas.mediosPago, medioPagoId);
-  if (!medio) return 'none';
+  const medio = findMedioPagoInConfig(finanzas.mediosPago, medioPagoId);
+  if (!medio || medio.activo === false) return 'none';
   if (medioPagoGeneratesPayables(medio)) return 'payables';
   if (medioPagoGeneratesImmediateCash(medio)) return 'cash';
   return 'none';
+}
+
+function expectedPurchaseCuotaCount(input: ParsedPurchaseInput): number {
+  const cuotas = Math.min(Math.max(1, Math.round(input.pago.cuotas)), 120);
+  let total = 0;
+  for (const [, montoTotal] of totalsByAmbitoFromItems(input.items)) {
+    if (montoTotal !== 0) total += cuotas;
+  }
+  return total;
+}
+
+async function countPurchaseCuotas(businessId: string, compraId: string): Promise<number> {
+  const snap = await db
+    .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+    .where('compraId', '==', compraId)
+    .get();
+  return snap.size;
+}
+
+async function purchasePayablesNeedSync(
+  businessId: string,
+  compraId: string,
+  input: ParsedPurchaseInput,
+  finanzas: FinanzasConfig
+): Promise<boolean> {
+  if (purchasePaymentKind(input.pago.medioPagoId, finanzas) !== 'payables') return false;
+
+  const expected = expectedPurchaseCuotaCount(input);
+  if (expected === 0) return false;
+
+  const existing = await countPurchaseCuotas(businessId, compraId);
+  if (existing === 0) return true;
+  if (existing !== expected) return true;
+
+  const medio = findMedioPagoInConfig(finanzas.mediosPago, input.pago.medioPagoId);
+  if (!medioPagoRequiereCuentaHija(medio) || !input.pago.tarjetaId) return false;
+
+  const snap = await db
+    .collection(`negocios/${businessId}/cuentas_pagar_cuotas`)
+    .where('compraId', '==', compraId)
+    .limit(1)
+    .get();
+  const tarjetaId = String(snap.docs[0]?.data()?.tarjetaId ?? '').trim();
+  return !tarjetaId;
 }
 
 function stockLinesFromItems(items: ParsedPurchaseLine[]): ParsedPurchaseLine[] {
@@ -455,12 +499,24 @@ async function applyPayablesForPurchase(
   finanzas: FinanzasConfig,
   options?: { allowPaid?: boolean }
 ): Promise<void> {
-  const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId);
-  if (!medio || !medioPagoGeneratesPayables(medio)) return;
+  const medio = findMedioPagoInConfig(finanzas.mediosPago, input.pago.medioPagoId);
+  if (!medio || medio.activo === false) {
+    throw new Error('Medio de pago inválido o inactivo.');
+  }
+  if (!medioPagoGeneratesPayables(medio)) {
+    throw new Error('Este medio de pago no genera cuotas en Cuentas a pagar.');
+  }
 
   const tarjeta = input.pago.tarjetaId
-    ? getTarjetaById(finanzas.tarjetas, input.pago.tarjetaId)
+    ? findTarjetaInConfig(finanzas.tarjetas, input.pago.tarjetaId)
     : undefined;
+  if (medioPagoRequiereCuentaHija(medio) && !tarjeta) {
+    throw new Error('Seleccioná la cuenta para este medio de pago.');
+  }
+
+  const resolvedMedioPagoId = medio.id;
+  const resolvedTarjetaId = tarjeta?.id ?? input.pago.tarjetaId ?? '';
+  const resolvedTarjetaLabel = tarjeta?.label ?? input.pago.tarjetaLabel ?? input.proveedor;
 
   let created = 0;
   for (const [ambito, montoTotal] of totalsByAmbitoFromItems(input.items)) {
@@ -472,9 +528,9 @@ async function applyPayablesForPurchase(
         compraId,
         compraLabel,
         proveedor: input.proveedor,
-        tarjetaId: tarjeta?.id ?? input.pago.tarjetaId ?? '',
-        tarjetaLabel: tarjeta?.label ?? input.proveedor,
-        medioPagoId: input.pago.medioPagoId,
+        tarjetaId: resolvedTarjetaId,
+        tarjetaLabel: resolvedTarjetaLabel,
+        medioPagoId: resolvedMedioPagoId,
         ambito,
         montoTotal,
         cuotas: input.pago.cuotas,
@@ -504,8 +560,84 @@ async function ensurePurchasePayablesFromDocument(
 ): Promise<void> {
   if (esNotaCredito(input.tipoComprobante)) return;
   if (purchasePaymentKind(input.pago.medioPagoId, finanzas) !== 'payables') return;
-  if (await purchaseHasCuotasForCompra(businessId, compraId)) return;
-  await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas);
+  if (!(await purchasePayablesNeedSync(businessId, compraId, input, finanzas))) return;
+
+  const existing = await countPurchaseCuotas(businessId, compraId);
+  await applyPayablesForPurchase(businessId, compraId, compraLabel, input, finanzas, {
+    allowPaid: existing > 0,
+  });
+}
+
+/** Asegura cuotas en Cuentas a pagar al abrir o guardar una compra confirmada. */
+export async function ensurePurchasePayablesForCompraId(
+  businessId: string,
+  compraId: string
+): Promise<{ cuotasCount: number }> {
+  const ref = db.doc(`negocios/${businessId}/compras/${compraId}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new Error('PURCHASE_NOT_FOUND');
+  }
+  const existing = snap.data() ?? {};
+  if (isPurchaseDraft(existing)) {
+    return { cuotasCount: 0 };
+  }
+
+  const finanzas = await loadFinanzasConfig(businessId);
+  const parsed = await parsePurchaseInput(businessId, existing as Record<string, unknown>, {
+    skipSupplierLookup: true,
+    finanzas,
+  });
+  if (parsed.error || !parsed.input) {
+    return { cuotasCount: 0 };
+  }
+
+  const compraLabel = resolvePurchaseLabel({ ...existing, id: compraId });
+  await ensurePurchasePayablesFromDocument(
+    businessId,
+    compraId,
+    compraLabel,
+    parsed.input,
+    finanzas
+  );
+
+  return { cuotasCount: await countPurchaseCuotas(businessId, compraId) };
+}
+
+/** Repara compras confirmadas con medio en cuotas que no tienen cuotas generadas. */
+export async function syncMissingPurchasePayablesForBusiness(businessId: string): Promise<number> {
+  const finanzas = await loadFinanzasConfig(businessId);
+  const comprasSnap = await db.collection(`negocios/${businessId}/compras`).get();
+  let repaired = 0;
+
+  for (const doc of comprasSnap.docs) {
+    const existing = doc.data() ?? {};
+    if (isPurchaseDraft(existing)) continue;
+
+    const parsed = await parsePurchaseInput(businessId, existing as Record<string, unknown>, {
+      skipSupplierLookup: true,
+      finanzas,
+    });
+    if (parsed.error || !parsed.input) continue;
+    if (purchasePaymentKind(parsed.input.pago.medioPagoId, finanzas) !== 'payables') continue;
+    if (!(await purchasePayablesNeedSync(businessId, doc.id, parsed.input, finanzas))) continue;
+
+    const compraLabel = resolvePurchaseLabel({ ...existing, id: doc.id });
+    try {
+      await ensurePurchasePayablesFromDocument(
+        businessId,
+        doc.id,
+        compraLabel,
+        parsed.input,
+        finanzas
+      );
+      repaired += 1;
+    } catch (error) {
+      console.error(`No se pudieron generar cuotas para compra #${compraLabel}:`, error);
+    }
+  }
+
+  return repaired;
 }
 
 /** Regenera cuotas de Cuentas a pagar desde el documento de compra (si faltan). */
@@ -717,7 +849,10 @@ async function applyPurchaseSideEffects(
   options?: ApplyPurchaseSideEffectsOptions & { finanzas?: FinanzasConfig }
 ): Promise<void> {
   const finanzas = options?.finanzas ?? (await loadFinanzasConfig(businessId));
-  const medio = getMedioPagoById(finanzas.mediosPago, input.pago.medioPagoId)!;
+  const medio = findMedioPagoInConfig(finanzas.mediosPago, input.pago.medioPagoId);
+  if (!medio || medio.activo === false) {
+    throw new Error('Medio de pago inválido o inactivo.');
+  }
   const isNotaCredito = esNotaCredito(input.tipoComprobante);
 
   await applyPurchaseStockEntries(
@@ -1264,6 +1399,13 @@ export async function updateConfirmedPurchase(
         negocioId: businessId,
         updatedAt: new Date().toISOString(),
       })
+    );
+    await ensurePurchasePayablesFromDocument(
+      businessId,
+      compraId,
+      compraLabel,
+      input,
+      finanzas
     );
     return {
       id: compraId,
