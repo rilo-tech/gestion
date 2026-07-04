@@ -38,7 +38,6 @@ import { SearchableSelectComponent } from '../../shared/components/searchable-se
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   IconActionComponent,
-  DESKTOP_LIST_SEARCH_WRAP_CLASS,
   LIST_TABLE_ROW_CLASS,
   LIST_TOOLBAR_CONTROL_HEIGHT,
   PAGE_SHELL_CLASS,
@@ -68,7 +67,10 @@ import { FORM_CANCEL_CLASS } from '../../shared/components/icon-action/icon-acti
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import { ModulePageHeaderComponent } from '../../shared/components/module-page-header/module-page-header.component';
 import { LucideAngularModule } from 'lucide-angular';
-import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import {
+  LIST_SEARCH_INPUT_CLASS,
+  ListSearchFieldComponent,
+} from '../../shared/components/list-search-field/list-search-field.component';
 import {
   TransactionDateFieldComponent,
   TransactionSaveBannerComponent,
@@ -85,8 +87,16 @@ import {
 } from '../../core/utils/transaction-date';
 import { Subscription, finalize } from 'rxjs';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  buildCashReturnQueryParams,
+} from '../../core/utils/cash-return-context';
 import { sortCashMovementsByRecency } from '../../../../../shared/cash-movement-sort.ts';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 @Component({
   selector: 'app-cash',
@@ -163,9 +173,9 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               class="block sm:hidden"
               variant="strip"
               density="compact"
-              [items]="activeAmbitoKpiItems"
+              [items]="activeAmbitoKpiItemsCompact"
               [centerCaption]="kpiPeriodMonthLabel"
-              ariaLabel="Indicadores del mes y saldo acumulado">
+              ariaLabel="Indicadores del mes y saldo">
             </app-compact-inline-stats>
             <app-compact-inline-stats
               class="hidden sm:block"
@@ -185,9 +195,9 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           class="block sm:hidden"
           variant="strip"
           density="compact"
-          [items]="cashKpiItems"
+          [items]="cashKpiItemsCompact"
           [centerCaption]="kpiPeriodMonthLabel"
-          ariaLabel="Indicadores del mes y saldo acumulado">
+          ariaLabel="Indicadores del mes y saldo">
         </app-compact-inline-stats>
         <app-compact-inline-stats
           class="hidden sm:block"
@@ -199,9 +209,9 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       </div>
 
       <app-compact-data-list [showSearch]="true">
-        <div listSearch [class]="desktopListSearchWrapClass">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-            <div class="min-w-0 w-full sm:flex-1 sm:max-w-xl">
+        <div listSearch>
+          <div class="hidden sm:flex sm:items-center sm:gap-3 w-full min-w-0">
+            <div class="min-w-0 flex-1">
               <app-list-search-field
                 mode="filter"
                 [(query)]="searchQuery"
@@ -212,33 +222,23 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 extraClass="w-full">
               </app-list-search-field>
             </div>
-            <label
-              class="flex flex-col gap-0.5 shrink-0 min-w-[9.5rem]"
-              [class]="'hidden sm:flex ' + listToolbarControlHeight">
-              <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 leading-none">
-                Mes
-              </span>
-              <input
-                type="month"
-                [ngModel]="filterMonthInput"
-                (ngModelChange)="onFilterMonthChange($event)"
-                name="cashFilterMonth"
-                [disabled]="loading"
-                class="h-full min-h-0 px-2.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100" />
-            </label>
-          </div>
-          <label class="flex flex-col gap-0.5 sm:hidden mt-2">
-            <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-              Mes
-            </span>
             <input
               type="month"
               [ngModel]="filterMonthInput"
               (ngModelChange)="onFilterMonthChange($event)"
-              name="cashFilterMonthMobile"
+              name="cashFilterMonth"
               [disabled]="loading"
-              class="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-900 dark:border-gray-600 dark:text-gray-100" />
-          </label>
+              title="Filtrar por mes"
+              [class]="listMonthFilterClass" />
+          </div>
+          <input
+            type="month"
+            [ngModel]="filterMonthInput"
+            (ngModelChange)="onFilterMonthChange($event)"
+            name="cashFilterMonthMobile"
+            [disabled]="loading"
+            title="Filtrar por mes"
+            [class]="'sm:hidden w-full mt-2 ' + listSearchInputClass" />
         </div>
         <div listMobile [class]="'sm:hidden ' + nativeCompactListClass">
           <app-compact-list-row
@@ -300,8 +300,10 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                     [text]="getMovementConceptoDisplay(movement)"
                     [pedidoId]="movement.pedidoId"
                     [ventaId]="movement.ventaId"
+                    [compraId]="resolveMovementCompraId(movement)"
                     [numeroPedidoLabel]="getOrderNumberLabel(movement)"
-                    [ventaLabel]="movement.ventaLabel">
+                    [ventaLabel]="movement.ventaLabel"
+                    [compraLabel]="movement.compraLabel">
                   </app-concept-ref-links>
                 </div>
                 <div class="text-xs text-gray-400 mt-0.5 sm:hidden">
@@ -367,8 +369,8 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
         </app-list-pagination>
         <app-list-load-more
           listFooter
-          [hasMore]="false"
-          [loading]="loadingMoreMovements || loading"
+          [hasMore]="hasMoreMovements"
+          [loading]="loadingMoreMovements"
           label="Cargar más movimientos"
           loadingLabel="Cargando más..."
           (loadMoreClick)="loadMoreMovements()">
@@ -384,6 +386,24 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       [hideSubtitleOnMobile]="true"
       maxWidthClass="max-w-lg"
       (closed)="closeMovementModal()">
+      <div headerActions *ngIf="showMovementModalActions" class="inline-flex items-center gap-1 shrink-0">
+        <app-record-action-toolbar
+          activityModule="cash"
+          [activityEntityId]="editingMovementId"
+          [showEdit]="canEditFromDetail"
+          editLabel="Editar"
+          [editDisabled]="savingMovement"
+          (editClick)="enableMovementEditFromDetail()"
+          [showDuplicate]="canDuplicateInModal"
+          duplicateLabel="Duplicar"
+          [duplicateDisabled]="savingMovement"
+          (duplicateClick)="duplicateMovementInModal()"
+          [showDelete]="canDeleteInModal"
+          deleteLabel="Eliminar"
+          [deleteDisabled]="savingMovement"
+          (deleteClick)="confirmDeleteEditingMovement()">
+        </app-record-action-toolbar>
+      </div>
 
         <div class="space-y-2.5 sm:space-y-3">
           <app-transaction-save-banner [message]="movementSaveFeedback.successMessage"></app-transaction-save-banner>
@@ -399,8 +419,24 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               <label class="block text-xs font-medium text-gray-700 mb-0.5">
                 {{ movementTipo === 'egreso' ? 'Gasto / concepto' : 'Concepto' }}
               </label>
+              <div
+                *ngIf="movementViewOnly && editingMovement && hasMovementTransactionLink(editingMovement)"
+                class="w-full px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-900">
+                <app-concept-ref-links
+                  [text]="getMovementConceptoDisplay(editingMovement)"
+                  [pedidoId]="editingMovement.pedidoId"
+                  [ventaId]="editingMovement.ventaId"
+                  [compraId]="resolveMovementCompraId(editingMovement)"
+                  [numeroPedidoLabel]="getOrderNumberLabel(editingMovement)"
+                  [ventaLabel]="editingMovement.ventaLabel"
+                  [compraLabel]="editingMovement.compraLabel"
+                  [pedidoQueryParams]="cashTransactionReturnQueryParams"
+                  [ventaQueryParams]="cashTransactionReturnQueryParams"
+                  [compraQueryParams]="cashTransactionReturnQueryParams">
+                </app-concept-ref-links>
+              </div>
               <app-searchable-select
-                *ngIf="usesConceptList"
+                *ngIf="usesConceptList && !(movementViewOnly && editingMovement && hasMovementTransactionLink(editingMovement))"
                 [(ngModel)]="movementConcepto"
                 (ngModelChange)="onMovementConceptoChange($event)"
                 name="movementConcepto"
@@ -412,7 +448,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 [plainPlaceholder]="movementConceptPlainPlaceholder">
               </app-searchable-select>
               <input
-                *ngIf="!usesConceptList"
+                *ngIf="!usesConceptList && !(movementViewOnly && editingMovement && hasMovementTransactionLink(editingMovement))"
                 #movementConceptoText
                 [(ngModel)]="movementConcepto"
                 name="movementConceptoText"
@@ -561,20 +597,6 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             Al guardar, la ventana queda abierta para cargar otro movimiento.
           </p>
           <div class="flex items-center gap-2">
-            <app-record-action-toolbar
-              [showEdit]="canEditFromDetail"
-              editLabel="Editar"
-              [editDisabled]="savingMovement"
-              (editClick)="enableMovementEditFromDetail()"
-              [showDuplicate]="canDuplicateInModal"
-              duplicateLabel="Duplicar"
-              [duplicateDisabled]="savingMovement"
-              (duplicateClick)="duplicateMovementInModal()"
-              [showDelete]="canDeleteInModal"
-              deleteLabel="Eliminar"
-              [deleteDisabled]="savingMovement"
-              (deleteClick)="confirmDeleteEditingMovement()">
-            </app-record-action-toolbar>
             <div class="flex-1 min-w-0"></div>
             <button type="button" (click)="closeMovementModal()" [class]="formCancelClass + ' sm:inline-flex'">
               Cerrar
@@ -596,8 +618,10 @@ export class CashComponent implements OnInit, OnDestroy {
   private static readonly OPENING_BALANCE_CONCEPT = 'Saldo inicial de caja';
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
-  readonly listToolbarControlHeight = LIST_TOOLBAR_CONTROL_HEIGHT;
-  readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
+  readonly listSearchInputClass = LIST_SEARCH_INPUT_CLASS;
+  readonly listMonthFilterClass =
+    'box-border shrink-0 w-[10.5rem] px-2 sm:px-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 ' +
+    LIST_TOOLBAR_CONTROL_HEIGHT;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly listTableRowClass = LIST_TABLE_ROW_CLASS;
   readonly nativeCompactTableClass = NATIVE_COMPACT_TABLE_CLASS;
@@ -653,6 +677,8 @@ export class CashComponent implements OnInit, OnDestroy {
   hasMoreMovements = false;
   nextMovementsCursor: string | null = null;
   loadingMoreMovements = false;
+  private readonly listLoadSession = new ProgressiveListSession();
+  private pendingMovementIdFromQuery: string | null = null;
 
   ngOnInit() {
     bindListPageRefreshOnReturn({
@@ -679,6 +705,7 @@ export class CashComponent implements OnInit, OnDestroy {
       }
       this.monthFilterRange = parsed;
       this.movementsPage = 1;
+      this.pendingMovementIdFromQuery = params.get('movementId')?.trim() || null;
       this.loadCashSummary();
       this.reloadMovements();
     });
@@ -751,11 +778,27 @@ export class CashComponent implements OnInit, OnDestroy {
     ];
   }
 
+  get cashKpiItemsCompact(): CompactInlineStat[] {
+    return [
+      { label: 'Ing.', value: this.formatMoney(this.totalIngresos), tone: 'success' },
+      { label: 'Egr.', value: this.formatMoney(this.totalEgresos), tone: 'danger' },
+      { label: 'Saldo', value: this.formatMoney(this.saldoCaja), alignEnd: true },
+    ];
+  }
+
   get activeAmbitoKpiItems(): CompactInlineStat[] {
     return [
       { label: 'Ing.', value: this.formatMoney(this.activeAmbitoIngresos), tone: 'success' },
       { label: 'Egr.', value: this.formatMoney(this.activeAmbitoEgresos), tone: 'danger' },
       { label: 'Saldo acum.', value: this.formatMoney(this.activeAmbitoSaldo), alignEnd: true },
+    ];
+  }
+
+  get activeAmbitoKpiItemsCompact(): CompactInlineStat[] {
+    return [
+      { label: 'Ing.', value: this.formatMoney(this.activeAmbitoIngresos), tone: 'success' },
+      { label: 'Egr.', value: this.formatMoney(this.activeAmbitoEgresos), tone: 'danger' },
+      { label: 'Saldo', value: this.formatMoney(this.activeAmbitoSaldo), alignEnd: true },
     ];
   }
 
@@ -859,6 +902,10 @@ export class CashComponent implements OnInit, OnDestroy {
     return this.isManualMovement(movement) && isDeletableCashMovement(movement);
   }
 
+  get showMovementModalActions(): boolean {
+    return this.canEditFromDetail || this.canDuplicateInModal || this.canDeleteInModal;
+  }
+
   get movementModalPrimaryButtonClass(): string {
     const base =
       'form-btn-primary rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60';
@@ -917,7 +964,7 @@ export class CashComponent implements OnInit, OnDestroy {
     if (this.movementViewOnly) {
       const movement = this.editingMovement;
       if (movement && !this.isManualMovement(movement)) {
-        return 'Movimiento automático. Para cambiarlo, usá el enlace del pedido o venta en el concepto.';
+        return 'Movimiento automático. Para cambiarlo, usá el enlace del pedido, venta o compra en el concepto.';
       }
       return 'Tocá Editar para modificar o Eliminá si corresponde.';
     }
@@ -1045,6 +1092,55 @@ export class CashComponent implements OnInit, OnDestroy {
     return '—';
   }
 
+  get cashTransactionReturnQueryParams(): Record<string, string> | null {
+    const movement = this.editingMovement;
+    if (!movement?.id) return null;
+    const { mes, anio } = monthYearQueryParams(this.summaryPeriodRange);
+    return buildCashReturnQueryParams({
+      movementId: movement.id,
+      mes,
+      anio,
+    });
+  }
+
+  hasMovementTransactionLink(movement: CashMovement): boolean {
+    return !!(
+      movement.pedidoId ||
+      movement.ventaId ||
+      this.resolveMovementCompraId(movement)
+    );
+  }
+
+  resolveMovementCompraId(movement: CashMovement): string | null {
+    if (movement.compraId) return String(movement.compraId);
+    const tipo = String(movement.origenTipo ?? '');
+    if ((tipo === 'compra' || tipo.startsWith('compra')) && movement.origenId) {
+      return String(movement.origenId);
+    }
+    return null;
+  }
+
+  private tryOpenPendingMovementDetail() {
+    const movementId = this.pendingMovementIdFromQuery;
+    if (!movementId || this.loading) return;
+
+    const movement = this.movements.find((item) => item.id === movementId);
+    if (!movement) return;
+
+    this.pendingMovementIdFromQuery = null;
+    this.openMovementDetail(movement);
+    this.clearMovementQueryParam();
+  }
+
+  private clearMovementQueryParam() {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { movementId: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
   private resolveOrigenGrupo(movement: CashMovement): string {
     if (movement.origenGrupo) return movement.origenGrupo;
     const tipo = String(movement.origenTipo ?? '');
@@ -1140,11 +1236,15 @@ export class CashComponent implements OnInit, OnDestroy {
       return;
     }
 
-    this.cashService.getMovements().subscribe({
-      next: (allMovements) => {
-        const remote = this.findOpeningBalanceMovement(allMovements);
+    this.cashService.getMovementsPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE).subscribe({
+      next: (page) => {
+        const remote = this.findOpeningBalanceMovement(page.items);
         if (remote) {
           this.openEditMovement(remote);
+          return;
+        }
+        if (page.hasMore && page.nextCursor) {
+          this.searchOpeningBalanceAcrossPages(page.nextCursor);
           return;
         }
         this.openNewOpeningBalanceModal();
@@ -1310,6 +1410,10 @@ export class CashComponent implements OnInit, OnDestroy {
 
   onMovementRowClick(movement: CashMovement) {
     if (!movement.id) return;
+    if (this.auth.canEditRecords && this.isManualMovement(movement)) {
+      this.openEditMovement(movement);
+      return;
+    }
     this.openMovementDetail(movement);
   }
 
@@ -1446,6 +1550,11 @@ export class CashComponent implements OnInit, OnDestroy {
     if (movement.ventaId) {
       const ventaRef = movement.ventaLabel ? `#${movement.ventaLabel}` : movement.ventaId;
       lines.push(`• Venta vinculada: ${ventaRef}`);
+    }
+    const compraId = this.resolveMovementCompraId(movement);
+    if (compraId) {
+      const compraRef = movement.compraLabel ? `#${movement.compraLabel}` : compraId;
+      lines.push(`• Compra vinculada: ${compraRef}`);
     }
 
     return lines.join('\n');
@@ -1608,47 +1717,92 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   private reloadMovements(showLoading = true) {
-    this.loadAllMovements(showLoading);
-  }
-
-  private loadAllMovements(showLoading = true) {
-    if (showLoading) this.loading = true;
-    this.hasMoreMovements = false;
-    this.nextMovementsCursor = null;
-    this.cashService.getMovements().subscribe({
-      next: (items) => {
-        this.movements = sortCashMovementsByRecency(items);
-        if (showLoading) this.loading = false;
-      },
-      error: () => {
-        if (showLoading) this.loading = false;
-        if (showLoading) {
-          this.dialogService.alert({
-            title: 'Error',
-            message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
-          });
-        }
-      },
-    });
+    this.loadMovements(showLoading);
   }
 
   private loadMovements(showLoading = true) {
+    const loadToken = this.listLoadSession.next();
     if (showLoading) this.loading = true;
-    this.cashService.getMovementsPage(120).subscribe({
+    this.hasMoreMovements = false;
+    this.nextMovementsCursor = null;
+    this.loadingMoreMovements = false;
+    const { mes, anio } = monthYearQueryParams(this.summaryPeriodRange);
+    this.cashService
+      .getMovementsPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE, undefined, mes, anio)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.movements = sortCashMovementsByRecency(page.items);
+          this.hasMoreMovements = page.hasMore;
+          this.nextMovementsCursor = page.nextCursor;
+          if (showLoading) this.loading = false;
+          this.tryOpenPendingMovementDetail();
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingMovementsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          if (showLoading) this.loading = false;
+          if (showLoading) {
+            this.dialogService.alert({
+              title: 'Error',
+              message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
+            });
+          }
+        },
+      });
+  }
+
+  private loadRemainingMovementsInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.hasMoreMovements || !this.nextMovementsCursor || this.loadingMoreMovements) return;
+
+    this.loadingMoreMovements = true;
+    const { mes, anio } = monthYearQueryParams(this.summaryPeriodRange);
+    this.cashService
+      .getMovementsPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.nextMovementsCursor, mes, anio)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.movements = sortCashMovementsByRecency([
+            ...this.movements,
+            ...page.items,
+          ]);
+          this.hasMoreMovements = page.hasMore;
+          this.nextMovementsCursor = page.nextCursor;
+          this.loadingMoreMovements = false;
+          this.tryOpenPendingMovementDetail();
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingMovementsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.loadingMoreMovements = false;
+        },
+      });
+  }
+
+  private searchOpeningBalanceAcrossPages(cursor: string) {
+    this.cashService.getMovementsPage(this.movementsPageFetchSize, cursor).subscribe({
       next: (page) => {
-        this.movements = sortCashMovementsByRecency(page.items);
-        this.hasMoreMovements = page.hasMore;
-        this.nextMovementsCursor = page.nextCursor;
-        if (showLoading) this.loading = false;
+        const remote = this.findOpeningBalanceMovement(page.items);
+        if (remote) {
+          this.openEditMovement(remote);
+          return;
+        }
+        if (page.hasMore && page.nextCursor) {
+          this.searchOpeningBalanceAcrossPages(page.nextCursor);
+          return;
+        }
+        this.openNewOpeningBalanceModal();
       },
       error: () => {
-        if (showLoading) this.loading = false;
-        if (showLoading) {
-          this.dialogService.alert({
-            title: 'Error',
-            message: 'No se pudieron cargar los movimientos de caja desde el servidor.',
-          });
-        }
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo buscar el saldo inicial. Intentá de nuevo.',
+        });
       },
     });
   }
@@ -1737,7 +1891,10 @@ export class CashComponent implements OnInit, OnDestroy {
   loadMoreMovements() {
     if (!this.hasMoreMovements || !this.nextMovementsCursor || this.loadingMoreMovements) return;
     this.loadingMoreMovements = true;
-    this.cashService.getMovementsPage(120, this.nextMovementsCursor).subscribe({
+    const { mes, anio } = monthYearQueryParams(this.summaryPeriodRange);
+    this.cashService
+      .getMovementsPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.nextMovementsCursor, mes, anio)
+      .subscribe({
       next: (page) => {
         this.movements = sortCashMovementsByRecency([
           ...this.movements,

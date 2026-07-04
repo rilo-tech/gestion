@@ -527,23 +527,48 @@ html.dark .disabled\:text-gray-500:disabled {
     min-height: 2.75rem;
   }
 
-  app-transaction-modal .form-actions .form-btn-secondary,
-  app-transaction-form-page .form-actions .form-btn-secondary {
+  app-transaction-modal .form-actions [data-footer-action='cancel'],
+  app-transaction-form-page .form-actions [data-footer-action='cancel'] {
     display: none;
   }
 
   .form-actions > .flex,
-  .form-actions .flex.justify-end {
+  .form-actions .flex.justify-end,
+  .form-actions .form-footer-primary-actions {
     flex-direction: column;
     width: 100%;
     gap: 0.625rem !important;
+  }
+
+  app-transaction-form-page .form-actions .form-footer-primary-actions {
+    display: flex;
+  }
+
+  app-transaction-form-page .form-actions [data-footer-action='primary'] {
+    order: 1;
+  }
+
+  app-transaction-form-page .form-actions [data-footer-action='secondary'] {
+    order: 2;
+  }
+
+  app-transaction-form-page .form-actions [data-footer-action='primary'],
+  app-transaction-form-page .form-actions [data-footer-action='secondary'],
+  app-transaction-form-page .form-actions .form-btn-draft {
+    width: 100%;
+    min-height: 2.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 600;
+    border-radius: 0.75rem;
   }
 
   .form-actions button[type='submit'],
   .form-actions .form-btn-primary {
     width: 100%;
     min-height: 2.75rem;
-    font-size: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
     font-weight: 600;
     border-radius: 0.75rem;
   }
@@ -552,7 +577,9 @@ html.dark .disabled\:text-gray-500:disabled {
   .form-actions .form-btn-secondary {
     width: 100%;
     min-height: 2.75rem;
-    font-size: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 600;
     border-radius: 0.75rem;
   }
 
@@ -634,6 +661,31 @@ html.dark select.order-status-select option,
 html.dark .order-status-select option {
   background-color: rgb(17 24 39);
   color: rgb(243 244 246);
+}
+
+/* Formularios de transacción: tipografía más compacta en celular */
+@media (max-width: 639px) {
+  .transaction-form-page-shell {
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+  }
+
+  .transaction-form-page-shell .text-sm {
+    font-size: 0.75rem;
+    line-height: 1.125rem;
+  }
+
+  .transaction-form-page-shell input:not([type='checkbox']):not([type='radio']):not([type='file']),
+  .transaction-form-page-shell select,
+  .transaction-form-page-shell textarea {
+    font-size: 0.75rem;
+    line-height: 1.125rem;
+  }
+
+  .transaction-form-page-shell label {
+    font-size: 0.75rem;
+    line-height: 1.125rem;
+  }
 }
 
 .order-status-select {
@@ -840,8 +892,12 @@ html.dark .form-label {
 
 /* KPIs / cuadros de resumen: ocultos en celular para ganar espacio */
 @media (max-width: 639px) {
-  .module-summary-kpis {
+  .module-summary-kpis:not(.module-summary-kpis--always-visible) {
     display: none !important;
+  }
+
+  .module-summary-kpis.module-summary-kpis--always-visible {
+    display: grid !important;
   }
 }
 
@@ -933,6 +989,58 @@ html.dark .form-label {
     width: auto !important;
     justify-content: flex-end !important;
     flex-wrap: nowrap;
+  }
+
+  table.order-lines-table {
+    /*
+     * Anchos de columna: NO se definen aquí en %.
+     * Fuente de verdad:
+     *   1) ORDER_FORM_COLUMN_WEIGHTS en transaction-lines-table.types.ts
+     *   2) <colgroup> en transaction-lines-table.component (columnColPercent)
+     *   3) resizable-table.ts escribe col.style.width en cada <col> al cargar
+     *
+     * Reparto actual (pesos 69 / 7 / 7 / 7 / 7 / 3 → % equivalente):
+     *   Producto 69%, Cant 7%, Costo 7%, Pers 7%, Venta 7%, cruz 3%
+     *
+     * Si arrastrás una columna, se guarda en localStorage (px) con versión
+     * ORDER_LINES_LAYOUT_VERSION; al cambiar pesos en código, subir esa versión.
+     */
+    table-layout: fixed;
+  }
+
+  table.order-lines-table th,
+  table.order-lines-table td {
+    overflow: hidden;
+  }
+
+  table.order-lines-table th:first-child,
+  table.order-lines-table td:first-child {
+    overflow: hidden;
+  }
+
+  table.order-lines-table th.order-lines-num-col,
+  table.order-lines-table td.order-lines-num-col {
+    white-space: nowrap;
+  }
+
+  table.order-lines-table th.order-lines-actions-col,
+  table.order-lines-table td.order-lines-actions-col {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  table.order-lines-table input[type='text'] {
+    max-width: 4.25rem;
+  }
+}
+
+app-transaction-summary-panel.order-economic-summary h2 {
+  margin-bottom: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  app-transaction-summary-panel.order-economic-summary h2 {
+    font-size: 0.9375rem;
   }
 }
 
@@ -1131,4 +1239,51 @@ table.module-data-table-layout td {
   html.dark .native-compact-list .compact-list-subtitle {
     color: rgb(156 163 175) !important;
   }
+}
+
+.barcode-scan-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(45 212 191 / 0.95), transparent);
+  box-shadow: 0 0 10px rgb(45 212 191 / 0.8);
+  animation: barcode-scan-sweep 2.2s ease-in-out infinite;
+}
+
+@keyframes barcode-scan-sweep {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translateY(calc(100% - 2px));
+    opacity: 1;
+  }
+}
+
+.barcode-scanner-host {
+  min-height: 100%;
+}
+
+.barcode-scanner-host video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.barcode-scanner-host img,
+.barcode-scanner-host canvas {
+  display: none !important;
+}
+
+.barcode-scanner-host #qr-shaded-region {
+  border-width: 28px !important;
+}
+
+.barcode-scanner-host #qr-shaded-region div {
+  border-color: rgb(45 212 191 / 0.95) !important;
 }

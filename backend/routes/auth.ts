@@ -133,6 +133,8 @@ router.post('/login', async (req, res) => {
     }
 
     const business = await toSessionBusinessInfo(businessId, businessRecord);
+    const { touchBusinessLogin } = await import('../auth/platform-trials.ts');
+    void touchBusinessLogin(businessId);
     res.json({
       ...companySessionResponse(toPublicUser(user), businessId),
       business,
@@ -215,6 +217,8 @@ router.post('/google', async (req, res) => {
     }
 
     const business = await toSessionBusinessInfo(businessId, businessRecord);
+    const { touchBusinessLogin } = await import('../auth/platform-trials.ts');
+    void touchBusinessLogin(businessId);
     res.json({
       ...companySessionResponse(toPublicUser(user), businessId),
       business,

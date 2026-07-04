@@ -69,7 +69,7 @@ import { Subscription, finalize } from 'rxjs';
 
       <p
         *ngIf="editingObligationId"
-        class="text-[11px] text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-900 rounded-lg px-3 py-1.5 leading-snug m-0">
+        class="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700/80 rounded-lg px-3 py-2 leading-snug m-0">
         Podés corregir nombre, monto o cuotas. Las ya pagadas conservan su estado; si cambiás el monto por cuota,
         se actualiza también el egreso en caja vinculado.
       </p>
@@ -222,6 +222,8 @@ import { Subscription, finalize } from 'rxjs';
           placeholder="Referencia, CBU, nº de factura..."
           [class]="fieldClass + ' resize-y min-h-[4.5rem]'"></textarea>
       </div>
+
+      <ng-content select="[formActions]"></ng-content>
 
       <app-form-footer
         *ngIf="showFooter"

@@ -4,6 +4,7 @@ const TABLE_BOUND_ATTR = 'data-resizable-table-bound';
 const TABLE_FITTED_ATTR = 'data-resizable-fitted';
 const TABLE_EXPANDED_ATTR = 'data-resizable-expanded';
 const SCROLL_EXPANDED_ATTR = 'data-table-scroll-expanded';
+const COL_LAYOUT_STORAGE_PREFIX = 'gestion.table-cols.';
 
 /** Tablas visibles en desktop de listados. */
 const TABLE_FIT_MIN_WIDTH = 640;
@@ -129,6 +130,75 @@ function readColumnWeight(header: HTMLTableCellElement): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getColLayoutId(table: HTMLTableElement): string | null {
+  const raw = table.getAttribute('data-col-layout-id')?.trim();
+  return raw || null;
+}
+
+function readLayoutVersion(table: HTMLTableElement): string | null {
+  const raw = table.getAttribute('data-col-layout-version')?.trim();
+  return raw || null;
+}
+
+function loadSavedColumnWidths(
+  layoutId: string,
+  count: number,
+  layoutVersion: string | null
+): number[] | null {
+  try {
+    const raw = localStorage.getItem(`${COL_LAYOUT_STORAGE_PREFIX}${layoutId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { v?: string; widths?: unknown } | unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const record = parsed as { v?: string; widths?: unknown };
+    if (layoutVersion && record.v !== layoutVersion) return null;
+    const widthsRaw = record.widths;
+    if (!Array.isArray(widthsRaw) || widthsRaw.length !== count) return null;
+    const widths = widthsRaw.map((value) => Math.round(Number(value)));
+    if (widths.some((width) => !Number.isFinite(width) || width < MIN_COL_WIDTH)) {
+      return null;
+    }
+    return widths;
+  } catch {
+    return null;
+  }
+}
+
+function saveColumnWidths(
+  layoutId: string,
+  layoutVersion: string | null,
+  cols: HTMLTableColElement[]
+): void {
+  try {
+    const widths = cols.map((col) => {
+      const styled = parseFloat(col.style.width);
+      if (Number.isFinite(styled) && col.style.width.includes('px')) {
+        return Math.max(MIN_COL_WIDTH, Math.round(styled));
+      }
+      return Math.max(MIN_COL_WIDTH, Math.round(col.getBoundingClientRect().width));
+    });
+    localStorage.setItem(
+      `${COL_LAYOUT_STORAGE_PREFIX}${layoutId}`,
+      JSON.stringify({ v: layoutVersion ?? '0', widths })
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function applySavedColumnWidths(
+  table: ResizableTableElement,
+  cols: HTMLTableColElement[],
+  widths: number[]
+): void {
+  cols.forEach((col, index) => {
+    col.style.width = `${widths[index]}px`;
+  });
+  table.removeAttribute(TABLE_FITTED_ATTR);
+  table.setAttribute(TABLE_EXPANDED_ATTR, '1');
+  syncExpandedTableWidth(table, cols);
+}
+
 function getDefaultColumnWeights(headers: HTMLTableCellElement[]): number[] {
   return headers.map((header, index) => {
     const customWeight = readColumnWeight(header);
@@ -153,13 +223,14 @@ function getDefaultColumnWeights(headers: HTMLTableCellElement[]): number[] {
 function getColumnWeights(
   table: HTMLTableElement,
   headers: HTMLTableCellElement[],
-  cols: HTMLTableColElement[]
+  cols: HTMLTableColElement[],
+  preferHeaderWeights = false
 ): number[] {
   const containerWidth = getTableContainerWidth(table) || table.offsetWidth || 1;
   const fromDefaults = getDefaultColumnWeights(headers);
   const hasStyledCols = cols.some((col) => col.style.width.trim());
 
-  if (!hasStyledCols) {
+  if (!hasStyledCols || preferHeaderWeights) {
     return fromDefaults;
   }
 
@@ -176,7 +247,8 @@ function getColumnWeights(
 function applyFittedColumnWidths(
   table: ResizableTableElement,
   headers: HTMLTableCellElement[],
-  cols: HTMLTableColElement[]
+  cols: HTMLTableColElement[],
+  preferHeaderWeights = false
 ): void {
   const containerWidth = getTableContainerWidth(table);
   if (containerWidth <= 0 || headers.length === 0) return;
@@ -188,7 +260,7 @@ function applyFittedColumnWidths(
 
   void table.offsetWidth;
 
-  const weights = getColumnWeights(table, headers, cols);
+  const weights = getColumnWeights(table, headers, cols, preferHeaderWeights);
   const total = weights.reduce((sum, weight) => sum + weight, 0) || headers.length;
 
   cols.forEach((col, index) => {
@@ -292,6 +364,11 @@ function attachResizeHandles(
         document.body.classList.remove('app-col-resizing');
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+        const layoutId = getColLayoutId(table);
+        const layoutVersion = readLayoutVersion(table);
+        if (layoutId) {
+          saveColumnWidths(layoutId, layoutVersion, cols);
+        }
         maybeCollapseExpandedTable(table, headers, cols);
       };
 
@@ -354,14 +431,24 @@ function bindResizableTable(table: ResizableTableElement): void {
   }
 
   const cols = ensureColgroup(table, headers.length);
-  const forceFitOnLoad = table.classList.contains('stock-products-table');
+  const layoutId = getColLayoutId(table);
+  const layoutVersion = readLayoutVersion(table);
+  const savedWidths = layoutId
+    ? loadSavedColumnWidths(layoutId, headers.length, layoutVersion)
+    : null;
+  const forceFitOnLoad =
+    table.classList.contains('stock-products-table') ||
+    table.classList.contains('order-lines-table');
+  const preferHeaderWeights = table.classList.contains('order-lines-table') && !savedWidths;
 
-  if (forceFitOnLoad) {
+  if (savedWidths) {
+    applySavedColumnWidths(table, cols, savedWidths);
+  } else if (forceFitOnLoad || preferHeaderWeights) {
     table.removeAttribute(TABLE_EXPANDED_ATTR);
     cols.forEach((col) => {
       col.style.width = '';
     });
-    applyFittedColumnWidths(table, headers, cols);
+    applyFittedColumnWidths(table, headers, cols, preferHeaderWeights);
   } else if (wasExpanded) {
     syncExpandedTableWidth(table, cols);
   } else {

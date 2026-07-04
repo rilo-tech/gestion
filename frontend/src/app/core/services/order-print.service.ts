@@ -1,7 +1,15 @@
 import { Injectable, inject } from '@angular/core';
-import { forkJoin } from 'rxjs';
+import { forkJoin, of, Observable } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
 import { Client } from './client.service';
-import { Order, OrderLineItem, formatOrderNumber, normalizeOrderForPrint } from './order.service';
+import {
+  Order,
+  OrderLineItem,
+  OrderService,
+  formatOrderNumber,
+  normalizeOrderForPrint,
+  orderLineItemsForPrint,
+} from './order.service';
 import { AuthService } from './auth.service';
 import { CatalogConfigService, type OrderPedidosConfigShape } from './catalog-config.service';
 import { getOrderStatusLabel } from '../constants/order-status';
@@ -120,7 +128,7 @@ function renderMetaStrip(order: Order, client: Client | null, clientName: string
 }
 
 function renderItemsTable(order: Order, options: OrderPrintOptions): string {
-  const lines = order.items ?? [];
+  const lines = orderLineItemsForPrint(order);
   if (lines.length === 0) {
     return '<p class="empty-note">Sin productos cargados.</p>';
   }
@@ -203,8 +211,9 @@ function renderBalanceFooter(order: Order, options: OrderPrintOptions): string {
   return `<div class="balance-footer">${señaRow}${saldoRow}${totalRow}</div>`;
 }
 
-function orderReferencePhotosEnabled(options?: OrderPrintOptions): boolean {
-  return options?.pedidos?.fotosReferenciaHabilitadas !== false;
+function orderReferencePhotosPrintEnabled(options?: OrderPrintOptions): boolean {
+  if (options?.pedidos?.fotosReferenciaHabilitadas === false) return false;
+  return options?.pedidos?.fotosReferenciaEnImpresion !== false;
 }
 
 function renderOrderPhotosSection(
@@ -214,7 +223,7 @@ function renderOrderPhotosSection(
   options: OrderPrintOptions,
   layout: 'full' | 'dual-right' = 'full'
 ): string {
-  if (!orderReferencePhotosEnabled(options)) return '';
+  if (!orderReferencePhotosPrintEnabled(options)) return '';
 
   const fotos = (order.fotos ?? []).filter((foto) => String(foto.url ?? '').trim());
   if (!fotos.length) return '';
@@ -712,6 +721,7 @@ function buildPrintStyles(): string {
     .description-box {
       flex: 1 1 auto;
       min-height: 48px;
+      margin-top: auto;
       display: flex;
       flex-direction: column;
     }
@@ -755,7 +765,6 @@ function buildPrintStyles(): string {
     .stock-note { color: #9a3412; font-weight: 600; }
     .empty-note { margin: 0; color: #6b7280; font-size: 11px; }
     .balance-footer {
-      margin-top: auto;
       flex-shrink: 0;
       display: grid;
       grid-template-columns: repeat(3, minmax(0, auto));
@@ -891,7 +900,7 @@ function buildPrintStyles(): string {
 function enrichOrdersForPrint(orders: Order[], stockById: Map<string, { stockActual: number; stockReservado?: number; controlaStock?: boolean }>): Order[] {
   return orders.map((order) => ({
     ...order,
-    items: (order.items ?? []).map((line) => {
+    items: orderLineItemsForPrint(order).map((line) => {
       if (line.stockDisponible !== undefined) return line;
       const stockItem = stockById.get(line.stockItemId);
       if (!stockItem) return line;
@@ -971,51 +980,89 @@ export class OrderPrintService {
   private auth = inject(AuthService);
   private catalogConfig = inject(CatalogConfigService);
   private stockService = inject(StockService);
+  private orderService = inject(OrderService);
 
   printOrders(orders: Order[], clientsById: Map<string, Client>): void {
     if (!orders.length || !this.auth.canPrintOrders) return;
 
-    forkJoin({
-      config: this.catalogConfig.getAppConfig(),
-      stock: this.stockService.getStock(),
-    }).subscribe({
-      next: ({ config, stock }) => {
-        const stockById = new Map(
-          stock.filter((item) => item.id).map((item) => [item.id!, item])
-        );
-        this.openPrintWithOptions(
-          enrichOrdersForPrint(
-            orders.map((order) => normalizeOrderForPrint(order)),
-            stockById
-          ),
-          clientsById,
-          {
-            companyName: this.auth.appBrandTitle,
-            showPrices: this.auth.canViewOrderSalePrice,
-            showBalance: this.auth.canViewAccountBalance,
-            dualCopy: this.catalogConfig.usesOrderPrintDualCopy(config),
-            landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(config),
-            lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(config),
-            pedidos: config.pedidos,
-          }
-        );
-      },
-      error: () => {
-        this.openPrintWithOptions(
-          orders.map((order) => normalizeOrderForPrint(order)),
-          clientsById,
-          {
-            companyName: this.auth.appBrandTitle,
-            showPrices: this.auth.canViewOrderSalePrice,
-            showBalance: this.auth.canViewAccountBalance,
-            dualCopy: this.catalogConfig.usesOrderPrintDualCopy(),
-            landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(),
-            lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(),
-            pedidos: this.catalogConfig.appConfig.pedidos,
-          }
-        );
+    this.ensureOrdersWithLineItems(orders).subscribe({
+      next: (resolvedOrders) => {
+        forkJoin({
+          config: this.catalogConfig.getAppConfig(),
+          stock: this.stockService.getStock().pipe(catchError(() => of([]))),
+        }).subscribe({
+          next: ({ config, stock }) => {
+            const stockList = Array.isArray(stock) ? stock : [];
+            const stockById = new Map(
+              stockList.filter((item) => item.id).map((item) => [item.id!, item])
+            );
+            this.openPrintWithOptions(
+              enrichOrdersForPrint(
+                resolvedOrders.map((order) => normalizeOrderForPrint(order)),
+                stockById
+              ),
+              clientsById,
+              {
+                companyName: this.auth.appBrandTitle,
+                showPrices: this.auth.canViewOrderSalePrice,
+                showBalance: this.auth.canViewAccountBalance,
+                dualCopy: this.catalogConfig.usesOrderPrintDualCopy(config),
+                landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(config),
+                lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(config),
+                pedidos: config.pedidos,
+              }
+            );
+          },
+          error: () => {
+            this.openPrintWithOptions(
+              resolvedOrders.map((order) => normalizeOrderForPrint(order)),
+              clientsById,
+              {
+                companyName: this.auth.appBrandTitle,
+                showPrices: this.auth.canViewOrderSalePrice,
+                showBalance: this.auth.canViewAccountBalance,
+                dualCopy: this.catalogConfig.usesOrderPrintDualCopy(),
+                landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(),
+                lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(),
+                pedidos: this.catalogConfig.appConfig.pedidos,
+              }
+            );
+          },
+        });
       },
     });
+  }
+
+  private ensureOrdersWithLineItems(orders: Order[]): Observable<Order[]> {
+    const prepared = orders.map((order) => ({
+      ...order,
+      items: orderLineItemsForPrint(order),
+    }));
+
+    const missing = prepared
+      .map((order, index) => ({ order, index }))
+      .filter(({ order }) => !order.items.length && !!order.id);
+
+    if (!missing.length) {
+      return of(prepared);
+    }
+
+    return forkJoin(
+      missing.map(({ order }) => this.orderService.getOrder(order.id!, { includePhotoUrls: true }))
+    ).pipe(
+      map((fetchedOrders) => {
+        const result = prepared.map((order) => ({ ...order }));
+        missing.forEach(({ index }, fetchedIndex) => {
+          const full = fetchedOrders[fetchedIndex];
+          result[index] = {
+            ...result[index],
+            ...full,
+            items: orderLineItemsForPrint(full),
+          };
+        });
+        return result;
+      })
+    );
   }
 
   private openPrintWithOptions(

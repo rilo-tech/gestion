@@ -6,7 +6,6 @@ export const MAX_ORDER_PHOTOS = 10;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 
 const ALLOWED_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type OrderPhotoRecord = {
   id: string;
@@ -23,6 +22,41 @@ function storageBucket() {
     return getStorage().bucket(firebaseStorageBucket);
   }
   return getStorage().bucket();
+}
+
+function buildOrderPhotoDownloadUrl(
+  bucketName: string,
+  storagePath: string,
+  downloadToken: string
+): string {
+  const encodedPath = encodeURIComponent(storagePath);
+  const emulatorHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST?.trim();
+  if (emulatorHost) {
+    return `http://${emulatorHost}/v0/b/${bucketName}/o/${encodedPath}?alt=media&token=${downloadToken}`;
+  }
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedPath}?alt=media&token=${downloadToken}`;
+}
+
+async function resolveDownloadToken(
+  storagePath: string,
+  photoId: string
+): Promise<string> {
+  const file = storageBucket().file(storagePath);
+  const [metadata] = await file.getMetadata();
+  const raw = metadata?.metadata?.firebaseStorageDownloadTokens;
+  const existing = String(raw ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .find(Boolean);
+  if (existing) return existing;
+
+  await file.setMetadata({
+    metadata: {
+      ...(metadata?.metadata ?? {}),
+      firebaseStorageDownloadTokens: photoId,
+    },
+  });
+  return photoId;
 }
 
 function extensionForContentType(contentType: string): string {
@@ -109,6 +143,7 @@ export async function uploadOrderPhoto(
     metadata: {
       contentType,
       metadata: {
+        firebaseStorageDownloadTokens: photoId,
         businessId,
         orderId,
         photoId,
@@ -141,17 +176,15 @@ export async function resolveOrderPhotoUrls(
 ): Promise<OrderPhotoWithUrl[]> {
   if (!photos.length) return [];
 
-  const bucket = storageBucket();
-  const expires = Date.now() + SIGNED_URL_TTL_MS;
+  const bucketName = storageBucket().name;
 
   return Promise.all(
     photos.map(async (photo) => {
-      const file = bucket.file(photo.storagePath);
-      const [url] = await file.getSignedUrl({
-        action: 'read',
-        expires,
-      });
-      return { ...photo, url };
+      const token = await resolveDownloadToken(photo.storagePath, photo.id);
+      return {
+        ...photo,
+        url: buildOrderPhotoDownloadUrl(bucketName, photo.storagePath, token),
+      };
     })
   );
 }

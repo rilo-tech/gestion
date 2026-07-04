@@ -19,6 +19,9 @@ import {
   SALE_FORM_TABLE_COLUMNS,
   SALE_DETAIL_TABLE_COLUMNS,
   ORDER_FORM_TABLE_COLUMNS,
+  ORDER_FORM_COLUMN_WEIGHTS,
+  ORDER_LINES_LAYOUT_ID,
+  ORDER_LINES_LAYOUT_VERSION,
   PURCHASE_STOCK_TABLE_COLUMNS,
   PURCHASE_DETAIL_TABLE_COLUMNS,
   COLUMN_DEFAULTS,
@@ -210,15 +213,29 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
       </div>
 
       <!-- Desktop: tabla -->
-      <table class="hidden sm:table app-data-table w-full table-fixed text-left text-sm">
-        <thead class="bg-gray-50 dark:bg-gray-800/80 text-xs uppercase text-gray-400 dark:text-gray-500">
+      <div class="hidden sm:block" [class.app-table-scroll-host]="isCompact">
+      <table
+        class="app-data-table w-full table-fixed text-left"
+        [class.order-lines-table]="isCompact"
+        [attr.data-col-layout-id]="isCompact ? orderLinesLayoutId : null"
+        [attr.data-col-layout-version]="isCompact ? orderLinesLayoutVersion : null"
+        [ngClass]="isCompact ? 'text-xs' : 'text-sm'">
+        <colgroup *ngIf="isCompact">
+          <col *ngFor="let column of visibleColumns" [style.width.%]="columnColPercent(column)" />
+        </colgroup>
+        <thead
+          class="bg-gray-50 dark:bg-gray-800/80 uppercase text-gray-400 dark:text-gray-500"
+          [ngClass]="isCompact ? 'text-[10px]' : 'text-xs'">
           <tr>
             <th
               *ngFor="let column of visibleColumns"
-              class="px-3 sm:px-4 py-2.5 whitespace-nowrap"
+              class="whitespace-nowrap"
+              [ngClass]="desktopHeaderCellClass(column)"
               [class.text-center]="column.align === 'center'"
               [class.text-right]="column.align === 'right'"
-              [ngClass]="column.widthClass || ''">
+              [attr.data-col-weight]="column.colWeight ?? null"
+              [class.order-lines-num-col]="isCompact && isCompactNumericColumn(column)"
+              [class.order-lines-actions-col]="isCompact && column.id === 'actions'">
               {{ column.headerShort || column.header }}
             </th>
           </tr>
@@ -227,32 +244,39 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
           <tr *ngFor="let line of lines; let i = index; trackBy: trackByIndex">
             <td
               *ngFor="let column of visibleColumns"
-              class="px-3 sm:px-4 py-2.5 align-top"
+              [ngClass]="desktopBodyCellClass(column)"
               [class.text-center]="column.align === 'center'"
-              [class.text-right]="column.align === 'right'">
+              [class.text-right]="column.align === 'right'"
+              [class.min-w-0]="column.id === 'product'"
+              [class.order-lines-num-col]="isCompact && isCompactNumericColumn(column)"
+              [class.order-lines-actions-col]="isCompact && column.id === 'actions'">
               <ng-container [ngSwitch]="column.id">
                 <ng-container *ngSwitchCase="'product'">
                   <button
                     *ngIf="line.productClickable && line.productId; else productPlain"
                     type="button"
                     (click)="productClick.emit({ index: i, productId: line.productId })"
-                    class="font-medium text-sm text-gray-900 dark:text-gray-100 leading-snug text-left break-words hover:text-teal-700 dark:hover:text-teal-400 hover:underline"
+                    [class]="desktopProductButtonClass"
                     [title]="'Abrir producto: ' + line.productName">
                     {{ line.productName || 'Producto' }}
                   </button>
                   <ng-template #productPlain>
-                    <p class="font-medium text-sm text-gray-900 dark:text-gray-100 leading-snug break-words">
+                    <p
+                      [class]="desktopProductTextClass"
+                      [title]="isCompact ? (line.productName || 'Producto') : null">
                       {{ line.productName || 'Producto' }}
                     </p>
                   </ng-template>
                   <p
                     *ngIf="line.extrasSummary"
-                    class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                    class="text-gray-500 dark:text-gray-400 mt-0.5 leading-snug"
+                    [ngClass]="isCompact ? 'text-[10px]' : 'text-xs'">
                     {{ line.extrasSummary }}
                   </p>
                   <div
                     *ngIf="metaRowTpl || line.metaItems?.length"
-                    class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-snug flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    class="mt-1 text-gray-500 dark:text-gray-400 leading-snug flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                    [ngClass]="isCompact ? 'text-[10px]' : 'text-xs'">
                     <ng-container *ngIf="metaRowTpl; else defaultMeta">
                       <ng-container
                         *ngTemplateOutlet="metaRowTpl; context: { $implicit: line, index: i }">
@@ -285,9 +309,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('quantity', i)"
                     (focus)="onNumericFocus('quantity', i, line.quantity, $event)"
                     (blur)="onNumericBlur('quantity', i, line.quantity)"
-                    [class]="numericInputClass + ' text-center'">
+                    [class]="lineNumericInputClass + ' text-center'">
                   <ng-template #quantityReadonly>
-                    <span class="block tabular-nums text-sm text-center">{{ formatReadonlyNumber(line.quantity) }}</span>
+                    <span [class]="lineNumericValueClass + ' text-center'">{{ formatReadonlyNumber(line.quantity) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -301,9 +325,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('unitCost', i)"
                     (focus)="onNumericFocus('unitCost', i, line.unitCost, $event)"
                     (blur)="onNumericBlur('unitCost', i, line.unitCost)"
-                    [class]="numericInputClass + ' text-center'">
+                    [class]="lineNumericInputClass + ' text-center'">
                   <ng-template #unitCostReadonly>
-                    <span class="block tabular-nums text-sm text-center text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.unitCost) }}</span>
+                    <span [class]="lineNumericValueClass + ' text-center text-gray-600 dark:text-gray-300'">{{ formatReadonlyNumber(line.unitCost) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -317,9 +341,9 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('personalization', i)"
                     (focus)="onNumericFocus('personalization', i, line.personalization, $event)"
                     (blur)="onNumericBlur('personalization', i, line.personalization)"
-                    [class]="numericInputClass + ' text-center'">
+                    [class]="lineNumericInputClass + ' text-center'">
                   <ng-template #personalizationReadonly>
-                    <span class="block tabular-nums text-sm text-center text-gray-600 dark:text-gray-300">{{ formatReadonlyNumber(line.personalization) }}</span>
+                    <span [class]="lineNumericValueClass + ' text-center text-gray-600 dark:text-gray-300'">{{ formatReadonlyNumber(line.personalization) }}</span>
                   </ng-template>
                 </ng-container>
 
@@ -333,14 +357,14 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     [name]="fieldName('unitSale', i)"
                     (focus)="onNumericFocus('unitSale', i, line.unitSale, $event)"
                     (blur)="onNumericBlur('unitSale', i, line.unitSale)"
-                    [class]="numericInputClass + ' text-center'">
+                    [class]="lineNumericInputClass + ' text-center'">
                   <ng-template #unitSaleReadonly>
-                    <span class="block tabular-nums text-sm text-center">{{ formatReadonlyCurrency(line.unitSale) }}</span>
+                    <span [class]="lineNumericValueClass + ' text-center'">{{ formatReadonlyCurrency(line.unitSale) }}</span>
                   </ng-template>
                 </ng-container>
 
                 <ng-container *ngSwitchCase="'subtotal'">
-                  <span class="tabular-nums text-sm font-semibold whitespace-nowrap">
+                  <span [class]="lineNumericValueClass + ' font-semibold whitespace-nowrap'">
                     {{ formatReadonlyCurrency(line.subtotal) }}
                   </span>
                 </ng-container>
@@ -350,7 +374,7 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
                     *ngIf="showRemoveAction(line)"
                     type="button"
                     (click)="removeLine.emit(i)"
-                    class="inline-flex items-center justify-center w-7 h-7 text-base text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg"
+                    [class]="removeButtonClass"
                     title="Quitar producto"
                     aria-label="Quitar producto">
                     ×
@@ -366,10 +390,14 @@ const MOBILE_NUMERIC_COLUMN_IDS = new Set<TransactionTableColumnId>([
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   `,
 })
 export class TransactionLinesTableComponent {
+  readonly orderLinesLayoutId = ORDER_LINES_LAYOUT_ID;
+  readonly orderLinesLayoutVersion = ORDER_LINES_LAYOUT_VERSION;
+
   readonly numericInputClass =
     'w-full min-w-0 px-2 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm leading-tight tabular-nums outline-none focus:ring-2 focus:ring-teal-500';
 
@@ -387,6 +415,8 @@ export class TransactionLinesTableComponent {
   /** Oculta la tabla (encabezados incluidos) hasta que haya al menos una línea. */
   @Input() hideWhenEmpty = false;
   @Input() fieldNamePrefix = 'txnLine';
+  /** Tabla desktop más densa: columnas numéricas angostas y nombre en una línea. */
+  @Input() density: 'default' | 'compact' = 'default';
 
   @Output() fieldChange = new EventEmitter<TransactionTableFieldChange>();
   @Output() removeLine = new EventEmitter<number>();
@@ -404,6 +434,96 @@ export class TransactionLinesTableComponent {
     index: number;
     fallback: number | null | undefined;
   }> | null = null;
+
+  get isCompact(): boolean {
+    return this.density === 'compact';
+  }
+
+  get desktopHeaderCellClass(): (column: TransactionTableColumn) => string {
+    return (column) => this.desktopCellPaddingClass(column, true);
+  }
+
+  get desktopBodyCellClass(): (column: TransactionTableColumn) => string {
+    return (column) => this.desktopCellPaddingClass(column, false);
+  }
+
+  private desktopCellPaddingClass(column: TransactionTableColumn, isHeader: boolean): string {
+    const vertical = isHeader
+      ? this.isCompact
+        ? 'py-2'
+        : 'py-2.5'
+      : this.isCompact
+        ? 'py-2'
+        : 'py-2.5';
+    if (!this.isCompact) {
+      return `px-3 sm:px-4 ${vertical} align-top`;
+    }
+    if (column.id === 'product') {
+      return `px-2 sm:px-3 ${vertical} align-top`;
+    }
+    if (column.id === 'actions') {
+      return `px-0.5 ${vertical} align-top`;
+    }
+    return `px-1 ${vertical} align-top`;
+  }
+
+  get desktopProductButtonClass(): string {
+    const base =
+      'block max-w-full font-medium text-gray-900 dark:text-gray-100 leading-snug text-left hover:text-teal-700 dark:hover:text-teal-400 hover:underline';
+    return this.isCompact
+      ? `${base} text-xs truncate`
+      : `${base} text-sm break-words`;
+  }
+
+  get desktopProductTextClass(): string {
+    const base = 'font-medium text-gray-900 dark:text-gray-100 leading-snug';
+    return this.isCompact
+      ? `${base} text-xs truncate max-w-full`
+      : `${base} text-sm break-words`;
+  }
+
+  get lineNumericInputClass(): string {
+    return this.isCompact
+      ? 'w-full max-w-[4.25rem] mx-auto min-w-0 px-1 py-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-xs leading-tight tabular-nums outline-none focus:ring-2 focus:ring-teal-500'
+      : this.numericInputClass;
+  }
+
+  get lineNumericValueClass(): string {
+    return this.isCompact
+      ? 'block tabular-nums text-xs'
+      : 'block tabular-nums text-sm';
+  }
+
+  get removeButtonClass(): string {
+    return this.isCompact
+      ? 'inline-flex items-center justify-center w-6 h-6 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-md'
+      : 'inline-flex items-center justify-center w-7 h-7 text-base text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg';
+  }
+
+  isCompactNumericColumn(column: TransactionTableColumn): boolean {
+    return (
+      column.id === 'quantity' ||
+      column.id === 'unitCost' ||
+      column.id === 'personalization' ||
+      column.id === 'unitSale' ||
+      column.id === 'subtotal'
+    );
+  }
+
+  columnColPercent(column: TransactionTableColumn): number {
+    const weights = this.visibleColumns.map((col) => this.columnLayoutWeight(col));
+    const total = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+    const index = this.visibleColumns.findIndex((col) => col.id === column.id);
+    return index < 0 ? 0 : (weights[index] / total) * 100;
+  }
+
+  private columnLayoutWeight(column: TransactionTableColumn): number {
+    if (column.colWeight != null) return column.colWeight;
+    if (column.id === 'product') return ORDER_FORM_COLUMN_WEIGHTS.product ?? 69;
+    if (column.id === 'actions') return ORDER_FORM_COLUMN_WEIGHTS.actions ?? 3;
+    if (this.isCompactNumericColumn(column)) return 7;
+    return 10;
+  }
 
   get visibleColumns(): TransactionTableColumn[] {
     return this.columns.filter((column) => column.visible !== false);
@@ -589,6 +709,9 @@ export {
   SALE_FORM_TABLE_COLUMNS,
   SALE_DETAIL_TABLE_COLUMNS,
   ORDER_FORM_TABLE_COLUMNS,
+  ORDER_FORM_COLUMN_WEIGHTS,
+  ORDER_LINES_LAYOUT_ID,
+  ORDER_LINES_LAYOUT_VERSION,
   PURCHASE_STOCK_TABLE_COLUMNS,
   PURCHASE_DETAIL_TABLE_COLUMNS,
 };

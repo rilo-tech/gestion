@@ -1,4 +1,5 @@
 import { db } from '../firebase.ts';
+import { ventaSaldoClienteImpact } from '../../shared/comprobantes-config.ts';
 
 function isCancelledStatus(estado?: string) {
   const value = String(estado ?? '').toLowerCase().trim();
@@ -35,10 +36,10 @@ export async function computeClientBalanceMap(
     const clienteId = String(data.clienteId ?? '').trim();
     if (!clienteId) continue;
 
-    const saldo = Math.max(0, Number(data.saldoPendiente) || 0);
-    if (saldo <= 0) continue;
+    const impact = ventaSaldoClienteImpact(data);
+    if (impact === 0) continue;
 
-    balances.set(clienteId, (balances.get(clienteId) ?? 0) + saldo);
+    balances.set(clienteId, (balances.get(clienteId) ?? 0) + impact);
   }
 
   return balances;
@@ -80,10 +81,10 @@ export async function computeClientBalanceForIds(
       const clienteId = String(data.clienteId ?? '').trim();
       if (!clienteId) continue;
 
-      const saldo = Math.max(0, Number(data.saldoPendiente) || 0);
-      if (saldo <= 0) continue;
+      const impact = ventaSaldoClienteImpact(data);
+      if (impact === 0) continue;
 
-      balances.set(clienteId, (balances.get(clienteId) ?? 0) + saldo);
+      balances.set(clienteId, (balances.get(clienteId) ?? 0) + impact);
     }
   }
 

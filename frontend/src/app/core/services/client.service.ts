@@ -41,6 +41,7 @@ export interface ClientAccountOrder {
   totalPagado: number;
   saldo: number;
   ventaId?: string | null;
+  fecha?: string | null;
   fechaEntrega?: string | null;
   pagos?: ClientAccountPayment[];
 }
@@ -92,6 +93,8 @@ export interface ClientAccountSale {
   montoCobrado: number;
   saldoPendiente: number;
   fecha?: string | null;
+  /** Caja asignada en la venta o en el cobro inicial; null si hay que elegir al cobrar saldo. */
+  ambito?: string | null;
 }
 
 export interface ClientAccountCuota {
@@ -194,7 +197,7 @@ export class ClientService {
 
   collectClientBalance(
     clientId: string,
-    payload: { monto: number; medioPago?: string; notas?: string }
+    payload: { monto: number; medioPago?: string; notas?: string; ambito?: string }
   ): Observable<{
     monto: number;
     saldoAnterior: number;

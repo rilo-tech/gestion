@@ -59,22 +59,6 @@ export interface ClientFormSaveEvent {
   ],
   template: `
     <div class="space-y-4">
-      <a
-        *ngIf="isEditing && clientId && showHistorialLink"
-        [routerLink]="['/clients', clientId, 'historial']"
-        class="flex items-center justify-between gap-4 rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 hover:bg-teal-100/80 transition-colors">
-        <div class="min-w-0">
-          <p class="text-sm font-semibold text-teal-900">Historial y cuenta corriente</p>
-          <p class="text-xs text-teal-800 mt-0.5">Ver pedidos, ventas y registrar cobros.</p>
-        </div>
-        <div class="flex items-center gap-3 shrink-0">
-          <span *ngIf="auth.canViewAccountBalance && clientSaldo > 0" class="text-sm font-bold tabular-nums text-orange-700">
-            {{ formatMoney(clientSaldo) }}
-          </span>
-          <i-lucide name="history" class="w-5 h-5 text-teal-700"></i-lucide>
-        </div>
-      </a>
-
       <div *ngIf="loadingClient" class="py-8 text-center text-sm text-gray-400">
         Cargando cliente...
       </div>
@@ -126,10 +110,25 @@ export interface ClientFormSaveEvent {
             type="email"
             [class]="formControlClass">
         </div>
-        <div>
-          <label [class]="formLabelClass">Etiquetas</label>
+        <div [class.md:col-span-2]="wideLayout && isEditing && clientId && showHistorialLink">
+          <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <label [class]="formLabelClass + ' mb-0'">Etiquetas</label>
+            <a
+              *ngIf="isEditing && clientId && showHistorialLink"
+              [routerLink]="['/clients', clientId, 'historial']"
+              class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs sm:text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline shrink-0">
+              <i-lucide name="history" class="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0"></i-lucide>
+              <span>Historial</span>
+              <span class="hidden sm:inline font-normal text-gray-500 dark:text-gray-400">· pedidos, ventas y cobros</span>
+              <span
+                *ngIf="auth.canViewAccountBalance && clientSaldo > 0"
+                class="font-bold tabular-nums text-orange-700 dark:text-orange-400">
+                · {{ formatMoney(clientSaldo) }}
+              </span>
+            </a>
+          </div>
 
-          <div *ngIf="useEtiquetaList; else freeEtiquetas">
+          <div *ngIf="useEtiquetaList; else freeEtiquetas" class="mt-1">
             <div
               [class]="chipInputWrapClass">
               <span
@@ -164,12 +163,14 @@ export interface ClientFormSaveEvent {
           </div>
 
           <ng-template #freeEtiquetas>
+            <div class="mt-1">
             <input
               [(ngModel)]="etiquetasText"
               name="etiquetasText"
               placeholder="Ej. VIP, Mayorista"
               [class]="formControlClass">
             <p class="mt-1 text-xs text-gray-400">Separá varias etiquetas con coma.</p>
+            </div>
           </ng-template>
         </div>
         </fieldset>
@@ -187,8 +188,14 @@ export interface ClientFormSaveEvent {
           </button>
         </div>
 
+        <p
+          *ngIf="isEditing && auth.canDeleteRecords && !canDeleteClient && deletionBlockedMessage"
+          class="text-xs text-gray-500 dark:text-gray-400">
+          {{ deletionBlockedMessage }}
+        </p>
+
         <app-form-panel-footer
-          [deleteLabel]="isEditing && auth.canDeleteRecords ? 'Eliminar cliente' : ''"
+          [deleteLabel]="isEditing && auth.canDeleteRecords && !hideFooterDelete && canDeleteClient ? 'Eliminar cliente' : ''"
           [cancelLabel]="formReadOnly ? 'Cerrar' : 'Cancelar'"
           [saveLabel]="isEditing ? 'Guardar' : 'Crear cliente'"
           [showSave]="!formReadOnly"
@@ -204,8 +211,10 @@ export interface ClientFormSaveEvent {
 export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   @Input() clientId: string | null = null;
   @Input() prefillNombre = '';
+  @Input() duplicateFromId: string | null = null;
   @Input() showHistorialLink = true;
   @Input() wideLayout = false;
+  @Input() hideFooterDelete = false;
   @Output() saved = new EventEmitter<ClientFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() deleted = new EventEmitter<void>();
@@ -221,6 +230,8 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
 
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   clientSaldo = 0;
+  canDeleteClient = false;
+  deletionBlockedMessage = '';
 
   formatMoney(value?: number | null): string {
     return formatMoneyValue(value);
@@ -281,7 +292,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['clientId'] || changes['prefillNombre']) {
+    if (changes['clientId'] || changes['prefillNombre'] || changes['duplicateFromId']) {
       this.resetForm();
     }
   }
@@ -292,9 +303,16 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
 
   private resetForm() {
     this.clientSaldo = 0;
+    this.canDeleteClient = false;
+    this.deletionBlockedMessage = '';
 
     if (this.clientId) {
       this.loadClient(this.clientId);
+      return;
+    }
+
+    if (this.duplicateFromId) {
+      this.loadClientForDuplicate(this.duplicateFromId);
       return;
     }
 
@@ -311,20 +329,8 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
     this.loadingClient = true;
     this.clientService.getClient(id).subscribe({
       next: (client) => {
-        this.clientForm = {
-          nombre: client.nombre ?? '',
-          telefono: client.telefono ?? '',
-          email: client.email ?? '',
-          direccion: client.direccion ?? '',
-          redes: {
-            igWeb: client.redes?.igWeb ?? client.redes?.instagram ?? '',
-          },
-          etiquetas: [...(client.etiquetas ?? [])],
-        };
-        this.clientSaldo = client.saldoPendiente ?? 0;
-        this.etiquetasText = (client.etiquetas ?? []).join(', ');
-        this.etiquetaPicker = '';
-        this.loadingClient = false;
+        this.applyLoadedClient(client);
+        this.loadDeletionGuard(id);
       },
       error: () => {
         this.loadingClient = false;
@@ -335,6 +341,61 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
         this.cancelled.emit();
       },
     });
+  }
+
+  private loadDeletionGuard(clientId: string) {
+    if (!this.auth.canDeleteRecords) return;
+
+    this.clientService.getClientDeletionGuard(clientId).subscribe({
+      next: (guard) => {
+        this.canDeleteClient = guard.canDelete;
+        this.deletionBlockedMessage =
+          guard.canDelete
+            ? ''
+            : guard.message?.trim() ||
+              'Este cliente tiene transacciones asociadas. No se puede eliminar.';
+      },
+      error: () => {
+        this.canDeleteClient = false;
+        this.deletionBlockedMessage = 'No se pudo verificar si el cliente se puede eliminar.';
+      },
+    });
+  }
+
+  private loadClientForDuplicate(id: string) {
+    this.loadingClient = true;
+    this.clientService.getClient(id).subscribe({
+      next: (client) => {
+        this.applyLoadedClient(client);
+        this.clientSaldo = 0;
+      },
+      error: () => {
+        this.loadingClient = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo cargar el cliente a duplicar.',
+        });
+        this.cancelled.emit();
+      },
+    });
+  }
+
+  private applyLoadedClient(client: Client) {
+    this.clientForm = {
+      nombre: client.nombre ?? '',
+      telefono: client.telefono ?? '',
+      email: client.email ?? '',
+      direccion: client.direccion ?? '',
+      activo: client.activo,
+      redes: {
+        igWeb: client.redes?.igWeb ?? client.redes?.instagram ?? '',
+      },
+      etiquetas: [...(client.etiquetas ?? [])],
+    };
+    this.clientSaldo = client.saldoPendiente ?? 0;
+    this.etiquetasText = (client.etiquetas ?? []).join(', ');
+    this.etiquetaPicker = '';
+    this.loadingClient = false;
   }
 
   onEtiquetaSelected(value: string) {

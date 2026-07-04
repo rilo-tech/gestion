@@ -6,10 +6,12 @@ import {
   ADMIN_ASSIGNABLE_PERMISSIONS,
   DEFAULT_STAFF_PERMISSIONS,
   Permission,
+  ROLE_PRESETS,
   STAFF_PERMISSION_GROUPS,
   sanitizeStaffPermissions,
   USER_ROLE_LABELS,
   UserRole,
+  userHasPermission,
 } from '../../core/constants/permissions';
 import { AppUser, CreateUserPayload, UserService } from '../../core/services/user.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -19,7 +21,16 @@ import {
   SUBSCRIPTION_STATUS_LABELS,
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
+import {
+  Collaborator,
+  CollaboratorsService,
+} from '../../core/services/collaborators.service';
 import { LucideAngularModule } from 'lucide-angular';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 @Component({
   selector: 'app-settings-users-panel',
@@ -118,6 +129,21 @@ import { LucideAngularModule } from 'lucide-angular';
               <option value="staff">{{ roleLabels.staff }}</option>
               <option value="admin" [disabled]="!canCreateAdministrator">{{ roleLabels.admin }}</option>
             </select>
+            <label *ngIf="draft.rol === 'staff'" class="block md:col-span-2">
+              <span class="text-xs font-medium text-gray-500 mb-1 block">Colaborador vinculado</span>
+              <select
+                [(ngModel)]="draft.colaboradorId"
+                name="newUserColaborador"
+                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                <option [ngValue]="null">Sin vincular</option>
+                <option *ngFor="let collaborator of activeCollaborators" [ngValue]="collaborator.id">
+                  {{ collaborator.nombre }}
+                </option>
+              </select>
+              <span class="mt-1 block text-xs text-gray-500 desc-lg-only">
+                Si lo vinculás y le das permiso de colaboradores, el operador verá solo sus horas al ingresar.
+              </span>
+            </label>
           </div>
           <div class="mt-4 flex justify-end gap-2">
             <button
@@ -201,6 +227,12 @@ import { LucideAngularModule } from 'lucide-angular';
                 <span class="text-gray-500 dark:text-gray-400">Usuario</span>
                 <span class="font-medium text-gray-900 dark:text-gray-100">{{ user.loginUsername }}</span>
               </div>
+              <div *ngIf="user.rol === 'staff'" class="flex flex-wrap gap-x-4 gap-y-1">
+                <span class="text-gray-500 dark:text-gray-400">Colaborador</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">
+                  {{ getCollaboratorLabel(user.colaboradorId) }}
+                </span>
+              </div>
               <div class="flex flex-wrap gap-x-4 gap-y-1">
                 <span class="text-gray-500 dark:text-gray-400">Acceso</span>
                 <span class="font-medium text-gray-900 dark:text-gray-100">
@@ -237,6 +269,40 @@ import { LucideAngularModule } from 'lucide-angular';
               <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-3">
                 Permisos del operador
               </p>
+              <div class="flex flex-wrap gap-2 mb-4">
+                <button
+                  type="button"
+                  (click)="applyRolePreset(user, 'operador')"
+                  class="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/50">
+                  Perfil operador (pedidos)
+                </button>
+                <button
+                  type="button"
+                  (click)="applyRolePreset(user, 'operador_horas')"
+                  class="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/50">
+                  Perfil operador (mis horas)
+                </button>
+              </div>
+              <label class="block mb-4">
+                <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-2 block">
+                  Colaborador vinculado
+                </span>
+                <select
+                  [(ngModel)]="user.colaboradorId"
+                  [name]="'colaborador-' + user.id"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white dark:bg-gray-900 dark:border-gray-600 text-sm">
+                  <option [ngValue]="null">Sin vincular</option>
+                  <option *ngFor="let collaborator of activeCollaborators" [ngValue]="collaborator.id">
+                    {{ collaborator.nombre }}
+                  </option>
+                </select>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400 desc-lg-only">
+                  Con «Ver colaboradores» activo, el operador verá únicamente las horas de esta persona.
+                </span>
+              </label>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-4 desc-lg-only">
+                El perfil operador gestiona estados de pedidos (pendiente, en proceso, listo), ve total y saldo del cliente, precios en stock, puede imprimir pedidos y no ve costos ni ganancias.
+              </p>
               <div class="space-y-4">
                 <div *ngFor="let group of staffPermissionGroups" class="space-y-2">
                   <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ group.label }}</p>
@@ -246,8 +312,9 @@ import { LucideAngularModule } from 'lucide-angular';
                       class="flex items-start gap-3 rounded-lg border border-gray-100 bg-white dark:border-gray-600 dark:bg-gray-800/90 px-3 py-2.5 cursor-pointer hover:border-teal-200 dark:hover:border-teal-700">
                       <input
                         type="checkbox"
-                        [checked]="hasPermission(user, perm.key)"
-                        (change)="togglePermission(user, perm.key, $any($event.target).checked)"
+                        [ngModel]="isStaffPermissionEnabled(user, perm.key)"
+                        (ngModelChange)="setStaffPermission(user, perm.key, $event)"
+                        [name]="'perm-' + user.id + '-' + perm.key"
                         class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600">
                       <span class="min-w-0">
                         <span class="block text-sm font-medium text-gray-800 dark:text-gray-200">{{ perm.label }}</span>
@@ -267,6 +334,7 @@ import { LucideAngularModule } from 'lucide-angular';
 export class SettingsUsersPanelComponent implements OnInit {
   readonly auth = inject(AuthService);
   private userService = inject(UserService);
+  private collaboratorsService = inject(CollaboratorsService);
   private businessService = inject(BusinessService);
   private dialogService = inject(DialogService);
 
@@ -274,10 +342,15 @@ export class SettingsUsersPanelComponent implements OnInit {
   readonly statusLabels = SUBSCRIPTION_STATUS_LABELS;
   readonly assignablePermissions = ADMIN_ASSIGNABLE_PERMISSIONS;
   readonly staffPermissionGroups = STAFF_PERMISSION_GROUPS;
+  readonly rolePresets = ROLE_PRESETS;
 
   users: AppUser[] = [];
+  collaborators: Collaborator[] = [];
   business: PublicBusinessInfo | null = null;
   loadingUsers = false;
+  usersHasMore = false;
+  usersCursor: string | null = null;
+  private readonly listLoadSession = new ProgressiveListSession();
   creatingUser = false;
   savingUserId: string | null = null;
   expandedUserId: string | null = null;
@@ -289,7 +362,14 @@ export class SettingsUsersPanelComponent implements OnInit {
     loginUsername: '',
     password: '',
     rol: 'staff' as UserRole,
+    colaboradorId: null as string | null,
   };
+
+  get activeCollaborators(): Collaborator[] {
+    return this.collaborators
+      .filter((item) => item.id && item.activo !== false)
+      .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+  }
 
   get canCreateAdministrator(): boolean {
     if (!this.business) return false;
@@ -316,11 +396,19 @@ export class SettingsUsersPanelComponent implements OnInit {
 
   ngOnInit() {
     this.loadBusiness();
+    this.loadCollaborators();
     this.loadUsers();
   }
 
-  hasPermission(user: AppUser, permission: Permission): boolean {
-    return (user.permisos ?? []).includes(permission);
+  getCollaboratorLabel(colaboradorId?: string | null): string {
+    const id = String(colaboradorId ?? '').trim();
+    if (!id) return 'Sin vincular';
+    const match = this.collaborators.find((item) => item.id === id);
+    return match?.nombre?.trim() || 'Colaborador no encontrado';
+  }
+
+  isStaffPermissionEnabled(user: AppUser, permission: Permission): boolean {
+    return userHasPermission('staff', user.permisos, permission);
   }
 
   isUserExpanded(userId?: string): boolean {
@@ -400,11 +488,17 @@ export class SettingsUsersPanelComponent implements OnInit {
     return 'bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-200';
   }
 
-  togglePermission(user: AppUser, permission: Permission, checked: boolean) {
-    const current = new Set(user.permisos ?? []);
-    if (checked) current.add(permission);
+  setStaffPermission(user: AppUser, permission: Permission, enabled: boolean) {
+    const current = new Set<Permission>(sanitizeStaffPermissions(user.permisos));
+    if (enabled) current.add(permission);
     else current.delete(permission);
-    user.permisos = sanitizeStaffPermissions([...current]);
+    user.permisos = [...current];
+  }
+
+  applyRolePreset(user: AppUser, presetKey: keyof typeof ROLE_PRESETS) {
+    const preset = ROLE_PRESETS[presetKey];
+    if (!preset) return;
+    user.permisos = sanitizeStaffPermissions(preset.permisos);
   }
 
   createUser() {
@@ -422,6 +516,7 @@ export class SettingsUsersPanelComponent implements OnInit {
       rol: this.draft.rol === 'admin' ? 'admin' : 'staff',
       permisos: [...DEFAULT_STAFF_PERMISSIONS],
       activo: true,
+      colaboradorId: this.draft.rol === 'staff' ? this.draft.colaboradorId : null,
       password: this.draft.password.trim() || undefined,
     };
 
@@ -436,6 +531,7 @@ export class SettingsUsersPanelComponent implements OnInit {
           loginUsername: '',
           password: '',
           rol: 'staff',
+          colaboradorId: null,
         };
         this.loadBusiness();
         this.loadUsers();
@@ -472,6 +568,7 @@ export class SettingsUsersPanelComponent implements OnInit {
       rol: user.rol,
       permisos: user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
       activo: user.activo !== false,
+      colaboradorId: user.rol === 'staff' ? user.colaboradorId ?? null : null,
     };
 
     this.savingUserId = user.id;
@@ -503,25 +600,66 @@ export class SettingsUsersPanelComponent implements OnInit {
     });
   }
 
-  private loadUsers() {
-    this.loadingUsers = true;
-    this.userService.getUsers().subscribe({
-      next: (users) => {
-        this.users = users.map((user) => ({
-          ...user,
-          permisos:
-            user.rol === 'staff'
-              ? sanitizeStaffPermissions(user.permisos)
-              : [],
-        }));
-        this.loadingUsers = false;
+  private loadCollaborators() {
+    this.collaboratorsService.getCollaborators().subscribe({
+      next: (rows) => {
+        this.collaborators = rows;
       },
       error: () => {
+        this.collaborators = [];
+      },
+    });
+  }
+
+  private loadUsers() {
+    const loadToken = this.listLoadSession.next();
+    this.loadingUsers = true;
+    this.userService.getUsersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.users = page.items.map((user) => ({
+          ...user,
+          permisos:
+            user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
+        }));
+        this.usersHasMore = page.hasMore;
+        this.usersCursor = page.nextCursor;
+        this.loadingUsers = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingUsersInBackground(loadToken);
+        }
+      },
+      error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loadingUsers = false;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudieron cargar los usuarios.',
         });
+      },
+    });
+  }
+
+  private loadRemainingUsersInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.usersHasMore || !this.usersCursor) return;
+
+    this.userService.getUsersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.usersCursor).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.users = [
+          ...this.users,
+          ...page.items.map((user) => ({
+            ...user,
+            permisos:
+              user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
+          })),
+        ];
+        this.usersHasMore = page.hasMore;
+        this.usersCursor = page.nextCursor;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingUsersInBackground(loadToken);
+        }
       },
     });
   }

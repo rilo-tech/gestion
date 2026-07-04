@@ -1,6 +1,6 @@
 import { Component, ViewChild, inject, OnInit, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, type ParamMap } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { DialogService } from '../../core/services/dialog.service';
 import { StockService } from '../../core/services/stock.service';
@@ -16,6 +16,12 @@ import {
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
+import {
+  comprobanteBorradorTitulo,
+  comprobanteNuevoTitulo,
+  normalizeComprobanteTipo,
+  type ComprobanteTipoId,
+} from '../../core/services/catalog-config.service';
 
 @Component({
   selector: 'app-new-sale',
@@ -30,10 +36,8 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
   ],
   template: `
     <app-transaction-form-page
-      [title]="isEditing ? ('Venta #' + (saleForm?.editingSaleLabel || '—')) : 'Venta de mostrador'"
-      [subtitle]="isEditing
-        ? 'Corregí productos, cantidades o el monto cobrado al registrar la venta.'
-        : 'Descuenta stock y registra el cobro en caja.'"
+      [title]="pageTitle"
+      [subtitle]="pageSubtitle"
       backLabel="Volver a ventas"
       backShortLabel="Volver"
       backAriaLabel="Volver a ventas"
@@ -41,6 +45,12 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       (backClick)="goBack()">
       <div headerActions class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-record-action-toolbar
+          activityModule="sales"
+          [activityEntityId]="activityEntityId"
+          [activityEntityLabel]="activityEntityLabel"
+          [showDuplicate]="canDuplicateCurrent"
+          duplicateLabel="Duplicar"
+          (duplicateClick)="duplicateCurrentSale()"
           [showSave]="true"
           [saveLabel]="saleHeaderSave.label"
           [saveDisabled]="saleHeaderSave.disabled"
@@ -54,6 +64,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           [pageLayout]="true"
           [hideInlineSummary]="true"
           [editingSaleId]="editingSaleId"
+          [lockedTipoComprobante]="newSaleLockedTipo"
           (saved)="onSaved($event)"
           (savingChange)="onSaleSavingChange($event)"
           (formReadyChange)="onSaleFormReadyChange($event)"
@@ -104,15 +115,49 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
   editingSaleId: string | null = null;
   saleSaving = false;
   saleSummaryReady = false;
-  private shouldRestoreDraft = false;
   private pendingRestoreClienteId: string | null = null;
+  initialTipoComprobante: ComprobanteTipoId = 'factura';
+
+  get newSaleLockedTipo(): ComprobanteTipoId | null {
+    if (this.editingSaleId || this.saleForm?.isDraftSale) return null;
+    return this.initialTipoComprobante;
+  }
+
+  get effectiveTipoComprobante(): ComprobanteTipoId {
+    const locked = this.newSaleLockedTipo;
+    if (locked) return locked;
+    return this.saleForm?.tipoComprobante ?? this.initialTipoComprobante;
+  }
 
   get isEditing(): boolean {
     return !!this.editingSaleId;
   }
 
+  get pageTitle(): string {
+    if (this.saleForm?.isDraftSale) {
+      return comprobanteBorradorTitulo(this.effectiveTipoComprobante, 'ventas');
+    }
+    if (this.isEditing) return 'Venta #' + (this.saleForm?.editingSaleLabel || '—');
+    return comprobanteNuevoTitulo(this.effectiveTipoComprobante, 'ventas');
+  }
+
+  get pageSubtitle(): string {
+    if (this.saleForm?.isDraftSale) {
+      return 'Todavía no impacta stock ni caja. Confirmá la venta cuando esté lista.';
+    }
+    if (this.isEditing) {
+      return 'Corregí productos, cantidades o el monto cobrado al registrar la venta.';
+    }
+    return 'Descuenta stock y registra el cobro en caja.';
+  }
+
   get saleSaveLabel(): string {
-    return this.isEditing ? 'Guardar cambios' : 'Registrar venta';
+    return this.saleForm?.primaryLabel ?? (this.isEditing ? 'Guardar cambios' : 'Registrar venta');
+  }
+
+  get saleSavingLabel(): string {
+    if (this.saleForm?.isDraftSale) return 'Confirmando...';
+    return this.isEditing ? 'Guardando...' : 'Registrando...';
   }
 
   get saleHeaderSave() {
@@ -120,8 +165,26 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
       saving: this.saleSaving,
       successMessage: this.saleForm?.saveSuccessMessage ?? '',
       idleLabel: this.saleSaveLabel,
-      savingLabel: this.isEditing ? 'Guardando...' : 'Registrando...',
+      savingLabel: this.saleSavingLabel,
     });
+  }
+
+  get canDuplicateCurrent(): boolean {
+    return this.saleForm?.canDuplicateCurrent ?? false;
+  }
+
+  get activityEntityId(): string | null {
+    return this.editingSaleId;
+  }
+
+  get activityEntityLabel(): string {
+    if (!this.activityEntityId) return '';
+    const label = this.saleForm?.editingSaleLabel?.trim();
+    return label ? `Venta #${label}` : 'Venta';
+  }
+
+  duplicateCurrentSale() {
+    this.saleForm?.duplicateCurrentSale();
   }
 
   ngOnInit() {
@@ -131,13 +194,24 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
     }
 
     this.editingSaleId = this.route.snapshot.paramMap.get('id');
+    this.initialTipoComprobante = this.resolveInitialTipo(this.route.snapshot.queryParamMap);
 
     if (this.route.snapshot.queryParamMap.get('restoreDraft') === '1') {
-      this.shouldRestoreDraft = true;
       this.pendingRestoreClienteId = this.route.snapshot.queryParamMap.get('clienteId');
     }
 
-    if (!this.editingSaleId && !this.shouldRestoreDraft) {
+    this.route.queryParamMap.subscribe((params) => {
+      if (params.get('restoreDraft') !== '1') return;
+      this.pendingRestoreClienteId = params.get('clienteId');
+      queueMicrotask(() => this.tryRestoreDraft());
+    });
+
+    this.route.queryParamMap.subscribe((params) => {
+      if (this.editingSaleId || params.get('restoreDraft') === '1') return;
+      this.initialTipoComprobante = this.resolveInitialTipo(params);
+    });
+
+    if (!this.editingSaleId && !this.route.snapshot.queryParamMap.get('restoreDraft')) {
       this.stockService.getStock().subscribe((items) => {
         if (items.length === 0) {
           this.dialogService.alert({
@@ -151,9 +225,16 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
   }
 
   ngAfterViewInit() {
-    if (!this.shouldRestoreDraft) return;
+    if (this.route.snapshot.queryParamMap.get('restoreDraft') === '1') {
+      this.tryRestoreDraft();
+    }
+  }
+
+  private tryRestoreDraft() {
+    if (!this.saleForm || this.route.snapshot.queryParamMap.get('restoreDraft') !== '1') return;
 
     this.saleForm.restoreFromSessionDraft(this.pendingRestoreClienteId);
+    this.pendingRestoreClienteId = null;
     this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { restoreDraft: null, clienteId: null },
@@ -186,6 +267,10 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
 
   goBack() {
     this.navigationBack.back(['/sales']);
+  }
+
+  private resolveInitialTipo(params: ParamMap): ComprobanteTipoId {
+    return normalizeComprobanteTipo(params.get('tipoComprobante') ?? 'factura');
   }
 
   formatMoney(value?: number | null): string {

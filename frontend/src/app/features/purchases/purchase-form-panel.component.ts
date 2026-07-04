@@ -14,6 +14,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import {
+  clearPurchaseFormDraft,
+  PurchaseFormDraftSnapshot,
+  readPurchaseFormDraft,
+  savePurchaseFormDraft,
+} from '../../core/utils/form-return-context';
+import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
@@ -28,13 +34,17 @@ import {
   medioPagoRequiereCuentaHija,
   usesCashAmbitoSeparation,
   getComprobantesActivos,
-  usesComprobantesExtra,
   normalizeComprobanteTipo,
+  comprobanteConfirmarLabel,
+  comprobanteRegistrarLabel,
+  comprobanteTipoHint,
+  isComprobanteTipoActivo,
   type PurchaseLineTipo,
   type TarjetaConfig,
   type ComprobanteTipoId,
   type ComprobanteTipoOption,
 } from '../../core/services/catalog-config.service';
+import { comprobanteLabel } from '../../../../../shared/comprobantes-config.ts';
 import {
   CreatePurchasePayload,
   Purchase,
@@ -125,66 +135,55 @@ interface PurchaseDraftLine {
     <form
       *ngIf="formShellReady"
       (submit)="submitPurchase(); $event.preventDefault()"
-      class="space-y-4">
+      class="space-y-2 sm:space-y-2.5">
       <app-transaction-save-banner [message]="saveSuccessMessage"></app-transaction-save-banner>
-      <fieldset [disabled]="readOnly" class="flex flex-col gap-3 sm:gap-4 border-0 p-0 m-0 min-w-0">
-      <div *ngIf="showComprobanteSelector" class="min-w-0">
-        <label [class]="fieldLabelClass">Tipo de comprobante</label>
-        <select
-          [(ngModel)]="tipoComprobante"
-          name="purchaseTipoComprobante"
-          [disabled]="readOnly"
-          [class]="fieldClass + ' form-control bg-white dark:bg-gray-900'">
-          <option *ngFor="let option of comprobanteOptions" [ngValue]="option.id">
-            {{ option.label }}
-          </option>
-        </select>
-        <p *ngIf="tipoComprobante === 'nota_credito'" class="text-[11px] text-amber-600 dark:text-amber-400 mt-1 m-0 leading-snug">
-          Nota de crédito: la mercadería sale del stock (devolución al proveedor).
+      <fieldset [disabled]="readOnly" class="flex flex-col gap-2 sm:gap-2.5 border-0 p-0 m-0 min-w-0">
+      <div
+        *ngIf="comprobanteTipoHintText"
+        class="rounded-lg border border-amber-200/80 bg-amber-50/70 dark:border-amber-800/80 dark:bg-amber-950/25">
+        <button
+          type="button"
+          (click)="comprobanteHintExpanded = !comprobanteHintExpanded"
+          [attr.aria-expanded]="comprobanteHintExpanded"
+          class="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs font-medium text-amber-800 dark:text-amber-200">
+          <span>{{ comprobanteTipoHintTitle }}</span>
+          <i-lucide
+            [name]="comprobanteHintExpanded ? 'chevron-up' : 'chevron-down'"
+            class="w-3.5 h-3.5 shrink-0 opacity-80"></i-lucide>
+        </button>
+        <p
+          *ngIf="comprobanteHintExpanded"
+          class="m-0 border-t border-amber-200/80 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:border-amber-800/80 dark:text-amber-100/90">
+          {{ comprobanteTipoHintText }}
         </p>
       </div>
 
-      <app-transaction-party-field
-        label="Proveedor"
-        [showCreateAction]="!readOnly"
-        createActionLabel="+ Nuevo proveedor"
-        (createClick)="openNewSupplierModal()">
-        <app-transaction-party-search
-          [(ngModel)]="purchaseProveedorId"
-          name="purchaseProveedorId"
-          inputName="purchaseProveedorId"
-          [labeledOptions]="supplierOptions"
-          [fallbackLabel]="pendingSupplierName.trim() || (initialPurchase?.proveedor?.trim() ?? '') || '—'"
-          [creatable]="!readOnly"
-          [disabled]="readOnly"
-          createLabelPrefix="Crear proveedor"
-          (partySelected)="onPurchasePartySelected($event)"
-          (createRequested)="quickCreateSupplier($event)"
-          (searchChange)="pendingSupplierName = $event"
-          placeholder="Buscar proveedor..."
-          emptyOptionsMessage="Escribí al menos 2 letras para buscar proveedores."
-          listHint="Opcional. Escribí para buscar, elegí un proveedor o creá uno nuevo.">
-        </app-transaction-party-search>
-      </app-transaction-party-field>
-
-      <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_10.5rem] gap-2 sm:gap-4 items-start">
-        <div class="min-w-0">
-          <label [class]="fieldLabelClass">N° factura del proveedor</label>
-          <input
-            type="text"
-            [(ngModel)]="purchaseNumeroComprobante"
-            name="purchaseNumeroComprobante"
-            [disabled]="readOnly"
-            [class]="fieldClass"
-            placeholder="Opcional — ej. 0001-00045678"
-            autocomplete="off"
-            maxlength="80" />
-          <p *ngIf="!readOnly" class="hidden sm:block text-[11px] text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
-            Comprobante de la factura del proveedor. El n° de compra del sistema se asigna al registrar.
-          </p>
+      <div class="grid grid-cols-3 gap-2 items-start">
+        <div class="min-w-0 col-span-2">
+          <app-transaction-party-field
+            label="Proveedor"
+            [showCreateAction]="!readOnly"
+            createActionLabel="+ Nuevo proveedor"
+            (createClick)="openNewSupplierModal()">
+            <app-transaction-party-search
+              [(ngModel)]="purchaseProveedorId"
+              name="purchaseProveedorId"
+              inputName="purchaseProveedorId"
+              [labeledOptions]="supplierOptions"
+              [fallbackLabel]="pendingSupplierName.trim() || (initialPurchase?.proveedor?.trim() ?? '') || '—'"
+              [creatable]="!readOnly"
+              [disabled]="readOnly"
+              createLabelPrefix="Crear proveedor"
+              (partySelected)="onPurchasePartySelected($event)"
+              (createRequested)="quickCreateSupplier($event)"
+              (searchChange)="pendingSupplierName = $event"
+              placeholder="Buscar proveedor..."
+              emptyOptionsMessage="Escribí al menos 2 letras para buscar proveedores.">
+            </app-transaction-party-search>
+          </app-transaction-party-field>
         </div>
 
-        <div class="min-w-0 sm:col-start-2">
+        <div class="min-w-0 col-span-1">
           <app-transaction-date-field
             [date]="purchaseFecha"
             (dateChange)="purchaseFecha = $event"
@@ -193,6 +192,22 @@ interface PurchaseDraftLine {
             [disabled]="readOnly">
           </app-transaction-date-field>
         </div>
+      </div>
+
+      <div class="min-w-0">
+        <label [class]="fieldLabelClass">N° factura del proveedor</label>
+        <input
+          type="text"
+          [(ngModel)]="purchaseNumeroComprobante"
+          name="purchaseNumeroComprobante"
+          [disabled]="readOnly"
+          [class]="fieldClass"
+          placeholder="Opcional — ej. 0001-00045678"
+          autocomplete="off"
+          maxlength="80" />
+        <p *ngIf="!readOnly" class="hidden sm:block text-[11px] text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
+          Comprobante de la factura del proveedor. El n° de compra del sistema se asigna al registrar.
+        </p>
       </div>
 
 
@@ -211,7 +226,8 @@ interface PurchaseDraftLine {
           [addedProductIds]="addedStockProductIds"
           addedLabel="En la compra"
           inputName="purchaseProductSearch"
-          (productSelected)="addProductFromSearch($event)">
+          (productSelected)="addProductFromSearch($event)"
+          (productQuantitySelected)="addProductFromSearchWithQuantity($event)">
         </app-transaction-product-search>
 
         <app-transaction-lines-table
@@ -221,7 +237,8 @@ interface PurchaseDraftLine {
           [readOnly]="readOnly"
           fieldNamePrefix="purchaseStock"
           (fieldChange)="onPurchaseStockFieldChange($event)"
-          (removeLine)="onPurchaseStockRemove($event)">
+          (removeLine)="onPurchaseStockRemove($event)"
+          (productClick)="onPurchaseStockProductClick($event)">
           <ng-template #metaRow let-line let-index="index">
             <div *ngIf="usesAmbitoSeparation" class="flex flex-wrap items-center gap-1.5 mt-0.5">
               <span class="text-gray-400">Ámbito <span class="text-red-500">*</span>:</span>
@@ -507,6 +524,8 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   @Input() initialPurchase: Purchase | null = null;
   @Input() editingDraftId: string | null = null;
   @Input() editingConfirmedId: string | null = null;
+  /** Tipo fijado al crear (desde menú +). Ignorado al editar, duplicar o restaurar borrador. */
+  @Input() lockedTipoComprobante: ComprobanteTipoId | null = null;
   @Output() saved = new EventEmitter<TransactionFormSaveEvent>();
   @Output() cancelled = new EventEmitter<void>();
   @Output() savingChange = new EventEmitter<boolean>();
@@ -543,6 +562,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   purchaseNumeroComprobante = '';
   purchaseFecha = todayDateInputValue();
   tipoComprobante: ComprobanteTipoId = 'factura';
+  comprobanteHintExpanded = false;
   draftLines: PurchaseDraftLine[] = [];
   private addedStockProductIdsCache: string[] = [];
   private addedStockProductIdsKey = '';
@@ -581,8 +601,20 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     return getMediosPagoActivos(this.appConfig);
   }
 
-  get showComprobanteSelector(): boolean {
-    return usesComprobantesExtra(this.appConfig);
+  get comprobanteTipoHintText(): string | null {
+    return comprobanteTipoHint(this.tipoComprobante, 'compras');
+  }
+
+  get comprobanteTipoHintTitle(): string {
+    return `Ayuda · ${comprobanteLabel(this.tipoComprobante)}`;
+  }
+
+  private get defaultTipoComprobante(): ComprobanteTipoId {
+    const locked = this.lockedTipoComprobante;
+    if (locked && isComprobanteTipoActivo(this.appConfig.comprobantes, locked)) {
+      return locked;
+    }
+    return 'factura';
   }
 
   get comprobanteOptions(): ComprobanteTipoOption[] {
@@ -742,7 +774,8 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
 
   get primarySaveLabel(): string {
     if (this.isEditingConfirmed) return 'Guardar cambios';
-    return this.isDraftMode ? 'Confirmar compra' : 'Registrar compra';
+    if (this.isDraftMode) return comprobanteConfirmarLabel(this.tipoComprobante, 'compras');
+    return comprobanteRegistrarLabel(this.tipoComprobante, 'compras');
   }
 
   get draftSecondaryLabel(): string {
@@ -790,8 +823,11 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       .map(({ index }) => index);
     this.purchaseStockTableLinesCache = this.stockLineIndicesCache.map((index) => {
       const line = this.draftLines[index];
+      const productName = line.productoNombre || 'Producto';
       return {
-        productName: `${line.productoNombre || 'Producto'} · Stock`,
+        productName: `${productName} · Stock`,
+        productId: line.productoId,
+        productClickable: !!line.productoId,
         quantity: line.cantidad,
         unitCost: line.costoUnitario,
         subtotal: (Number(line.cantidad) || 0) * (Number(line.costoUnitario) || 0),
@@ -803,6 +839,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   ngOnInit() {
+    if (!this.initialPurchase && !this.editingDraftId && !this.editingConfirmedId && !this.readOnly) {
+      this.tipoComprobante = this.defaultTipoComprobante;
+    }
+
     this.configSub = this.catalogConfig.appConfig$.subscribe((config) => {
       if (this.formShellReady) {
         this.applyAppConfig(config);
@@ -833,7 +873,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.appConfig = config;
     this.syncPurchaseMedioOptions();
     if (!this.comprobanteOptions.some((option) => option.id === this.tipoComprobante)) {
-      this.tipoComprobante = 'factura';
+      this.tipoComprobante =
+        !this.initialPurchase && !this.draftLines.length
+          ? this.defaultTipoComprobante
+          : 'factura';
     }
     const finanzasKey = buildFinanzasPagoConfigKey(config);
     const finanzasChanged = finanzasKey !== this.finanzasPagoConfigKey;
@@ -851,6 +894,17 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   ngOnChanges(changes: SimpleChanges) {
+    if (
+      changes['lockedTipoComprobante'] &&
+      !changes['lockedTipoComprobante'].firstChange &&
+      !this.initialPurchase &&
+      !this.editingDraftId &&
+      !this.editingConfirmedId &&
+      !this.readOnly
+    ) {
+      this.tipoComprobante = this.defaultTipoComprobante;
+    }
+
     if (changes['initialProveedorId'] && !changes['initialProveedorId'].firstChange && !this.readOnly) {
       this.purchaseProveedorId = this.initialProveedorId.trim();
     }
@@ -878,7 +932,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.purchaseNotas = '';
     this.purchaseNumeroComprobante = '';
     this.purchaseFecha = todayDateInputValue();
-    this.tipoComprobante = 'factura';
+    this.tipoComprobante = this.defaultTipoComprobante;
     this.pendingSupplierName = '';
     this.draftLines = [];
     this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
@@ -1138,7 +1192,39 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   addProductFromSearch(item: StockItem) {
-    if (!item.id || this.addedStockProductIds.includes(item.id)) return;
+    this.addOrIncrementProductFromSearch(item, 1);
+  }
+
+  addProductFromSearchWithQuantity(event: { item: StockItem; quantity: number }) {
+    this.addOrIncrementProductFromSearch(event.item, event.quantity);
+  }
+
+  private addOrIncrementProductFromSearch(item: StockItem, quantity: number) {
+    if (!item.id || quantity <= 0) return;
+
+    const existingIndex = this.draftLines.findIndex(
+      (line) => line.tipoLinea === 'stock' && line.productoId === item.id
+    );
+    if (existingIndex >= 0) {
+      const existing = this.draftLines[existingIndex];
+      this.draftLines = [
+        ...this.draftLines.slice(0, existingIndex),
+        {
+          ...existing,
+          cantidad: (Number(existing.cantidad) || 0) + quantity,
+        },
+        ...this.draftLines.slice(existingIndex + 1),
+      ];
+      this.syncAddedStockProductIds();
+      this.syncPurchaseStockTableLines();
+      return;
+    }
+
+    this.createProductLineFromSearch(item, quantity);
+  }
+
+  private createProductLineFromSearch(item: StockItem, initialQty = 1) {
+    if (!item.id) return;
 
     this.draftLines = [
       ...this.draftLines,
@@ -1148,7 +1234,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         ambito: this.usesAmbitoSeparation ? '' : this.defaultAmbito,
         productoId: item.id,
         productoNombre: item.nombre,
-        cantidad: 1,
+        cantidad: initialQty,
         costoUnitario: Number(item.costo) || 0,
         importe: null,
         costoGuardado: Number(item.costo) || 0,
@@ -1193,13 +1279,6 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       return;
     }
 
-    const detalle = diffLines
-      .map((line) => {
-        const guardado = Number(line.costoGuardado) || 0;
-        const costo = Number(line.costoUnitario) || 0;
-        return `• ${line.productoNombre || 'Producto'}: guardado ${this.formatMoneyShort(guardado)} → comprado ${this.formatMoneyShort(costo)}`;
-      })
-      .join('\n');
     const ahorroTotal = diffLines.reduce((acc, line) => {
       const guardado = Number(line.costoGuardado) || 0;
       const costo = Number(line.costoUnitario) || 0;
@@ -1210,10 +1289,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.dialogService
       .choose({
         title: 'Precio más bajo que el guardado',
-        message: `No marcaste "en oferta" y compraste más barato que el costo guardado:\n\n${detalle}\n\nSi no lo guardás como oferta, se va a SOBRESCRIBIR el costo guardado.\n\nElegí: guardar la diferencia (${this.formatMoneyShort(ahorroTotal)}) como ganancia sin tocar el costo, o sobrescribir el costo.`,
+        message: this.buildOfferDifferenceMessage(diffLines, ahorroTotal),
         options: [
-          { id: 'ganancia', label: 'Guardar como ganancia (no cambia el costo)' },
-          { id: 'costo', label: 'Sobrescribir el costo guardado' },
+          { id: 'ganancia', label: 'Guardar ahorro como ganancia' },
+          { id: 'costo', label: 'Actualizar costo guardado' },
         ],
         cancelLabel: 'Cancelar',
       })
@@ -1234,6 +1313,42 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       const guardado = Number(line.costoGuardado) || 0;
       return cantidad > 0 && costo > 0 && guardado > 0 && costo < guardado;
     });
+  }
+
+  private buildOfferDifferenceMessage(
+    diffLines: PurchaseDraftLine[],
+    ahorroTotal: number
+  ): string {
+    const count = diffLines.length;
+    const countLabel = count === 1 ? '1 producto' : `${count} productos`;
+    const lines: string[] = [
+      `Hay ${countLabel} con precio de compra menor al costo guardado.`,
+      `Ahorro estimado: ${this.formatMoneyShort(ahorroTotal)}.`,
+    ];
+
+    if (count <= 3) {
+      const detalle = diffLines
+        .map((line) => {
+          const guardado = Number(line.costoGuardado) || 0;
+          const costo = Number(line.costoUnitario) || 0;
+          const nombre = this.shortOfferProductName(line.productoNombre);
+          return `• ${nombre}: ${this.formatMoneyShort(guardado)} → ${this.formatMoneyShort(costo)}`;
+        })
+        .join('\n');
+      lines.push('', detalle);
+    }
+
+    lines.push(
+      '',
+      'Si no es una oferta puntual, al confirmar se actualizará el costo guardado.',
+      '¿Cómo querés registrarlo?'
+    );
+    return lines.join('\n');
+  }
+
+  private shortOfferProductName(name?: string): string {
+    const trimmed = (name ?? 'Producto').trim() || 'Producto';
+    return trimmed.length > 30 ? `${trimmed.slice(0, 29)}…` : trimmed;
   }
 
   formatMoney(value?: number | null): string {
@@ -1288,7 +1403,11 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         this.savingDraft = false;
         this.savingChange.emit(false);
         this.editingDraftId = result.id;
-        this.saveFeedback.showSuccess('Borrador guardado');
+        this.purchaseService.notifyListChanged();
+        this.saveFeedback.showSuccessWithDetail(
+          'Borrador guardado',
+          'Lo encontrás en Compras, arriba de la lista (marcado como Borrador).'
+        );
         this.saved.emit({ id: result.id, label: 'Borrador', draft: true });
       },
       error: (err) => {
@@ -1589,5 +1708,72 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       this.saveFeedback.endSave();
     }
     this.savingChange.emit(this.saveFeedback.saving);
+  }
+
+  onPurchaseStockProductClick(event: { index: number; productId?: string }): void {
+    const draftIndex = this.stockLineIndices[event.index];
+    const line = this.draftLines[draftIndex];
+    if (line) this.openPurchaseLineProduct(line);
+  }
+
+  openPurchaseLineProduct(line: PurchaseDraftLine): void {
+    if (this.readOnly) return;
+    const productId = String(line.productoId ?? '').trim();
+    if (!productId) return;
+    this.savePurchaseFormDraftForReturn();
+    this.router.navigate(['/stock', productId, 'edit'], {
+      queryParams: {
+        returnTo: 'purchases',
+        ...(this.editingConfirmedId ? { purchaseId: this.editingConfirmedId } : {}),
+        ...(this.editingDraftId && !this.editingConfirmedId
+          ? { purchaseDraftId: this.editingDraftId }
+          : {}),
+      },
+    });
+  }
+
+  restoreFromSessionDraft(): void {
+    const draft = readPurchaseFormDraft();
+    if (!draft) return;
+    this.applyPurchaseDraftSnapshot(draft);
+    clearPurchaseFormDraft();
+  }
+
+  applyPurchaseDraftSnapshot(draft: PurchaseFormDraftSnapshot): void {
+    this.purchaseProveedorId = draft.purchaseProveedorId;
+    this.pendingSupplierName = draft.pendingSupplierName;
+    this.purchaseNotas = draft.purchaseNotas;
+    this.purchaseNumeroComprobante = draft.purchaseNumeroComprobante;
+    this.purchaseFecha = draft.purchaseFecha;
+    this.tipoComprobante = normalizeComprobanteTipo(draft.tipoComprobante);
+    this.pagoCuotas = draft.pagoCuotas;
+    this.pagoFechaPrimerVencimiento = draft.pagoFechaPrimerVencimiento;
+    this.pagoTarjetaId = draft.pagoTarjetaId;
+    this.applyPagoMedioState(draft.pagoMedioId, {
+      preserveCuotas: true,
+      preserveFechaVencimiento: true,
+    });
+    this.draftLines = structuredClone(draft.draftLines) as PurchaseDraftLine[];
+    this.lineCounter = this.draftLines.length;
+    this.syncAddedStockProductIds();
+    this.syncPurchaseStockTableLines();
+  }
+
+  private savePurchaseFormDraftForReturn(): void {
+    savePurchaseFormDraft({
+      purchaseProveedorId: this.purchaseProveedorId,
+      pendingSupplierName: this.pendingSupplierName,
+      purchaseNotas: this.purchaseNotas,
+      purchaseNumeroComprobante: this.purchaseNumeroComprobante,
+      purchaseFecha: this.purchaseFecha,
+      tipoComprobante: this.tipoComprobante,
+      draftLines: structuredClone(this.draftLines),
+      pagoMedioId: this.pagoMedioId,
+      pagoTarjetaId: this.pagoTarjetaId,
+      pagoCuotas: this.pagoCuotas,
+      pagoFechaPrimerVencimiento: this.pagoFechaPrimerVencimiento,
+      editingDraftId: this.editingDraftId,
+      editingConfirmedId: this.editingConfirmedId,
+    });
   }
 }

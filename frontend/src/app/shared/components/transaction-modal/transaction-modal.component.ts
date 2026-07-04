@@ -84,44 +84,44 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
           class="shrink-0"
           [class.mb-3]="compact && (title || subtitle)"
           [class.mb-4]="!compact && (title || subtitle)">
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <h2
-                  *ngIf="title"
-                  [id]="titleId"
-                  class="font-bold text-gray-900"
-                  [class.text-lg]="compact"
-                  [class.text-xl]="!compact"
-                  [class.mb-0]="compact"
-                  [class.mb-1]="!compact">
-                  {{ title }}
-                </h2>
-                <span
-                  *ngIf="titleBadge"
-                  class="shrink-0 text-sm font-semibold text-teal-700 tabular-nums"
-                  [class.sm:text-base]="!compact">
-                  #{{ titleBadge }}
-                </span>
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+                  <h2
+                    *ngIf="title"
+                    [id]="titleId"
+                    class="font-bold text-gray-900 dark:text-gray-100"
+                    [class.text-lg]="compact"
+                    [class.text-xl]="!compact"
+                    [class.mb-0]="compact"
+                    [class.mb-1]="!compact">
+                    {{ title }}
+                  </h2>
+                  <span
+                    *ngIf="titleBadge"
+                    class="shrink-0 text-sm font-semibold text-teal-700 tabular-nums"
+                    [class.sm:text-base]="!compact">
+                    #{{ titleBadge }}
+                  </span>
+                </div>
+                <ng-content select="[headerActions]"></ng-content>
               </div>
               <p
                 *ngIf="subtitle"
-                class="text-sm text-gray-500"
+                class="text-sm text-gray-500 dark:text-gray-400"
                 [class.hidden]="hideSubtitleOnMobile"
                 [class.sm:block]="hideSubtitleOnMobile">
                 {{ subtitle }}
               </p>
             </div>
-            <div class="flex items-center gap-1 shrink-0 -mr-1">
-              <ng-content select="[headerActions]"></ng-content>
-              <button
-                type="button"
-                (click)="closed.emit()"
-                class="sm:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-gray-500 hover:bg-gray-100 shrink-0"
-                aria-label="Cerrar">
-                <i-lucide name="x" class="w-5 h-5"></i-lucide>
-              </button>
-            </div>
+            <button
+              type="button"
+              (click)="closed.emit()"
+              class="sm:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0 -mr-1"
+              aria-label="Cerrar">
+              <i-lucide name="x" class="w-5 h-5"></i-lucide>
+            </button>
           </div>
         </header>
 

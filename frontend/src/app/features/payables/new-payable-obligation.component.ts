@@ -17,11 +17,15 @@ import {
   buildTransactionSaveHeaderState,
 } from '../../shared/components/transaction-form';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
-import { FormFooterComponent } from '../../shared/components/form-shell';
+import {
+  FORM_CANCEL_CLASS,
+  FORM_SUBMIT_CLASS,
+} from '../../shared/components/icon-action/icon-action.component';
 import {
   RecordActionToolbarComponent,
 } from '../../shared/components/icon-toolbar';
 import { formatMonthYearLabel } from '../../core/utils/date-format';
+import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'app-new-payable-obligation',
@@ -32,7 +36,7 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
     PayableObligationFormPanelComponent,
     PayableCuotaPayModalComponent,
     RecordActionToolbarComponent,
-    FormFooterComponent,
+    LucideAngularModule,
   ],
   template: `
     <app-transaction-form-page
@@ -40,24 +44,9 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
       backLabel="Volver a cuentas a pagar"
       backShortLabel="Volver"
       backAriaLabel="Volver a cuentas a pagar"
+      [hideAside]="!!editingObligationId"
       [hasHeaderActions]="hasHeaderActions"
       (backClick)="goBack()">
-      <div headerActions *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3 lg:hidden">
-        <app-record-action-toolbar
-          [showSave]="auth.canEditRecords"
-          [saveLabel]="obligationHeaderSave.label"
-          [saveDisabled]="obligationHeaderSave.disabled"
-          [saveLoading]="obligationHeaderSave.loading"
-          (saveClick)="obligationForm?.submitForm()"
-          [showDuplicate]="canDuplicateCurrent && !isEditingMensual"
-          duplicateLabel="Duplicar"
-          (duplicateClick)="duplicateCurrentObligation()"
-          [showDelete]="canDeleteCurrent && !isEditingMensual"
-          deleteLabel="Eliminar"
-          [deleteDisabled]="obligationSaving || deletingObligation || togglingActive"
-          (deleteClick)="confirmDeleteCurrentObligation()">
-        </app-record-action-toolbar>
-      </div>
       <section main [class]="formCardClass">
         <app-payable-obligation-form-panel
           #obligationForm
@@ -68,80 +57,86 @@ import { formatMonthYearLabel } from '../../core/utils/date-format';
           (saved)="onSaved($event)"
           (savingChange)="onObligationSavingChange($event)"
           (cancelled)="goBack()">
+          <div
+            *ngIf="editingObligationId"
+            formActions
+            class="pt-4 mt-1 border-t border-gray-100 dark:border-gray-800 space-y-4">
+            <div
+              *ngIf="canPayCurrentMensual"
+              class="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-teal-200/80 dark:border-teal-800/60 bg-teal-50/70 dark:bg-teal-950/25 px-3.5 py-3 sm:px-4">
+              <div class="flex items-start gap-3 min-w-0 flex-1">
+                <span
+                  class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-100 dark:bg-teal-900/60 text-teal-700 dark:text-teal-300">
+                  <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
+                </span>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0">Pagar este mes</p>
+                  <p class="text-xs text-gray-600 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
+                    {{ formatMonthYearLabel(payMes) }} · podés ajustar el monto al confirmar.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                (click)="openPayCurrentMensual()"
+                [disabled]="payCuotaLoading || obligationSaving || togglingActive"
+                class="shrink-0 self-start sm:self-center text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-50 whitespace-nowrap">
+                {{ payCuotaLoading ? 'Cargando...' : 'Pagar' }}
+              </button>
+            </div>
+
+            <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center gap-3">
+              <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
+                <app-record-action-toolbar
+                  [showDuplicate]="canDuplicateCurrent"
+                  duplicateLabel="Duplicar"
+                  [duplicateDisabled]="obligationSaving || deletingObligation || togglingActive"
+                  (duplicateClick)="duplicateCurrentObligation()"
+                  [showDelete]="canDeleteCurrent"
+                  deleteLabel="Eliminar"
+                  [deleteDisabled]="obligationSaving || deletingObligation || togglingActive"
+                  (deleteClick)="confirmDeleteCurrentObligation()">
+                </app-record-action-toolbar>
+                <button
+                  *ngIf="canToggleActiveCurrent"
+                  type="button"
+                  (click)="toggleCurrentObligationActive()"
+                  [disabled]="togglingActive || obligationSaving || deletingObligation"
+                  class="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-50 whitespace-nowrap">
+                  {{ togglingActive ? 'Guardando...' : (loadedObligation?.activo ? 'Desactivar' : 'Reactivar') }}
+                </button>
+              </div>
+
+              <div class="flex-1 min-w-0 hidden sm:block"></div>
+
+              <div class="flex flex-col items-stretch sm:items-end gap-2 w-full sm:w-auto">
+                <p
+                  *ngIf="obligationForm?.saveSuccessMessage"
+                  class="text-sm font-semibold text-teal-800 dark:text-teal-200 text-right m-0"
+                  role="status"
+                  aria-live="polite">
+                  {{ obligationForm.saveSuccessMessage }}
+                </p>
+                <div class="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3">
+                  <button
+                    type="button"
+                    (click)="goBack()"
+                    [class]="formCancelClass + ' w-full sm:w-auto justify-center'">
+                    Volver sin guardar
+                  </button>
+                  <button
+                    type="button"
+                    [disabled]="obligationHeaderSave.disabled"
+                    [class]="formSubmitClass + ' w-full sm:w-auto justify-center'"
+                    (click)="obligationForm?.submitForm()">
+                    {{ obligationHeaderSave.loading ? 'Guardando...' : obligationHeaderSave.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </app-payable-obligation-form-panel>
       </section>
-
-      <aside *ngIf="editingObligationId" aside class="space-y-3">
-        <div
-          class="rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm p-3 sm:p-4 space-y-3">
-          <h2 class="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 m-0">
-            Acciones
-          </h2>
-
-          <div
-            *ngIf="canPayCurrentMensual"
-            class="rounded-lg border border-teal-100 dark:border-teal-900/50 bg-teal-50/70 dark:bg-teal-950/25 px-3 py-2.5 space-y-2">
-            <div>
-              <p class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0">Pagar este mes</p>
-              <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
-                {{ formatMonthYearLabel(payMes) }} · podés ajustar el monto al confirmar.
-              </p>
-            </div>
-            <button
-              type="button"
-              (click)="openPayCurrentMensual()"
-              [disabled]="payCuotaLoading || obligationSaving || togglingActive"
-              class="w-full inline-flex items-center justify-center rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
-              {{ payCuotaLoading ? 'Cargando...' : 'Pagar' }}
-            </button>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <button
-              *ngIf="canToggleActiveCurrent"
-              type="button"
-              (click)="toggleCurrentObligationActive()"
-              [disabled]="togglingActive || obligationSaving || deletingObligation"
-              class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs font-semibold text-teal-700 dark:text-teal-400 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-50">
-              {{ togglingActive ? 'Guardando...' : (loadedObligation?.activo ? 'Desactivar' : 'Reactivar') }}
-            </button>
-            <button
-              *ngIf="canDuplicateCurrent"
-              type="button"
-              (click)="duplicateCurrentObligation()"
-              [disabled]="obligationSaving || deletingObligation || togglingActive"
-              class="w-full text-left rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60 disabled:opacity-50">
-              Duplicar
-            </button>
-            <button
-              *ngIf="canDeleteCurrent"
-              type="button"
-              (click)="confirmDeleteCurrentObligation()"
-              [disabled]="obligationSaving || deletingObligation || togglingActive"
-              class="w-full text-left rounded-lg border border-red-100 dark:border-red-900/40 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50">
-              {{ deletingObligation ? 'Eliminando...' : 'Eliminar' }}
-            </button>
-          </div>
-
-          <div class="space-y-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-            <app-form-footer
-              mode="sidebar"
-              [showCancel]="false"
-              [saveLabel]="obligationHeaderSave.label"
-              [saving]="obligationHeaderSave.loading"
-              [saveDisabled]="obligationHeaderSave.disabled"
-              [successMessage]="obligationForm?.saveSuccessMessage ?? ''"
-              (saveClick)="obligationForm?.submitForm()">
-            </app-form-footer>
-            <button
-              type="button"
-              (click)="goBack()"
-              class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60">
-              Volver sin guardar
-            </button>
-          </div>
-        </div>
-      </aside>
     </app-transaction-form-page>
 
     <app-payable-cuota-pay-modal
@@ -163,6 +158,8 @@ export class NewPayableObligationComponent implements OnInit {
   private navigationBack = inject(NavigationBackService);
 
   readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
+  readonly formCancelClass = FORM_CANCEL_CLASS;
+  readonly formSubmitClass = FORM_SUBMIT_CLASS;
   initialAmbito = '';
   editingObligationId: string | null = null;
   loadedObligation: PayableObligation | null = null;
@@ -196,16 +193,7 @@ export class NewPayableObligationComponent implements OnInit {
   }
 
   get hasHeaderActions(): boolean {
-    if (!this.editingObligationId) return false;
-    if (this.isEditingMensual) {
-      return this.auth.canEditRecords;
-    }
-    return (
-      this.auth.canEditRecords ||
-      this.canDuplicateCurrent ||
-      this.canDeleteCurrent ||
-      this.canToggleActiveCurrent
-    );
+    return false;
   }
 
   get canDuplicateCurrent(): boolean {

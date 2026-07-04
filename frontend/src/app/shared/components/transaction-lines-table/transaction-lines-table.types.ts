@@ -14,6 +14,8 @@ export interface TransactionTableColumn {
   header: string;
   headerShort?: string;
   widthClass?: string;
+  /** Peso relativo para tablas redimensionables (`data-col-weight`). */
+  colWeight?: number;
   align?: 'left' | 'center' | 'right';
   visible?: boolean;
 }
@@ -93,15 +95,33 @@ export const COLUMN_DEFAULTS: Record<
 
 export function buildTransactionTableColumns(
   ids: TransactionTableColumnId[],
-  visibility: Partial<Record<TransactionTableColumnId, boolean>> = {}
+  visibility: Partial<Record<TransactionTableColumnId, boolean>> = {},
+  widths: Partial<Record<TransactionTableColumnId, string>> = {},
+  colWeights: Partial<Record<TransactionTableColumnId, number>> = {}
 ): TransactionTableColumn[] {
   return ids
     .map((id) => ({
       ...COLUMN_DEFAULTS[id],
+      ...(widths[id] ? { widthClass: widths[id] } : {}),
+      ...(colWeights[id] != null ? { colWeight: colWeights[id] } : {}),
       visible: visibility[id] !== false,
     }))
     .filter((column) => column.visible !== false);
 }
+
+/** Proporciones de columnas en pedidos: numéricas 7% c/u, producto el resto. */
+export const ORDER_FORM_COLUMN_WEIGHTS: Partial<Record<TransactionTableColumnId, number>> = {
+  product: 69,
+  quantity: 7,
+  unitCost: 7,
+  personalization: 7,
+  unitSale: 7,
+  actions: 3,
+};
+
+/** Incrementar al cambiar ORDER_FORM_COLUMN_WEIGHTS para invalidar anchos guardados. */
+export const ORDER_LINES_LAYOUT_VERSION = '5';
+export const ORDER_LINES_LAYOUT_ID = 'order-lines';
 
 export const SALE_FORM_TABLE_COLUMNS: TransactionTableColumnId[] = [
   'product',

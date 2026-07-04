@@ -33,6 +33,7 @@ export {
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
+  mediosPagoIdsEquivalent,
   normalizeMedioPagoLookupId,
   purchaseLineAffectsStock,
   resolvePurchasePagoDisplayLabel,

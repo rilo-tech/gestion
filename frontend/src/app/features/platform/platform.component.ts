@@ -1,34 +1,49 @@
 import { Component, inject, OnInit } from '@angular/core';
+import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
   PlatformService,
   SubscriptionStatus,
+  type PlatformTrialRow,
 } from '../../core/services/platform.service';
 import {
   PublicBusinessInfo,
   PublicPlanInfo,
-  SubscriptionPayment,
   SubscriptionPaymentStatus,
   SUBSCRIPTION_PAYMENT_STATUS_LABELS,
   SUBSCRIPTION_STATUS_LABELS,
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
-import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import {
   TABLE_SCROLL_CLASS,
   DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import {
+  DEFAULT_PLAN_MODULES,
+  SELLABLE_SUBSCRIPTION_MODULE_CATALOG,
+  normalizeModulesMap,
+  type SubscriptionModuleId,
+  type SubscriptionModulesMap,
+} from '../../../../../shared/subscription-modules.ts';
+import {
+  DEFAULT_TRIAL_DAYS,
+} from '../../../../../shared/trial-state.ts';
 
-type PlatformTab = 'empresas' | 'pagos' | 'planes';
+type PlatformTab = 'empresas' | 'pruebas' | 'pagos' | 'planes';
 type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
 @Component({
   selector: 'app-platform',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionModalComponent, ListSearchFieldComponent],
+  imports: [
+    CommonModule,
+    FormsModule,
+    LucideAngularModule,
+    ListSearchFieldComponent,
+  ],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
       <div>
@@ -48,6 +63,16 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
           [class.border-transparent]="activeTab !== 'empresas'"
           [class.text-gray-500]="activeTab !== 'empresas'">
           Empresas
+        </button>
+        <button
+          type="button"
+          (click)="switchTab('pruebas')"
+          class="px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors"
+          [class.border-teal-600]="activeTab === 'pruebas'"
+          [class.text-teal-700]="activeTab === 'pruebas'"
+          [class.border-transparent]="activeTab !== 'pruebas'"
+          [class.text-gray-500]="activeTab !== 'pruebas'">
+          Pruebas activas
         </button>
         <button
           type="button"
@@ -113,7 +138,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               <select
                 [(ngModel)]="businessDraft.planId"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm md:col-span-2">
-                <option *ngFor="let plan of plans" [value]="plan.id">
+                <option *ngFor="let plan of activePlans" [value]="plan.id">
                   {{ plan.nombre }} · {{ formatMoney(plan.precioMensual) }}/mes
                 </option>
               </select>
@@ -138,10 +163,29 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 <input
                   type="checkbox"
                   [(ngModel)]="businessDraft.enPrueba"
+                  (ngModelChange)="onCreateTrialToggle($event)"
                   name="businessDraftEnPrueba"
                   class="rounded border-violet-300 text-violet-600">
-                Cuenta en período de prueba (no suma en control de cobros)
+                Prueba gratis {{ defaultTrialDays }} días (Plan Intermedio, no suma en cobros)
               </label>
+              <ng-container *ngIf="businessDraft.enPrueba">
+                <div>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">Inicio de prueba</label>
+                  <input
+                    [(ngModel)]="businessDraft.trialStartDate"
+                    name="businessDraftTrialStart"
+                    type="date"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">Fin de prueba</label>
+                  <input
+                    [(ngModel)]="businessDraft.trialEndDate"
+                    name="businessDraftTrialEnd"
+                    type="date"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                </div>
+              </ng-container>
             </div>
             <div class="mt-4 flex justify-end gap-2">
               <button
@@ -201,7 +245,17 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     <div class="font-medium text-gray-900 truncate flex items-center gap-2">
                       <span class="truncate">{{ business.nombre }}</span>
                       <span
-                        *ngIf="isTrialBusiness(business)"
+                        *ngIf="isTrialExpiredBusiness(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-900">
+                        Prueba vencida
+                      </span>
+                      <span
+                        *ngIf="isTrialExpiringSoon(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-orange-100 text-orange-900">
+                        Vence en {{ business.trialDaysRemaining }} d
+                      </span>
+                      <span
+                        *ngIf="isActiveTrialBusiness(business)"
                         class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-violet-100 text-violet-800">
                         Prueba
                       </span>
@@ -265,12 +319,89 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </div>
       </section>
 
+      <section *ngIf="activeTab === 'pruebas'" class="space-y-4">
+        <div class="flex flex-wrap gap-2">
+          <button type="button" (click)="trialFilter = 'active'; loadTrials()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border"
+            [class.border-violet-300]="trialFilter === 'active'"
+            [class.bg-violet-50]="trialFilter === 'active'">Activas</button>
+          <button type="button" (click)="trialFilter = 'expiring'; loadTrials()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border"
+            [class.border-orange-300]="trialFilter === 'expiring'"
+            [class.bg-orange-50]="trialFilter === 'expiring'">Por vencer</button>
+          <button type="button" (click)="trialFilter = 'expired'; loadTrials()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border"
+            [class.border-amber-300]="trialFilter === 'expired'"
+            [class.bg-amber-50]="trialFilter === 'expired'">Vencidas</button>
+          <button type="button" (click)="trialFilter = 'all'; loadTrials()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200">Todas</button>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+          <table class="app-data-table w-full text-left text-sm">
+            <thead>
+              <tr class="bg-gray-50 border-b border-gray-100 text-xs uppercase text-gray-400">
+                <th class="px-4 py-3">Empresa</th>
+                <th class="px-4 py-3">Responsable</th>
+                <th class="px-4 py-3">Contacto</th>
+                <th class="px-4 py-3">Vence</th>
+                <th class="px-4 py-3">Uso</th>
+                <th class="px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              <tr *ngFor="let row of trialRows" class="hover:bg-gray-50 cursor-pointer" (click)="openBusinessById(row.businessId)">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-gray-900">{{ row.nombre }}</div>
+                  <div class="text-xs text-gray-500 font-mono">{{ row.businessId }}</div>
+                </td>
+                <td class="px-4 py-3 text-gray-700">{{ row.ownerName || '—' }}</td>
+                <td class="px-4 py-3 text-xs text-gray-600">
+                  <div>{{ row.phone || '—' }} <span *ngIf="row.phoneVerified" class="text-green-600">✓</span></div>
+                  <div>{{ row.email || '—' }} <span *ngIf="row.emailVerified" class="text-green-600">✓</span></div>
+                </td>
+                <td class="px-4 py-3">
+                  <div>{{ formatDate(row.trialEndDate ?? undefined) }}</div>
+                  <div class="text-xs text-gray-500" *ngIf="row.trialDaysRemaining != null">{{ row.trialDaysRemaining }} días</div>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-600">
+                  P {{ row.usage.ordersCount }} · V {{ row.usage.salesCount }} · Prod {{ row.usage.productsCount }}
+                </td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-violet-100 text-violet-800">
+                    {{ row.trialStatus || '—' }}
+                  </span>
+                </td>
+              </tr>
+              <tr *ngIf="loadingTrials">
+                <td colspan="6" class="px-4 py-10 text-center text-gray-400">Cargando pruebas...</td>
+              </tr>
+              <tr *ngIf="!loadingTrials && trialRows.length === 0">
+                <td colspan="6" class="px-4 py-10 text-center text-gray-400">No hay pruebas con este filtro.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- PAGOS -->
       <section *ngIf="activeTab === 'pagos'" class="space-y-4">
         <div class="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-900">
           Control de cobros mensuales por empresa activa (excluye cuentas en prueba).
           Período en curso: <span class="font-semibold">{{ formatPeriodo(currentPeriodoLabel) }}</span>.
           Hasta el día 10 se considera pendiente; después, vencido.
+        </div>
+
+        <div
+          *ngIf="paymentStats.trialExpiringSoon > 0"
+          class="rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+          {{ paymentStats.trialExpiringSoon }} cuenta{{ paymentStats.trialExpiringSoon === 1 ? '' : 's' }} en prueba
+          vence{{ paymentStats.trialExpiringSoon === 1 ? '' : 'n' }} en los próximos 3 días.
+        </div>
+        <div
+          *ngIf="paymentStats.trialExpired > 0"
+          class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {{ paymentStats.trialExpired }} cuenta{{ paymentStats.trialExpired === 1 ? '' : 's' }} con prueba vencida.
+          Revisá si convertís a pago, extendés o desactivás la suscripción.
         </div>
 
         <div class="grid grid-cols-2 lg:grid-cols-6 gap-3">
@@ -366,7 +497,17 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     <div class="font-medium text-gray-900 truncate flex items-center gap-2">
                       <span class="truncate">{{ business.nombre }}</span>
                       <span
-                        *ngIf="isTrialBusiness(business)"
+                        *ngIf="isTrialExpiredBusiness(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-900">
+                        Prueba vencida
+                      </span>
+                      <span
+                        *ngIf="isTrialExpiringSoon(business)"
+                        class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-orange-100 text-orange-900">
+                        Vence en {{ business.trialDaysRemaining }} d
+                      </span>
+                      <span
+                        *ngIf="isActiveTrialBusiness(business)"
                         class="shrink-0 inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-violet-100 text-violet-800">
                         Prueba
                       </span>
@@ -445,6 +586,10 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
       <!-- PLANES -->
       <section *ngIf="activeTab === 'planes'" class="space-y-4">
+        <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+          Los planes son <strong>plantillas para empresas nuevas</strong>. Para cambiar operadores, módulos o precios de un cliente,
+          abrí su ficha en Empresas. Al guardar un plan sin marcar «aplicar a existentes», las empresas actuales conservan su configuración.
+        </p>
         <div class="flex justify-end">
           <button
             type="button"
@@ -459,7 +604,16 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
           class="rounded-xl border shadow-sm overflow-hidden bg-amber-50/50 border-amber-100">
           <div class="border-l-4 border-l-amber-500 p-4 sm:p-5">
             <h3 class="font-bold text-gray-900 mb-1">Nuevo plan</h3>
-            <p class="text-sm text-gray-600 mb-4">Definí cupos y precio mensual de la suscripción.</p>
+            <p class="text-sm text-gray-600 mb-4">Definí cupos, precios y módulos incluidos.</p>
+            <div class="flex flex-wrap gap-2 mb-4">
+              <button
+                type="button"
+                *ngFor="let tpl of planTemplateOptions"
+                (click)="applyPlanDraftTemplate(tpl.id)"
+                class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-amber-200 bg-white text-amber-900 hover:bg-amber-100">
+                Plantilla {{ tpl.label }}
+              </button>
+            </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 [(ngModel)]="planDraft.id"
@@ -470,11 +624,33 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 placeholder="Nombre *"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               <input
-                [(ngModel)]="planDraft.precioMensual"
+                [(ngModel)]="planDraft.precioBaseMensual"
+                (ngModelChange)="planDraft.precioMensual = planDraft.precioBaseMensual"
                 type="number"
                 min="0"
                 step="1"
-                placeholder="Precio mensual ($)"
+                placeholder="Precio base ($/mes)"
+                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <input
+                [(ngModel)]="planDraft.precioPorAdministrador"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="$/admin/mes"
+                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <input
+                [(ngModel)]="planDraft.precioPorOperador"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="$/operador/mes"
+                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <input
+                [(ngModel)]="planDraft.maxAmbitosCaja"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Máx. ámbitos caja"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               <input
                 [(ngModel)]="planDraft.limiteAdministradores"
@@ -494,6 +670,25 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 min="1"
                 placeholder="Límite total (opcional)"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm md:col-span-2">
+            </div>
+            <div class="mt-4">
+              <h4 class="text-sm font-semibold text-gray-900 mb-2">Módulos incluidos</h4>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label
+                  *ngFor="let module of moduleCatalog"
+                  class="inline-flex items-start gap-2 rounded-lg border border-gray-100 bg-white px-3 py-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    [checked]="planDraftModuleEnabled(module.id)"
+                    [disabled]="module.alwaysOn"
+                    (change)="togglePlanDraftModule(module.id, $any($event.target).checked)"
+                    class="mt-0.5 rounded border-gray-300 text-teal-600">
+                  <span>
+                    <span class="block font-medium text-gray-900">{{ module.label }}</span>
+                    <span class="block text-xs text-gray-500">{{ module.description }}</span>
+                  </span>
+                </label>
+              </div>
             </div>
             <div class="mt-4 flex justify-end gap-2">
               <button
@@ -515,7 +710,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
         <div class="space-y-3">
           <article
-            *ngFor="let plan of plans; let i = index"
+            *ngFor="let plan of activePlans; let i = index"
             class="rounded-xl border shadow-sm overflow-hidden"
             [ngClass]="{
               'bg-teal-50/40 border-teal-100': i % 3 === 0,
@@ -590,10 +785,41 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-500">
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Precio mensual ($)</label>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">Precio base ($/mes)</label>
                   <input
-                    [(ngModel)]="plan.precioMensual"
-                    [name]="'planPrecio' + plan.id"
+                    [(ngModel)]="plan.precioBaseMensual"
+                    (ngModelChange)="plan.precioMensual = plan.precioBaseMensual"
+                    [name]="'planPrecioBase' + plan.id"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">$/admin/mes</label>
+                  <input
+                    [(ngModel)]="plan.precioPorAdministrador"
+                    [name]="'planPrecioAdmin' + plan.id"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">$/operador/mes</label>
+                  <input
+                    [(ngModel)]="plan.precioPorOperador"
+                    [name]="'planPrecioOp' + plan.id"
+                    type="number"
+                    min="0"
+                    step="1"
+                    class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">Máx. ámbitos caja</label>
+                  <input
+                    [(ngModel)]="plan.maxAmbitosCaja"
+                    [name]="'planMaxCaja' + plan.id"
                     type="number"
                     min="0"
                     step="1"
@@ -637,6 +863,49 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 Plan activo
               </label>
 
+              <div class="mb-4">
+                <h4 class="text-sm font-semibold text-gray-900 mb-2">Módulos incluidos en el plan</h4>
+                <div class="flex flex-wrap gap-2 mb-3">
+                  <button
+                    type="button"
+                    *ngFor="let tpl of planTemplateOptions"
+                    (click)="applyPlanTemplate(plan, tpl.id)"
+                    class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">
+                    Plantilla {{ tpl.label }}
+                  </button>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label
+                    *ngFor="let module of moduleCatalog"
+                    class="inline-flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      [checked]="planModuleEnabled(plan, module.id)"
+                      [disabled]="module.alwaysOn"
+                      (change)="togglePlanModule(plan, module.id, $any($event.target).checked)"
+                      class="mt-0.5 rounded border-gray-300 text-teal-600">
+                    <span>
+                      <span class="block font-medium text-gray-900">{{ module.label }}</span>
+                      <span class="block text-xs text-gray-500">{{ module.description }}</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <label class="inline-flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-sm cursor-pointer mb-4">
+                <input
+                  type="checkbox"
+                  [(ngModel)]="planApplyToExisting[plan.id]"
+                  [name]="'applyExisting' + plan.id"
+                  class="mt-0.5 rounded border-amber-300 text-amber-600">
+                <span>
+                  <span class="block font-medium text-amber-950">Aplicar también a empresas que ya usan este plan</span>
+                  <span class="block text-xs text-amber-800 mt-0.5">
+                    Dejalo desmarcado para no tocar clientes existentes. Solo las empresas nuevas tomarán la plantilla actualizada.
+                  </span>
+                </span>
+              </label>
+
               <div class="flex justify-end gap-2">
                 <button
                   type="button"
@@ -657,194 +926,38 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </div>
       </section>
     </div>
-
-    <app-transaction-modal
-      [open]="businessModalOpen"
-      [title]="selectedBusiness?.nombre ?? 'Empresa'"
-      [subtitle]="selectedBusiness ? 'Código ' + selectedBusiness.id + ' · Plan ' + selectedBusiness.plan.nombre : ''"
-      maxWidthClass="max-w-2xl"
-      (closed)="closeBusinessModal()">
-      <div *ngIf="selectedBusiness" class="space-y-6">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="rounded-xl border border-gray-100 bg-gray-50 p-3">
-            <p class="text-xs text-gray-500">Cuota mensual</p>
-            <p class="text-lg font-bold text-gray-900 tabular-nums">{{ formatMoney(selectedBusiness.montoMensualEsperado) }}</p>
-          </div>
-          <div class="rounded-xl border border-gray-100 bg-gray-50 p-3">
-            <p class="text-xs text-gray-500">Estado cobro ({{ formatPeriodo(selectedBusiness.periodoPagoActual) }})</p>
-            <span
-              class="inline-flex mt-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-              [ngClass]="getBillingStatusClass(selectedBusiness)">
-              {{ getBillingStatusLabel(selectedBusiness) }}
-            </span>
-          </div>
-        </div>
-
-        <div class="rounded-xl border border-violet-100 bg-violet-50 p-4 space-y-2">
-          <label class="inline-flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              [checked]="isTrialBusiness(selectedBusiness)"
-              [disabled]="togglingTrialId === selectedBusiness.id"
-              (change)="toggleBusinessTrial(selectedBusiness, $any($event.target).checked)"
-              class="h-4 w-4 rounded border-violet-300 text-violet-600">
-            <span class="text-sm font-semibold text-violet-900">Cuenta en período de prueba</span>
-          </label>
-          <p class="text-xs text-violet-800">
-            Mientras esté activa, la empresa puede usar el sistema pero no se exige pago mensual ni suma en pendientes, vencidos ni por cobrar.
-          </p>
-        </div>
-
-        <div class="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-2">
-          <label class="inline-flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              [checked]="isSubscriptionActive(selectedBusiness)"
-              [disabled]="togglingSubscriptionId === selectedBusiness.id"
-              (change)="toggleBusinessSubscription(selectedBusiness, $any($event.target).checked)"
-              class="h-4 w-4 rounded border-gray-300 text-teal-600">
-            <span class="text-sm font-semibold text-gray-900">Suscripción activa</span>
-          </label>
-          <p class="text-xs text-gray-500">
-            Si desactivás la suscripción, ningún usuario de esta empresa podrá ingresar al sistema.
-          </p>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Plan</label>
-          <select
-            [(ngModel)]="selectedBusiness.planId"
-            [name]="'modalPlan' + selectedBusiness.id"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-            <option *ngFor="let plan of plans" [value]="plan.id">{{ plan.nombre }}</option>
-          </select>
-        </div>
-
-        <p class="text-sm text-gray-500">
-          Admins {{ selectedBusiness.administradoresActivos }}/{{ selectedBusiness.plan.limiteAdministradores }} ·
-          Ops {{ selectedBusiness.operadoresActivos }}/{{ selectedBusiness.plan.limiteOperadores }}
-        </p>
-
-        <div class="flex justify-end">
-          <button
-            type="button"
-            (click)="saveBusiness(selectedBusiness)"
-            [disabled]="savingBusinessId === selectedBusiness.id"
-            class="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-            {{ savingBusinessId === selectedBusiness.id ? 'Guardando...' : 'Guardar cambios' }}
-          </button>
-        </div>
-
-        <div class="border-t border-gray-100 pt-5 space-y-4">
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="font-semibold text-gray-900">Registrar pago mensual</h3>
-          </div>
-          <p
-            *ngIf="isTrialBusiness(selectedBusiness)"
-            class="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
-            Cuenta en prueba: podés registrar un pago igualmente, pero no se exige cobro mientras dure el período de prueba.
-          </p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-medium text-gray-500 mb-1">Período (AAAA-MM)</label>
-              <input
-                [(ngModel)]="paymentDraft.periodo"
-                [name]="'payPeriodo' + selectedBusiness.id"
-                placeholder="2026-05"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-500 mb-1">Monto ($)</label>
-              <input
-                [(ngModel)]="paymentDraft.monto"
-                [name]="'payMonto' + selectedBusiness.id"
-                type="number"
-                min="0"
-                step="1"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-500 mb-1">Fecha de pago</label>
-              <input
-                [(ngModel)]="paymentDraft.fechaPago"
-                [name]="'payFecha' + selectedBusiness.id"
-                type="date"
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-500 mb-1">Notas (opcional)</label>
-              <input
-                [(ngModel)]="paymentDraft.notas"
-                [name]="'payNotas' + selectedBusiness.id"
-                placeholder="Transferencia, efectivo..."
-                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-            </div>
-          </div>
-          <div class="flex justify-end">
-            <button
-              type="button"
-              (click)="registerPayment()"
-              [disabled]="registeringPayment"
-              class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
-              {{ registeringPayment ? 'Registrando...' : 'Registrar pago' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="border-t border-gray-100 pt-5">
-          <h3 class="font-semibold text-gray-900 mb-3">Historial de pagos</h3>
-          <div *ngIf="loadingPayments" class="text-sm text-gray-400 py-4 text-center">Cargando pagos...</div>
-          <div *ngIf="!loadingPayments && payments.length === 0" class="text-sm text-gray-400 py-4 text-center">
-            Sin pagos registrados todavía.
-          </div>
-          <div *ngIf="!loadingPayments && payments.length > 0" class="overflow-x-auto -mx-1">
-            <table class="w-full min-w-[420px] text-left text-sm">
-              <thead>
-                <tr class="border-b border-gray-100 text-xs uppercase text-gray-400">
-                  <th class="py-2 pr-3">Período</th>
-                  <th class="py-2 pr-3 text-right">Monto</th>
-                  <th class="py-2 pr-3">Fecha</th>
-                  <th class="py-2">Notas</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-50">
-                <tr *ngFor="let payment of payments">
-                  <td class="py-2.5 pr-3 font-medium text-gray-900">{{ formatPeriodo(payment.periodo) }}</td>
-                  <td class="py-2.5 pr-3 text-right tabular-nums">{{ formatMoney(payment.monto) }}</td>
-                  <td class="py-2.5 pr-3 text-gray-600">{{ formatDate(payment.fechaPago) }}</td>
-                  <td class="py-2.5 text-gray-500 truncate max-w-[10rem]">{{ payment.notas || '—' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </app-transaction-modal>
   `,
 })
 export class PlatformComponent implements OnInit {
   private platformService = inject(PlatformService);
   private dialogService = inject(DialogService);
+  private router = inject(Router);
 
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
   readonly statusLabels = SUBSCRIPTION_STATUS_LABELS;
   readonly paymentStatusLabels = SUBSCRIPTION_PAYMENT_STATUS_LABELS;
+  readonly moduleCatalog = SELLABLE_SUBSCRIPTION_MODULE_CATALOG;
+  readonly defaultTrialDays = DEFAULT_TRIAL_DAYS;
+  readonly planTemplateOptions = [
+    { id: 'plan_basico', label: 'Básico' },
+    { id: 'plan_intermedio', label: 'Intermedio' },
+    { id: 'plan_profesional', label: 'Pro' },
+  ];
 
   activeTab: PlatformTab = 'empresas';
+  trialFilter: 'active' | 'expiring' | 'expired' | 'all' = 'active';
+  trialRows: PlatformTrialRow[] = [];
+  loadingTrials = false;
   businesses: (PublicBusinessInfo & { planId?: string })[] = [];
   plans: PublicPlanInfo[] = [];
-  payments: SubscriptionPayment[] = [];
 
   loadingBusinesses = false;
-  loadingPayments = false;
   creatingBusiness = false;
   creatingPlan = false;
-  savingBusinessId: string | null = null;
   savingPlanId: string | null = null;
-  registeringPayment = false;
   togglingSubscriptionId: string | null = null;
-  togglingTrialId: string | null = null;
+  planApplyToExisting: Record<string, boolean> = {};
 
   showCreateBusinessForm = false;
   showCreatePlanForm = false;
@@ -854,14 +967,14 @@ export class PlatformComponent implements OnInit {
   paymentSearchQuery = '';
   paymentFilter: PaymentFilter = 'all';
   includeSuspendedInPayments = false;
-  businessModalOpen = false;
-  selectedBusiness: (PublicBusinessInfo & { planId?: string }) | null = null;
 
   businessDraft = {
     id: '',
     nombre: '',
     planId: 'plan_basico',
     enPrueba: false,
+    trialStartDate: '',
+    trialEndDate: '',
     supervisorNombre: '',
     supervisorEmail: '',
     supervisorLogin: '',
@@ -872,17 +985,20 @@ export class PlatformComponent implements OnInit {
     id: '',
     nombre: '',
     precioMensual: 0,
+    precioBaseMensual: 0,
+    precioPorAdministrador: 0,
+    precioPorOperador: 0,
+    maxAmbitosCaja: 0,
     limiteAdministradores: 1,
     limiteOperadores: 2,
     limiteUsuariosTotal: 3,
   };
 
-  paymentDraft = {
-    periodo: '',
-    monto: 0,
-    fechaPago: '',
-    notas: '',
-  };
+  planDraftModules: SubscriptionModulesMap = { ...DEFAULT_PLAN_MODULES.plan_basico };
+
+  get activePlans(): PublicPlanInfo[] {
+    return this.plans.filter((plan) => plan.activo);
+  }
 
   get filteredBusinesses(): (PublicBusinessInfo & { planId?: string })[] {
     const query = this.businessSearchQuery.trim().toLowerCase();
@@ -907,7 +1023,13 @@ export class PlatformComponent implements OnInit {
   get paymentStats() {
     const billable = this.businesses.filter((business) => this.countsForBilling(business));
     const trialActive = this.businesses.filter(
-      (business) => business.estadoSuscripcion === 'activa' && this.isTrialBusiness(business)
+      (business) => business.estadoSuscripcion === 'activa' && this.isActiveTrialBusiness(business)
+    );
+    const trialExpiringSoon = this.businesses.filter(
+      (business) => business.estadoSuscripcion === 'activa' && this.isTrialExpiringSoon(business)
+    );
+    const trialExpired = this.businesses.filter(
+      (business) => business.estadoSuscripcion === 'activa' && this.isTrialExpiredBusiness(business)
     );
 
     const montoCobradoMes = billable
@@ -930,6 +1052,8 @@ export class PlatformComponent implements OnInit {
       pendiente: billable.filter((business) => business.estadoPago === 'pendiente').length,
       vencido: billable.filter((business) => business.estadoPago === 'vencido').length,
       enPrueba: trialActive.length,
+      trialExpiringSoon: trialExpiringSoon.length,
+      trialExpired: trialExpired.length,
       montoCobradoMes,
       montoPendiente,
     };
@@ -994,6 +1118,29 @@ export class PlatformComponent implements OnInit {
     this.loadBusinesses();
   }
 
+  switchTab(tab: PlatformTab) {
+    this.activeTab = tab;
+    if (tab === 'pruebas') this.loadTrials();
+  }
+
+  loadTrials() {
+    this.loadingTrials = true;
+    this.platformService.getTrials(this.trialFilter).subscribe({
+      next: (rows) => {
+        this.trialRows = rows;
+        this.loadingTrials = false;
+      },
+      error: () => {
+        this.trialRows = [];
+        this.loadingTrials = false;
+      },
+    });
+  }
+
+  openBusinessById(businessId: string) {
+    void this.router.navigate(['/platform', 'empresas', businessId]);
+  }
+
   toggleCreateBusinessForm() {
     this.showCreateBusinessForm = !this.showCreateBusinessForm;
   }
@@ -1002,6 +1149,7 @@ export class PlatformComponent implements OnInit {
     this.showCreatePlanForm = !this.showCreatePlanForm;
     if (this.showCreatePlanForm) {
       this.expandedPlanId = null;
+      this.planDraftModules = { ...DEFAULT_PLAN_MODULES.plan_basico };
     }
   }
 
@@ -1017,23 +1165,59 @@ export class PlatformComponent implements OnInit {
   }
 
   openBusiness(business: PublicBusinessInfo & { planId?: string }) {
-    this.selectedBusiness = {
-      ...business,
-      planId: business.planId ?? business.plan.id,
+    void this.router.navigate(['/platform', 'empresas', business.id]);
+  }
+
+  planDraftModuleEnabled(moduleId: SubscriptionModuleId): boolean {
+    return this.planDraftModules[moduleId] === true;
+  }
+
+  togglePlanDraftModule(moduleId: SubscriptionModuleId, enabled: boolean) {
+    this.planDraftModules = {
+      ...this.planDraftModules,
+      [moduleId]: moduleId === 'core' ? true : enabled,
     };
-    this.resetPaymentDraft(business);
-    this.businessModalOpen = true;
-    this.loadPayments(business.id);
+  }
+
+  applyPlanDraftTemplate(templateId: string) {
+    const template = DEFAULT_PLAN_MODULES[templateId];
+    if (!template) return;
+    this.planDraftModules = { ...template };
+  }
+
+  planModuleEnabled(plan: PublicPlanInfo, moduleId: SubscriptionModuleId): boolean {
+    const modules = normalizeModulesMap(plan.modulosIncluidos, plan.id);
+    return modules[moduleId] === true;
+  }
+
+  togglePlanModule(plan: PublicPlanInfo, moduleId: SubscriptionModuleId, enabled: boolean) {
+    if (!plan.modulosIncluidos) {
+      plan.modulosIncluidos = normalizeModulesMap(undefined, plan.id);
+    }
+    plan.modulosIncluidos[moduleId] = moduleId === 'core' ? true : enabled;
+  }
+
+  applyPlanTemplate(plan: PublicPlanInfo, templateId: string) {
+    const template = DEFAULT_PLAN_MODULES[templateId];
+    if (!template) return;
+    plan.modulosIncluidos = { ...template };
+  }
+
+  private normalizePlan(plan: PublicPlanInfo): PublicPlanInfo {
+    return {
+      ...plan,
+      precioBaseMensual: plan.precioBaseMensual ?? plan.precioMensual ?? 0,
+      precioMensual: plan.precioBaseMensual ?? plan.precioMensual ?? 0,
+      precioPorAdministrador: plan.precioPorAdministrador ?? 0,
+      precioPorOperador: plan.precioPorOperador ?? 0,
+      maxAmbitosCaja: plan.maxAmbitosCaja ?? 0,
+      modulosIncluidos: normalizeModulesMap(plan.modulosIncluidos, plan.id),
+      preciosAddonModulo: plan.preciosAddonModulo ?? {},
+    };
   }
 
   openBusinessForPayment(business: PublicBusinessInfo & { planId?: string }) {
-    this.openBusiness(business);
-  }
-
-  closeBusinessModal() {
-    this.businessModalOpen = false;
-    this.selectedBusiness = null;
-    this.payments = [];
+    void this.router.navigate(['/platform', 'empresas', business.id], { fragment: 'pagos' });
   }
 
   getPlanInitial(plan: PublicPlanInfo): string {
@@ -1057,48 +1241,59 @@ export class PlatformComponent implements OnInit {
     return business.enPrueba === true;
   }
 
+  isActiveTrialBusiness(business: PublicBusinessInfo): boolean {
+    return business.trialBillingActive === true || (business.enPrueba === true && business.trialStatus === 'active');
+  }
+
+  isTrialExpiredBusiness(business: PublicBusinessInfo): boolean {
+    return business.enPrueba === true && business.trialStatus === 'expired';
+  }
+
+  isTrialExpiringSoon(business: PublicBusinessInfo): boolean {
+    return business.trialExpiringSoon === true && business.trialStatus === 'active';
+  }
+
   countsForBilling(business: PublicBusinessInfo): boolean {
-    return business.estadoSuscripcion === 'activa' && !this.isTrialBusiness(business);
+    if (business.estadoSuscripcion !== 'activa') return false;
+    if (business.trialBillingActive === true) return false;
+    if (business.trialBillingActive === false) return true;
+    return !business.enPrueba;
   }
 
   getBillingStatusLabel(business: PublicBusinessInfo): string {
-    if (this.isTrialBusiness(business)) return 'En prueba';
+    if (this.isTrialExpiredBusiness(business)) return 'Prueba vencida';
+    if (this.isActiveTrialBusiness(business)) {
+      if (this.isTrialExpiringSoon(business) && business.trialDaysRemaining != null) {
+        return `Prueba · vence en ${business.trialDaysRemaining} d`;
+      }
+      return 'En prueba';
+    }
     return this.paymentStatusLabels[business.estadoPago];
   }
 
   getBillingStatusClass(business: PublicBusinessInfo): string {
-    if (this.isTrialBusiness(business)) return 'bg-violet-100 text-violet-800';
+    if (this.isTrialExpiredBusiness(business)) return 'bg-amber-100 text-amber-900';
+    if (this.isActiveTrialBusiness(business)) {
+      if (this.isTrialExpiringSoon(business)) return 'bg-orange-100 text-orange-900';
+      return 'bg-violet-100 text-violet-800';
+    }
     return this.getPaymentStatusClass(business.estadoPago);
   }
 
-  toggleBusinessTrial(
-    business: PublicBusinessInfo & { planId?: string },
-    enPrueba: boolean
-  ) {
-    if (enPrueba === this.isTrialBusiness(business)) return;
-
-    this.togglingTrialId = business.id;
-    this.platformService.updateBusiness(business.id, { enPrueba }).subscribe({
-      next: (updated) => {
-        this.togglingTrialId = null;
-        business.enPrueba = updated.enPrueba;
-        this.loadBusinesses();
-        if (this.selectedBusiness?.id === business.id) {
-          this.selectedBusiness = {
-            ...updated,
-            planId: updated.planId,
-          };
-        }
-      },
-      error: (err) => {
-        this.togglingTrialId = null;
-        this.loadBusinesses();
-        this.dialogService.alert({
-          title: 'Error',
-          message: err?.error?.error || 'No se pudo actualizar el período de prueba.',
-        });
-      },
-    });
+  onCreateTrialToggle(enPrueba: boolean) {
+    if (enPrueba) {
+      this.businessDraft.planId = 'plan_intermedio';
+      if (!this.businessDraft.trialStartDate) {
+        const today = new Date();
+        const end = new Date(today);
+        end.setDate(end.getDate() + this.defaultTrialDays);
+        this.businessDraft.trialStartDate = today.toISOString().slice(0, 10);
+        this.businessDraft.trialEndDate = end.toISOString().slice(0, 10);
+      }
+      return;
+    }
+    this.businessDraft.trialStartDate = '';
+    this.businessDraft.trialEndDate = '';
   }
 
   getSubscriptionStatusClass(status: SubscriptionStatus): string {
@@ -1138,13 +1333,6 @@ export class PlatformComponent implements OnInit {
             this.setBusinessSubscriptionActive(business, false);
           } else {
             this.loadBusinesses();
-            if (this.selectedBusiness?.id === business.id) {
-              this.platformService.getBusiness(business.id).subscribe({
-                next: (updated) => {
-                  this.selectedBusiness = { ...updated, planId: updated.planId };
-                },
-              });
-            }
           }
         });
       return;
@@ -1167,12 +1355,6 @@ export class PlatformComponent implements OnInit {
           this.togglingSubscriptionId = null;
           business.estadoSuscripcion = updated.estadoSuscripcion;
           this.loadBusinesses();
-          if (this.selectedBusiness?.id === business.id) {
-            this.selectedBusiness = {
-              ...updated,
-              planId: updated.planId,
-            };
-          }
         },
         error: (err) => {
           this.togglingSubscriptionId = null;
@@ -1232,12 +1414,15 @@ export class PlatformComponent implements OnInit {
     }
 
     this.creatingBusiness = true;
+    const planId = this.businessDraft.enPrueba ? 'plan_intermedio' : this.businessDraft.planId;
     this.platformService
       .createBusiness({
         id,
         nombre,
-        planId: this.businessDraft.planId,
+        planId,
         enPrueba: this.businessDraft.enPrueba,
+        trialStartDate: this.businessDraft.trialStartDate || undefined,
+        trialEndDate: this.businessDraft.trialEndDate || undefined,
         supervisor: {
           nombre: this.businessDraft.supervisorNombre.trim(),
           email: this.businessDraft.supervisorEmail.trim().toLowerCase(),
@@ -1257,6 +1442,8 @@ export class PlatformComponent implements OnInit {
             nombre: '',
             planId: this.plans[0]?.id ?? 'plan_basico',
             enPrueba: false,
+            trialStartDate: '',
+            trialEndDate: '',
             supervisorNombre: '',
             supervisorEmail: '',
             supervisorLogin: '',
@@ -1273,93 +1460,6 @@ export class PlatformComponent implements OnInit {
       });
   }
 
-  saveBusiness(business: PublicBusinessInfo & { planId?: string }) {
-    this.savingBusinessId = business.id;
-    this.platformService
-      .updateBusiness(business.id, {
-        planId: business.planId ?? business.plan.id,
-        estadoSuscripcion: business.estadoSuscripcion as SubscriptionStatus,
-        enPrueba: business.enPrueba,
-      })
-      .subscribe({
-        next: (updated) => {
-          this.savingBusinessId = null;
-          this.loadBusinesses();
-          if (this.selectedBusiness?.id === business.id) {
-            this.selectedBusiness = {
-              ...updated,
-              planId: updated.planId,
-            };
-            this.resetPaymentDraft(updated);
-          }
-        },
-        error: (err) => {
-          this.savingBusinessId = null;
-          this.dialogService.alert({
-            title: 'Error',
-            message: err?.error?.error || 'No se pudo actualizar la empresa.',
-          });
-        },
-      });
-  }
-
-  registerPayment() {
-    if (!this.selectedBusiness) return;
-
-    const periodo = this.paymentDraft.periodo.trim();
-    const monto = Number(this.paymentDraft.monto);
-
-    if (!periodo || !/^\d{4}-\d{2}$/.test(periodo)) {
-      this.dialogService.alert({
-        title: 'Período inválido',
-        message: 'Usá el formato AAAA-MM, por ejemplo 2026-05.',
-      });
-      return;
-    }
-
-    if (!Number.isFinite(monto) || monto <= 0) {
-      this.dialogService.alert({
-        title: 'Monto inválido',
-        message: 'Ingresá un monto mayor a cero.',
-      });
-      return;
-    }
-
-    this.registeringPayment = true;
-    this.platformService
-      .registerBusinessPayment(this.selectedBusiness.id, {
-        periodo,
-        monto,
-        fechaPago: this.paymentDraft.fechaPago || undefined,
-        notas: this.paymentDraft.notas.trim() || undefined,
-      })
-      .subscribe({
-        next: () => {
-          this.registeringPayment = false;
-          this.loadPayments(this.selectedBusiness!.id);
-          this.loadBusinesses();
-          this.platformService.getBusiness(this.selectedBusiness!.id).subscribe({
-            next: (updated) => {
-              if (this.selectedBusiness?.id === updated.id) {
-                this.selectedBusiness = {
-                  ...updated,
-                  planId: updated.planId,
-                };
-                this.resetPaymentDraft(updated);
-              }
-            },
-          });
-        },
-        error: (err) => {
-          this.registeringPayment = false;
-          this.dialogService.alert({
-            title: 'Error',
-            message: err?.error?.error || 'No se pudo registrar el pago.',
-          });
-        },
-      });
-  }
-
   createPlan() {
     const id = this.planDraft.id.trim();
     const nombre = this.planDraft.nombre.trim();
@@ -1369,11 +1469,17 @@ export class PlatformComponent implements OnInit {
     }
 
     this.creatingPlan = true;
+    const precioBase = Number(this.planDraft.precioBaseMensual ?? this.planDraft.precioMensual) || 0;
     this.platformService
       .createPlan({
         id,
         nombre,
-        precioMensual: Number(this.planDraft.precioMensual) || 0,
+        precioMensual: precioBase,
+        precioBaseMensual: precioBase,
+        precioPorAdministrador: Number(this.planDraft.precioPorAdministrador) || 0,
+        precioPorOperador: Number(this.planDraft.precioPorOperador) || 0,
+        maxAmbitosCaja: Number(this.planDraft.maxAmbitosCaja) || 0,
+        modulosIncluidos: { ...this.planDraftModules },
         limiteAdministradores: Number(this.planDraft.limiteAdministradores),
         limiteOperadores: Number(this.planDraft.limiteOperadores),
         limiteUsuariosTotal: Number(this.planDraft.limiteUsuariosTotal) || undefined,
@@ -1387,10 +1493,15 @@ export class PlatformComponent implements OnInit {
             id: '',
             nombre: '',
             precioMensual: 0,
+            precioBaseMensual: 0,
+            precioPorAdministrador: 0,
+            precioPorOperador: 0,
+            maxAmbitosCaja: 0,
             limiteAdministradores: 1,
             limiteOperadores: 2,
             limiteUsuariosTotal: 3,
           };
+          this.planDraftModules = { ...DEFAULT_PLAN_MODULES.plan_basico };
           this.loadPlans();
         },
         error: (err) => {
@@ -1404,61 +1515,66 @@ export class PlatformComponent implements OnInit {
   }
 
   savePlan(plan: PublicPlanInfo) {
-    this.savingPlanId = plan.id;
-    this.platformService
-      .updatePlan(plan.id, {
-        nombre: plan.nombre,
-        precioMensual: Number(plan.precioMensual) || 0,
-        limiteAdministradores: plan.limiteAdministradores,
-        limiteOperadores: plan.limiteOperadores,
-        limiteUsuariosTotal: plan.limiteUsuariosTotal,
-        activo: plan.activo,
-      })
-      .subscribe({
-        next: () => {
-          this.savingPlanId = null;
-          this.loadPlans();
-          this.loadBusinesses();
-        },
-        error: (err) => {
-          this.savingPlanId = null;
-          this.dialogService.alert({
-            title: 'Error',
-            message: err?.error?.error || 'No se pudo actualizar el plan.',
-          });
-        },
-      });
-  }
-
-  private resetPaymentDraft(business: PublicBusinessInfo) {
-    const today = new Date();
-    const periodo = business.periodoPagoActual || this.currentPeriodo(today);
-    this.paymentDraft = {
-      periodo,
-      monto: business.montoMensualEsperado || business.plan.precioMensual || 0,
-      fechaPago: today.toISOString().slice(0, 10),
-      notas: '',
+    const applyToExisting = this.planApplyToExisting[plan.id] === true;
+    const save = () => {
+      this.savingPlanId = plan.id;
+      this.platformService
+        .updatePlan(plan.id, {
+          nombre: plan.nombre,
+          precioMensual: Number(plan.precioBaseMensual ?? plan.precioMensual) || 0,
+          precioBaseMensual: Number(plan.precioBaseMensual ?? plan.precioMensual) || 0,
+          precioPorAdministrador: plan.precioPorAdministrador,
+          precioPorOperador: plan.precioPorOperador,
+          maxAmbitosCaja: plan.maxAmbitosCaja,
+          modulosIncluidos: normalizeModulesMap(plan.modulosIncluidos, plan.id),
+          preciosAddonModulo: plan.preciosAddonModulo,
+          limiteAdministradores: plan.limiteAdministradores,
+          limiteOperadores: plan.limiteOperadores,
+          limiteUsuariosTotal: plan.limiteUsuariosTotal,
+          activo: plan.activo,
+          applyToExistingBusinesses: applyToExisting,
+        })
+        .subscribe({
+          next: (result) => {
+            this.savingPlanId = null;
+            this.planApplyToExisting[plan.id] = false;
+            this.loadPlans();
+            this.loadBusinesses();
+            const parts = [
+              'Plan actualizado.',
+              applyToExisting
+                ? `Se aplicó a empresas existentes (${result.clearedFrozenCount} descongeladas).`
+                : `Solo nuevas empresas (${result.frozenBusinessCount} congeladas con plantilla anterior).`,
+            ];
+            this.dialogService.alert({ title: 'Plan guardado', message: parts.join(' ') });
+          },
+          error: (err) => {
+            this.savingPlanId = null;
+            this.dialogService.alert({
+              title: 'Error',
+              message: err?.error?.error || 'No se pudo actualizar el plan.',
+            });
+          },
+        });
     };
+
+    this.dialogService
+      .confirm({
+        title: 'Guardar plan',
+        message: applyToExisting
+          ? 'Los cambios se aplicarán a todas las empresas con este plan, incluidas las existentes.'
+          : 'Las empresas actuales conservarán su plantilla anterior. Solo las nuevas usarán estos cambios.',
+        confirmLabel: 'Guardar',
+      })
+      .subscribe((confirmed) => {
+        if (confirmed) save();
+      });
   }
 
   private currentPeriodo(date = new Date()): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
-  }
-
-  private loadPayments(businessId: string) {
-    this.loadingPayments = true;
-    this.platformService.getBusinessPayments(businessId).subscribe({
-      next: (payments) => {
-        this.payments = payments;
-        this.loadingPayments = false;
-      },
-      error: () => {
-        this.loadingPayments = false;
-        this.payments = [];
-      },
-    });
   }
 
   private loadBusinesses() {
@@ -1484,9 +1600,12 @@ export class PlatformComponent implements OnInit {
   private loadPlans() {
     this.platformService.getPlans().subscribe({
       next: (plans) => {
-        this.plans = [...plans].sort((a, b) => a.precioMensual - b.precioMensual);
-        if (!this.businessDraft.planId && plans.length) {
-          this.businessDraft.planId = plans[0].id;
+        this.plans = [...plans]
+          .map((plan) => this.normalizePlan(plan))
+          .sort((a, b) => a.precioMensual - b.precioMensual);
+        const firstActive = this.activePlans[0];
+        if (!this.businessDraft.planId && firstActive) {
+          this.businessDraft.planId = firstActive.id;
         }
       },
       error: () => {

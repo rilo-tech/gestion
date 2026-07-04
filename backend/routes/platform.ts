@@ -19,6 +19,16 @@ import {
   toPublicPlanInfo,
   updatePlan,
 } from '../auth/plans.ts';
+import { sanitizeBusinessSubscriptionPayload } from '../auth/subscription-entitlements.ts';
+import { SELLABLE_SUBSCRIPTION_MODULE_CATALOG } from '../../shared/subscription-modules.ts';
+import { buildTrialFieldUpdates } from '../auth/trial-business.ts';
+import {
+  clearFrozenPlanForBusinesses,
+  countBusinessesOnPlan,
+  freezePlanForExistingBusinesses,
+} from '../auth/plan-snapshot.ts';
+import { listSubscriptionHistory } from '../auth/subscription-history.ts';
+import { listPlatformTrials } from '../auth/platform-trials.ts';
 import {
   requireAuth,
   requireSuperadmin,
@@ -28,6 +38,22 @@ import {
 const router = express.Router();
 
 router.use(requireAuth, requireSuperadmin);
+
+router.get('/trials', async (req, res) => {
+  try {
+    const status = req.query.status as 'active' | 'expiring' | 'expired' | 'all' | undefined;
+    const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+    const trials = await listPlatformTrials({ status, source });
+    res.json(trials);
+  } catch (error) {
+    console.error('Error listing platform trials:', error);
+    res.status(500).json({ error: 'No se pudieron listar las pruebas.' });
+  }
+});
+
+router.get('/modules', (_req, res) => {
+  res.json(SELLABLE_SUBSCRIPTION_MODULE_CATALOG);
+});
 
 router.get('/plans', async (_req, res) => {
   try {
@@ -57,7 +83,13 @@ router.post('/plans', async (req, res) => {
           Number(req.body.limiteAdministradores ?? 1) +
             Number(req.body.limiteOperadores ?? 0)
       ),
-      precioMensual: Number(req.body.precioMensual ?? 0),
+      precioMensual: Number(req.body.precioBaseMensual ?? req.body.precioMensual ?? 0),
+      precioBaseMensual: Number(req.body.precioBaseMensual ?? req.body.precioMensual ?? 0),
+      precioPorAdministrador: Number(req.body.precioPorAdministrador ?? 0),
+      precioPorOperador: Number(req.body.precioPorOperador ?? 0),
+      modulosIncluidos: req.body.modulosIncluidos ?? {},
+      preciosAddonModulo: req.body.preciosAddonModulo ?? {},
+      maxAmbitosCaja: Number(req.body.maxAmbitosCaja ?? 0),
       activo: req.body.activo !== false,
     });
 
@@ -74,6 +106,22 @@ router.post('/plans', async (req, res) => {
 router.patch('/plans/:planId', async (req, res) => {
   try {
     const { planId } = req.params;
+    const applyToExisting = req.body.applyToExistingBusinesses === true;
+    const existingPlan = await getPlan(planId);
+    if (!existingPlan) {
+      return res.status(404).json({ error: 'Plan no encontrado.' });
+    }
+
+    const affectedBusinessCount = await countBusinessesOnPlan(planId);
+    let frozenBusinessCount = 0;
+    let clearedFrozenCount = 0;
+
+    if (!applyToExisting) {
+      frozenBusinessCount = await freezePlanForExistingBusinesses(planId, existingPlan);
+    } else {
+      clearedFrozenCount = await clearFrozenPlanForBusinesses(planId);
+    }
+
     const plan = await updatePlan(planId, {
       nombre: typeof req.body.nombre === 'string' ? req.body.nombre : undefined,
       limiteAdministradores:
@@ -92,9 +140,33 @@ router.patch('/plans/:planId', async (req, res) => {
         typeof req.body.precioMensual === 'number'
           ? req.body.precioMensual
           : undefined,
+      precioBaseMensual:
+        typeof req.body.precioBaseMensual === 'number'
+          ? req.body.precioBaseMensual
+          : typeof req.body.precioMensual === 'number'
+            ? req.body.precioMensual
+            : undefined,
+      precioPorAdministrador:
+        typeof req.body.precioPorAdministrador === 'number'
+          ? req.body.precioPorAdministrador
+          : undefined,
+      precioPorOperador:
+        typeof req.body.precioPorOperador === 'number'
+          ? req.body.precioPorOperador
+          : undefined,
+      modulosIncluidos: req.body.modulosIncluidos,
+      preciosAddonModulo: req.body.preciosAddonModulo,
+      maxAmbitosCaja:
+        typeof req.body.maxAmbitosCaja === 'number' ? req.body.maxAmbitosCaja : undefined,
       activo: req.body.activo,
     });
-    res.json(toPublicPlanInfo(plan));
+    res.json({
+      plan: toPublicPlanInfo(plan),
+      affectedBusinessCount,
+      applyToExistingBusinesses: applyToExisting,
+      frozenBusinessCount,
+      clearedFrozenCount,
+    });
   } catch (error) {
     if (error instanceof Error && error.message === 'PLAN_NOT_FOUND') {
       return res.status(404).json({ error: 'Plan no encontrado.' });
@@ -128,7 +200,11 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
   try {
     const businessId = String(req.body.id ?? req.body.businessId ?? '').trim();
     const nombre = String(req.body.nombre ?? '').trim();
-    const planId = String(req.body.planId ?? req.body.plan ?? DEFAULT_PLAN_ID).trim();
+    const enPrueba = req.body.enPrueba === true;
+    let planId = String(req.body.planId ?? req.body.plan ?? DEFAULT_PLAN_ID).trim();
+    if (enPrueba && (!req.body.planId || planId === 'plan_basico')) {
+      planId = 'plan_intermedio';
+    }
     const supervisor = req.body.supervisor ?? {};
 
     if (!businessId || !nombre) {
@@ -161,9 +237,27 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       nombre,
       planId,
       estadoSuscripcion: 'activa',
-      enPrueba: req.body.enPrueba === true,
+      enPrueba,
+      ...buildTrialFieldUpdates(
+        {
+          enPrueba,
+          trialStartDate: req.body.trialStartDate,
+          trialEndDate: req.body.trialEndDate,
+          trialStatus: enPrueba ? 'active' : undefined,
+        },
+        undefined
+      ),
       creadoPor: req.auth?.userId,
     });
+
+    const subscriptionPatch = sanitizeBusinessSubscriptionPayload(req.body);
+    if (subscriptionPatch) {
+      await updateBusiness(
+        businessId,
+        { suscripcion: subscriptionPatch },
+        { allowSubscriptionFields: true }
+      );
+    }
 
     const passwordHash = supervisorPassword
       ? await hashPassword(supervisorPassword)
@@ -180,7 +274,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    const publicBusiness = buildNewBusinessPublicInfo(business, plan);
+    const publicBusiness = await toPublicBusinessInfo(businessId, { business });
 
     res.status(201).json({
       business: publicBusiness,
@@ -201,7 +295,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-router.patch('/businesses/:businessId', async (req, res) => {
+router.patch('/businesses/:businessId', async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId } = req.params;
     const planId =
@@ -219,6 +313,8 @@ router.patch('/businesses/:businessId', async (req, res) => {
       }
     }
 
+    const subscriptionPatch = sanitizeBusinessSubscriptionPayload(req.body);
+
     await updateBusiness(
       businessId,
       {
@@ -226,8 +322,19 @@ router.patch('/businesses/:businessId', async (req, res) => {
         planId,
         estadoSuscripcion,
         enPrueba: req.body.enPrueba !== undefined ? req.body.enPrueba === true : undefined,
+        trialStartDate:
+          typeof req.body.trialStartDate === 'string' ? req.body.trialStartDate : undefined,
+        trialEndDate:
+          typeof req.body.trialEndDate === 'string' ? req.body.trialEndDate : undefined,
+        trialStatus: req.body.trialStatus,
+        ...(subscriptionPatch ? { suscripcion: subscriptionPatch } : {}),
       },
-      { allowSubscriptionFields: true }
+      {
+        allowSubscriptionFields: true,
+        changedBy: req.auth?.userId,
+        historyNote:
+          typeof req.body.historyNote === 'string' ? req.body.historyNote.trim() : undefined,
+      }
     );
 
     const business = await toPublicBusinessInfo(businessId);
@@ -238,6 +345,16 @@ router.patch('/businesses/:businessId', async (req, res) => {
     }
     console.error('Error updating business:', error);
     res.status(500).json({ error: 'No se pudo actualizar la empresa.' });
+  }
+});
+
+router.get('/businesses/:businessId/subscription-history', async (req, res) => {
+  try {
+    const history = await listSubscriptionHistory(req.params.businessId);
+    res.json(history);
+  } catch (error) {
+    console.error('Error listing subscription history:', error);
+    res.status(500).json({ error: 'No se pudo cargar el historial comercial.' });
   }
 });
 

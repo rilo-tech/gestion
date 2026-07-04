@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { TenantService } from './tenant.service';
 
@@ -50,7 +50,7 @@ export interface OrderLineItem {
 
 export interface OrderPayment {
   id?: string;
-  tipo: 'seña' | 'cuota' | 'pago' | 'extra';
+  tipo: 'seña' | 'cuota' | 'pago';
   monto: number;
   fecha: string;
   movimientoCajaId?: string;
@@ -103,21 +103,53 @@ export function formatOrderNumber(order: Pick<Order, 'numeroPedido' | 'numeroPed
   return '';
 }
 
+export function coerceOrderLineItems(raw: unknown): OrderLineItem[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((line) => line && typeof line === 'object') as OrderLineItem[];
+  }
+  if (raw && typeof raw === 'object') {
+    return Object.values(raw as Record<string, OrderLineItem>).filter(
+      (line) => line && typeof line === 'object'
+    );
+  }
+  return [];
+}
+
+/** Líneas listas para impresión: ítems del pedido o formato legacy de un solo producto. */
+export function orderLineItemsForPrint(order: Order): OrderLineItem[] {
+  const fromItems = coerceOrderLineItems(order.items);
+  if (fromItems.length) return fromItems;
+
+  const stockItemId = String(order.stockItemId ?? '').trim();
+  if (!stockItemId) return [];
+
+  return [
+    {
+      stockItemId,
+      nombre: order.productoNombres?.[0]?.trim() || 'Producto',
+      cantidad: Number(order.cantidad) || 1,
+      costoUnitario: 0,
+      precioVenta: Number(order.total) || null,
+    },
+  ];
+}
+
+import {
+  resolveOrderBalance as resolveSharedOrderBalance,
+  type OrderBalanceInput,
+} from '../../../../../shared/order-balance.ts';
+
 export function resolveOrderBalance(
   order: Pick<
     Order,
-    'total' | 'senia' | 'totalPagado' | 'pagos' | 'seniaBloqueada' | 'movimientoSeniaId'
-  >
-): { pagado: number; saldo: number; senia: number } {
-  const total = Number(order.total) || 0;
+    'total' | 'senia' | 'totalPagado' | 'pagos' | 'seniaBloqueada' | 'movimientoSeniaId' | 'items'
+  > & { items?: OrderBalanceInput['items'] }
+): { pagado: number; saldo: number; senia: number; total: number } {
+  const balance = resolveSharedOrderBalance(order);
   const pagos = order.pagos ?? [];
-  const pagadoFromPagos = pagos
-    .filter((pago) => pago.tipo !== 'extra')
-    .reduce((sum, pago) => sum + (Number(pago.monto) || 0), 0);
   const seniaFromPagos = pagos
     .filter((pago) => pago.tipo === 'seña')
     .reduce((sum, pago) => sum + (Number(pago.monto) || 0), 0);
-
   const seniaCollected =
     seniaFromPagos > 0
       ? seniaFromPagos
@@ -125,19 +157,10 @@ export function resolveOrderBalance(
         ? Number(order.senia) || 0
         : 0;
 
-  let pagado = 0;
-  if (pagadoFromPagos > 0) {
-    pagado = pagadoFromPagos;
-  } else if (
-    order.totalPagado != null &&
-    (order.seniaBloqueada || order.movimientoSeniaId || pagos.length > 0)
-  ) {
-    pagado = Number(order.totalPagado) || 0;
-  }
-
   return {
-    pagado,
-    saldo: Math.max(0, total - pagado),
+    pagado: balance.pagado,
+    saldo: balance.saldo,
+    total: balance.total,
     senia: seniaCollected,
   };
 }
@@ -309,6 +332,13 @@ export class OrderService {
     return this.orderCache.get(this.cacheKey(orderId)) ?? null;
   }
 
+  /** Actualiza la caché local tras guardar sin volver a pedir el pedido completo. */
+  patchCachedOrder(orderId: string, patch: Partial<Order>): void {
+    const cached = this.getCachedOrder(orderId);
+    if (!cached) return;
+    this.cacheOrder({ ...cached, ...patch, id: orderId });
+  }
+
   getOrders(): Observable<Order[]> {
     return this.http
       .get<Order[]>(`/api/orders/${this.businessId}`)
@@ -323,9 +353,13 @@ export class OrderService {
       .pipe(tap((page) => this.cacheOrders(page?.items ?? [])));
   }
 
-  getOrder(orderId: string): Observable<Order> {
+  getOrder(orderId: string, options?: { includePhotoUrls?: boolean }): Observable<Order> {
+    let params = new HttpParams();
+    if (options?.includePhotoUrls) {
+      params = params.set('photoUrls', '1');
+    }
     return this.http
-      .get<Order>(`/api/orders/${this.businessId}/${orderId}`)
+      .get<Order>(`/api/orders/${this.businessId}/${orderId}`, { params })
       .pipe(tap((order) => this.cacheOrder(order)));
   }
 
@@ -368,7 +402,7 @@ export class OrderService {
 
   addOrderPayment(
     orderId: string,
-    payment: { monto: number; tipo?: 'cuota' | 'pago'; allowExtra?: boolean; notas?: string }
+    payment: { monto: number; notas?: string }
   ): Observable<{
     id: string;
     pago: OrderPayment;
@@ -385,6 +419,29 @@ export class OrderService {
       totalPagado: number;
       saldo: number;
     }>(`/api/orders/${this.businessId}/${orderId}/pagos`, payment);
+  }
+
+  removeOrderPayment(
+    orderId: string,
+    paymentId: string
+  ): Observable<{
+    id: string;
+    pagos: OrderPayment[];
+    totalPagado: number;
+    saldo: number;
+    seniaBloqueada?: boolean;
+    movimientoSeniaId?: string | null;
+  }> {
+    return this.http
+      .delete<{
+        id: string;
+        pagos: OrderPayment[];
+        totalPagado: number;
+        saldo: number;
+        seniaBloqueada?: boolean;
+        movimientoSeniaId?: string | null;
+      }>(`/api/orders/${this.businessId}/${orderId}/pagos/${paymentId}`)
+      .pipe(tap(() => this.orderCache.delete(this.cacheKey(orderId))));
   }
 
   getStockPreparation(orderId: string): Observable<OrderStockPreparationView> {

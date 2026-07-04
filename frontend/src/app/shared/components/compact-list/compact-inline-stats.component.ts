@@ -16,49 +16,72 @@ export interface CompactInlineStat {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div
-      *ngIf="variant === 'strip'; else inlineVariant"
-      class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 text-xs w-full"
-      [class.gap-x-2]="isCompact"
-      [class.gap-y-0.5]="isCompact"
-      [class.text-[10px]]="isCompact"
-      [class.sm:justify-end]="align === 'end'"
-      role="list"
-      [attr.aria-label]="ariaLabel">
-      <div class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 min-w-0" [class.gap-x-2]="isCompact">
-        <span *ngFor="let stat of leadingItems" class="tabular-nums" role="listitem">
+    <div *ngIf="variant === 'strip'; else inlineVariant" [class]="stripRootClass" [attr.aria-label]="ariaLabel">
+      <ng-container *ngIf="isCompact; else stripDefaultLayout">
+        <div
+          class="flex flex-nowrap items-center gap-x-1.5 w-full min-w-0 overflow-x-auto text-[9px]"
+          role="list">
           <span
-            class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1"
-            [class.text-[9px]]="isCompact">
-            {{ stat.label }}
+            *ngFor="let stat of leadingItems; let last = last"
+            class="shrink-0 tabular-nums whitespace-nowrap"
+            role="listitem">
+            <span class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-0.5 text-[8px]">
+              {{ stat.label }}
+            </span>
+            <span class="font-bold text-[10px] leading-none" [class]="valueClass(stat)">{{ stat.value }}</span>
+            <span *ngIf="!last || trailingItems.length" class="text-gray-300 dark:text-gray-600 px-1" aria-hidden="true">
+              ·
+            </span>
           </span>
-          <span class="font-bold" [class]="valueClass(stat)" [class.text-sm]="isCompact">{{ stat.value }}</span>
-        </span>
-      </div>
-      <span
-        *ngIf="centerCaption"
-        class="w-full sm:w-auto sm:flex-1 sm:min-w-[5rem] text-center font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 capitalize px-1 order-last sm:order-none"
-        [class.text-[9px]]="isCompact"
-        role="note">
-        {{ centerCaption }}
-      </span>
-      <div
-        class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 sm:ml-auto"
-        [class.gap-x-2]="isCompact"
-        [class.w-full]="!centerCaption && trailingItems.length > 0">
+          <span
+            *ngFor="let stat of trailingItems; let last = last"
+            class="shrink-0 tabular-nums whitespace-nowrap"
+            role="listitem">
+            <span class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-0.5 text-[8px]">
+              {{ stat.label }}
+            </span>
+            <span class="font-bold text-[10px] leading-none" [class]="valueClass(stat)">{{ stat.value }}</span>
+            <span *ngIf="!last" class="text-gray-300 dark:text-gray-600 px-1" aria-hidden="true">·</span>
+          </span>
+        </div>
+        <p
+          *ngIf="centerCaption"
+          class="mt-0.5 text-center font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 capitalize text-[8px] leading-tight"
+          role="note">
+          {{ centerCaption }}
+        </p>
+      </ng-container>
+
+      <ng-template #stripDefaultLayout>
+        <div class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 min-w-0">
+          <span *ngFor="let stat of leadingItems" class="tabular-nums" role="listitem">
+            <span class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1">
+              {{ stat.label }}
+            </span>
+            <span class="font-bold" [class]="valueClass(stat)">{{ stat.value }}</span>
+          </span>
+        </div>
         <span
-          *ngFor="let stat of trailingItems"
-          class="tabular-nums"
-          role="listitem"
-          [class.sm:ml-auto]="!centerCaption && trailingItems.length === 1">
-          <span
-            class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1"
-            [class.text-[9px]]="isCompact">
-            {{ stat.label }}
-          </span>
-          <span class="font-bold" [class]="valueClass(stat)" [class.text-sm]="isCompact">{{ stat.value }}</span>
+          *ngIf="centerCaption"
+          class="w-full sm:w-auto sm:flex-1 sm:min-w-[5rem] text-center font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 capitalize px-1 order-last sm:order-none"
+          role="note">
+          {{ centerCaption }}
         </span>
-      </div>
+        <div
+          class="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 sm:ml-auto"
+          [class.w-full]="!centerCaption && trailingItems.length > 0">
+          <span
+            *ngFor="let stat of trailingItems"
+            class="tabular-nums"
+            role="listitem"
+            [class.sm:ml-auto]="!centerCaption && trailingItems.length === 1">
+            <span class="font-semibold uppercase text-gray-400 dark:text-gray-500 mr-1">
+              {{ stat.label }}
+            </span>
+            <span class="font-bold" [class]="valueClass(stat)">{{ stat.value }}</span>
+          </span>
+        </div>
+      </ng-template>
     </div>
 
     <ng-template #inlineVariant>
@@ -87,6 +110,14 @@ export class CompactInlineStatsComponent {
 
   get isCompact(): boolean {
     return this.density === 'compact';
+  }
+
+  get stripRootClass(): string {
+    if (this.isCompact) {
+      return 'flex flex-col w-full min-w-0';
+    }
+    const alignClass = this.align === 'end' ? ' sm:justify-end' : '';
+    return `flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1 text-xs w-full min-w-0${alignClass}`;
   }
 
   get leadingItems(): CompactInlineStat[] {

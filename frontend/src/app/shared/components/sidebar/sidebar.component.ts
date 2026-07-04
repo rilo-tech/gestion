@@ -83,7 +83,12 @@ export class SidebarComponent implements OnInit, OnDestroy {
       label: 'Compras',
       visible: () => this.auth.canAccessPurchases,
     },
-    { path: '/orders', icon: 'clipboard-list', label: 'Pedidos' },
+    {
+      path: '/orders',
+      icon: 'clipboard-list',
+      label: 'Pedidos',
+      visible: () => this.auth.canAccessOrders,
+    },
     {
       path: '/cash',
       icon: 'wallet',

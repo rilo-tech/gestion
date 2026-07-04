@@ -1,6 +1,12 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import type {
+  ModuleOverrideState,
+  MonthlyFeeBreakdown,
+  SubscriptionModuleId,
+  SubscriptionModulesMap,
+} from '../../../../../shared/subscription-modules.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 export type SubscriptionPaymentStatus = 'al_dia' | 'pendiente' | 'vencido';
@@ -12,7 +18,27 @@ export interface PublicPlanInfo {
   limiteOperadores: number;
   limiteUsuariosTotal: number;
   precioMensual: number;
+  precioBaseMensual: number;
+  precioPorAdministrador: number;
+  precioPorOperador: number;
+  modulosIncluidos: SubscriptionModulesMap;
+  preciosAddonModulo: Partial<Record<SubscriptionModuleId, number>>;
+  maxAmbitosCaja: number;
   activo: boolean;
+}
+
+export interface BusinessSubscriptionInfo {
+  limiteAdministradores?: number | null;
+  limiteOperadores?: number | null;
+  limiteUsuariosTotal?: number | null;
+  maxAmbitosCaja?: number | null;
+  modulosOverride?: Partial<Record<SubscriptionModuleId, ModuleOverrideState>>;
+  precioBaseOverride?: number | null;
+  precioPorAdministradorOverride?: number | null;
+  precioPorOperadorOverride?: number | null;
+  preciosAddonModuloOverride?: Partial<Record<SubscriptionModuleId, number>>;
+  descuentoMensual?: number;
+  notasComerciales?: string;
 }
 
 export interface SubscriptionPayment {
@@ -33,10 +59,26 @@ export interface PublicBusinessInfo {
   estadoPago: SubscriptionPaymentStatus;
   periodoPagoActual: string;
   montoMensualEsperado: number;
+  cuotaDesglose?: MonthlyFeeBreakdown;
+  entitlements?: SubscriptionModulesMap;
+  modulosOverride?: Partial<Record<SubscriptionModuleId, ModuleOverrideState>>;
+  limitesEfectivos?: {
+    limiteAdministradores: number;
+    limiteOperadores: number;
+    limiteUsuariosTotal: number;
+    maxAmbitosCaja: number;
+  };
+  suscripcion?: BusinessSubscriptionInfo;
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
   enPrueba: boolean;
+  trialStartDate?: string | null;
+  trialEndDate?: string | null;
+  trialStatus?: 'active' | 'expired' | 'converted' | 'cancelled' | null;
+  trialDaysRemaining?: number | null;
+  trialExpiringSoon?: boolean;
+  trialBillingActive?: boolean;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;

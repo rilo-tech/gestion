@@ -38,6 +38,11 @@ import {
   NATIVE_COMPACT_TABLE_CLASS,
 } from '../../shared/components/compact-list/compact-list.constants';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 const PRICE_QTY_BADGE_CLASS =
   'inline-flex items-center rounded-md bg-teal-50 border border-teal-100 px-3 py-1 text-xs sm:text-sm leading-snug text-teal-900 whitespace-nowrap';
@@ -300,6 +305,10 @@ export class PriceCatalogComponent implements OnInit {
 
   entries: PriceCatalogEntry[] = [];
   loading = true;
+  loadingMoreEntries = false;
+  entriesHasMore = false;
+  entriesCursor: string | null = null;
+  private readonly listLoadSession = new ProgressiveListSession();
   searchQuery = '';
   catalogPage = 1;
   savedNotice = '';
@@ -386,14 +395,22 @@ export class PriceCatalogComponent implements OnInit {
   }
 
   private loadEntries() {
+    const loadToken = this.listLoadSession.next();
     this.loading = true;
     this.catalogPage = 1;
-    this.priceCatalogService.getEntries().subscribe({
-      next: (entries) => {
-        this.entries = entries;
+    this.priceCatalogService.getEntriesPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.entries = page.items;
+        this.entriesHasMore = page.hasMore;
+        this.entriesCursor = page.nextCursor;
         this.loading = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingEntriesInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loading = false;
         this.dialogService.alert({
           title: 'Error',
@@ -401,5 +418,30 @@ export class PriceCatalogComponent implements OnInit {
         });
       },
     });
+  }
+
+  private loadRemainingEntriesInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.entriesHasMore || !this.entriesCursor || this.loadingMoreEntries) return;
+
+    this.loadingMoreEntries = true;
+    this.priceCatalogService
+      .getEntriesPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.entriesCursor)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.entries = [...this.entries, ...page.items];
+          this.entriesHasMore = page.hasMore;
+          this.entriesCursor = page.nextCursor;
+          this.loadingMoreEntries = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingEntriesInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.loadingMoreEntries = false;
+        },
+      });
   }
 }

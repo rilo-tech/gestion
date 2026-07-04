@@ -89,4 +89,4 @@ export const FORM_SUBMIT_CLASS =
   'form-btn-primary rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60';
 
 export const FORM_CANCEL_CLASS =
-  'form-btn-secondary rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50';
+  'form-btn-secondary rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50';

@@ -257,6 +257,18 @@ export function normalizeMedioPagoLookupId(id: string | undefined | null): strin
   return MEDIO_PAGO_ID_ALIASES[key] ?? key;
 }
 
+/** True si dos ids de medio de pago representan el mismo medio (incluye alias legacy). */
+export function mediosPagoIdsEquivalent(
+  a: string | undefined | null,
+  b: string | undefined | null
+): boolean {
+  const rawA = String(a ?? '').trim().toLowerCase();
+  const rawB = String(b ?? '').trim().toLowerCase();
+  if (!rawA || !rawB) return false;
+  if (rawA === rawB) return true;
+  return normalizeMedioPagoLookupId(rawA) === normalizeMedioPagoLookupId(rawB);
+}
+
 export function findTarjetaInConfig(
   tarjetas: TarjetaConfig[] | undefined,
   tarjetaId: string | undefined | null
@@ -270,10 +282,22 @@ export function findMedioPagoInConfig(
   medios: MedioPagoConfig[] | undefined,
   medioPagoId: string | undefined | null
 ): MedioPagoConfig | undefined {
-  const key = normalizeMedioPagoLookupId(medioPagoId);
-  if (!key) return undefined;
+  const rawKey = String(medioPagoId ?? '').trim().toLowerCase();
+  if (!rawKey) return undefined;
   const list = medios ?? DEFAULT_MEDIOS_PAGO;
-  return list.find((medio) => String(medio.id ?? '').trim().toLowerCase() === key);
+
+  const exact = list.find((medio) => String(medio.id ?? '').trim().toLowerCase() === rawKey);
+  if (exact) return exact;
+
+  const normalizedKey = normalizeMedioPagoLookupId(rawKey);
+  if (normalizedKey !== rawKey) {
+    const aliased = list.find(
+      (medio) => String(medio.id ?? '').trim().toLowerCase() === normalizedKey
+    );
+    if (aliased) return aliased;
+  }
+
+  return list.find((medio) => normalizeMedioPagoLookupId(medio.id) === normalizedKey);
 }
 
 export type PurchasePagoShape = {

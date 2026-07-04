@@ -7,7 +7,7 @@ import { FormScreenHeaderComponent } from '../form-shell/form-screen-header.comp
   standalone: true,
   imports: [CommonModule, FormScreenHeaderComponent],
   template: `
-    <div class="p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
+    <div class="transaction-form-page-shell p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
       <app-form-screen-header
         [title]="title"
         [titleBadge]="titleBadge"
@@ -22,11 +22,13 @@ import { FormScreenHeaderComponent } from '../form-shell/form-screen-header.comp
         <ng-content select="[headerActions]" headerActions></ng-content>
       </app-form-screen-header>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        <div class="lg:col-span-2 space-y-4">
+      <div
+        class="grid grid-cols-1 gap-4 sm:gap-6"
+        [ngClass]="gridClass">
+        <div class="space-y-4" [ngClass]="mainColumnClass">
           <ng-content select="[main]"></ng-content>
         </div>
-        <aside class="space-y-4 lg:sticky lg:top-8 lg:self-start">
+        <aside *ngIf="!hideAside" class="space-y-4 lg:sticky lg:top-8 lg:self-start min-w-0">
           <ng-content select="[aside]"></ng-content>
         </aside>
       </div>
@@ -44,6 +46,22 @@ export class TransactionFormPageComponent {
   @Input() backRouterLink: string | readonly unknown[] | null = null;
   @Input() hideSubtitleOnMobile = true;
   @Input() hasHeaderActions = false;
+  /** Oculta la columna lateral y usa todo el ancho para el formulario principal. */
+  @Input() hideAside = false;
+  /** En desktop: columna lateral más angosta para dar más espacio al formulario. */
+  @Input() asideLayout: 'default' | 'narrow' = 'default';
 
   @Output() backClick = new EventEmitter<void>();
+
+  get gridClass(): string {
+    if (this.hideAside) return '';
+    return this.asideLayout === 'narrow'
+      ? 'lg:grid-cols-[minmax(0,1fr)_17rem]'
+      : 'lg:grid-cols-3';
+  }
+
+  get mainColumnClass(): string {
+    if (this.hideAside) return '';
+    return this.asideLayout === 'narrow' ? '' : 'lg:col-span-2';
+  }
 }

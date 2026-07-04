@@ -1,6 +1,6 @@
-import { Component, ViewChild, inject, OnInit } from '@angular/core';
+import { Component, ViewChild, inject, OnInit, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, type ParamMap } from '@angular/router';
 import { PurchaseFormPanelComponent } from './purchase-form-panel.component';
 import {
   formatPurchaseLabel,
@@ -22,6 +22,23 @@ import {
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
+import {
+  purchaseFormDraftMatchesRoute,
+  readPurchaseFormDraft,
+} from '../../core/utils/form-return-context';
+import {
+  buildCashReopenQueryParams,
+  parseCashReturnContext,
+  type CashReturnContext,
+} from '../../core/utils/cash-return-context';
+import {
+  comprobanteBorradorTitulo,
+  comprobanteConfirmarLabel,
+  comprobanteNuevoTitulo,
+  comprobanteRegistrarLabel,
+  normalizeComprobanteTipo,
+  type ComprobanteTipoId,
+} from '../../core/services/catalog-config.service';
 
 type PayablesViewTab = 'month' | 'account' | 'obligation';
 
@@ -54,6 +71,9 @@ function parsePayablesViewTab(value: string | null | undefined): PayablesViewTab
       (backClick)="goBack()">
       <div headerActions *ngIf="hasHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <app-record-action-toolbar
+          activityModule="purchases"
+          [activityEntityId]="currentPurchaseId"
+          [activityEntityLabel]="activityEntityLabel"
           [showSave]="!readOnlyMode"
           [saveLabel]="purchaseHeaderSave.label"
           [saveDisabled]="purchaseHeaderSave.disabled"
@@ -83,6 +103,7 @@ function parsePayablesViewTab(value: string | null | undefined): PayablesViewTab
           [initialPurchase]="loadedPurchase"
           [editingDraftId]="editingDraftId"
           [editingConfirmedId]="editingConfirmedId"
+          [lockedTipoComprobante]="purchaseLockedTipo"
           (saved)="onSaved($event)"
           (savingChange)="onPurchaseSavingChange($event)"
           (formReadyChange)="onPurchaseFormReadyChange($event)"
@@ -114,7 +135,7 @@ function parsePayablesViewTab(value: string | null | undefined): PayablesViewTab
     </app-transaction-form-page>
   `,
 })
-export class NewPurchaseComponent implements OnInit {
+export class NewPurchaseComponent implements OnInit, AfterViewInit {
   @ViewChild('purchaseForm') purchaseForm!: PurchaseFormPanelComponent;
 
   private route = inject(ActivatedRoute);
@@ -137,18 +158,48 @@ export class NewPurchaseComponent implements OnInit {
   deletingPurchase = false;
   private purchaseRouteId: string | null = null;
   private duplicateSourceId: string | null = null;
-  private returnTo: 'purchases' | 'payables' = 'purchases';
+  private returnTo: 'purchases' | 'payables' | 'cash' = 'purchases';
   private payablesReturnTab: PayablesViewTab | null = null;
+  private cashReturnContext: CashReturnContext | null = null;
+  private shouldRestoreDraft = false;
+  initialTipoComprobante: ComprobanteTipoId = 'factura';
+
+  get purchaseLockedTipo(): ComprobanteTipoId | null {
+    if (
+      this.purchaseLoadPending ||
+      this.editingDraftId ||
+      this.editingConfirmedId ||
+      this.purchaseRouteId ||
+      this.duplicateSourceId ||
+      this.loadedPurchase
+    ) {
+      return null;
+    }
+    return this.initialTipoComprobante;
+  }
+
+  get effectiveTipoComprobante(): ComprobanteTipoId {
+    if (this.loadedPurchase?.tipoComprobante) {
+      return normalizeComprobanteTipo(this.loadedPurchase.tipoComprobante);
+    }
+    const locked = this.purchaseLockedTipo;
+    if (locked) return locked;
+    return this.purchaseForm?.tipoComprobante ?? this.initialTipoComprobante;
+  }
 
   get backLabel(): string {
-    return this.returnTo === 'payables' ? 'Volver a cuentas a pagar' : 'Volver a compras';
+    if (this.returnTo === 'payables') return 'Volver a cuentas a pagar';
+    if (this.returnTo === 'cash') return 'Volver a caja';
+    return 'Volver a compras';
   }
 
   get pageTitle(): string {
     if (this.readOnlyMode) return 'Detalle de compra';
     if (this.editingConfirmedId) return 'Editar compra';
-    if (this.editingDraftId) return 'Borrador de compra';
-    return 'Nueva compra';
+    if (this.editingDraftId) {
+      return comprobanteBorradorTitulo(this.effectiveTipoComprobante, 'compras');
+    }
+    return comprobanteNuevoTitulo(this.effectiveTipoComprobante, 'compras');
   }
 
   get pageTitleBadge(): string {
@@ -168,21 +219,27 @@ export class NewPurchaseComponent implements OnInit {
   }
 
   get purchaseHeaderSave() {
+    const tipo = this.effectiveTipoComprobante;
     return buildTransactionSaveHeaderState({
       saving: this.purchaseSaving,
       successMessage: this.purchaseForm?.saveSuccessMessage ?? '',
       idleLabel: this.editingConfirmedId
         ? 'Guardar cambios'
         : this.editingDraftId
-          ? 'Confirmar compra'
-          : 'Registrar compra',
+          ? comprobanteConfirmarLabel(tipo, 'compras')
+          : comprobanteRegistrarLabel(tipo, 'compras'),
       savingLabel: 'Registrando...',
     });
   }
 
   /** Id de la compra/borrador en pantalla, si ya está guardada. */
-  private get currentPurchaseId(): string | null {
+  get currentPurchaseId(): string | null {
     return this.editingConfirmedId ?? this.editingDraftId ?? this.loadedPurchase?.id ?? null;
+  }
+
+  get activityEntityLabel(): string {
+    const label = this.savedPurchaseLabel || formatPurchaseNumberBadge(this.loadedPurchase);
+    return label ? `Compra ${label}` : 'Compra';
   }
 
   get canDuplicateCurrent(): boolean {
@@ -273,6 +330,7 @@ export class NewPurchaseComponent implements OnInit {
       const routeId = params.get('id')?.trim() || null;
       this.purchaseRouteId = routeId;
       if (routeId) {
+        if (this.tryRestorePurchaseDraft(routeId, null)) return;
         this.purchaseLoadPending = true;
         this.loadPurchaseFromRoute(routeId);
         return;
@@ -287,17 +345,74 @@ export class NewPurchaseComponent implements OnInit {
     });
   }
 
-  private syncReturnContext(params: { get: (name: string) => string | null }): void {
+  ngAfterViewInit() {
+    this.schedulePurchaseDraftRestore();
+  }
+
+  private tryRestorePurchaseDraft(
+    routeConfirmedId: string | null,
+    draftIdFromQuery: string | null
+  ): boolean {
+    const draft = readPurchaseFormDraft();
+    if (!draft) return false;
+    if (!purchaseFormDraftMatchesRoute(draft, routeConfirmedId, draftIdFromQuery)) return false;
+
+    this.shouldRestoreDraft = true;
+    this.editingConfirmedId = draft.editingConfirmedId;
+    this.editingDraftId = draft.editingDraftId;
+    this.loadedPurchase = null;
+    this.purchaseLoadPending = false;
+    this.readOnlyMode = false;
+    this.schedulePurchaseDraftRestore();
+    return true;
+  }
+
+  private schedulePurchaseDraftRestore() {
+    queueMicrotask(() => {
+      if (!this.shouldRestoreDraft || !this.purchaseForm) return;
+      this.purchaseForm.restoreFromSessionDraft();
+      this.shouldRestoreDraft = false;
+      this.clearRestoreQueryParams();
+    });
+  }
+
+  private clearRestoreQueryParams() {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { restoreDraft: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  private syncReturnContext(params: ParamMap): void {
     if (params.get('returnTo') === 'payables') {
       this.returnTo = 'payables';
       this.payablesReturnTab = parsePayablesViewTab(params.get('tab'));
+      this.cashReturnContext = null;
+      return;
+    }
+    const ctx = parseCashReturnContext(params);
+    if (ctx) {
+      this.returnTo = 'cash';
+      this.cashReturnContext = ctx;
+      this.payablesReturnTab = null;
       return;
     }
     this.returnTo = 'purchases';
     this.payablesReturnTab = null;
+    this.cashReturnContext = null;
   }
 
   private returnQueryParams(): Record<string, string> {
+    if (this.returnTo === 'cash' && this.cashReturnContext) {
+      return {
+        returnTo: 'cash',
+        movementId: this.cashReturnContext.movementId,
+        mes: String(this.cashReturnContext.mes),
+        anio: String(this.cashReturnContext.anio),
+      };
+    }
     if (this.returnTo !== 'payables') return {};
     return {
       returnTo: 'payables',
@@ -306,18 +421,25 @@ export class NewPurchaseComponent implements OnInit {
   }
 
   private syncNewPurchaseQuery(params: { get: (name: string) => string | null }) {
+    const draftId = params.get('draftId')?.trim() ?? '';
+    if (params.get('restoreDraft') === '1' && this.tryRestorePurchaseDraft(null, draftId || null)) {
+      return;
+    }
+
     this.proveedorId = params.get('proveedorId')?.trim() ?? '';
     const duplicateId = params.get('duplicate')?.trim() ?? '';
     if (duplicateId) {
       this.loadPurchaseForDuplicate(duplicateId);
       return;
     }
-    const draftId = params.get('draftId')?.trim() ?? '';
     if (!draftId) {
       this.editingDraftId = null;
       this.duplicateSourceId = null;
       this.loadedPurchase = null;
       this.purchaseLoadPending = false;
+      this.initialTipoComprobante = normalizeComprobanteTipo(
+        params.get('tipoComprobante') ?? 'factura'
+      );
       return;
     }
     if (this.editingDraftId === draftId && this.loadedPurchase?.id === draftId) {
@@ -467,6 +589,7 @@ export class NewPurchaseComponent implements OnInit {
   onPurchaseFormReadyChange(ready: boolean) {
     queueMicrotask(() => {
       this.purchaseSummaryReady = ready;
+      if (ready) this.schedulePurchaseDraftRestore();
     });
   }
 
@@ -515,6 +638,12 @@ export class NewPurchaseComponent implements OnInit {
   }
 
   goBack() {
+    if (this.returnTo === 'cash' && this.cashReturnContext) {
+      void this.router.navigate(['/cash'], {
+        queryParams: buildCashReopenQueryParams(this.cashReturnContext),
+      });
+      return;
+    }
     if (this.returnTo === 'payables') {
       void this.router.navigate(['/payables'], {
         queryParams: this.payablesReturnTab ? { tab: this.payablesReturnTab } : {},

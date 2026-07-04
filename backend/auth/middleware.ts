@@ -1,8 +1,12 @@
 import type { NextFunction, Request, Response } from 'express';
 import { verifyAuthToken } from './jwt.ts';
-import { assertBusinessActive } from './business.ts';
+import { assertBusinessActive, getBusinessSubscription } from './business.ts';
 import { getStoredUser, toPublicUser, type PublicUser } from './users.ts';
 import { DEFAULT_BUSINESS_ID, userHasPermission, type AssignablePermission } from './constants.ts';
+import {
+  businessHasModule,
+} from './subscription-entitlements.ts';
+import type { SubscriptionModuleId } from '../../shared/subscription-modules.ts';
 import {
   getPlatformAdmin,
   PLATFORM_SCOPE,
@@ -156,6 +160,28 @@ export function requirePermission(permission: AssignablePermission) {
     }
 
     next();
+  };
+}
+
+export function requireBusinessModule(...moduleIds: SubscriptionModuleId[]) {
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.auth?.scope !== 'company') {
+      return res.status(403).json({ error: 'No tenés acceso a este módulo.' });
+    }
+
+    try {
+      const resolved = await getBusinessSubscription(req.auth.businessId);
+      const allowed = moduleIds.some((moduleId) => businessHasModule(resolved, moduleId));
+      if (!allowed) {
+        return res.status(403).json({
+          error: 'Este módulo no está incluido en la suscripción de tu empresa.',
+        });
+      }
+      next();
+    } catch (error) {
+      console.error('Module entitlement check failed:', error);
+      return res.status(500).json({ error: 'No se pudo validar la suscripción.' });
+    }
   };
 }
 

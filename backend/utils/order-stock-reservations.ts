@@ -166,10 +166,10 @@ export function computeLineStockFields(line: OrderLineStock): OrderLineStock {
 
 export function computeOrderStockStatus(items: OrderLineStock[] = []): OrderStockStatus {
   const stockLines = items.filter((line) => {
-    if (!line.stockItemId || (Number(line.cantidad) || 0) <= 0) return false;
-    if (lineControlsStock(line)) return true;
-    const computed = computeLineStockFields(line);
-    return (Number(computed.cantidadFaltante) || 0) > 0;
+    if (!lineControlsStock(line)) return false;
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) return false;
+    return (Number(line.cantidad) || 0) > 0;
   });
   if (stockLines.length === 0) return 'completo';
 
@@ -184,6 +184,44 @@ export function normalizeOrderItemsStock(items: OrderLineStock[] = []): OrderLin
   return items.map((line) => computeLineStockFields(line));
 }
 
+export async function enrichOrderItemsStockControl(
+  businessId: string,
+  items: OrderLineStock[] = []
+): Promise<OrderLineStock[]> {
+  const lines = items.map((line) => ({ ...line }));
+  const stockIds = [
+    ...new Set(
+      lines
+        .map((line) => String(line.stockItemId ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+
+  if (!stockIds.length) {
+    return normalizeOrderItemsStock(lines);
+  }
+
+  const snaps = await Promise.all(
+    stockIds.map((stockItemId) =>
+      db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get()
+    )
+  );
+  const stockById = new Map<string, Record<string, unknown>>();
+  stockIds.forEach((stockItemId, index) => {
+    stockById.set(stockItemId, (snaps[index].data() ?? {}) as Record<string, unknown>);
+  });
+
+  return normalizeOrderItemsStock(
+    lines.map((line) => {
+      const stockItemId = String(line.stockItemId ?? '').trim();
+      if (!stockItemId) return line;
+      const data = stockById.get(stockItemId);
+      if (!data) return line;
+      return { ...line, controlaStock: productControlsStock(data) };
+    })
+  );
+}
+
 export function orderHasPendingPhysicalStock(items: OrderLineStock[] = []): boolean {
   return normalizeOrderItemsStock(items).some((line) => {
     if (!lineControlsStock(line)) return false;
@@ -195,6 +233,15 @@ export function orderHasPendingPhysicalStock(items: OrderLineStock[] = []): bool
   });
 }
 
+export function orderHasStockControlledLines(items: OrderLineStock[] = []): boolean {
+  return normalizeOrderItemsStock(items).some((line) => {
+    if (!lineControlsStock(line)) return false;
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) return false;
+    return (Number(line.cantidad) || 0) > 0;
+  });
+}
+
 export function orderStockFullyConsumed(items: OrderLineStock[] = []): boolean {
   return !orderHasPendingPhysicalStock(items);
 }
@@ -203,6 +250,8 @@ function resolveLinePhysicalToConsume(
   line: OrderLineStock,
   scope: OrderPhysicalStockScope
 ): number {
+  if (!lineControlsStock(line)) return 0;
+
   const cantidadPedida = Number(line.cantidad) || 0;
   const cantidadUsada = Math.max(0, Number(line.cantidadUsada) || 0);
   const pendiente = Math.max(0, cantidadPedida - cantidadUsada);
@@ -730,7 +779,7 @@ export async function buildStockPreparationView(
     const rawLine = items[lineIndex];
     const stockItemId = String(rawLine.stockItemId ?? '').trim();
     const cantidadPedida = Number(rawLine.cantidad) || 0;
-    if (!stockItemId || cantidadPedida <= 0) continue;
+    if (!stockItemId || cantidadPedida <= 0 || rawLine.controlaStock === false) continue;
     indexedLines.push({ lineIndex, rawLine });
   }
 
@@ -754,6 +803,7 @@ export async function buildStockPreparationView(
     const stockItemId = String(rawLine.stockItemId ?? '').trim();
     const cantidadPedida = Number(rawLine.cantidad) || 0;
     const data = stockById.get(stockItemId) ?? {};
+    if (!productControlsStock(data)) continue;
     const stockReal = Number(data.stockActual) || 0;
     const stockReservadoGlobal = Number(data.stockReservado) || 0;
     const stockDisponible = getStockDisponible(stockReal, stockReservadoGlobal);
@@ -1324,7 +1374,19 @@ export async function consumeOrderStockForProduction(
   order: OrderStockRecord,
   scope: OrderPhysicalStockScope = 'pedido_completo'
 ): Promise<ConsumeOrderStockResult> {
-  const normalizedItems = normalizeOrderItemsStock(order.items ?? []);
+  const normalizedItems = await enrichOrderItemsStockControl(
+    businessId,
+    order.items ?? []
+  );
+
+  if (!orderHasStockControlledLines(normalizedItems)) {
+    return {
+      items: normalizedItems,
+      stockDescontado: order.stockDescontado ?? false,
+      estadoStock: computeOrderStockStatus(normalizedItems),
+      stockPreparado: true,
+    };
+  }
 
   if (order.stockDescontado && orderStockFullyConsumed(normalizedItems)) {
     return {
@@ -1380,14 +1442,25 @@ export async function consumeOrderStockForProduction(
   }
 
   if (scope === 'solo_reservado') {
-    const totalReserved = items.reduce(
-      (sum, line) => sum + resolveLinePhysicalToConsume(line, scope),
-      0
-    );
-    if (totalReserved <= 0) {
-      throw new OrderStockError(
-        'No hay unidades reservadas para descontar del depósito. Revisá la preparación de stock o elegí descontar todo el pedido.'
+    const pendingStockLines = items.filter((line) => {
+      if (!lineControlsStock(line)) return false;
+      const stockItemId = String(line.stockItemId ?? '').trim();
+      if (!stockItemId) return false;
+      const cantidadPedida = Number(line.cantidad) || 0;
+      const cantidadUsada = Math.max(0, Number(line.cantidadUsada) || 0);
+      return cantidadPedida > cantidadUsada;
+    });
+
+    if (pendingStockLines.length > 0) {
+      const totalReserved = pendingStockLines.reduce(
+        (sum, line) => sum + resolveLinePhysicalToConsume(line, scope),
+        0
       );
+      if (totalReserved <= 0) {
+        throw new OrderStockError(
+          'No hay unidades reservadas para descontar del depósito. Revisá la preparación de stock o elegí descontar todo el pedido.'
+        );
+      }
     }
   }
 
@@ -1433,6 +1506,15 @@ export async function consumeOrderStockOnDelivery(
 ): Promise<ConsumeOrderStockResult> {
   const normalizedItems = normalizeOrderItemsStock(order.items ?? []);
 
+  if (!orderHasStockControlledLines(normalizedItems)) {
+    return {
+      items: normalizedItems,
+      stockDescontado: order.stockDescontado ?? false,
+      estadoStock: computeOrderStockStatus(normalizedItems),
+      stockPreparado: true,
+    };
+  }
+
   if (!orderHasPendingPhysicalStock(normalizedItems)) {
     return {
       items: normalizedItems,
@@ -1464,6 +1546,16 @@ export async function consumeOrderStockOnStatusChange(
   const { pedidosConfig, targetEstado } = params;
   const scope =
     params.scope ?? resolveOrderPhysicalStockScope(pedidosConfig, targetEstado);
+
+  const enrichedItems = await enrichOrderItemsStockControl(businessId, order.items ?? []);
+  if (!orderHasStockControlledLines(enrichedItems)) {
+    return {
+      items: enrichedItems,
+      stockDescontado: order.stockDescontado ?? false,
+      estadoStock: computeOrderStockStatus(enrichedItems),
+      stockPreparado: true,
+    };
+  }
 
   if (pedidosConfig.modoStock === 'directo') {
     return consumeOrderStockDirect(businessId, orderId, order);
@@ -1571,7 +1663,22 @@ export async function buildOrderStockDiscountPreview(
   const canChooseScope =
     pedidosConfig.modoStock !== 'directo' && pedidosConfig.permitirElegirAlcanceDescuento;
 
-  const items = normalizeOrderItemsStock(order.items ?? []);
+  const items = await enrichOrderItemsStockControl(businessId, order.items ?? []);
+  if (!orderHasStockControlledLines(items)) {
+    return {
+      willConsume: false,
+      nextEstado: normalizeOrderEstadoValue(nextEstado),
+      nextEstadoLabel,
+      defaultScope,
+      canChooseScope,
+      requiresFullStock,
+      blocked: false,
+      lines: [],
+      totalReservado: 0,
+      totalCompleto: 0,
+    };
+  }
+
   const lines: OrderStockDiscountPreviewLine[] = [];
   let totalReservado = 0;
   let totalCompleto = 0;
@@ -1985,33 +2092,36 @@ export type StockReservationGroup = {
   reservas: StockReservationRow[];
 };
 
-export async function listStockReservations(
-  businessId: string,
+export type PaginatedStockReservations = {
+  rows: StockReservationRow[];
+  hasMore: boolean;
+  nextCursor: string | null;
+};
+
+const STOCK_RESERVATIONS_ORDERS_BATCH = 80;
+const STOCK_RESERVATIONS_DEFAULT_PAGE = 30;
+const STOCK_RESERVATIONS_MAX_ORDER_BATCHES = 4;
+
+type OrderReservationDoc = {
+  id: string;
+  data: () => Record<string, unknown>;
+};
+
+function extractStockReservationRowsFromOrderDocs(
+  docs: OrderReservationDoc[],
   stockItemIdFilter?: string
-): Promise<{ rows: StockReservationRow[]; grouped: StockReservationGroup[] }> {
+): StockReservationRow[] {
   const targetProductId = String(stockItemIdFilter ?? '').trim();
-  const snapshot = await db.collection(`negocios/${businessId}/pedidos`).get();
-  const clientCache = new Map<string, string>();
   const rows: StockReservationRow[] = [];
 
-  async function getClientName(clienteId: string): Promise<string> {
-    if (!clienteId) return 'Sin cliente';
-    const cached = clientCache.get(clienteId);
-    if (cached !== undefined) return cached;
-    const name = await resolveClientName(businessId, clienteId);
-    const resolved = name || 'Sin nombre';
-    clientCache.set(clienteId, resolved);
-    return resolved;
-  }
-
-  for (const doc of snapshot.docs) {
-    const order = doc.data() as OrderStockRecord & { estado?: string };
+  for (const doc of docs) {
+    const order = doc.data() as OrderStockRecord & { estado?: string; clienteNombre?: string };
     const estado = String(order.estado ?? '').toLowerCase();
     if (estado === 'cancelado') continue;
 
     const orderLabel = resolveOrderLabel(order);
     const clienteId = String(order.clienteId ?? '').trim();
-    const clienteNombre = await getClientName(clienteId);
+    const storedClientName = String(order.clienteNombre ?? '').trim();
     const items = normalizeOrderItemsStock(order.items ?? []);
 
     items.forEach((line, lineIndex) => {
@@ -2029,7 +2139,7 @@ export async function listStockReservations(
         orderLabel,
         orderEstado: order.estado ?? '',
         clienteId,
-        clienteNombre,
+        clienteNombre: storedClientName || (clienteId ? '' : 'Sin cliente'),
         stockItemId,
         productoNombre: String(line.nombre ?? 'Producto'),
         lineIndex,
@@ -2041,12 +2151,52 @@ export async function listStockReservations(
     });
   }
 
+  return rows;
+}
+
+async function enrichStockReservationRowsWithClientNames(
+  businessId: string,
+  rows: StockReservationRow[]
+): Promise<void> {
+  const ids = [
+    ...new Set(
+      rows
+        .filter((row) => !String(row.clienteNombre ?? '').trim() && String(row.clienteId ?? '').trim())
+        .map((row) => String(row.clienteId).trim())
+    ),
+  ];
+
+  const nameMap = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 30) {
+    const batch = ids.slice(i, i + 30);
+    const refs = batch.map((id) => db.collection(`negocios/${businessId}/clientes`).doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      nameMap.set(snap.id, String(snap.data()?.nombre ?? '').trim());
+    }
+  }
+
+  for (const row of rows) {
+    if (String(row.clienteNombre ?? '').trim()) continue;
+    const clienteId = String(row.clienteId ?? '').trim();
+    if (!clienteId) {
+      row.clienteNombre = 'Sin cliente';
+      continue;
+    }
+    row.clienteNombre = nameMap.get(clienteId) || 'Sin nombre';
+  }
+}
+
+function sortStockReservationRows(rows: StockReservationRow[]): void {
   rows.sort((a, b) => {
     const byProduct = a.productoNombre.localeCompare(b.productoNombre, 'es');
     if (byProduct !== 0) return byProduct;
     return a.orderLabel.localeCompare(b.orderLabel, 'es');
   });
+}
 
+function buildStockReservationGroups(rows: StockReservationRow[]): StockReservationGroup[] {
   const groupedMap = new Map<string, StockReservationGroup>();
   for (const row of rows) {
     const existing = groupedMap.get(row.stockItemId);
@@ -2063,10 +2213,80 @@ export async function listStockReservations(
     existing.reservas.push(row);
   }
 
-  const grouped = [...groupedMap.values()].sort((a, b) =>
+  return [...groupedMap.values()].sort((a, b) =>
     a.productoNombre.localeCompare(b.productoNombre, 'es')
   );
+}
 
+export async function listStockReservationsPage(
+  businessId: string,
+  options: { stockItemIdFilter?: string; limit?: number; cursor?: string } = {}
+): Promise<PaginatedStockReservations> {
+  const limit = Math.min(
+    300,
+    Math.max(20, Math.trunc(Number(options.limit) || STOCK_RESERVATIONS_DEFAULT_PAGE))
+  );
+  const stockItemIdFilter = String(options.stockItemIdFilter ?? '').trim() || undefined;
+  const initialCursor = String(options.cursor ?? '').trim();
+  let scanCursor = initialCursor;
+  const collected: StockReservationRow[] = [];
+  let hasMoreOrders = true;
+  let lastScannedOrderId: string | null = null;
+  let batchesScanned = 0;
+  const maxOrderBatches = initialCursor
+    ? Number.POSITIVE_INFINITY
+    : STOCK_RESERVATIONS_MAX_ORDER_BATCHES;
+
+  while (collected.length <= limit && hasMoreOrders && batchesScanned < maxOrderBatches) {
+    let query = db
+      .collection(`negocios/${businessId}/pedidos`)
+      .orderBy('createdAt', 'desc')
+      .limit(STOCK_RESERVATIONS_ORDERS_BATCH);
+
+    if (scanCursor) {
+      const cursorSnap = await db
+        .collection(`negocios/${businessId}/pedidos`)
+        .doc(scanCursor)
+        .get();
+      if (cursorSnap.exists) {
+        query = query.startAfter(cursorSnap);
+      }
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) {
+      hasMoreOrders = false;
+      break;
+    }
+
+    collected.push(...extractStockReservationRowsFromOrderDocs(snapshot.docs, stockItemIdFilter));
+    lastScannedOrderId = snapshot.docs[snapshot.docs.length - 1].id;
+    scanCursor = lastScannedOrderId;
+    hasMoreOrders = snapshot.docs.length >= STOCK_RESERVATIONS_ORDERS_BATCH;
+    batchesScanned += 1;
+  }
+
+  const hasMore = collected.length > limit || hasMoreOrders;
+  const rows = collected.slice(0, limit);
+  await enrichStockReservationRowsWithClientNames(businessId, rows);
+  sortStockReservationRows(rows);
+
+  return {
+    rows,
+    hasMore,
+    nextCursor: hasMore ? lastScannedOrderId : null,
+  };
+}
+
+export async function listStockReservations(
+  businessId: string,
+  stockItemIdFilter?: string
+): Promise<{ rows: StockReservationRow[]; grouped: StockReservationGroup[] }> {
+  const snapshot = await db.collection(`negocios/${businessId}/pedidos`).get();
+  const rows = extractStockReservationRowsFromOrderDocs(snapshot.docs, stockItemIdFilter);
+  await enrichStockReservationRowsWithClientNames(businessId, rows);
+  sortStockReservationRows(rows);
+  const grouped = buildStockReservationGroups(rows);
   return { rows, grouped };
 }
 

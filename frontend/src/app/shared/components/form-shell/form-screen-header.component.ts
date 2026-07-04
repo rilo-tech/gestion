@@ -11,7 +11,7 @@ import { FormBackButtonComponent } from './form-back-button.component';
   imports: [CommonModule, FormBackButtonComponent],
   template: `
     <header class="mb-3 sm:mb-4">
-      <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+      <div class="flex items-center gap-2 min-w-0">
         <app-form-back-button
           appearance="icon"
           [label]="backLabel"
@@ -22,28 +22,30 @@ import { FormBackButtonComponent } from './form-back-button.component';
           (clicked)="backClick.emit()">
         </app-form-back-button>
 
-        <div class="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-          <h1
-            class="min-w-0 text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-tight truncate">
-            {{ title }}
-          </h1>
-          <span
-            *ngIf="titleBadge"
-            class="shrink-0 text-sm sm:text-lg font-semibold text-teal-700 dark:text-teal-400 tabular-nums">
-            #{{ titleBadge }}
-          </span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline gap-x-1.5 gap-y-0.5 flex-wrap min-w-0">
+            <h1
+              class="min-w-0 text-lg sm:text-2xl font-bold text-gray-900 dark:text-gray-100 leading-snug sm:leading-tight">
+              {{ title }}
+            </h1>
+            <span
+              *ngIf="titleBadge"
+              class="shrink-0 text-xs sm:text-lg font-semibold text-teal-700 dark:text-teal-400 tabular-nums">
+              #{{ titleBadge }}
+            </span>
+          </div>
         </div>
 
         <div
           *ngIf="hasHeaderActions"
-          class="flex shrink-0 items-center justify-end gap-2 sm:gap-2.5 max-sm:max-w-[45%]">
+          class="flex shrink-0 items-center gap-1 sm:gap-2.5">
           <ng-content select="[headerActions]"></ng-content>
         </div>
       </div>
 
       <p
         *ngIf="subtitle"
-        class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5 sm:mt-1 leading-snug pl-[calc(2.5rem+0.5rem)] sm:pl-[calc(2.75rem+0.75rem)]"
+        class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1 sm:mt-1 leading-snug pl-[calc(2.5rem+0.5rem)] sm:pl-[calc(2.75rem+0.75rem)]"
         [class.desc-lg-only]="hideSubtitleOnMobile">
         {{ subtitle }}
       </p>

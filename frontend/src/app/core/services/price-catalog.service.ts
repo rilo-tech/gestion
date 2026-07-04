@@ -26,6 +26,12 @@ export interface PriceCatalogEntry {
   updatedAt?: string;
 }
 
+export interface PaginatedPriceCatalogEntries {
+  items: PriceCatalogEntry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface PriceSummaryRow {
   variantNombre: string;
   cells: Array<{ label: string; precio: number }>;
@@ -304,6 +310,15 @@ export class PriceCatalogService {
 
   getEntries(): Observable<PriceCatalogEntry[]> {
     return this.http.get<PriceCatalogEntry[]>(`/api/price-catalog/${this.businessId}`);
+  }
+
+  getEntriesPage(limit = 120, cursor?: string): Observable<PaginatedPriceCatalogEntries> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedPriceCatalogEntries>(
+      `/api/price-catalog/${this.businessId}`,
+      { params }
+    );
   }
 
   getEntry(entryId: string): Observable<PriceCatalogEntry> {

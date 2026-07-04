@@ -2,13 +2,28 @@ import { db } from '../firebase.ts';
 
 export const DEFAULT_PLAN_ID = 'plan_basico';
 
+import {
+  DEFAULT_PLAN_MODULES,
+  emptyModulesMap,
+  normalizeModulesMap,
+  type SubscriptionModuleId,
+  type SubscriptionModulesMap,
+} from '../../shared/subscription-modules.ts';
+
 export interface PlanRecord {
   id: string;
   nombre: string;
   limiteAdministradores: number;
   limiteOperadores: number;
   limiteUsuariosTotal: number;
+  /** @deprecated Usar precioBaseMensual. Se mantiene por compatibilidad. */
   precioMensual: number;
+  precioBaseMensual: number;
+  precioPorAdministrador: number;
+  precioPorOperador: number;
+  modulosIncluidos: SubscriptionModulesMap;
+  preciosAddonModulo: Partial<Record<SubscriptionModuleId, number>>;
+  maxAmbitosCaja: number;
   activo: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -21,6 +36,12 @@ export interface PublicPlanInfo {
   limiteOperadores: number;
   limiteUsuariosTotal: number;
   precioMensual: number;
+  precioBaseMensual: number;
+  precioPorAdministrador: number;
+  precioPorOperador: number;
+  modulosIncluidos: SubscriptionModulesMap;
+  preciosAddonModulo: Partial<Record<SubscriptionModuleId, number>>;
+  maxAmbitosCaja: number;
   activo: boolean;
 }
 
@@ -32,6 +53,27 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteOperadores: 2,
     limiteUsuariosTotal: 3,
     precioMensual: 15000,
+    precioBaseMensual: 15000,
+    precioPorAdministrador: 0,
+    precioPorOperador: 3000,
+    modulosIncluidos: DEFAULT_PLAN_MODULES.plan_basico,
+    preciosAddonModulo: {},
+    maxAmbitosCaja: 0,
+    activo: true,
+  },
+  {
+    id: 'plan_intermedio',
+    nombre: 'Plan Intermedio',
+    limiteAdministradores: 1,
+    limiteOperadores: 4,
+    limiteUsuariosTotal: 5,
+    precioMensual: 28000,
+    precioBaseMensual: 22000,
+    precioPorAdministrador: 0,
+    precioPorOperador: 4000,
+    modulosIncluidos: DEFAULT_PLAN_MODULES.plan_intermedio,
+    preciosAddonModulo: {},
+    maxAmbitosCaja: 1,
     activo: true,
   },
   {
@@ -41,15 +83,12 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteOperadores: 5,
     limiteUsuariosTotal: 7,
     precioMensual: 35000,
-    activo: true,
-  },
-  {
-    id: 'plan_premium',
-    nombre: 'Plan Premium',
-    limiteAdministradores: 3,
-    limiteOperadores: 10,
-    limiteUsuariosTotal: 13,
-    precioMensual: 65000,
+    precioBaseMensual: 28000,
+    precioPorAdministrador: 5000,
+    precioPorOperador: 4500,
+    modulosIncluidos: DEFAULT_PLAN_MODULES.plan_profesional,
+    preciosAddonModulo: {},
+    maxAmbitosCaja: 2,
     activo: true,
   },
 ];
@@ -72,13 +111,28 @@ function mapPlan(id: string, data: Record<string, unknown>): PlanRecord {
       ? data.limiteUsuariosTotal
       : limiteAdministradores + limiteOperadores;
 
+  const precioBaseMensual = Math.max(
+    0,
+    Number(data.precioBaseMensual ?? data.precioMensual) || 0
+  );
+
   return {
     id,
     nombre: String(data.nombre ?? id).trim(),
     limiteAdministradores,
     limiteOperadores,
     limiteUsuariosTotal,
-    precioMensual: Math.max(0, Number(data.precioMensual) || 0),
+    precioMensual: precioBaseMensual,
+    precioBaseMensual,
+    precioPorAdministrador: Math.max(0, Number(data.precioPorAdministrador) || 0),
+    precioPorOperador: Math.max(0, Number(data.precioPorOperador) || 0),
+    modulosIncluidos: normalizeModulesMap(
+      data.modulosIncluidos as Partial<Record<string, boolean>> | undefined,
+      id
+    ),
+    preciosAddonModulo:
+      (data.preciosAddonModulo as Partial<Record<SubscriptionModuleId, number>>) ?? {},
+    maxAmbitosCaja: Math.max(0, Number(data.maxAmbitosCaja) || 0),
     activo: data.activo !== false,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
@@ -92,7 +146,13 @@ export function toPublicPlanInfo(plan: PlanRecord): PublicPlanInfo {
     limiteAdministradores: plan.limiteAdministradores,
     limiteOperadores: plan.limiteOperadores,
     limiteUsuariosTotal: plan.limiteUsuariosTotal,
-    precioMensual: plan.precioMensual,
+    precioMensual: plan.precioBaseMensual,
+    precioBaseMensual: plan.precioBaseMensual,
+    precioPorAdministrador: plan.precioPorAdministrador,
+    precioPorOperador: plan.precioPorOperador,
+    modulosIncluidos: plan.modulosIncluidos,
+    preciosAddonModulo: plan.preciosAddonModulo,
+    maxAmbitosCaja: plan.maxAmbitosCaja,
     activo: plan.activo,
   };
 }
@@ -107,6 +167,39 @@ export async function ensureDefaultPlans(): Promise<void> {
     await ref.set({
       ...plan,
       createdAt: new Date().toISOString(),
+    });
+  }
+
+  await migratePremiumIntoProfesional();
+}
+
+let premiumMigrationDone = false;
+
+/** Unifica plan_premium en plan_profesional (plantilla única de plan alto). */
+export async function migratePremiumIntoProfesional(): Promise<void> {
+  if (premiumMigrationDone) return;
+  premiumMigrationDone = true;
+
+  const premiumRef = plansCollection().doc('plan_premium');
+  const premiumDoc = await premiumRef.get();
+  if (premiumDoc.exists) {
+    await premiumRef.set(
+      {
+        activo: false,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+
+  const { listBusinesses } = await import('./business.ts');
+  const businesses = await listBusinesses();
+  const now = new Date().toISOString();
+  for (const business of businesses) {
+    if (business.planId !== 'plan_premium') continue;
+    await db.collection('negocios').doc(business.id).update({
+      planId: 'plan_profesional',
+      updatedAt: now,
     });
   }
 }
@@ -162,15 +255,22 @@ export async function listPlans(activeOnly = false): Promise<PlanRecord[]> {
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 }
 
+export type CreatePlanPayload = Omit<PlanRecord, 'id' | 'createdAt' | 'updatedAt'>;
+
 export async function createPlan(
   planId: string,
-  payload: Omit<PlanRecord, 'id' | 'createdAt' | 'updatedAt'>
+  payload: CreatePlanPayload
 ): Promise<PlanRecord> {
   const ref = plansCollection().doc(planId);
   const existing = await ref.get();
   if (existing.exists) {
     throw new Error('PLAN_EXISTS');
   }
+
+  const precioBaseMensual = Math.max(
+    0,
+    Number(payload.precioBaseMensual ?? payload.precioMensual) || 0
+  );
 
   const record = {
     nombre: payload.nombre.trim(),
@@ -180,12 +280,19 @@ export async function createPlan(
       payload.limiteUsuariosTotal > 0
         ? payload.limiteUsuariosTotal
         : payload.limiteAdministradores + payload.limiteOperadores,
-    precioMensual: Math.max(0, Number(payload.precioMensual) || 0),
+    precioMensual: precioBaseMensual,
+    precioBaseMensual,
+    precioPorAdministrador: Math.max(0, Number(payload.precioPorAdministrador) || 0),
+    precioPorOperador: Math.max(0, Number(payload.precioPorOperador) || 0),
+    modulosIncluidos: normalizeModulesMap(payload.modulosIncluidos, planId),
+    preciosAddonModulo: payload.preciosAddonModulo ?? {},
+    maxAmbitosCaja: Math.max(0, Number(payload.maxAmbitosCaja) || 0),
     activo: payload.activo !== false,
     createdAt: new Date().toISOString(),
   };
 
   await ref.set(record);
+  planCache.delete(planId);
   return mapPlan(planId, record);
 }
 
@@ -200,6 +307,13 @@ export async function updatePlan(
   }
 
   const current = mapPlan(doc.id, doc.data() as Record<string, unknown>);
+  const precioBaseMensual =
+    typeof payload.precioBaseMensual === 'number'
+      ? Math.max(0, payload.precioBaseMensual)
+      : typeof payload.precioMensual === 'number'
+        ? Math.max(0, payload.precioMensual)
+        : current.precioBaseMensual;
+
   const next = {
     nombre:
       typeof payload.nombre === 'string' && payload.nombre.trim()
@@ -217,21 +331,42 @@ export async function updatePlan(
       typeof payload.limiteUsuariosTotal === 'number'
         ? payload.limiteUsuariosTotal
         : current.limiteUsuariosTotal,
-    precioMensual:
-      typeof payload.precioMensual === 'number'
-        ? Math.max(0, payload.precioMensual)
-        : current.precioMensual,
+    precioMensual: precioBaseMensual,
+    precioBaseMensual,
+    precioPorAdministrador:
+      typeof payload.precioPorAdministrador === 'number'
+        ? Math.max(0, payload.precioPorAdministrador)
+        : current.precioPorAdministrador,
+    precioPorOperador:
+      typeof payload.precioPorOperador === 'number'
+        ? Math.max(0, payload.precioPorOperador)
+        : current.precioPorOperador,
+    modulosIncluidos:
+      payload.modulosIncluidos !== undefined
+        ? normalizeModulesMap(payload.modulosIncluidos, planId)
+        : current.modulosIncluidos,
+    preciosAddonModulo:
+      payload.preciosAddonModulo !== undefined
+        ? payload.preciosAddonModulo
+        : current.preciosAddonModulo,
+    maxAmbitosCaja:
+      typeof payload.maxAmbitosCaja === 'number'
+        ? Math.max(0, payload.maxAmbitosCaja)
+        : current.maxAmbitosCaja,
     activo: payload.activo !== undefined ? payload.activo !== false : current.activo,
     updatedAt: new Date().toISOString(),
   };
 
   await ref.update(next);
+  planCache.delete(planId);
   const updated = await ref.get();
   return mapPlan(updated.id, updated.data() as Record<string, unknown>);
 }
 
 export function resolveLegacyPlanId(plan: unknown): string {
-  if (plan === 'profesional') return 'plan_profesional';
-  if (plan === 'empresa' || plan === 'premium') return 'plan_premium';
+  if (plan === 'profesional' || plan === 'intermedio') return 'plan_profesional';
+  if (plan === 'empresa' || plan === 'premium') return 'plan_profesional';
   return DEFAULT_PLAN_ID;
 }
+
+export { emptyModulesMap };

@@ -15,12 +15,19 @@ export interface AppUser {
   tema?: 'light' | 'dark';
   hasPassword?: boolean;
   hasGoogle?: boolean;
+  colaboradorId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
 export interface CreateUserPayload extends AppUser {
   password?: string;
+}
+
+export interface PaginatedUsers {
+  items: AppUser[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 @Injectable({
@@ -36,6 +43,12 @@ export class UserService {
 
   getUsers(): Observable<AppUser[]> {
     return this.http.get<AppUser[]>(`/api/users/${this.businessId}`);
+  }
+
+  getUsersPage(limit = 120, cursor?: string): Observable<PaginatedUsers> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedUsers>(`/api/users/${this.businessId}`, { params });
   }
 
   getUser(userId: string): Observable<AppUser> {

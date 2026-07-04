@@ -1,11 +1,18 @@
 import { db } from '../firebase.ts';
-import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
+import {
+  getBusinessCashAmbitoId,
+  normalizeMovementAmbito,
+  parseCashAmbitoOrNull,
+  usesCashAmbitoSeparationFromCaja,
+} from './caja-ambitos.ts';
 import { resolveOrderLabel } from './order-number.ts';
 import { resolveSaleLabel } from './sale-number.ts';
+import { ventaSaldoClienteImpact } from '../../shared/comprobantes-config.ts';
+import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
 
 type OrderPayment = {
   id: string;
-  tipo: 'seña' | 'cuota' | 'pago' | 'extra';
+  tipo: 'seña' | 'cuota' | 'pago';
   monto: number;
   fecha: string;
   movimientoCajaId?: string;
@@ -195,7 +202,7 @@ export function buildClientHistorialPagos(params: {
   for (const pedido of params.pedidos) {
     const label = pedido.numeroPedidoLabel ?? resolveOrderLabel(pedido);
     for (const pago of pedido.pagos ?? []) {
-      if (pago.tipo === 'extra' || !(Number(pago.monto) > 0)) continue;
+      if (!(Number(pago.monto) > 0)) continue;
 
       const dedupeKey = pago.movimientoCajaId || `pedido_${pedido.id}_${pago.id}`;
       if (seen.has(dedupeKey)) continue;
@@ -274,12 +281,6 @@ export function buildClientHistorialPagos(params: {
   return entries;
 }
 
-function sumPagosHaciaTotal(pagos: OrderPayment[] = []) {
-  return pagos
-    .filter((pago) => pago.tipo !== 'extra')
-    .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
-}
-
 function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   const clean: Record<string, unknown> = {
     id: pago.id,
@@ -290,6 +291,85 @@ function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   if (pago.movimientoCajaId) clean.movimientoCajaId = pago.movimientoCajaId;
   if (pago.notas) clean.notas = pago.notas;
   return clean;
+}
+
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  return appDoc.exists ? ((appDoc.data()?.caja as Record<string, unknown>) ?? {}) : {};
+}
+
+export async function resolveVentaCashAmbito(
+  businessId: string,
+  venta: Record<string, unknown>,
+  caja: Record<string, unknown> = {}
+): Promise<string | null> {
+  const config = Object.keys(caja).length > 0 ? caja : await loadCajaConfig(businessId);
+  const stored = parseCashAmbitoOrNull(venta.ambito, config);
+  if (stored) return stored;
+
+  const movId = String(venta.movimientoCajaId ?? '').trim();
+  if (!movId) return null;
+
+  const snap = await db.doc(`negocios/${businessId}/movimientos_caja/${movId}`).get();
+  if (!snap.exists) return null;
+  return normalizeMovementAmbito(snap.data()?.ambito, config);
+}
+
+export async function resolveVentasCashAmbitoMap(
+  businessId: string,
+  ventas: Array<{ id: string; data: Record<string, unknown> }>,
+  caja: Record<string, unknown> = {}
+): Promise<Map<string, string | null>> {
+  const config = Object.keys(caja).length > 0 ? caja : await loadCajaConfig(businessId);
+  const result = new Map<string, string | null>();
+  const movIds = new Set<string>();
+
+  for (const { id, data } of ventas) {
+    const stored = parseCashAmbitoOrNull(data.ambito, config);
+    if (stored) {
+      result.set(id, stored);
+      continue;
+    }
+    const movId = String(data.movimientoCajaId ?? '').trim();
+    if (movId) movIds.add(movId);
+  }
+
+  const movAmbito = new Map<string, string>();
+  if (movIds.size > 0) {
+    const snaps = await db.getAll(
+      ...[...movIds].map((movId) =>
+        db.doc(`negocios/${businessId}/movimientos_caja/${movId}`)
+      )
+    );
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      movAmbito.set(snap.id, normalizeMovementAmbito(snap.data()?.ambito, config));
+    }
+  }
+
+  for (const { id, data } of ventas) {
+    if (result.has(id)) continue;
+    const movId = String(data.movimientoCajaId ?? '').trim();
+    result.set(id, movId ? (movAmbito.get(movId) ?? null) : null);
+  }
+
+  return result;
+}
+
+function resolveCobroAmbito(
+  ventaAmbito: string | null,
+  requestedAmbito: unknown,
+  caja: Record<string, unknown>
+): string {
+  if (ventaAmbito) return ventaAmbito;
+  if (!usesCashAmbitoSeparationFromCaja(caja)) {
+    return getBusinessCashAmbitoId(caja);
+  }
+  const parsed = parseCashAmbitoOrNull(requestedAmbito, caja);
+  if (!parsed) {
+    throw new Error('Seleccioná la caja donde registrar el cobro.');
+  }
+  return parsed;
 }
 
 async function createCashIncome(
@@ -307,16 +387,16 @@ async function createCashIncome(
     ventaLabel?: string | null;
     numeroPedido?: number | null;
     numeroPedidoLabel?: string | null;
+    ambito?: string;
   }
 ) {
-  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
-  const caja = appDoc.exists ? ((appDoc.data()?.caja as Record<string, unknown>) ?? {}) : {};
+  const caja = await loadCajaConfig(businessId);
   const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
     tipo: 'ingreso',
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
-    ambito: getBusinessCashAmbitoId(caja),
+    ambito: normalizeMovementAmbito(params.ambito, caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -364,14 +444,14 @@ export async function getClientPendingDebts(
     const data = doc.data();
     if (data.origen === 'pedido') continue;
 
-    const saldo = Math.max(0, Number(data.saldoPendiente) || 0);
-    if (saldo <= 0) continue;
+    const impact = ventaSaldoClienteImpact(data);
+    if (impact <= 0) continue;
 
     const ventaLabel = resolveSaleLabel(data);
     debts.push({
       kind: 'venta',
       id: doc.id,
-      saldo,
+      saldo: impact,
       fecha: String(data.fecha ?? ''),
       label: `Venta #${ventaLabel}`,
     });
@@ -405,7 +485,8 @@ async function applyPedidoPayment(
   orderId: string,
   monto: number,
   medioPago: string,
-  notas: string
+  notas: string,
+  ambito?: string
 ): Promise<{ movimientoCajaId: string; label: string }> {
   const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
   const orderSnap = await orderRef.get();
@@ -429,6 +510,11 @@ async function applyPedidoPayment(
 
   const orderLabel = resolveOrderLabel(order);
   const timestamp = Date.now();
+  const caja = await loadCajaConfig(businessId);
+  const cobroAmbito =
+    ambito && parseCashAmbitoOrNull(ambito, caja)
+      ? parseCashAmbitoOrNull(ambito, caja)!
+      : getBusinessCashAmbitoId(caja);
   const movimientoCajaId = await createCashIncome(businessId, {
     monto,
     concepto: `Pago pedido #${orderLabel}`,
@@ -440,6 +526,7 @@ async function applyPedidoPayment(
     pedidoId: orderId,
     numeroPedido: order.numeroPedido ?? null,
     numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    ambito: cobroAmbito,
   });
 
   const nuevosPagos: OrderPayment[] = [
@@ -474,7 +561,8 @@ async function applyVentaCobro(
   ventaId: string,
   monto: number,
   medioPago: string,
-  notas: string
+  notas: string,
+  requestedAmbito?: string
 ): Promise<{ movimientoCajaId: string; label: string }> {
   const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
   const ventaSnap = await ventaRef.get();
@@ -494,44 +582,61 @@ async function applyVentaCobro(
 
   const ventaLabel = resolveSaleLabel(venta);
   const timestamp = new Date().toISOString();
-  const movimientoCajaId = await createCashIncome(businessId, {
-    monto,
-    concepto: `Cobro saldo venta #${ventaLabel}`,
-    origenId: ventaId,
-    origenTipo: 'venta_mostrador_cobro',
-    origenGrupo: 'venta',
-    medio: medioPago,
-    clienteId,
-    ventaId,
-    ventaLabel,
-    pedidoId: null,
-  });
+  let movimientoCajaId: string | null = null;
+  const caja = await loadCajaConfig(businessId);
+  const ventaAmbito = await resolveVentaCashAmbito(businessId, venta, caja);
+  const cobroAmbito = resolveCobroAmbito(ventaAmbito, requestedAmbito, caja);
 
-  const montoCobrado = (Number(venta.montoCobrado) || 0) + monto;
-  const nuevoSaldo = Math.max(0, (Number(venta.total) || 0) - montoCobrado);
-  const cobrosExtra = Array.isArray(venta.cobros) ? [...venta.cobros] : [];
-  cobrosExtra.push({
-    id: `cobro_${Date.now()}`,
-    monto,
-    fecha: timestamp,
-    medioPago,
-    notas: notas || undefined,
-    movimientoCajaId,
-  });
+  try {
+    movimientoCajaId = await createCashIncome(businessId, {
+      monto,
+      concepto: `Cobro saldo venta #${ventaLabel}`,
+      origenId: ventaId,
+      origenTipo: 'venta_mostrador_cobro',
+      origenGrupo: 'venta',
+      medio: medioPago,
+      clienteId,
+      ventaId,
+      ventaLabel,
+      pedidoId: null,
+      ambito: cobroAmbito,
+    });
 
-  await ventaRef.update({
-    montoCobrado,
-    saldoPendiente: nuevoSaldo,
-    cobros: cobrosExtra,
-  });
+    const montoCobrado = (Number(venta.montoCobrado) || 0) + monto;
+    const nuevoSaldo = Math.max(0, (Number(venta.total) || 0) - montoCobrado);
+    const cobrosExtra = Array.isArray(venta.cobros) ? [...venta.cobros] : [];
+    const nuevoCobro: Record<string, unknown> = {
+      id: `cobro_${Date.now()}`,
+      monto,
+      fecha: timestamp,
+      medioPago,
+      movimientoCajaId,
+    };
+    if (notas) nuevoCobro.notas = notas;
+    cobrosExtra.push(nuevoCobro);
 
-  return { movimientoCajaId, label: `Venta #${ventaLabel}` };
+    await ventaRef.update({
+      montoCobrado,
+      saldoPendiente: nuevoSaldo,
+      cobros: cobrosExtra,
+    });
+  } catch (error) {
+    if (movimientoCajaId) {
+      await db
+        .doc(`negocios/${businessId}/movimientos_caja/${movimientoCajaId}`)
+        .delete()
+        .catch(() => undefined);
+    }
+    throw error;
+  }
+
+  return { movimientoCajaId: movimientoCajaId!, label: `Venta #${ventaLabel}` };
 }
 
 export async function collectClientBalance(
   businessId: string,
   clientId: string,
-  params: { monto: number; medioPago?: string; notas?: string }
+  params: { monto: number; medioPago?: string; notas?: string; ambito?: string }
 ): Promise<{
   monto: number;
   saldoAnterior: number;
@@ -552,6 +657,7 @@ export async function collectClientBalance(
 
   const medioPago = String(params.medioPago ?? 'efectivo').trim() || 'efectivo';
   const notas = String(params.notas ?? '').trim();
+  const requestedAmbito = String(params.ambito ?? '').trim() || undefined;
   const plan = planClientCollection(debts, monto);
   const allocations: ClientCollectionAllocation[] = [];
 
@@ -563,7 +669,8 @@ export async function collectClientBalance(
         entry.debt.id,
         entry.monto,
         medioPago,
-        notas
+        notas,
+        requestedAmbito
       );
       allocations.push({
         kind: 'pedido',
@@ -581,7 +688,8 @@ export async function collectClientBalance(
       entry.debt.id,
       entry.monto,
       medioPago,
-      notas
+      notas,
+      requestedAmbito
     );
     allocations.push({
       kind: 'venta',

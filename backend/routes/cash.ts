@@ -18,13 +18,14 @@ import {
   usesCashAmbitoSeparationFromCaja,
 } from '../utils/caja-ambitos.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import { requireBusinessModule } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   normalizeTransactionDateTimeToIso,
 } from '../utils/transaction-date.ts';
 import { sortCashMovementsByRecency } from '../../shared/cash-movement-sort.ts';
-import { reconcilePayablesAndCashData } from '../utils/payables.ts';
+import { schedulePayablesDataRepair } from '../utils/payables.ts';
 import {
   applyCashMovementToPeriod,
   classifyMovementPeriod,
@@ -37,6 +38,7 @@ import {
 } from '../utils/cash-period-summary.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessModule('caja'));
 const ORIGENES_CACHE_TTL_MS = 60_000;
 const cashOrigenesCache = new Map<
   string,
@@ -144,6 +146,18 @@ function resolveOrigenLabel(
   return base;
 }
 
+function resolveMovementsMonthBounds(
+  mes: unknown,
+  anio: unknown
+): { startIso: string; endIso: string } | null {
+  const mesNum = Number(mes);
+  const anioNum = Number(anio);
+  if (!Number.isFinite(mesNum) || mesNum < 1 || mesNum > 12) return null;
+  if (!Number.isFinite(anioNum) || anioNum < 2000 || anioNum > 2100) return null;
+  const { start, end } = getCalendarMonthBounds(Math.trunc(mesNum), Math.trunc(anioNum));
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
 function mapCashMovementDoc(
   doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
 ): Record<string, unknown> {
@@ -214,7 +228,7 @@ async function enrichMovements(
 router.get('/:businessId/summary', async (req, res) => {
   try {
     const { businessId } = req.params;
-    await reconcilePayablesAndCashData(businessId);
+    schedulePayablesDataRepair(businessId);
     const caja = await loadCajaConfig(businessId);
     const ambitos = normalizeCajaAmbitos(caja);
     const ambitoTotals: Record<string, { ingreso: number; egreso: number }> = {};
@@ -311,7 +325,7 @@ router.get('/:businessId/summary', async (req, res) => {
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
-    await reconcilePayablesAndCashData(businessId);
+    schedulePayablesDataRepair(businessId);
     const paged = String(req.query.paged ?? '') === '1';
     if (paged) {
       const requestedLimit = Number(req.query.limit);
@@ -319,11 +333,19 @@ router.get('/:businessId', async (req, res) => {
         ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
         : 120;
       const cursor = String(req.query.cursor ?? '').trim();
+      const monthBounds = resolveMovementsMonthBounds(req.query.mes, req.query.anio);
 
-      let query = db
+      let query: FirebaseFirestore.Query = db
         .collection(`negocios/${businessId}/movimientos_caja`)
-        .orderBy('fecha', 'desc')
-        .limit(limit + 1);
+        .orderBy('fecha', 'desc');
+
+      if (monthBounds) {
+        query = query
+          .where('fecha', '>=', monthBounds.startIso)
+          .where('fecha', '<=', monthBounds.endIso);
+      }
+
+      query = query.limit(limit + 1);
 
       if (cursor) {
         const cursorSnap = await db

@@ -36,6 +36,7 @@ import {
   FORM_CANCEL_CLASS,
   FORM_SUBMIT_CLASS,
   IconActionComponent,
+  LIST_TOOLBAR_CONTROL_HEIGHT,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_SCROLL_CLASS,
@@ -132,8 +133,8 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
   template: `
     <div [class]="pageShellClass">
       <app-module-page-header
-        title="Colaboradores"
-        description="Horarios, sueldos, extras (repartos, aguinaldo, premios) y pagos."
+        [title]="moduleTitle"
+        [description]="moduleDescription"
         [showMobileSearch]="activeTab === 'movimientos'"
         [(searchQuery)]="movementSearch"
         (searchQueryChange)="movementsPage = 1"
@@ -141,18 +142,87 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
         activityModule="collaborators"
         [showRefresh]="true"
         (refreshClick)="loadData()">
-        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Registrar horas" variant="secondary" (clicked)="openMovementModal('horas')">
-          <i-lucide name="clock" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
-        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Extra / aguinaldo" variant="secondary" (clicked)="openMovementModal('extra')">
-          <i-lucide name="gift" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
-        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Registrar pago" (clicked)="openMovementModal('pago')">
-          <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
-        <app-icon-action headerActions *ngIf="auth.canEditRecords" label="Nuevo colaborador" (clicked)="openCollaboratorModal()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <div headerActions *ngIf="canManageCollaboratorTeam" class="hidden sm:contents">
+          <app-icon-action label="Registrar horas" variant="secondary" (clicked)="openMovementModal('horas')">
+            <i-lucide name="clock" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <app-icon-action label="Extra / aguinaldo" variant="secondary" (clicked)="openMovementModal('extra')">
+            <i-lucide name="gift" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <app-icon-action label="Registrar pago" (clicked)="openMovementModal('pago')">
+            <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <app-icon-action label="Nuevo colaborador" (clicked)="openCollaboratorModal()">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </div>
+        <div headerActions *ngIf="canRegisterOwnHours" class="hidden sm:contents">
+          <app-icon-action label="Registrar horas" variant="secondary" (clicked)="openMovementModal('horas')">
+            <i-lucide name="clock" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+        </div>
+        <div headerActions *ngIf="canRegisterOwnHours" class="relative shrink-0 sm:hidden">
+          <button
+            type="button"
+            (click)="openMovementFromMenu('horas')"
+            [class]="collaboratorsCreateMenuButtonClass"
+            aria-label="Registrar horas">
+            <i-lucide name="clock" class="w-4 h-4"></i-lucide>
+          </button>
+        </div>
+        <div headerActions *ngIf="canManageCollaboratorTeam" class="relative shrink-0 sm:hidden">
+          <button
+            type="button"
+            (click)="toggleCollaboratorsCreateMenu($event)"
+            [attr.aria-expanded]="collaboratorsCreateMenuOpen"
+            aria-haspopup="menu"
+            aria-label="Acciones de colaboradores"
+            [class]="collaboratorsCreateMenuButtonClass">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </button>
+          <div
+            *ngIf="collaboratorsCreateMenuOpen"
+            class="fixed inset-0 z-10"
+            aria-hidden="true"
+            (click)="closeCollaboratorsCreateMenu()"></div>
+          <div
+            *ngIf="collaboratorsCreateMenuOpen"
+            role="menu"
+            class="absolute right-0 top-full z-20 mt-1 min-w-[11.5rem] overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1 shadow-lg">
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openMovementFromMenu('horas')"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="clock" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Registrar horas
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openMovementFromMenu('extra')"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="gift" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Extra / aguinaldo
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openMovementFromMenu('pago')"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="wallet" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Registrar pago
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              (click)="openCollaboratorFromMenu()"
+              class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+              <i-lucide name="user-plus" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+              Nuevo colaborador
+            </button>
+          </div>
+        </div>
       </app-module-page-header>
 
       <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
@@ -168,7 +238,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
               <input type="date" [(ngModel)]="periodTo" name="periodTo" (change)="onPeriodChange()"
                 class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white">
             </label>
-            <label class="block min-w-0 col-span-2 sm:col-span-1">
+            <label *ngIf="!isOwnCollaboratorScope" class="block min-w-0 col-span-2 sm:col-span-1">
               <span class="text-xs font-medium text-gray-500 mb-1 block">Filtrar colaborador</span>
               <app-searchable-select
                 [(ngModel)]="filterColaboradorId"
@@ -211,7 +281,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
       </div>
 
       <div class="mb-6 flex gap-2 border-b border-gray-200 overflow-x-auto">
-        <button *ngFor="let tab of tabs" type="button" (click)="activeTab = tab.id"
+        <button *ngFor="let tab of visibleTabs" type="button" (click)="activeTab = tab.id"
           class="px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
           [class.border-teal-600]="activeTab === tab.id"
           [class.text-teal-700]="activeTab === tab.id"
@@ -229,51 +299,46 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
         <div [class]="nativeCompactListClass + ' sm:hidden'">
           <ng-container *ngFor="let row of paginatedSummaryRows">
             <div class="border-b border-gray-100 last:border-b-0">
-              <button
-                type="button"
-                class="w-full text-left px-3 py-3 hover:bg-gray-50 active:bg-gray-100 transition-colors"
-                (click)="toggleSummaryExpand(row.colaboradorId)">
-                <div class="flex items-start gap-2">
-                  <i-lucide
-                    [name]="isSummaryExpanded(row.colaboradorId) ? 'chevron-down' : 'chevron-right'"
-                    class="w-4 h-4 text-gray-500 shrink-0 mt-0.5">
-                  </i-lucide>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-sm font-semibold text-gray-900 truncate">{{ row.nombre }}</div>
-                    <div class="text-[11px] text-gray-500 mt-0.5">
-                      {{ summaryMovementsCount(row.colaboradorId) }} registro(s)
-                      <span *ngIf="!row.activo" class="text-gray-400"> · inactivo</span>
-                    </div>
-                    <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                      <dt class="text-gray-400">Pendiente</dt>
-                      <dd
-                        class="text-right font-semibold tabular-nums"
-                        [class.text-orange-600]="row.pendientePeriodo > 0">
-                        {{ formatMoney(row.pendientePeriodo) }}
-                      </dd>
-                      <dt class="text-gray-400">Devengado</dt>
-                      <dd class="text-right tabular-nums text-gray-800">{{ formatMoney(row.devengado) }}</dd>
-                      <dt class="text-gray-400">Horas</dt>
-                      <dd class="text-right tabular-nums text-gray-700">{{ formatQty(row.horas) }}</dd>
-                      <dt class="text-gray-400">Saldo total</dt>
-                      <dd class="text-right tabular-nums text-gray-700">{{ formatMoney(row.saldoAcumulado) }}</dd>
-                    </dl>
-                  </div>
+              <div class="px-3 py-3">
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-80 active:opacity-70"
+                    (click)="toggleSummaryExpand(row.colaboradorId)">
+                    <i-lucide
+                      [name]="isSummaryExpanded(row.colaboradorId) ? 'chevron-down' : 'chevron-right'"
+                      class="w-4 h-4 shrink-0 text-gray-500">
+                    </i-lucide>
+                    <span class="truncate text-sm font-semibold text-gray-900">
+                      {{ row.nombre }}
+                      <span *ngIf="!row.activo" class="font-normal text-gray-400"> · inactivo</span>
+                    </span>
+                  </button>
+                  <button
+                    *ngIf="auth.canEditRecords && canPayBalance(row)"
+                    type="button"
+                    [disabled]="payingLiquidation"
+                    class="shrink-0 text-xs font-semibold text-teal-700 hover:underline disabled:opacity-50"
+                    (click)="openPayBalance(row, $event)">
+                    Pagar
+                  </button>
                 </div>
-              </button>
-              <div *ngIf="auth.canEditRecords && canPayBalance(row)" class="px-3 pb-3 -mt-1">
-                <button
-                  type="button"
-                  [disabled]="payingLiquidation"
-                  class="text-xs font-semibold text-teal-700 hover:underline disabled:opacity-50"
-                  (click)="openPayBalance(row, $event)">
-                  Pagar
-                </button>
+                <dl class="mt-2 ml-6 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                  <dt class="text-gray-400">Horas</dt>
+                  <dd class="text-right tabular-nums text-gray-700">{{ formatQty(row.horas) }}</dd>
+                  <dt class="text-gray-400">Saldo total</dt>
+                  <dd
+                    class="text-right font-semibold tabular-nums text-gray-800"
+                    [class.text-orange-600]="row.saldoAcumulado > 0">
+                    {{ formatMoney(row.saldoAcumulado) }}
+                  </dd>
+                </dl>
               </div>
               <div *ngIf="isSummaryExpanded(row.colaboradorId)" class="px-3 pb-3 bg-gray-50/80 border-t border-gray-100">
                 <div
                   *ngFor="let mov of movementsForCollaborator(row.colaboradorId)"
-                  class="py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
+                  class="py-2.5 border-b border-gray-100 last:border-b-0 text-sm cursor-pointer"
+                  (click)="onMovementRowClick(mov)">
                   <div class="flex items-start justify-between gap-2">
                     <div class="min-w-0">
                       <div class="text-xs text-gray-500 tabular-nums">{{ formatDate(mov.fecha) }}</div>
@@ -288,16 +353,8 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                       <div class="font-semibold tabular-nums" [class.text-teal-700]="mov.tipo === 'pago'">
                         {{ formatMoney(mov.monto) }}
                       </div>
-                      <button
-                        *ngIf="auth.canEditRecords && canPayAccrual(mov)"
-                        type="button"
-                        [disabled]="payingLiquidation"
-                        class="mt-1 text-[11px] font-semibold text-teal-700 hover:underline disabled:opacity-50"
-                        (click)="openPayAccrual(mov, $event)">
-                        Registrar pago
-                      </button>
                       <span
-                        *ngIf="auth.canEditRecords && isAccrualLiquidated(mov)"
+                        *ngIf="isAccrualLiquidated(mov)"
                         class="mt-1 block text-[11px] font-semibold text-teal-600">
                         Liquidado
                       </span>
@@ -346,12 +403,14 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                       class="w-4 h-4 text-gray-500 inline-block">
                     </i-lucide>
                   </td>
-                  <td class="px-4 sm:px-6 py-3 text-sm font-medium text-gray-900 min-w-0">
-                    <span class="font-medium text-gray-900">{{ row.nombre }}</span>
-                    <span *ngIf="!row.activo" class="ml-2 text-xs text-gray-400">(inactivo)</span>
-                    <span class="ml-2 text-xs font-normal text-gray-400">
+                  <td class="px-4 sm:px-6 py-3 text-sm min-w-0">
+                    <div class="font-medium text-gray-900">
+                      {{ row.nombre }}
+                      <span *ngIf="!row.activo" class="ml-1 text-xs text-gray-400">(inactivo)</span>
+                    </div>
+                    <div class="text-xs font-normal text-gray-400 mt-0.5">
                       {{ summaryMovementsCount(row.colaboradorId) }} registro(s)
-                    </span>
+                    </div>
                   </td>
                   <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums">{{ formatQty(row.horas) }}</td>
                   <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums">{{ formatMoney(row.montoHoras) }}</td>
@@ -383,14 +442,15 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                             <th [class]="moduleTableHeadNestedClass">Fecha</th>
                             <th [class]="moduleTableHeadNestedClass">Tipo</th>
                             <th [class]="moduleTableHeadNestedClass">Detalle</th>
-                            <th [class]="moduleTableHeadNestedClass + ' text-right'">Monto</th>
-                            <th *ngIf="auth.canEditRecords" [class]="moduleTableHeadNestedClass + ' text-right'">Acción</th>
+                            <th [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap'">Monto</th>
+                            <th *ngIf="auth.canEditRecords" [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap'">Acción</th>
                           </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
                           <tr
                             *ngFor="let mov of movementsForCollaborator(row.colaboradorId)"
-                            class="bg-white">
+                            class="bg-white cursor-pointer"
+                            (click)="onMovementRowClick(mov)">
                             <td class="px-3 py-2 text-sm text-gray-600 whitespace-nowrap tabular-nums">{{ formatDate(mov.fecha) }}</td>
                             <td class="px-3 py-2 text-sm">
                               <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold"
@@ -409,24 +469,36 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                               <span *ngIf="mov.tipo === 'pago'">Pago<span *ngIf="mov.periodoDesde"> · {{ formatPeriodRange(mov.periodoDesde, mov.periodoHasta) }}</span></span>
                               <p *ngIf="mov.notas" class="text-xs text-gray-400 mt-0.5 truncate">{{ mov.notas }}</p>
                             </td>
-                            <td class="px-3 py-2 text-sm text-right tabular-nums font-semibold" [class.text-teal-700]="mov.tipo === 'pago'">
+                            <td class="px-3 py-2 text-sm text-right tabular-nums font-semibold whitespace-nowrap" [class.text-teal-700]="mov.tipo === 'pago'">
                               {{ formatMoney(mov.monto) }}
                             </td>
-                            <td *ngIf="auth.canEditRecords" class="px-3 py-2 text-right">
-                              <button
-                                *ngIf="canPayAccrual(mov)"
-                                type="button"
-                                [disabled]="payingLiquidation"
-                                class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50"
-                                (click)="openPayAccrual(mov, $event)">
-                                Registrar pago
-                              </button>
-                              <span
-                                *ngIf="isAccrualLiquidated(mov)"
-                                class="text-[11px] font-semibold text-teal-600 whitespace-nowrap">
-                                Liquidado
-                              </span>
-                              <span *ngIf="mov.tipo === 'pago'" class="text-[11px] text-gray-400">—</span>
+                            <td *ngIf="auth.canEditRecords" class="px-3 py-2 text-right whitespace-nowrap" (click)="$event.stopPropagation()">
+                              <div class="inline-flex items-center justify-end gap-1.5 flex-nowrap max-w-full">
+                                <button
+                                  *ngIf="canPayAccrual(mov)"
+                                  type="button"
+                                  [disabled]="payingLiquidation"
+                                  class="text-xs font-semibold text-teal-700 hover:underline shrink-0 disabled:opacity-50"
+                                  (click)="openPayAccrual(mov, $event)">
+                                  Pagar
+                                </button>
+                                <span
+                                  *ngIf="isAccrualLiquidated(mov)"
+                                  class="text-[11px] font-semibold text-teal-600 shrink-0">
+                                  Liquidado
+                                </span>
+                                <app-list-row-actions
+                                  [showDuplicate]="!!mov.id"
+                                  [showDelete]="auth.canDeleteRecords"
+                                  [deleteLoading]="deletingMovementId === mov.id"
+                                  [deleteDisabled]="!!deletingMovementId && deletingMovementId !== mov.id"
+                                  [editDisabled]="!!deletingMovementId"
+                                  [duplicateDisabled]="!!deletingMovementId"
+                                  (editClick)="editMovement(mov)"
+                                  (duplicateClick)="duplicateMovement(mov)"
+                                  (deleteClick)="confirmDeleteMovement(mov)">
+                                </app-list-row-actions>
+                              </div>
                             </td>
                           </tr>
                           <tr *ngIf="!movementsForCollaborator(row.colaboradorId).length">
@@ -692,12 +764,38 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
       </form>
     </app-transaction-modal>
 
-    <app-transaction-modal [open]="movementModalOpen" [title]="movementModalTitle" maxWidthClass="max-w-lg" (closed)="closeMovementModal()">
+    <app-transaction-modal
+      [open]="movementModalOpen"
+      [title]="movementModalTitle"
+      [subtitle]="movementModalSubtitle"
+      maxWidthClass="max-w-lg"
+      (closed)="closeMovementModal()">
+      <div
+        headerActions
+        *ngIf="canDuplicateMovementInModal || canDeleteMovementInModal"
+        class="inline-flex items-center gap-1 shrink-0">
+        <app-record-action-toolbar
+          [showDuplicate]="canDuplicateMovementInModal"
+          duplicateLabel="Duplicar"
+          [duplicateDisabled]="movementSaving || !!deletingMovementId"
+          (duplicateClick)="duplicateMovementInModal()"
+          [showDelete]="canDeleteMovementInModal"
+          deleteLabel="Eliminar"
+          [deleteDisabled]="movementSaving || !!deletingMovementId"
+          (deleteClick)="confirmDeleteEditingMovement()">
+        </app-record-action-toolbar>
+      </div>
       <form class="space-y-4" (ngSubmit)="saveMovement()">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
-          <label class="block min-w-0 sm:col-span-2">
+        <div class="grid grid-cols-[minmax(0,1fr)_8.5rem] sm:grid-cols-3 gap-2 sm:gap-3 items-start">
+          <label class="block min-w-0 sm:col-span-2 relative z-50 overflow-visible">
             <span class="text-sm font-medium text-gray-700 mb-1 block">Colaborador *</span>
+            <div
+              *ngIf="isOwnCollaboratorScope"
+              class="form-control min-h-10 flex items-center px-3 text-sm text-gray-900 bg-gray-50">
+              {{ linkedCollaboratorName }}
+            </div>
             <app-searchable-select
+              *ngIf="!isOwnCollaboratorScope"
               [(ngModel)]="movementDraft.colaboradorId"
               (ngModelChange)="onMovementColaboradorChange()"
               name="movColaborador"
@@ -767,7 +865,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
           </div>
 
           <div *ngIf="movementHoursMode === 'franja'" class="space-y-2">
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="grid grid-cols-3 gap-2 sm:gap-3 items-start">
               <label class="block min-w-0">
                 <span class="text-sm font-medium text-gray-700 mb-1 block">Desde *</span>
                 <input
@@ -859,30 +957,37 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
           </div>
         </ng-container>
 
+        <p *ngIf="canPayEditingMovementInModal" class="text-sm">
+          <button
+            type="button"
+            [disabled]="movementSaving || payingLiquidation"
+            class="font-semibold text-teal-700 hover:underline disabled:opacity-50 disabled:no-underline"
+            (click)="payEditingMovementFromModal()">
+            Pagar
+          </button>
+          <span class="text-gray-500"> · registrar egreso en caja</span>
+        </p>
+
         <label class="block">
           <span class="text-sm font-medium text-gray-700 mb-1 block">Notas</span>
           <textarea [(ngModel)]="movementDraft.notas" name="movNotas" rows="2" class="form-control"></textarea>
         </label>
 
-        <div class="form-actions flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-gray-100 mt-2">
-          <app-record-action-toolbar
-            [showDuplicate]="canDuplicateMovementInModal"
-            duplicateLabel="Duplicar"
-            [duplicateDisabled]="movementSaving || !!deletingMovementId"
-            (duplicateClick)="duplicateMovementInModal()"
-            [showDelete]="canDeleteMovementInModal"
-            deleteLabel="Eliminar"
-            [deleteDisabled]="movementSaving || !!deletingMovementId"
-            (deleteClick)="confirmDeleteEditingMovement()">
-          </app-record-action-toolbar>
-          <div class="flex justify-end gap-3 flex-wrap sm:ml-auto">
-            <button type="button" (click)="closeMovementModal()" [class]="formCancelClass">Cancelar</button>
+        <div class="form-actions flex flex-col sm:flex-row sm:justify-end gap-3 pt-2 border-t border-gray-100 mt-2">
+          <div class="flex flex-col sm:flex-row sm:justify-end gap-3 w-full sm:w-auto">
             <button
               type="button"
               [disabled]="movementSaving"
-              [class]="formSubmitClass"
+              [class]="formSubmitClass + ' order-1 sm:order-2'"
               (click)="saveMovement()">
               {{ movementSaving ? 'Guardando...' : 'Guardar' }}
+            </button>
+            <button
+              type="button"
+              (click)="closeMovementModal()"
+              [class]="formCancelClass + ' order-2 sm:order-1'"
+              [disabled]="movementSaving">
+              Cancelar
             </button>
           </div>
         </div>
@@ -891,7 +996,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
 
     <app-transaction-modal
       [open]="payLiquidationModalOpen"
-      [title]="payLiquidationTarget?.liquidacionMovimientoId ? 'Registrar pago' : 'Pagar saldo del período'"
+      [title]="payLiquidationTarget?.liquidacionMovimientoId ? 'Pagar' : 'Pagar saldo del período'"
       [subtitle]="payLiquidationTarget?.subtitle ?? ''"
       maxWidthClass="max-w-md"
       (closed)="closePayLiquidationModal()">
@@ -953,6 +1058,10 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
   readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
 
   movementSaving = false;
+  collaboratorsCreateMenuOpen = false;
+
+  readonly collaboratorsCreateMenuButtonClass =
+    `inline-flex items-center justify-center rounded-lg bg-teal-600 text-white hover:bg-teal-700 w-[42px] p-0 transition-colors ${LIST_TOOLBAR_CONTROL_HEIGHT}`;
 
   payLiquidationModalOpen = false;
   payLiquidationTarget: PayLiquidationTarget | null = null;
@@ -970,6 +1079,46 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     { id: 'movimientos' as ActiveTab, label: 'Registros' },
     { id: 'equipo' as ActiveTab, label: 'Equipo' },
   ];
+
+  get visibleTabs() {
+    if (this.isOwnCollaboratorScope) {
+      return this.tabs.filter((tab) => tab.id !== 'equipo');
+    }
+    return this.tabs;
+  }
+
+  get isOwnCollaboratorScope(): boolean {
+    return this.auth.isOwnCollaboratorScope;
+  }
+
+  get linkedCollaboratorId(): string | null {
+    return this.auth.linkedCollaboratorId;
+  }
+
+  get linkedCollaboratorName(): string {
+    const id = this.linkedCollaboratorId;
+    if (!id) return '—';
+    return this.collaboratorName(id);
+  }
+
+  get canManageCollaboratorTeam(): boolean {
+    return this.auth.canEditRecords && !this.isOwnCollaboratorScope;
+  }
+
+  get canRegisterOwnHours(): boolean {
+    return this.auth.canEditRecords && this.isOwnCollaboratorScope;
+  }
+
+  get moduleTitle(): string {
+    return this.isOwnCollaboratorScope ? 'Mis horas' : 'Colaboradores';
+  }
+
+  get moduleDescription(): string {
+    if (this.isOwnCollaboratorScope) {
+      return 'Consultá tus horas, extras y pagos registrados por la empresa.';
+    }
+    return 'Horarios, sueldos, extras (repartos, aguinaldo, premios) y pagos.';
+  }
 
   activeTab: ActiveTab = 'resumen';
   periodFrom = weekStartDate();
@@ -1050,6 +1199,16 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     return 'Registrar pago';
   }
 
+  get movementModalSubtitle(): string | undefined {
+    if (!this.editingMovement) return undefined;
+    return 'Modificá el registro y guardá los cambios.';
+  }
+
+  get canPayEditingMovementInModal(): boolean {
+    const mov = this.editingMovement;
+    return !!mov && this.canPayAccrual(mov);
+  }
+
   get canDuplicateMovementInModal(): boolean {
     return !!this.editingMovement?.id && this.auth.canEditRecords;
   }
@@ -1081,6 +1240,9 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    if (this.linkedCollaboratorId) {
+      this.filterColaboradorId = this.linkedCollaboradorId;
+    }
     bindListPageRefreshOnReturn({
       listPath: '/collaborators',
       reload: () => this.loadData(),
@@ -1219,6 +1381,25 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
       });
   }
 
+  toggleCollaboratorsCreateMenu(event: Event): void {
+    event.stopPropagation();
+    this.collaboratorsCreateMenuOpen = !this.collaboratorsCreateMenuOpen;
+  }
+
+  closeCollaboratorsCreateMenu(): void {
+    this.collaboratorsCreateMenuOpen = false;
+  }
+
+  openMovementFromMenu(tipo: MovementModalMode): void {
+    this.closeCollaboratorsCreateMenu();
+    this.openMovementModal(tipo);
+  }
+
+  openCollaboratorFromMenu(): void {
+    this.closeCollaboratorsCreateMenu();
+    this.openCollaboratorModal();
+  }
+
   openMovementModal(tipo: MovementModalMode, movement?: CollaboratorMovement): void {
     this.editingMovement = movement ?? null;
     if (movement) {
@@ -1238,7 +1419,8 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
       }
     } else {
       this.movementDraft = this.emptyMovementDraft(tipo);
-      this.movementDraft.colaboradorId = this.filterColaboradorId || '';
+      this.movementDraft.colaboradorId =
+        this.linkedCollaboratorId || this.filterColaboradorId || '';
       this.movementDraft.periodoDesde = this.periodFrom;
       this.movementDraft.periodoHasta = this.periodTo;
       if (tipo === 'horas') {
@@ -1311,12 +1493,18 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     this.editingMovement = null;
   }
 
+  duplicateMovement(mov: CollaboratorMovement): void {
+    if (!mov.id || !this.auth.canEditRecords) return;
+    this.openMovementModal(mov.tipo as MovementModalMode, mov);
+    this.editingMovement = null;
+  }
+
   canPayBalance(row: CollaboratorSummaryRow): boolean {
-    return this.auth.canEditRecords && row.pendientePeriodo > 0;
+    return this.canManageCollaboratorTeam && row.pendientePeriodo > 0;
   }
 
   canPayAccrual(mov: CollaboratorMovement): boolean {
-    if (!this.auth.canEditRecords) return false;
+    if (!this.canManageCollaboratorTeam) return false;
     if (mov.tipo !== 'horas' && mov.tipo !== 'extra') return false;
     return !this.isAccrualLiquidated(mov) && Number(mov.monto) > 0;
   }
@@ -1334,8 +1522,8 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     return !!row && row.pendientePeriodo <= 0;
   }
 
-  openPayAccrual(mov: CollaboratorMovement, event: Event): void {
-    event.stopPropagation();
+  openPayAccrual(mov: CollaboratorMovement, event?: Event): void {
+    event?.stopPropagation();
     if (!this.canPayAccrual(mov)) return;
     this.payLiquidationTarget = {
       colaboradorId: mov.colaboradorId,
@@ -1348,6 +1536,13 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     };
     this.payLiquidationMedioId = 'efectivo';
     this.payLiquidationModalOpen = true;
+  }
+
+  payEditingMovementFromModal(): void {
+    const mov = this.editingMovement;
+    if (!mov || !this.canPayAccrual(mov)) return;
+    this.closeMovementModal();
+    this.openPayAccrual(mov);
   }
 
   openPayBalance(row: CollaboratorSummaryRow, event: Event): void {

@@ -18,11 +18,6 @@ import {
   ListPaginationComponent,
   paginateSlice,
 } from '../../shared/components/list-pagination/list-pagination.component';
-import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
-import {
-  ClientFormPanelComponent,
-  ClientFormSaveEvent,
-} from './client-form-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { confirmClientDeletion } from '../../core/utils/client-delete-flow';
@@ -37,6 +32,11 @@ import { ModulePageHeaderComponent } from '../../shared/components/module-page-h
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 @Component({
   selector: 'app-clients',
@@ -46,8 +46,6 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
     FormsModule,
     LucideAngularModule,
     RouterLink,
-    TransactionModalComponent,
-    ClientFormPanelComponent,
     ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
@@ -57,7 +55,7 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
     ListSearchFieldComponent,
   ],
   template: `
-    <div [class]="pageShellClass">
+    <div [class]="pageShellClass" (click)="clearSaldoKpiFilter()">
       <app-module-page-header
         title="Clientes"
         description="Administra tu base de datos de clientes."
@@ -79,6 +77,72 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
           <span class="hidden sm:inline">Nuevo cliente</span>
         </a>
       </app-module-page-header>
+
+      <div
+        *ngIf="auth.canViewAccountBalance"
+        class="sm:hidden mb-3 px-2"
+        (click)="$event.stopPropagation()">
+        <div class="grid grid-cols-2 gap-1">
+          <button
+            type="button"
+            (click)="toggleSaldoKpiFilter($event)"
+            [class]="saldoKpiMobileChipClass('orange')">
+            <span class="block text-[9px] font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
+              Por cobrar
+            </span>
+            <span class="block text-[11px] font-bold tabular-nums text-orange-600 dark:text-orange-400 leading-tight mt-0.5 truncate">
+              {{ formatMoney(totalSaldoPorCobrar) }}
+            </span>
+          </button>
+          <button
+            type="button"
+            (click)="toggleSaldoKpiFilter($event)"
+            [class]="saldoKpiMobileChipClass('neutral')">
+            <span class="block text-[9px] font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
+              Con saldo
+            </span>
+            <span class="block text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-tight mt-0.5">
+              {{ debtorCount }}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        *ngIf="auth.canViewAccountBalance"
+        class="module-summary-kpis hidden sm:grid grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8"
+        (click)="$event.stopPropagation()">
+        <button
+          type="button"
+          (click)="toggleSaldoKpiFilter($event)"
+          [class]="saldoKpiCardClass('border-orange-100 dark:border-orange-900/50')">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Total por cobrar</p>
+          <p class="text-xl sm:text-2xl font-bold text-orange-600 tabular-nums">{{ formatMoney(totalSaldoPorCobrar) }}</p>
+        </button>
+        <button
+          type="button"
+          (click)="toggleSaldoKpiFilter($event)"
+          [class]="saldoKpiCardClass('border-gray-100 dark:border-gray-700')">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Clientes con saldo</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums">{{ debtorCount }}</p>
+        </button>
+      </div>
+
+      <div
+        *ngIf="saldoKpiFilterActive && auth.canViewAccountBalance"
+        class="mb-3 sm:mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg sm:rounded-xl border border-teal-100 dark:border-teal-900/50 bg-teal-50 dark:bg-teal-950/40 px-3 py-2 sm:px-4 sm:py-3 text-xs sm:text-sm text-teal-800 dark:text-teal-200">
+        <span class="min-w-0 truncate">
+          <span class="sm:hidden">Filtrado: </span>
+          <span class="hidden sm:inline">Mostrando solo clientes con saldo pendiente. Hacé click fuera de los recuadros para ver todos.</span>
+          <span class="sm:hidden font-semibold">Con saldo</span>
+        </span>
+        <button
+          type="button"
+          (click)="clearSaldoKpiFilter(); $event.stopPropagation()"
+          class="shrink-0 font-semibold text-teal-700 dark:text-teal-300 hover:underline">
+          Ver todos
+        </button>
+      </div>
 
       <app-compact-data-list [showSearch]="true">
         <div listSearch [class]="desktopListSearchWrapClass">
@@ -109,7 +173,12 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando clientes...</p>
           <p *ngIf="!loading && clients.length > 0 && filteredClients.length === 0" [class]="compactListEmptyClass">
-            No se encontraron clientes para "{{ searchQuery }}".
+            <ng-container *ngIf="saldoKpiFilterActive && !searchQuery.trim()">
+              No hay clientes con saldo pendiente.
+            </ng-container>
+            <ng-container *ngIf="!saldoKpiFilterActive || searchQuery.trim()">
+              No se encontraron clientes para "{{ searchQuery }}".
+            </ng-container>
           </p>
           <p *ngIf="!loading && clients.length === 0" [class]="compactListEmptyClass">
             No se encontraron clientes.
@@ -167,7 +236,6 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
                   [class.text-gray-400]="!(client.saldoPendiente || 0)">
                   {{ formatMoney(client.saldoPendiente || 0) }}
                 </div>
-                <div *ngIf="client.debe" class="text-xs font-semibold text-orange-500">Debe</div>
               </td>
               <td class="hidden sm:table-cell px-4 py-4 text-sm font-medium text-right" (click)="$event.stopPropagation()">
                 <app-list-row-actions
@@ -191,7 +259,12 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
             </tr>
             <tr *ngIf="!loading && clients.length > 0 && filteredClients.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-gray-400">
-                No se encontraron clientes para "{{ searchQuery }}".
+                <ng-container *ngIf="saldoKpiFilterActive && !searchQuery.trim()">
+                  No hay clientes con saldo pendiente.
+                </ng-container>
+                <ng-container *ngIf="!saldoKpiFilterActive || searchQuery.trim()">
+                  No se encontraron clientes para "{{ searchQuery }}".
+                </ng-container>
               </td>
             </tr>
             <tr *ngIf="!loading && clients.length === 0">
@@ -211,21 +284,6 @@ import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh'
         </app-list-pagination>
       </app-compact-data-list>
     </div>
-
-    <app-transaction-modal
-      [open]="clientModalOpen"
-      [title]="clientModalTitle"
-      [subtitle]="clientModalSubtitle"
-      maxWidthClass="max-w-lg"
-      (closed)="closeClientModal()">
-      <app-client-form-panel
-        [clientId]="editingClientId"
-        [prefillNombre]="clientPrefillNombre"
-        (saved)="onClientSaved($event)"
-        (cancelled)="closeClientModal()"
-        (deleted)="onClientDeleted()">
-      </app-client-form-panel>
-    </app-transaction-modal>
   `,
 })
 export class ClientsComponent implements OnInit {
@@ -253,27 +311,36 @@ export class ClientsComponent implements OnInit {
 
   clients: Client[] = [];
   loading = true;
+  loadingMoreClients = false;
+  clientsHasMore = false;
+  clientsCursor: string | null = null;
+  private readonly listLoadSession = new ProgressiveListSession();
   searchQuery = '';
   clientsPage = 1;
-  clientModalOpen = false;
-  editingClientId: string | null = null;
-  clientPrefillNombre = '';
+  saldoKpiFilterActive = false;
 
-  get clientModalTitle(): string {
-    return this.editingClientId ? 'Editar cliente' : 'Nuevo cliente';
+  get totalSaldoPorCobrar(): number {
+    return this.clients.reduce(
+      (sum, client) => sum + Math.max(0, client.saldoPendiente || 0),
+      0
+    );
   }
 
-  get clientModalSubtitle(): string {
-    return this.editingClientId
-      ? 'Datos de contacto y etiquetas del cliente.'
-      : 'Cargá un cliente a tu base de datos.';
+  get debtorCount(): number {
+    return this.clients.filter((client) => (client.saldoPendiente || 0) > 0).length;
   }
 
   get filteredClients(): Client[] {
-    const query = this.searchQuery.trim().toLowerCase();
-    if (!query) return this.clients;
+    let list = this.clients;
 
-    return this.clients.filter((client) => {
+    if (this.saldoKpiFilterActive) {
+      list = list.filter((client) => (client.saldoPendiente || 0) > 0);
+    }
+
+    const query = this.searchQuery.trim().toLowerCase();
+    if (!query) return list;
+
+    return list.filter((client) => {
       const nombre = (client.nombre ?? '').toLowerCase();
       const contacto = this.getContactDisplay(client).toLowerCase();
       const direccion = (client.direccion ?? '').toLowerCase();
@@ -298,7 +365,6 @@ export class ClientsComponent implements OnInit {
     bindListPageRefreshOnReturn({
       listPath: '/clients',
       reload: () => this.reloadList(),
-      reset: () => this.closeClientModal(),
       router: this.router,
       destroyRef: this.destroyRef,
       injector: this.injector,
@@ -310,8 +376,7 @@ export class ClientsComponent implements OnInit {
       const isNew = params.get('new') === '1';
 
       if (editId) {
-        this.openClientModal(editId);
-        this.clearClientQueryParams();
+        this.router.navigate(['/clients', editId, 'edit'], { replaceUrl: true });
         return;
       }
 
@@ -325,58 +390,30 @@ export class ClientsComponent implements OnInit {
     });
   }
 
-  private clearClientQueryParams() {
-    this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { edit: null, new: null, nombre: null },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
-  }
-
-  openNewClient(prefillNombre = '') {
-    this.editingClientId = null;
-    this.clientPrefillNombre = prefillNombre.trim();
-    this.clientModalOpen = true;
-  }
-
-  openClientModal(clientId: string) {
-    this.editingClientId = clientId;
-    this.clientPrefillNombre = '';
-    this.clientModalOpen = true;
-  }
-
-  closeClientModal() {
-    this.clientModalOpen = false;
-    this.editingClientId = null;
-    this.clientPrefillNombre = '';
-  }
-
-  onClientSaved(event: ClientFormSaveEvent) {
-    this.editingClientId = event.id;
-    this.loadClients();
-  }
-
-  onClientDeleted() {
-    this.closeClientModal();
-    this.loadClients();
-  }
-
   reloadList() {
     this.clientsPage = 1;
     this.loadClients();
   }
 
   loadClients() {
+    const loadToken = this.listLoadSession.next();
     this.loading = true;
-    this.clientService.getClients().subscribe({
-      next: (clients) => {
-        this.clients = [...clients].sort((a, b) =>
+    this.clientsPage = 1;
+    this.clientService.getClientsPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.clients = [...page.items].sort((a, b) =>
           (a.nombre ?? '').localeCompare(b.nombre ?? '', 'es', { sensitivity: 'base' })
         );
+        this.clientsHasMore = page.hasMore;
+        this.clientsCursor = page.nextCursor;
         this.loading = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingClientsInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loading = false;
         this.dialogService.alert({
           title: 'Error',
@@ -384,6 +421,66 @@ export class ClientsComponent implements OnInit {
         });
       },
     });
+  }
+
+  private loadRemainingClientsInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.clientsHasMore || !this.clientsCursor || this.loadingMoreClients) return;
+
+    this.loadingMoreClients = true;
+    this.clientService
+      .getClientsPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.clientsCursor)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.clients = [...this.clients, ...page.items].sort((a, b) =>
+            (a.nombre ?? '').localeCompare(b.nombre ?? '', 'es', { sensitivity: 'base' })
+          );
+          this.clientsHasMore = page.hasMore;
+          this.clientsCursor = page.nextCursor;
+          this.loadingMoreClients = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingClientsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.loadingMoreClients = false;
+        },
+      });
+  }
+
+  toggleSaldoKpiFilter(event: Event): void {
+    event.stopPropagation();
+    this.saldoKpiFilterActive = !this.saldoKpiFilterActive;
+    this.clientsPage = 1;
+  }
+
+  clearSaldoKpiFilter(): void {
+    if (!this.saldoKpiFilterActive) return;
+    this.saldoKpiFilterActive = false;
+    this.clientsPage = 1;
+  }
+
+  saldoKpiCardClass(borderClass: string): string {
+    const base =
+      'w-full text-left bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border shadow-sm transition-colors cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50';
+    const ring = this.saldoKpiFilterActive
+      ? ' ring-2 ring-teal-500 ring-offset-2 dark:ring-offset-gray-950'
+      : '';
+    return `${base} ${borderClass}${ring}`;
+  }
+
+  saldoKpiMobileChipClass(variant: 'orange' | 'neutral'): string {
+    const base =
+      'w-full min-w-0 text-left rounded-lg px-2 py-1.5 border transition-colors active:scale-[0.98]';
+    if (this.saldoKpiFilterActive) {
+      return `${base} border-teal-500 bg-teal-50 ring-1 ring-teal-500/40 dark:bg-teal-950/50 dark:border-teal-600`;
+    }
+    if (variant === 'orange') {
+      return `${base} border-orange-200 dark:border-orange-900/50 bg-white dark:bg-gray-900`;
+    }
+    return `${base} border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900`;
   }
 
   getContactDisplay(client: Client): string {
@@ -401,7 +498,7 @@ export class ClientsComponent implements OnInit {
 
   openClient(client: Client) {
     if (!client.id) return;
-    this.openClientModal(client.id);
+    this.router.navigate(['/clients', client.id, 'edit']);
   }
 
   confirmDeleteClient(client: Client) {

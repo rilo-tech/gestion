@@ -21,6 +21,56 @@ function normalizeCodigoKey(codigo: unknown): string {
   return String(codigo ?? '').trim();
 }
 
+export function normalizeBarcodeKey(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, '');
+}
+
+export async function findStockItemByCodigoBarras(
+  businessId: string,
+  codigoBarras: string,
+  excludeId?: string
+): Promise<{ id: string; codigoBarras?: string } | null> {
+  const key = normalizeBarcodeKey(codigoBarras);
+  if (!key) return null;
+
+  const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
+  for (const doc of snapshot.docs) {
+    if (excludeId && doc.id === excludeId) continue;
+    const existing = normalizeBarcodeKey(doc.data().codigoBarras);
+    if (existing && existing === key) {
+      return { id: doc.id, codigoBarras: existing };
+    }
+  }
+  return null;
+}
+
+/** Busca por código de barras; si no hay, prueba el código interno del producto. */
+export async function findStockItemByBarcode(
+  businessId: string,
+  barcode: string,
+  excludeId?: string
+): Promise<{ id: string; data: Record<string, unknown> } | null> {
+  const key = normalizeBarcodeKey(barcode);
+  if (!key) return null;
+
+  const byBarcode = await findStockItemByCodigoBarras(businessId, key, excludeId);
+  if (byBarcode) {
+    const snap = await db.collection(`negocios/${businessId}/stock`).doc(byBarcode.id).get();
+    if (snap.exists) {
+      return { id: snap.id, data: snap.data() as Record<string, unknown> };
+    }
+  }
+
+  const byCodigo = await findStockItemByCodigo(businessId, key, excludeId);
+  if (!byCodigo) return null;
+
+  const snap = await db.collection(`negocios/${businessId}/stock`).doc(byCodigo.id).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, data: snap.data() as Record<string, unknown> };
+}
+
 export async function loadProductosCodigoConfig(
   businessId: string
 ): Promise<ProductosCodigoConfig> {

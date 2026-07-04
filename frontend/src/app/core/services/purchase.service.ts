@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, Subject } from 'rxjs';
 import { TenantService } from './tenant.service';
 import type { PurchaseLineTipo } from '../../../../../shared/finance-config.ts';
 import type { ComprobanteTipoId } from '../../../../../shared/comprobantes-config.ts';
@@ -115,6 +115,14 @@ export function formatPurchaseNumberBadge(
 export class PurchaseService {
   private http = inject(HttpClient);
   private tenant = inject(TenantService);
+  private readonly listChangedSubject = new Subject<void>();
+
+  /** Emite cuando una compra o borrador se crea, actualiza o elimina. */
+  readonly listChanged$ = this.listChangedSubject.asObservable();
+
+  notifyListChanged(): void {
+    this.listChangedSubject.next();
+  }
 
   private get businessId(): string {
     return this.tenant.businessId;

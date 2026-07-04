@@ -41,8 +41,8 @@ type PhotoUploadFeedback = {
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Fotos de referencia</label>
         <span class="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">{{ photoCount }}/{{ maxPhotos }}</span>
       </div>
-      <p class="text-[11px] text-gray-500 dark:text-gray-400 mb-2">
-        Se guardan en el pedido y se imprimen abajo del imprimible, en la misma hoja A4.
+      <p *ngIf="showPrintHint" class="text-[11px] text-gray-500 dark:text-gray-400 mb-2">
+        Se imprimen abajo del imprimible, en la misma hoja A4.
       </p>
 
       <p
@@ -166,6 +166,7 @@ export class OrderPhotoAttachmentsComponent implements OnDestroy {
 
   @Input() orderId: string | null = null;
   @Input() canEdit = false;
+  @Input() showPrintHint = false;
   @Input() photos: OrderPhoto[] = [];
   @Output() photosChange = new EventEmitter<OrderPhoto[]>();
 

@@ -2,14 +2,23 @@ import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DuplicateActionButtonComponent } from '../duplicate-action-button/duplicate-action-button.component';
 import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
+import { ActivityLogTriggerComponent } from '../activity-log-trigger/activity-log-trigger.component';
+import type { ActivityModule } from '../../../core/services/activity.service';
 
 @Component({
   selector: 'app-record-action-toolbar',
   standalone: true,
   host: { class: 'inline-flex shrink-0' },
-  imports: [CommonModule, DuplicateActionButtonComponent, IconToolbarButtonComponent],
+  imports: [CommonModule, DuplicateActionButtonComponent, IconToolbarButtonComponent, ActivityLogTriggerComponent],
   template: `
     <div class="inline-flex items-center gap-2.5 sm:gap-3 flex-wrap">
+      <app-activity-log-trigger
+        *ngIf="activityModule && activityEntityId"
+        [module]="activityModule"
+        [entityId]="activityEntityId"
+        [entityLabel]="activityEntityLabel">
+      </app-activity-log-trigger>
+
       <app-duplicate-action-button
         *ngIf="showDuplicate"
         [label]="duplicateLabel"
@@ -70,6 +79,10 @@ import { IconToolbarButtonComponent } from './icon-toolbar-button.component';
   `,
 })
 export class RecordActionToolbarComponent {
+  @Input() activityModule: ActivityModule | null = null;
+  @Input() activityEntityId: string | null = null;
+  @Input() activityEntityLabel = '';
+
   @Input() showDuplicate = false;
   @Input() duplicateLabel = 'Duplicar';
   @Input() duplicateDisabled = false;

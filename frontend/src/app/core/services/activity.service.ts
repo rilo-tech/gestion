@@ -60,10 +60,28 @@ export class ActivityService {
   private http = inject(HttpClient);
   private tenant = inject(TenantService);
 
-  getModuleActivity(module: ActivityModule, limit = 120): Observable<ActivityLogEntry[]> {
+  getModuleActivity(module: ActivityModule, limit = 10): Observable<ActivityLogEntry[]> {
+    return this.getActivity(module, { limit });
+  }
+
+  getEntityActivity(
+    module: ActivityModule,
+    entityId: string,
+    limit = 120
+  ): Observable<ActivityLogEntry[]> {
+    return this.getActivity(module, { entityId, limit });
+  }
+
+  private getActivity(
+    module: ActivityModule,
+    options: { limit?: number; entityId?: string }
+  ): Observable<ActivityLogEntry[]> {
+    const params: Record<string, string> = { module };
+    if (options.limit != null) params['limit'] = String(options.limit);
+    if (options.entityId) params['entityId'] = options.entityId;
     return this.http.get<ActivityLogEntry[]>(
       `/api/activity/${this.tenant.businessId}`,
-      { params: { module, limit: String(limit) } }
+      { params }
     );
   }
 }

@@ -46,6 +46,48 @@ export function comprobanteLabel(tipo: ComprobanteTipoId): string {
   return COMPROBANTE_LABELS[tipo] ?? COMPROBANTE_LABELS.factura;
 }
 
+export function comprobanteNuevoTitulo(tipo: ComprobanteTipoId, modulo: ComprobanteModulo): string {
+  if (tipo === 'factura') {
+    return modulo === 'ventas' ? 'Nueva venta' : 'Nueva compra';
+  }
+  return comprobanteLabel(tipo);
+}
+
+export function comprobanteBorradorTitulo(tipo: ComprobanteTipoId, modulo: ComprobanteModulo): string {
+  if (tipo === 'factura') {
+    return modulo === 'ventas' ? 'Borrador de venta' : 'Borrador de compra';
+  }
+  return `Borrador de ${comprobanteLabel(tipo).toLowerCase()}`;
+}
+
+export function comprobanteRegistrarLabel(tipo: ComprobanteTipoId, modulo: ComprobanteModulo): string {
+  if (tipo === 'factura') {
+    return modulo === 'ventas' ? 'Registrar venta' : 'Registrar compra';
+  }
+  return `Registrar ${comprobanteLabel(tipo).toLowerCase()}`;
+}
+
+export function comprobanteConfirmarLabel(tipo: ComprobanteTipoId, modulo: ComprobanteModulo): string {
+  if (tipo === 'factura') {
+    return modulo === 'ventas' ? 'Confirmar venta' : 'Confirmar compra';
+  }
+  return `Confirmar ${comprobanteLabel(tipo).toLowerCase()}`;
+}
+
+export function comprobanteTipoHint(tipo: ComprobanteTipoId, modulo: ComprobanteModulo): string | null {
+  if (tipo === 'nota_credito') {
+    return modulo === 'ventas'
+      ? 'Nota de crédito: reduce la deuda del cliente. Si devolvés dinero ahora, registrá el monto abajo. El stock se reingresa solo en líneas con producto.'
+      : 'Nota de crédito: la mercadería sale del stock (devolución al proveedor).';
+  }
+  if (tipo === 'nota_debito') {
+    return modulo === 'ventas'
+      ? 'Nota de débito: aumenta la deuda del cliente. Si cobrás ahora, registrá el monto abajo.'
+      : 'Nota de débito: aumenta la deuda con el proveedor.';
+  }
+  return null;
+}
+
 export function normalizeComprobanteTipo(value: unknown): ComprobanteTipoId {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'nota_credito' || raw === 'notacredito' || raw === 'nc') return 'nota_credito';
@@ -116,4 +158,86 @@ export function comprobanteSignoFinanciero(tipo: ComprobanteTipoId): 1 | -1 {
 
 export function esNotaCredito(tipo: ComprobanteTipoId): boolean {
   return tipo === 'nota_credito';
+}
+
+export function esNotaDebito(tipo: ComprobanteTipoId): boolean {
+  return tipo === 'nota_debito';
+}
+
+export function esNotaComprobante(tipo: ComprobanteTipoId): boolean {
+  return esNotaCredito(tipo) || esNotaDebito(tipo);
+}
+
+export type NotaMotivoId = 'devolucion' | 'descuento' | 'ajuste' | 'otro';
+
+export const NOTA_MOTIVO_OPTIONS: Array<{ id: NotaMotivoId; label: string }> = [
+  { id: 'devolucion', label: 'Devolución de producto' },
+  { id: 'descuento', label: 'Descuento o bonificación' },
+  { id: 'ajuste', label: 'Ajuste de saldo o precio' },
+  { id: 'otro', label: 'Otro' },
+];
+
+const LEGACY_NOTA_MOTIVO_MAP: Record<string, NotaMotivoId> = {
+  bonificacion: 'descuento',
+  error_precio: 'ajuste',
+  diferencia_cobro: 'ajuste',
+  ajuste_saldo: 'ajuste',
+  envio: 'ajuste',
+};
+
+export function normalizeNotaMotivo(value: unknown): NotaMotivoId | '' {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (LEGACY_NOTA_MOTIVO_MAP[raw]) return LEGACY_NOTA_MOTIVO_MAP[raw];
+  if (NOTA_MOTIVO_OPTIONS.some((option) => option.id === raw)) {
+    return raw as NotaMotivoId;
+  }
+  return '';
+}
+
+/** True cuando la nota debe cargar líneas de producto (movimiento de stock). */
+export function notaMotivoRequiresProductLines(motivo: NotaMotivoId | ''): boolean {
+  return motivo === 'devolucion';
+}
+
+export function notaMotivoLabel(motivo: unknown, descripcion?: unknown): string {
+  const id = normalizeNotaMotivo(motivo);
+  if (!id) return String(descripcion ?? '').trim();
+  if (id === 'otro') return String(descripcion ?? '').trim() || 'Otro';
+  return NOTA_MOTIVO_OPTIONS.find((option) => option.id === id)?.label ?? id;
+}
+
+/** Saldo pendiente almacenado (siempre >= 0): total − cobrado/devuelto ahora. */
+export function computeComprobanteSaldoPendiente(total: number, montoCobrado: number): number {
+  return Math.max(0, (Number(total) || 0) - Math.max(0, Number(montoCobrado) || 0));
+}
+
+/** Impacto en cuenta corriente del cliente/proveedor (+ deuda, − saldo a favor). */
+export function comprobanteSaldoCuentaCorrienteImpact(
+  tipo: ComprobanteTipoId,
+  saldoPendiente: number
+): number {
+  const pendiente = Math.max(0, Number(saldoPendiente) || 0);
+  if (pendiente <= 0) return 0;
+  return comprobanteSignoFinanciero(tipo) * pendiente;
+}
+
+export function ventaSaldoClienteImpact(data: {
+  tipoComprobante?: unknown;
+  saldoPendiente?: unknown;
+}): number {
+  const tipo = normalizeComprobanteTipo(data.tipoComprobante);
+  return comprobanteSaldoCuentaCorrienteImpact(tipo, Number(data.saldoPendiente) || 0);
+}
+
+export type SaleLineTipo = 'producto' | 'concepto';
+
+export function saleLineMovesStock(line: {
+  tipoLinea?: unknown;
+  stockItemId?: unknown;
+  mueveStock?: unknown;
+}): boolean {
+  const tipo = String(line.tipoLinea ?? 'producto').trim().toLowerCase();
+  if (tipo === 'concepto') return false;
+  if (line.mueveStock === false) return false;
+  return Boolean(String(line.stockItemId ?? '').trim());
 }

@@ -38,11 +38,20 @@ import { ListLoadMoreComponent } from '../../shared/components/list-load-more/li
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
+import {
   AppConfig,
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
+  getComprobantesActivos,
   resolvePurchasePagoDisplayLabel,
+  type ComprobanteTipoId,
+  type ComprobanteTipoOption,
 } from '../../core/services/catalog-config.service';
+import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search-field/list-search-field.component';
 
 @Component({
   selector: 'app-purchases',
@@ -79,33 +88,76 @@ import {
           Los movimientos de stock se ven en
           <a routerLink="/stock" class="text-teal-600 hover:underline">Stock → Movimientos</a>.
         </p>
-        <app-icon-action
-          headerActions
-          label="Nueva compra"
-          (clicked)="openPurchaseModal()">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <ng-container headerActions>
+          <app-icon-action
+            *ngIf="!showComprobanteCreateMenu"
+            label="Nueva compra"
+            (clicked)="openPurchaseModal()">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <div *ngIf="showComprobanteCreateMenu" class="relative shrink-0">
+            <button
+              type="button"
+              (click)="togglePurchasesCreateMenu($event)"
+              [attr.aria-expanded]="purchasesCreateMenuOpen"
+              aria-haspopup="menu"
+              aria-label="Nueva compra, nota de crédito o débito"
+              [class]="purchasesCreateMenuButtonClass">
+              <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+            </button>
+            <div
+              *ngIf="purchasesCreateMenuOpen"
+              class="fixed inset-0 z-10"
+              aria-hidden="true"
+              (click)="closePurchasesCreateMenu()"></div>
+            <div
+              *ngIf="purchasesCreateMenuOpen"
+              role="menu"
+              class="absolute right-0 top-full z-20 mt-1 min-w-[11rem] overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1 shadow-lg">
+              <button
+                *ngFor="let option of comprobanteCreateOptions"
+                type="button"
+                role="menuitem"
+                (click)="openNewPurchaseFromMenu(option.id)"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+                <i-lucide [name]="comprobanteCreateIcon(option.id)" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+        </ng-container>
       </app-module-page-header>
 
-      <div *ngIf="auth.canViewEconomics" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Compras registradas</p>
-          <p class="text-2xl font-bold text-gray-900">{{ purchases.length }}</p>
+      <div *ngIf="auth.canViewEconomics" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full items-start">
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Compras confirmadas</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ confirmedPurchaseCount }}</p>
+          <p *ngIf="draftCount > 0" class="text-xs font-semibold text-amber-600 mt-1">
+            + {{ draftCount }} borrador{{ draftCount === 1 ? '' : 'es' }}
+          </p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Total comprado</p>
-          <p class="text-2xl font-bold text-teal-600">{{ formatMoney(totalComprado) }}</p>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Total comprado</p>
+          <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums leading-tight">{{ formatMoney(totalComprado) }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Este mes</p>
-          <p class="text-2xl font-bold text-gray-900">{{ formatMoney(totalMes) }}</p>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0 col-span-2 lg:col-span-1">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Este mes</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ formatMoney(totalMes) }}</p>
         </div>
         <div
           *ngIf="ahorroOfertasMes > 0"
-          class="bg-amber-50 p-6 rounded-xl border border-amber-100 shadow-sm min-w-0 col-span-2 lg:col-span-1">
-          <p class="text-xs font-semibold text-amber-600 uppercase mb-2">Ahorro por ofertas (mes)</p>
-          <p class="text-2xl font-bold text-amber-700">{{ formatMoney(ahorroOfertasMes) }}</p>
+          class="bg-amber-50 dark:bg-amber-950/30 p-4 sm:p-5 rounded-xl border border-amber-100 dark:border-amber-900/50 shadow-sm min-w-0 col-span-2 lg:col-span-1">
+          <p class="text-[11px] font-semibold text-amber-600 uppercase mb-1">Ahorro por ofertas (mes)</p>
+          <p class="text-xl sm:text-2xl font-bold text-amber-700 tabular-nums leading-tight">{{ formatMoney(ahorroOfertasMes) }}</p>
         </div>
+      </div>
+
+      <div
+        *ngIf="draftCount > 0"
+        class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        Tenés <span class="font-semibold">{{ draftCount }} borrador{{ draftCount === 1 ? '' : 'es' }}</span>
+        sin confirmar. Aparecen primero en la lista marcados como <span class="font-semibold">Borrador</span>
+        (no mueven stock ni caja hasta que confirmes).
       </div>
 
       <app-compact-data-list [showSearch]="true">
@@ -264,11 +316,23 @@ export class PurchasesComponent implements OnInit {
   loadingMorePurchases = false;
   purchasesHasMore = false;
   purchasesCursor: string | null = null;
-  readonly serverPageSize = 80;
+  private readonly listLoadSession = new ProgressiveListSession();
 
   searchQuery = '';
   purchasesPage = 1;
   deletingPurchaseId: string | null = null;
+  purchasesCreateMenuOpen = false;
+
+  readonly purchasesCreateMenuButtonClass =
+    `inline-flex items-center justify-center rounded-lg bg-teal-600 text-white hover:bg-teal-700 w-[42px] p-0 transition-colors ${LIST_TOOLBAR_CONTROL_HEIGHT}`;
+
+  get showComprobanteCreateMenu(): boolean {
+    return this.comprobanteCreateOptions.length > 1;
+  }
+
+  get comprobanteCreateOptions(): ComprobanteTipoOption[] {
+    return getComprobantesActivos(this.catalogConfig.appConfig, 'compras');
+  }
 
   canEditPurchase(purchase: Purchase): boolean {
     return (
@@ -298,9 +362,9 @@ export class PurchasesComponent implements OnInit {
 
   get filteredPurchases(): Purchase[] {
     const query = this.searchQuery.trim().toLowerCase();
-    if (!query) return this.purchases;
-
-    return this.purchases.filter((purchase) => {
+    const list = !query
+      ? [...this.purchases]
+      : this.purchases.filter((purchase) => {
       const label = formatPurchaseLabel(purchase).toLowerCase();
       const proveedor = (purchase.proveedor || '').toLowerCase();
       const comprobante = (purchase.numeroComprobante || '').toLowerCase();
@@ -317,9 +381,27 @@ export class PurchasesComponent implements OnInit {
         proveedor.includes(query) ||
         comprobante.includes(query) ||
         notas.includes(query) ||
-        productos.includes(query)
+        productos.includes(query) ||
+        (purchase.estado === 'borrador' && 'borrador'.includes(query))
       );
     });
+
+    return list.sort((a, b) => {
+      const aDraft = a.estado === 'borrador' ? 0 : 1;
+      const bDraft = b.estado === 'borrador' ? 0 : 1;
+      if (aDraft !== bDraft) return aDraft - bDraft;
+      const dateA = Date.parse(String(a.fecha ?? '')) || 0;
+      const dateB = Date.parse(String(b.fecha ?? '')) || 0;
+      return dateB - dateA;
+    });
+  }
+
+  get draftCount(): number {
+    return this.purchases.filter((purchase) => purchase.estado === 'borrador').length;
+  }
+
+  get confirmedPurchaseCount(): number {
+    return this.purchases.length - this.draftCount;
   }
 
   get paginatedFilteredPurchases(): Purchase[] {
@@ -336,6 +418,7 @@ export class PurchasesComponent implements OnInit {
       .subscribe((config) => {
         this.appConfig = config;
       });
+    this.catalogConfig.getAppConfig().subscribe();
     bindListPageRefreshOnReturn({
       listPath: '/purchases',
       reload: () => this.reloadList(),
@@ -343,6 +426,9 @@ export class PurchasesComponent implements OnInit {
       destroyRef: this.destroyRef,
       injector: this.injector,
     });
+    this.purchaseService.listChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.reloadList());
     this.loadPurchases();
 
     this.route.queryParamMap
@@ -359,13 +445,16 @@ export class PurchasesComponent implements OnInit {
   }
 
   get totalComprado(): number {
-    return this.purchases.reduce((acc, purchase) => acc + (Number(purchase.total) || 0), 0);
+    return this.purchases
+      .filter((purchase) => purchase.estado !== 'borrador')
+      .reduce((acc, purchase) => acc + (Number(purchase.total) || 0), 0);
   }
 
   get totalMes(): number {
     const now = new Date();
     return this.purchases
       .filter((purchase) => {
+        if (purchase.estado === 'borrador') return false;
         const date = new Date(purchase.fecha);
         return (
           !Number.isNaN(date.getTime()) &&
@@ -444,6 +533,27 @@ export class PurchasesComponent implements OnInit {
 
   openPurchaseModal() {
     this.router.navigate(['/purchases/new']);
+  }
+
+  togglePurchasesCreateMenu(event: Event): void {
+    event.stopPropagation();
+    this.purchasesCreateMenuOpen = !this.purchasesCreateMenuOpen;
+  }
+
+  closePurchasesCreateMenu(): void {
+    this.purchasesCreateMenuOpen = false;
+  }
+
+  comprobanteCreateIcon(tipo: ComprobanteTipoId): string {
+    if (tipo === 'nota_credito') return 'file-minus';
+    if (tipo === 'nota_debito') return 'file-plus';
+    return 'receipt';
+  }
+
+  openNewPurchaseFromMenu(tipo: ComprobanteTipoId): void {
+    this.closePurchasesCreateMenu();
+    const queryParams = tipo === 'factura' ? {} : { tipoComprobante: tipo };
+    this.router.navigate(['/purchases/new'], { queryParams });
   }
 
   openPurchaseDraftEdit(purchase: Purchase) {
@@ -543,17 +653,23 @@ export class PurchasesComponent implements OnInit {
   }
 
   private loadPurchases() {
+    const loadToken = this.listLoadSession.next();
     this.loading = true;
     this.purchasesPage = 1;
-    this.purchaseService.getPurchasesPage(this.serverPageSize).subscribe({
+    this.purchaseService.getPurchasesPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.purchases = page.items;
         this.purchasesHasMore = page.hasMore;
         this.purchasesCursor = page.nextCursor;
         this.loading = false;
         this.tryOpenDetailFromQuery();
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingPurchasesInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loading = false;
         this.dialogService.alert({
           title: 'Error',
@@ -563,11 +679,36 @@ export class PurchasesComponent implements OnInit {
     });
   }
 
+  private loadRemainingPurchasesInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.purchasesHasMore || !this.purchasesCursor || this.loadingMorePurchases) return;
+
+    this.loadingMorePurchases = true;
+    this.purchaseService
+      .getPurchasesPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.purchasesCursor)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.purchases = [...this.purchases, ...page.items];
+          this.purchasesHasMore = page.hasMore;
+          this.purchasesCursor = page.nextCursor;
+          this.loadingMorePurchases = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingPurchasesInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.loadingMorePurchases = false;
+        },
+      });
+  }
+
   loadMorePurchases() {
     if (!this.purchasesHasMore || this.loadingMorePurchases) return;
     this.loadingMorePurchases = true;
     this.purchaseService
-      .getPurchasesPage(this.serverPageSize, this.purchasesCursor ?? undefined)
+      .getPurchasesPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.purchasesCursor ?? undefined)
       .subscribe({
         next: (page) => {
           this.purchases = [...this.purchases, ...page.items];

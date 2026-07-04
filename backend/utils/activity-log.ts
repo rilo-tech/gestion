@@ -91,14 +91,23 @@ export async function logActivityFromRequest(
   await logActivity(businessId, actor, input);
 }
 
+export interface ListModuleActivityOptions {
+  limit?: number;
+  entityId?: string;
+}
+
 export async function listModuleActivity(
   businessId: string,
   module: ActivityModule,
   viewer: { userId: string; rol: UserRole | 'superadmin' },
-  limit = 120
+  options: ListModuleActivityOptions = {}
 ): Promise<ActivityLogRecord[]> {
   const privileged = isPrivilegedRole(viewer.rol);
-  const fetchLimit = Math.min(Math.max(limit * 4, 120), 500);
+  const entityId = options.entityId?.trim() || undefined;
+  const limit = Math.min(Math.max(options.limit ?? (entityId ? 120 : 10), 1), 200);
+  const fetchLimit = entityId
+    ? 500
+    : Math.min(Math.max(limit * 4, 40), 500);
 
   const snapshot = await activityCollection(businessId)
     .orderBy('createdAt', 'desc')
@@ -124,8 +133,9 @@ export async function listModuleActivity(
       };
     })
     .filter((entry) => entry.module === module)
+    .filter((entry) => !entityId || entry.entityId === entityId)
     .filter((entry) => privileged || entry.userId === viewer.userId)
-    .slice(0, Math.min(Math.max(limit, 1), 200));
+    .slice(0, limit);
 }
 
 export function isActivityModule(value: unknown): value is ActivityModule {

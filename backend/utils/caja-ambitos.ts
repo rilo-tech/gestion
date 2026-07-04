@@ -80,6 +80,17 @@ export function usesCashAmbitoSeparationFromCaja(caja: Record<string, unknown> =
   return normalizeCajaAmbitos(caja).length > 1;
 }
 
+export function parseCashAmbitoOrNull(
+  value: unknown,
+  caja: Record<string, unknown> = {}
+): string | null {
+  const ambitos = normalizeCajaAmbitos(caja);
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return null;
+  if (ambitos.some((entry) => entry.id === raw)) return raw;
+  return null;
+}
+
 export function normalizeMovementAmbito(
   value: unknown,
   caja: Record<string, unknown> = {}
@@ -88,8 +99,8 @@ export function normalizeMovementAmbito(
   const businessId = getBusinessCashAmbitoId(caja);
   if (ambitos.length <= 1) return businessId;
 
-  const raw = String(value ?? '').trim().toLowerCase();
-  if (raw && ambitos.some((entry) => entry.id === raw)) return raw;
+  const parsed = parseCashAmbitoOrNull(value, caja);
+  if (parsed) return parsed;
   return businessId;
 }
 

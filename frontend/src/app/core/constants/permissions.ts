@@ -6,12 +6,16 @@ export const PERMISSIONS = {
   CASH_ACCESS: 'cash.access',
   ACCOUNT_BALANCE_VIEW: 'accounts.viewBalance',
   ECONOMICS_VIEW: 'economics.view',
+  /** Alias de ECONOMICS_VIEW (costos de stock). */
+  STOCK_VIEW_COSTS: 'economics.view',
   REPORTS_VIEW: 'reports.view',
   ORDERS_VIEW_SALE_PRICE: 'orders.viewSalePrice',
   ORDERS_PERSONALIZATION: 'orders.personalization',
   ORDERS_VIEW_ALL: 'orders.viewAll',
   ORDERS_VIEW_DELIVERED: 'orders.viewDelivered',
+  ORDERS_CHANGE_STATUS: 'orders.changeStatus',
   ORDERS_PRINT: 'orders.print',
+  STOCK_VIEW_PRICES: 'stock.viewPrices',
   SALES_CREATE: 'sales.create',
   SALES_VIEW_HISTORY: 'sales.viewHistory',
   SALES_VIEW_SUMMARY: 'sales.viewSummary',
@@ -33,10 +37,8 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   staff: 'Operador',
 };
 
-/** Permisos que tiene un usuario staff recién creado. */
-export const DEFAULT_STAFF_PERMISSIONS: readonly Permission[] = [
-  PERMISSIONS.ORDERS_PERSONALIZATION,
-];
+/** Permisos que tiene un usuario staff recién creado (sin asignar hasta que el admin elija). */
+export const DEFAULT_STAFF_PERMISSIONS: readonly Permission[] = [];
 
 export interface PermissionMeta {
   key: Permission;
@@ -116,7 +118,8 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
   {
     key: PERMISSIONS.ORDERS_VIEW_SALE_PRICE,
     label: 'Precio de venta',
-    description: 'Ver y cargar precios en pedidos y ventas.',
+    description:
+      'Ver y cargar precios en pedidos y ventas, y ver pagos y saldo pendiente de cada pedido.',
   },
   {
     key: PERMISSIONS.ORDERS_VIEW_ALL,
@@ -127,6 +130,12 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
     key: PERMISSIONS.ORDERS_VIEW_DELIVERED,
     label: 'Ver pedidos entregados',
     description: 'Acceder a pedidos ya entregados o entregados con saldo.',
+  },
+  {
+    key: PERMISSIONS.ORDERS_CHANGE_STATUS,
+    label: 'Cambiar estado del pedido',
+    description:
+      'Mover pedidos entre pendiente, en proceso, listo y entrega, sin editar productos ni montos.',
   },
   {
     key: PERMISSIONS.ORDERS_PERSONALIZATION,
@@ -147,6 +156,11 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
     key: PERMISSIONS.PRICES_MANAGE,
     label: 'Gestionar catálogo de precios',
     description: 'Crear, editar y eliminar referencias del catálogo de precios de venta.',
+  },
+  {
+    key: PERMISSIONS.STOCK_VIEW_PRICES,
+    label: 'Ver precios en stock',
+    description: 'Ver precio sugerido de venta en productos, sin costos de compra ni valor en depósito.',
   },
 ];
 
@@ -189,9 +203,15 @@ export const STAFF_PERMISSION_GROUPS: readonly StaffPermissionGroup[] = [
     permissions: permissionGroup(
       PERMISSIONS.ORDERS_VIEW_ALL,
       PERMISSIONS.ORDERS_VIEW_DELIVERED,
+      PERMISSIONS.ORDERS_CHANGE_STATUS,
       PERMISSIONS.ORDERS_VIEW_SALE_PRICE,
-      PERMISSIONS.ORDERS_PERSONALIZATION
+      PERMISSIONS.ORDERS_PERSONALIZATION,
+      PERMISSIONS.ORDERS_PRINT
     ),
+  },
+  {
+    label: 'Stock',
+    permissions: permissionGroup(PERMISSIONS.STOCK_VIEW_PRICES),
   },
   {
     label: 'Compras y costos',
@@ -261,6 +281,21 @@ export const ROLE_PRESETS: Record<
       PERMISSIONS.ORDERS_PRINT,
     ],
   },
+  operador: {
+    label: 'Operador (pedidos)',
+    permisos: [
+      PERMISSIONS.ORDERS_VIEW_ALL,
+      PERMISSIONS.ORDERS_CHANGE_STATUS,
+      PERMISSIONS.ORDERS_VIEW_SALE_PRICE,
+      PERMISSIONS.ACCOUNT_BALANCE_VIEW,
+      PERMISSIONS.STOCK_VIEW_PRICES,
+      PERMISSIONS.ORDERS_PRINT,
+    ],
+  },
+  operador_horas: {
+    label: 'Operador (mis horas)',
+    permisos: [PERMISSIONS.COLLABORATORS_ACCESS],
+  },
 };
 
 const ASSIGNABLE_SET = new Set<Permission>(ADMIN_ASSIGNABLE_PERMISSIONS.map((item) => item.key));
@@ -321,5 +356,5 @@ export function canManageSettings(
   return userHasPermission(role, permisos, PERMISSIONS.SETTINGS_MANAGE);
 }
 
-/** @deprecated Usar PERMISSIONS.ECONOMICS_VIEW en plantillas nuevas. */
-export const STOCK_VIEW_COSTS = PERMISSIONS.ECONOMICS_VIEW;
+/** @deprecated Usar PERMISSIONS.ECONOMICS_VIEW o PERMISSIONS.STOCK_VIEW_COSTS. */
+export const STOCK_VIEW_COSTS = PERMISSIONS.STOCK_VIEW_COSTS;

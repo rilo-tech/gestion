@@ -8,11 +8,13 @@ import {
 import { assertCanActivateUser, assertCanAddUser } from '../auth/business.ts';
 import {
   countActiveSupervisors,
-  ensureDefaultSupervisor,
   listUsers,
+  listUsersPage,
   toPublicUser,
   getStoredUser,
+  assertColaboradorLinkAvailable,
 } from '../auth/users.ts';
+import { getCollaborator } from '../utils/collaborators.ts';
 import {
   assertCompanyTenantAccess,
   requireAuth,
@@ -48,6 +50,12 @@ router.patch('/:businessId/me/preferences', async (req: AuthenticatedRequest, re
   }
 });
 
+function normalizeColaboradorId(value: unknown, rol: UserRole): string | null {
+  if (rol !== 'staff') return null;
+  const id = String(value ?? '').trim();
+  return id || null;
+}
+
 function normalizeUserPayload(userData: Record<string, unknown>) {
   const rol: UserRole =
     userData.rol === 'admin' ? 'admin' : 'staff';
@@ -63,7 +71,22 @@ function normalizeUserPayload(userData: Record<string, unknown>) {
     rol,
     permisos: rol === 'staff' ? sanitizeStaffPermissions(userData.permisos) : [],
     activo: userData.activo !== false,
+    colaboradorId: normalizeColaboradorId(userData.colaboradorId, rol),
   };
+}
+
+async function assertColaboradorLinkPayload(
+  businessId: string,
+  colaboradorId: string | null,
+  excludeUserId?: string
+): Promise<string | null> {
+  if (!colaboradorId) return null;
+  const collaborator = await getCollaborator(businessId, colaboradorId);
+  if (!collaborator) {
+    throw new Error('COLABORADOR_NOT_FOUND');
+  }
+  await assertColaboradorLinkAvailable(businessId, colaboradorId, excludeUserId);
+  return colaboradorId;
 }
 
 function mapUserMutationError(error: unknown): { status: number; message: string } | null {
@@ -95,12 +118,32 @@ function mapUserMutationError(error: unknown): { status: number; message: string
   if (code === 'PLAN_INACTIVE') {
     return { status: 403, message: 'El plan asignado no está activo.' };
   }
+  if (code === 'COLABORADOR_NOT_FOUND') {
+    return { status: 400, message: 'El colaborador seleccionado no existe.' };
+  }
+  if (code === 'COLABORADOR_ALREADY_LINKED') {
+    return {
+      status: 400,
+      message: 'Ese colaborador ya está vinculado a otro operador activo.',
+    };
+  }
   return null;
 }
 
 router.get('/:businessId', requireSupervisor, async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId } = req.params;
+    const paged = String(req.query.paged ?? '') === '1';
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : 120;
+      const cursor = String(req.query.cursor ?? '').trim();
+      const page = await listUsersPage(businessId, limit, cursor || undefined);
+      return res.json(page);
+    }
+
     const users = await listUsers(businessId);
     res.json(users);
   } catch (error) {
@@ -133,6 +176,10 @@ router.post('/:businessId', requireSupervisor, async (req: AuthenticatedRequest,
 
     const normalized = normalizeUserPayload({ ...raw, rol });
     await assertCanAddUser(businessId, normalized.rol);
+    normalized.colaboradorId = await assertColaboradorLinkPayload(
+      businessId,
+      normalized.colaboradorId
+    );
 
     if (!normalized.nombre) {
       return res.status(400).json({ error: 'El nombre es obligatorio.' });
@@ -180,6 +227,11 @@ router.patch('/:businessId/:userId', requireSupervisor, async (req: Authenticate
 
     const merged = normalizeUserPayload({ ...existingData, ...raw, rol });
     const nextRol = merged.rol;
+    merged.colaboradorId = await assertColaboradorLinkPayload(
+      businessId,
+      merged.colaboradorId,
+      userId
+    );
     const activating = existingData.activo === false && merged.activo === true;
     const roleChanged = existingData.rol !== nextRol;
 

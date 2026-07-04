@@ -10,6 +10,7 @@ import {
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
 } from './finance-config.ts';
+import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
 import { resolvePurchaseLabel } from './purchase-number.ts';
 
 export type PayableTipo = 'unico' | 'mensual';
@@ -440,6 +441,8 @@ async function getLatestCuotaDate(
 }
 
 export async function ensureMensualCuotasHorizon(businessId: string): Promise<void> {
+  const caja = await loadCajaConfig(businessId);
+  const defaultAmbito = getBusinessCashAmbitoId(caja);
   const snapshot = await obligationsCollection(businessId).get();
 
   const mensualActivas = snapshot.docs
@@ -455,6 +458,16 @@ export async function ensureMensualCuotasHorizon(businessId: string): Promise<vo
   for (const doc of snapshot.docs) {
     const obligation = mapObligation(doc.id, doc.data() as Record<string, unknown>);
     if (obligation.tipo !== 'mensual' || !obligation.activo) continue;
+
+    const resolvedAmbito = obligation.ambito || defaultAmbito;
+    if (!obligation.ambito) {
+      batch.update(obligationsCollection(businessId).doc(obligation.id), {
+        ambito: resolvedAmbito,
+        updatedAt: new Date().toISOString(),
+      });
+      writes += 1;
+    }
+
     let latestDate =
       (await getLatestCuotaDate(businessId, obligation.id)) ??
       obligation.fechaPrimerVencimiento;
@@ -472,13 +485,20 @@ export async function ensureMensualCuotasHorizon(businessId: string): Promise<vo
         monto: obligation.monto,
         estado: 'pendiente',
         tipo: 'mensual',
-        ambito: obligation.ambito ?? '',
+        ambito: resolvedAmbito,
         origenTipo: obligation.origenTipo ?? 'manual',
         descripcion: `${obligation.beneficiario}${obligation.categoriaLabel ? ` · ${obligation.categoriaLabel}` : ''} · ${latestDate.slice(0, 7)}`,
         createdAt: new Date().toISOString(),
       });
       writes += 1;
     }
+  }
+
+  const cuotasSnap = await cuotasCollection(businessId).where('tipo', '==', 'mensual').get();
+  for (const cuotaDoc of cuotasSnap.docs) {
+    if (String(cuotaDoc.data().ambito ?? '').trim() || writes >= 400) continue;
+    batch.update(cuotaDoc.ref, { ambito: defaultAmbito });
+    writes += 1;
   }
 
   if (writes > 0) {
@@ -568,10 +588,10 @@ function compareInstallmentsByDueDate(
   return a.beneficiario.localeCompare(b.beneficiario, 'es');
 }
 
-export type PayableInstallmentsScope = 'month' | 'all';
+export type PayableInstallmentsScope = 'month' | 'all' | 'account';
 
 export interface ListPayableInstallmentsOptions {
-  /** YYYY-MM; con scope=month filtra vencimientos del mes. */
+  /** YYYY-MM; con scope=month filtra vencimientos del mes; con scope=account define el mes del resumen. */
   mes?: string;
   scope?: PayableInstallmentsScope;
   /** Corrección de datos (costosa); solo en refresh explícito. */
@@ -613,13 +633,34 @@ function dayBeforeIso(iso: string): string {
   return date.toISOString().slice(0, 10);
 }
 
-function applyCuotaAmbitoFilter(
-  query: FirebaseFirestore.Query,
+async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return {};
+  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+}
+
+function cuotaDocMatchesAmbitoFilter(
+  doc: FirebaseFirestore.QueryDocumentSnapshot,
+  filterAmbito: string | undefined,
+  businessAmbito: string
+): boolean {
+  const filter = String(filterAmbito ?? '').trim().toLowerCase();
+  if (!filter) return true;
+  const raw = String(doc.data().ambito ?? '').trim().toLowerCase();
+  if (!raw) return filter === businessAmbito;
+  return raw === filter;
+}
+
+async function filterCuotaDocsByAmbito(
+  businessId: string,
+  docs: FirebaseFirestore.QueryDocumentSnapshot[],
   ambito?: string
-): FirebaseFirestore.Query {
-  const normalized = String(ambito ?? '').trim();
-  if (!normalized) return query;
-  return query.where('ambito', '==', normalized);
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const filter = String(ambito ?? '').trim().toLowerCase();
+  if (!filter) return docs;
+  const caja = await loadCajaConfig(businessId);
+  const businessAmbito = getBusinessCashAmbitoId(caja);
+  return docs.filter((doc) => cuotaDocMatchesAmbitoFilter(doc, filter, businessAmbito));
 }
 
 async function queryCuotasByMonthAndEstado(
@@ -631,33 +672,39 @@ async function queryCuotasByMonthAndEstado(
   const today = todayIso();
 
   if (displayEstado === 'pagada') {
-    let query = cuotasCollection(businessId)
-      .where('estado', '==', 'pagada')
-      .where('fechaVencimiento', '>=', bounds.start)
-      .where('fechaVencimiento', '<=', bounds.end);
-    query = applyCuotaAmbitoFilter(query, ambito);
-    return (await query.get()).docs;
+    const docs = (
+      await cuotasCollection(businessId)
+        .where('estado', '==', 'pagada')
+        .where('fechaVencimiento', '>=', bounds.start)
+        .where('fechaVencimiento', '<=', bounds.end)
+        .get()
+    ).docs;
+    return filterCuotaDocsByAmbito(businessId, docs, ambito);
   }
 
   if (displayEstado === 'pendiente') {
     const start = bounds.start > today ? bounds.start : today;
     if (start > bounds.end) return [];
-    let query = cuotasCollection(businessId)
-      .where('estado', '==', 'pendiente')
-      .where('fechaVencimiento', '>=', start)
-      .where('fechaVencimiento', '<=', bounds.end);
-    query = applyCuotaAmbitoFilter(query, ambito);
-    return (await query.get()).docs;
+    const docs = (
+      await cuotasCollection(businessId)
+        .where('estado', '==', 'pendiente')
+        .where('fechaVencimiento', '>=', start)
+        .where('fechaVencimiento', '<=', bounds.end)
+        .get()
+    ).docs;
+    return filterCuotaDocsByAmbito(businessId, docs, ambito);
   }
 
   const end = bounds.end < today ? bounds.end : dayBeforeIso(today);
   if (bounds.start > end) return [];
-  let query = cuotasCollection(businessId)
-    .where('estado', '==', 'pendiente')
-    .where('fechaVencimiento', '>=', bounds.start)
-    .where('fechaVencimiento', '<=', end);
-  query = applyCuotaAmbitoFilter(query, ambito);
-  return (await query.get()).docs;
+  const docs = (
+    await cuotasCollection(businessId)
+      .where('estado', '==', 'pendiente')
+      .where('fechaVencimiento', '>=', bounds.start)
+      .where('fechaVencimiento', '<=', end)
+      .get()
+  ).docs;
+  return filterCuotaDocsByAmbito(businessId, docs, ambito);
 }
 
 async function computePayableInstallmentMonthSummary(
@@ -669,44 +716,36 @@ async function computePayableInstallmentMonthSummary(
   const pendStart = bounds.start > today ? bounds.start : today;
   const vencEnd = bounds.end < today ? bounds.end : dayBeforeIso(today);
 
-  const pagadaQuery = applyCuotaAmbitoFilter(
+  const [pagadasRaw, pendientesRaw, vencidasRaw] = await Promise.all([
     cuotasCollection(businessId)
       .where('estado', '==', 'pagada')
       .where('fechaVencimiento', '>=', bounds.start)
-      .where('fechaVencimiento', '<=', bounds.end),
-    ambito
-  );
-
-  const pendienteQuery =
+      .where('fechaVencimiento', '<=', bounds.end)
+      .get()
+      .then((snap) => snap.docs),
     pendStart <= bounds.end
-      ? applyCuotaAmbitoFilter(
-          cuotasCollection(businessId)
-            .where('estado', '==', 'pendiente')
-            .where('fechaVencimiento', '>=', pendStart)
-            .where('fechaVencimiento', '<=', bounds.end),
-          ambito
-        )
-      : null;
-
-  const vencidaQuery =
+      ? cuotasCollection(businessId)
+          .where('estado', '==', 'pendiente')
+          .where('fechaVencimiento', '>=', pendStart)
+          .where('fechaVencimiento', '<=', bounds.end)
+          .get()
+          .then((snap) => snap.docs)
+      : Promise.resolve([] as FirebaseFirestore.QueryDocumentSnapshot[]),
     bounds.start <= vencEnd
-      ? applyCuotaAmbitoFilter(
-          cuotasCollection(businessId)
-            .where('estado', '==', 'pendiente')
-            .where('fechaVencimiento', '>=', bounds.start)
-            .where('fechaVencimiento', '<=', vencEnd),
-          ambito
-        )
-      : null;
-
-  const [pagadasSnap, pendientesSnap, vencidasSnap] = await Promise.all([
-    pagadaQuery.get(),
-    pendienteQuery ? pendienteQuery.get() : Promise.resolve(null),
-    vencidaQuery ? vencidaQuery.get() : Promise.resolve(null),
+      ? cuotasCollection(businessId)
+          .where('estado', '==', 'pendiente')
+          .where('fechaVencimiento', '>=', bounds.start)
+          .where('fechaVencimiento', '<=', vencEnd)
+          .get()
+          .then((snap) => snap.docs)
+      : Promise.resolve([] as FirebaseFirestore.QueryDocumentSnapshot[]),
   ]);
 
-  const pendientes = pendientesSnap?.docs ?? [];
-  const vencidas = vencidasSnap?.docs ?? [];
+  const [pagadasSnap, pendientes, vencidas] = await Promise.all([
+    filterCuotaDocsByAmbito(businessId, pagadasRaw, ambito),
+    filterCuotaDocsByAmbito(businessId, pendientesRaw, ambito),
+    filterCuotaDocsByAmbito(businessId, vencidasRaw, ambito),
+  ]);
   const totalPendiente = [...pendientes, ...vencidas].reduce(
     (sum, doc) => sum + (Number(doc.data().monto) || 0),
     0
@@ -715,7 +754,7 @@ async function computePayableInstallmentMonthSummary(
   return {
     pendientes: pendientes.length,
     vencidas: vencidas.length,
-    pagadas: pagadasSnap.docs.length,
+    pagadas: pagadasSnap.length,
     totalPendiente: roundPayableMoney(totalPendiente),
   };
 }
@@ -732,6 +771,38 @@ function mapInstallmentDocs(
       };
     })
     .sort(compareInstallmentsByDueDate);
+}
+
+function cuotaDocHasTarjeta(doc: FirebaseFirestore.QueryDocumentSnapshot): boolean {
+  return Boolean(String(doc.data().tarjetaId ?? '').trim());
+}
+
+/** Lecturas mínimas para «Por cuenta»: pendientes + cuotas del mes del resumen (sin historial pagado). */
+async function queryAccountViewCuotas(
+  businessId: string,
+  mes: string
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const bounds = monthDateBounds(mes);
+  const [pendingSnap, monthSnap] = await Promise.all([
+    cuotasCollection(businessId).where('estado', '==', 'pendiente').get(),
+    bounds
+      ? cuotasCollection(businessId)
+          .where('fechaVencimiento', '>=', bounds.start)
+          .where('fechaVencimiento', '<=', bounds.end)
+          .get()
+      : Promise.resolve(null),
+  ]);
+
+  const byId = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  for (const doc of pendingSnap.docs) {
+    if (cuotaDocHasTarjeta(doc)) byId.set(doc.id, doc);
+  }
+  if (monthSnap) {
+    for (const doc of monthSnap.docs) {
+      if (cuotaDocHasTarjeta(doc)) byId.set(doc.id, doc);
+    }
+  }
+  return [...byId.values()];
 }
 
 /** Reparación de datos; ejecutar en escrituras, no en cada lectura de listado. */
@@ -751,6 +822,8 @@ export async function listPayableInstallments(
   businessId: string,
   options?: ListPayableInstallmentsOptions
 ): Promise<ListPayableInstallmentsResult> {
+  await ensureMensualCuotasHorizon(businessId);
+
   if (options?.reconcile) {
     await preparePayablesData(businessId);
   }
@@ -765,14 +838,18 @@ export async function listPayableInstallments(
     const bounds = monthDateBounds(mes);
     if (!bounds) return { items: [] };
 
-    const fetchDocs = (): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> =>
-      displayEstado
-        ? queryCuotasByMonthAndEstado(businessId, bounds, displayEstado, ambito)
-        : cuotasCollection(businessId)
-            .where('fechaVencimiento', '>=', bounds.start)
-            .where('fechaVencimiento', '<=', bounds.end)
-            .get()
-            .then((snapshot) => snapshot.docs);
+    const fetchDocs = async (): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> => {
+      if (displayEstado) {
+        return queryCuotasByMonthAndEstado(businessId, bounds, displayEstado, ambito);
+      }
+      const raw = (
+        await cuotasCollection(businessId)
+          .where('fechaVencimiento', '>=', bounds.start)
+          .where('fechaVencimiento', '<=', bounds.end)
+          .get()
+      ).docs;
+      return filterCuotaDocsByAmbito(businessId, raw, ambito);
+    };
 
     const [docs, monthSummary] = await Promise.all([
       fetchDocs(),
@@ -784,6 +861,12 @@ export async function listPayableInstallments(
     return { items: mapInstallmentDocs(docs), monthSummary };
   }
 
+  if (scope === 'account') {
+    const viewMes = /^\d{4}-\d{2}$/.test(mes) ? mes : todayIso().slice(0, 7);
+    const docs = await queryAccountViewCuotas(businessId, viewMes);
+    return { items: mapInstallmentDocs(docs) };
+  }
+
   const snapshot = await cuotasCollection(businessId).get();
   return { items: mapInstallmentDocs(snapshot.docs) };
 }
@@ -793,6 +876,11 @@ export async function createPayableObligation(
   input: CreatePayableObligationInput
 ): Promise<{ obligation: PayableObligationRecord; cuotasCreated: number }> {
   const finanzas = await loadFinanzasConfig(businessId);
+  const caja = await loadCajaConfig(businessId);
+  const defaultAmbito = getBusinessCashAmbitoId(caja);
+  if (!input.ambito) {
+    input.ambito = defaultAmbito;
+  }
   const categoria = input.categoriaId
     ? getCategoriaGastoById(finanzas.categoriasGasto, input.categoriaId)
     : undefined;

@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { TenantService } from './tenant.service';
-import type { ComprobanteTipoId } from '../../../../../shared/comprobantes-config.ts';
+import type { ComprobanteTipoId, NotaMotivoId } from '../../../../../shared/comprobantes-config.ts';
 
 export interface SaleLineExtraCost {
   nombre: string;
@@ -18,6 +18,9 @@ export interface SaleLine {
   costoUnitario?: number;
   costoPersonalizacion?: number;
   costosExtra?: SaleLineExtraCost[];
+  tipoLinea?: 'producto' | 'concepto';
+  descripcion?: string;
+  mueveStock?: boolean;
 }
 
 export interface Sale {
@@ -27,6 +30,9 @@ export interface Sale {
   ventaLabel?: string;
   origen: 'mostrador' | 'pedido';
   tipoComprobante?: ComprobanteTipoId;
+  motivo?: NotaMotivoId | null;
+  descripcionMotivo?: string | null;
+  comprobanteRelacionadoId?: string | null;
   pedidoId?: string | null;
   numeroPedidoLabel?: string | null;
   pedidoDescripcion?: string | null;
@@ -45,6 +51,8 @@ export interface Sale {
   esDonacion?: boolean;
   fecha: string;
   movimientoCajaId?: string;
+  /** Caja asignada en la venta o en el cobro inicial; null si hay que elegir al cobrar saldo. */
+  ambito?: string | null;
   cobros?: Array<{
     id: string;
     monto: number;
@@ -88,19 +96,25 @@ export interface CreateSalePayload {
   pedidoId?: string;
   clienteId?: string;
   items?: Array<{
-    stockItemId: string;
+    stockItemId?: string;
     nombre?: string;
+    descripcion?: string;
+    tipoLinea?: 'producto' | 'concepto';
     cantidad: number;
     precioUnitario: number;
     costoUnitario?: number;
     costoPersonalizacion?: number;
     costosExtra?: SaleLineExtraCost[];
+    mueveStock?: boolean;
   }>;
   montoCobrado?: number;
   medioPago?: string;
   notas?: string;
   fecha?: string;
   tipoComprobante?: ComprobanteTipoId;
+  motivo?: NotaMotivoId | '';
+  descripcionMotivo?: string;
+  comprobanteRelacionadoId?: string;
   compromisoPago?: CompromisoPagoPayload;
   draft?: boolean;
   ventaId?: string;
@@ -109,19 +123,25 @@ export interface CreateSalePayload {
 export interface UpdateSalePayload {
   clienteId?: string;
   items?: Array<{
-    stockItemId: string;
+    stockItemId?: string;
     nombre?: string;
+    descripcion?: string;
+    tipoLinea?: 'producto' | 'concepto';
     cantidad: number;
     precioUnitario: number;
     costoUnitario?: number;
     costoPersonalizacion?: number;
     costosExtra?: SaleLineExtraCost[];
+    mueveStock?: boolean;
   }>;
   montoCobrado?: number;
   medioPago?: string;
   notas?: string;
   fecha?: string;
   tipoComprobante?: ComprobanteTipoId;
+  motivo?: NotaMotivoId | '';
+  descripcionMotivo?: string;
+  comprobanteRelacionadoId?: string;
 }
 
 export interface PaginatedSales {
@@ -239,7 +259,7 @@ export class SalesService {
 
   collectSaleBalance(
     ventaId: string,
-    payload: { monto: number; medioPago?: string; notas?: string }
+    payload: { monto: number; medioPago?: string; notas?: string; ambito?: string }
   ): Observable<{
     id: string;
     ventaLabel: string;

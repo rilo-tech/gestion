@@ -3,7 +3,8 @@ import { db } from '../firebase.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
 import { resolveSaleLabel } from '../utils/sale-number.ts';
 import { computeClientBalanceMap, computeClientBalanceForIds } from '../utils/client-balance.ts';
-import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData } from '../utils/client-collections.ts';
+import { ventaSaldoClienteImpact } from '../../shared/comprobantes-config.ts';
+import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData, resolveVentasCashAmbitoMap } from '../utils/client-collections.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
@@ -13,20 +14,13 @@ import {
   validateClientDeletion,
 } from '../utils/client-deletion-guards.ts';
 import { mapDeletionError } from '../utils/deletion-guards.ts';
+import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
 
 const router = createCompanyRouter();
 
 function isCancelledStatus(estado?: string) {
   const value = String(estado ?? '').toLowerCase().trim();
   return value === 'cancelado' || value.includes('cancelad');
-}
-
-function sumPagosHaciaTotal(
-  pagos: Array<{ tipo?: string; monto?: number }> = []
-): number {
-  return pagos
-    .filter((pago) => pago.tipo !== 'extra')
-    .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
 }
 
 function computeTotalFacturado(ventas: Array<{ total?: number }>): number {
@@ -199,7 +193,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
         const saldo = Math.max(0, Number(data.saldo) || 0);
         const totalPagado = Number(data.totalPagado) || Math.max(0, total - saldo);
         const pagos = normalizePedidoPagosFromData({
-          pagos: data.pagos as Array<{ id: string; tipo: 'seña' | 'cuota' | 'pago' | 'extra'; monto: number; fecha: string; movimientoCajaId?: string; notas?: string }>,
+          pagos: data.pagos as Array<{ id: string; tipo: 'seña' | 'cuota' | 'pago'; monto: number; fecha: string; movimientoCajaId?: string; notas?: string }>,
           movimientoSeniaId: data.movimientoSeniaId ? String(data.movimientoSeniaId) : undefined,
           senia: Number(data.senia) || 0,
           createdAt: data.createdAt ? String(data.createdAt) : undefined,
@@ -215,6 +209,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           totalPagado,
           saldo,
           ventaId: data.ventaId ?? null,
+          fecha: data.fecha ?? data.createdAt ?? null,
           fechaEntrega: data.fechaEntrega ?? null,
           cancelado: isCancelledStatus(data.estado),
           pagos,
@@ -223,11 +218,13 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
       .filter((order) => !order.cancelado)
       .sort((a, b) => String(b.fechaEntrega ?? '').localeCompare(String(a.fechaEntrega ?? '')));
 
-    const ventas = salesSnap.docs
-      .map((doc) => {
-        const data = doc.data();
+    const ventaDocs = salesSnap.docs.map((doc) => ({ id: doc.id, data: doc.data() }));
+    const ventaAmbitoMap = await resolveVentasCashAmbitoMap(businessId, ventaDocs);
+
+    const ventas = ventaDocs
+      .map(({ id, data }) => {
         return {
-          id: doc.id,
+          id,
           ventaLabel: resolveSaleLabel(data),
           origen: data.origen ?? 'mostrador',
           pedidoId: data.pedidoId ?? null,
@@ -237,6 +234,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           saldoPendiente: Math.max(0, Number(data.saldoPendiente) || 0),
           medioPago: String(data.medioPago ?? 'efectivo'),
           movimientoCajaId: data.movimientoCajaId ? String(data.movimientoCajaId) : null,
+          ambito: ventaAmbitoMap.get(id) ?? null,
           cobros: (Array.isArray(data.cobros) ? data.cobros : []).map(
             (cobro: Record<string, unknown>) => ({
               id: String(cobro.id ?? ''),
@@ -262,7 +260,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
     const saldoPedidos = pedidos.reduce((acc, order) => acc + order.saldo, 0);
     const saldoVentasMostrador = ventas
       .filter((sale) => sale.origen !== 'pedido')
-      .reduce((acc, sale) => acc + sale.saldoPendiente, 0);
+      .reduce((acc, sale) => acc + ventaSaldoClienteImpact(sale), 0);
     const saldoTotal = saldoPedidos + saldoVentasMostrador;
 
     const proximosCobros = compromisos.flatMap((compromiso) =>
@@ -348,6 +346,7 @@ router.post('/:businessId/:clientId/cobros', async (req, res) => {
       monto: Number(req.body.monto) || 0,
       medioPago: req.body.medioPago,
       notas: req.body.notas,
+      ambito: req.body.ambito,
     });
 
     const clientName = String(clientSnap.data()?.nombre ?? 'Cliente');

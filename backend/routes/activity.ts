@@ -17,6 +17,8 @@ router.get('/:businessId', async (req: AuthenticatedRequest, res) => {
     }
 
     const limit = Number(req.query.limit);
+    const entityId =
+      typeof req.query.entityId === 'string' ? req.query.entityId.trim() : '';
     const entries = await listModuleActivity(
       req.params.businessId,
       module,
@@ -24,7 +26,10 @@ router.get('/:businessId', async (req: AuthenticatedRequest, res) => {
         userId: req.auth.userId,
         rol: req.auth.user.rol as UserRole,
       },
-      Number.isFinite(limit) ? limit : 120
+      {
+        limit: Number.isFinite(limit) ? limit : undefined,
+        entityId: entityId || undefined,
+      }
     );
 
     res.json(entries);

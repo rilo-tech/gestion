@@ -109,3 +109,21 @@ export function requireAnyPermission(...permissions: Permission[]): CanActivateF
       : router.createUrlTree(['/dashboard']);
   };
 }
+
+export function requireModule(...moduleIds: import('../../../../../shared/subscription-modules.ts').SubscriptionModuleId[]): CanActivateFn {
+  return () => {
+    const auth = inject(AuthService);
+    const router = inject(Router);
+    return moduleIds.some((moduleId) => auth.hasModule(moduleId))
+      ? true
+      : router.createUrlTree(['/dashboard']);
+  };
+}
+
+/** Redirige al flujo de activación si la prueba venció (login permitido, operación bloqueada). */
+export const trialActiveGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  if (!auth.isTrialExpired) return true;
+  return router.createUrlTree(['/activar-suscripcion']);
+};

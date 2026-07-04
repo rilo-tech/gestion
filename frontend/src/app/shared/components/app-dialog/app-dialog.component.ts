@@ -21,14 +21,15 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
         (click)="onCancel()">
       </button>
 
-      <div class="relative w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 shadow-2xl">
-        <div class="mb-4 flex items-start gap-4">
+      <div
+        class="relative flex w-full max-w-md max-h-[min(90dvh,34rem)] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-2xl">
+        <div class="mb-4 flex min-h-0 flex-1 items-start gap-4 overflow-hidden">
           <div
             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
             [ngClass]="iconWrapperClass">
             <i-lucide [name]="iconName" class="h-5 w-5"></i-lucide>
           </div>
-          <div class="min-w-0 pt-0.5">
+          <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pt-0.5">
             <h2 class="text-lg font-bold text-gray-900">{{ title }}</h2>
             <p class="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ request.options.message }}</p>
           </div>
@@ -36,7 +37,7 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
 
         <div
           *ngIf="request.type !== 'choice'"
-          class="flex justify-end gap-3">
+          class="flex shrink-0 justify-end gap-3 border-t border-gray-100 pt-4">
           <button
             *ngIf="request.type === 'confirm'"
             type="button"
@@ -55,7 +56,7 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
 
         <div
           *ngIf="request.type === 'choice'"
-          class="flex flex-col gap-2.5">
+          class="flex shrink-0 flex-col gap-2.5 border-t border-gray-100 pt-4">
           <button
             *ngFor="let opt of request.options.options"
             type="button"

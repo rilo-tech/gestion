@@ -12,6 +12,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { firstValueFrom } from 'rxjs';
 import { ClientService, Client } from '../../core/services/client.service';
 import { StockService, StockItem, itemControlsStock, getStockDisponible } from '../../core/services/stock.service';
 import {
@@ -26,6 +27,8 @@ import {
   OrderPhysicalStockScope,
   resolveOrderBalance,
   OrderPhoto,
+  coerceOrderLineItems,
+  orderLineItemsForPrint,
 } from '../../core/services/order.service';
 import { OrderPrintService } from '../../core/services/order-print.service';
 import { DialogService } from '../../core/services/dialog.service';
@@ -40,10 +43,13 @@ import {
   orderEstadoMatchesStockTrigger,
   OrderExtraCostPreset,
   usesDetailedOrderExtraCosts,
+  usesOrderReferencePhotos,
+  usesOrderReferencePhotosPrint,
 } from '../../core/services/catalog-config.service';
 import {
   shouldConsumeStockOnStatusChange,
   orderStockFullyConsumed,
+  orderHasStockControlledLines,
   getOrderPhysicalStockScopeLabel,
   resolveOrderPhysicalStockScope,
   getOrderWorkflowStatusOptionsForSelect,
@@ -67,13 +73,21 @@ import {
 } from '../../core/constants/order-stock-status';
 import { OrderStockPreparationPanelComponent } from './order-stock-preparation-panel.component';
 import { OrderPhotoAttachmentsComponent } from './order-photo-attachments.component';
-import { buildSuggestedStockAllocations } from '../../core/utils/order-stock-prep';
+import {
+  buildSuggestedStockAllocations,
+  syncOrderLineStockReservationFields,
+} from '../../core/utils/order-stock-prep';
 import { sumLineExtraCosts } from '../../core/utils/line-extra-costs';
 import {
   saveOrderFormDraft,
   readOrderFormDraft,
   clearOrderFormDraft,
 } from '../../core/utils/form-return-context';
+import {
+  buildCashReopenQueryParams,
+  parseCashReturnContext,
+  type CashReturnContext,
+} from '../../core/utils/cash-return-context';
 import { LucideAngularModule } from 'lucide-angular';
 import { TransactionLinesSectionComponent } from '../../shared/components/transaction-lines-section/transaction-lines-section.component';
 import { TransactionProductSearchComponent } from '../../shared/components/transaction-product-search/transaction-product-search.component';
@@ -81,6 +95,7 @@ import {
   TransactionLinesTableComponent,
   buildTransactionTableColumns,
   ORDER_FORM_TABLE_COLUMNS,
+  ORDER_FORM_COLUMN_WEIGHTS,
 } from '../../shared/components/transaction-lines-table/transaction-lines-table.component';
 import {
   TransactionExtraCostsFormComponent,
@@ -123,6 +138,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
   imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, OrderPhotoAttachmentsComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
   template: `
     <app-transaction-form-page
+      asideLayout="narrow"
       [title]="orderPageTitle"
       [titleBadge]="orderPageTitleBadge"
       [subtitle]="orderPageSubtitle"
@@ -131,9 +147,12 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       [backAriaLabel]="orderBackLabel"
       (backClick)="goBack()"
       [hasHeaderActions]="hasOrderHeaderActions">
-      <div headerActions *ngIf="hasOrderHeaderActions" class="flex flex-wrap items-center gap-2.5 sm:gap-3">
+      <div headerActions *ngIf="hasOrderHeaderActions" class="inline-flex items-center gap-1 sm:gap-2.5">
         <app-record-action-toolbar
-          [showSave]="!isReadOnlyOrder || canSaveLockedDescription"
+          activityModule="orders"
+          [activityEntityId]="editingOrderId"
+          [activityEntityLabel]="activityEntityLabel"
+          [showSave]="canSaveOrder || canSaveLockedDescription"
           [saveLabel]="primaryButtonLabel"
           [saveDisabled]="orderSaveState === 'saving'"
           [saveLoading]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
@@ -261,7 +280,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 <div class="flex items-center gap-2 min-w-0">
                   <label class="text-sm font-medium text-gray-700 dark:text-gray-300 shrink-0">Estado</label>
                   <select
-                    *ngIf="!isReadOnlyOrder"
+                    *ngIf="canEditOrderStatus"
                     [ngModel]="orderEstadoDisplay"
                     (ngModelChange)="onOrderEstadoChange($event)"
                     name="estado"
@@ -271,7 +290,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                     </option>
                   </select>
                   <span
-                    *ngIf="isReadOnlyOrder"
+                    *ngIf="!canEditOrderStatus"
                     class="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold shrink-0"
                     [ngClass]="getOrderStatusBadgeClass(order.estado, appConfig.pedidos, { saldo: order.saldo, entregaConSaldo: order.entregaConSaldo })">
                     {{ getOrderStatusLabelFor(order.estado) }}
@@ -328,6 +347,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               *ngIf="orderPhotosEnabled"
               [orderId]="editingOrderId"
               [canEdit]="canEditOrderPhotos"
+              [showPrintHint]="orderPhotosPrintEnabled"
               [photos]="orderPhotos"
               (photosChange)="onOrderPhotosChange($event)" />
           </section>
@@ -357,11 +377,13 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               [itemMeta]="orderSearchResultSubtitle"
               inputName="orderProductSearch"
               (focused)="onProductSearchFocused()"
-              (productSelected)="onOrderProductSelected($event)">
+              (productSelected)="onOrderProductSelected($event)"
+              (productQuantitySelected)="onOrderProductQuantitySelected($event)">
             </app-transaction-product-search>
 
             <app-transaction-lines-table
               #orderLinesTable
+              density="compact"
               [hideWhenEmpty]="true"
               [lines]="orderTableLines"
               [columns]="orderTableColumns"
@@ -388,7 +410,6 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                       Disp. {{ orderLines[index].stockDisponible ?? 0 }}
                     </ng-container>
                   </span>
-                  <span *ngIf="orderLines[index].stockItemId && !lineControlsStock(orderLines[index])" class="text-gray-400">Sin stock</span>
                   <button
                     *ngIf="canReviewStock && orderLines[index].stockItemId && lineControlsStock(orderLines[index])"
                     type="button"
@@ -422,7 +443,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           </app-transaction-lines-section>
 
         <app-form-footer
-          *ngIf="!isReadOnlyOrder"
+          *ngIf="canSaveOrder"
           mode="inline"
           [saveLabel]="primaryButtonLabel"
           [saving]="orderSaveState === 'saving' && orderSaveAction === 'submit'"
@@ -455,65 +476,72 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             *ngIf="auth.canViewEconomics"
             title="Resumen Económico"
             variant="light"
-            class="sm:sticky sm:top-8">
+            class="order-economic-summary sm:sticky sm:top-8">
 
             <div
               *ngIf="auth.canViewAccountBalance || auth.canViewOrderSalePrice"
-              class="grid grid-cols-2 gap-x-3 gap-y-1 mb-2 sm:hidden text-xs">
-              <div *ngIf="auth.canViewAccountBalance">
-                <p class="text-[10px] uppercase text-gray-500">Saldo</p>
-                <p class="font-bold text-orange-600 tabular-nums">{{ formatMoney(order.saldo || 0) }}</p>
+              class="mb-2 sm:hidden space-y-1 text-xs">
+              <div *ngIf="auth.canViewOrderSalePrice" class="flex items-baseline justify-between gap-3">
+                <span class="text-[10px] uppercase text-gray-500 shrink-0">Venta</span>
+                <span class="font-bold text-teal-600 tabular-nums text-right">{{ formatMoney(order.total || 0) }}</span>
               </div>
-              <div
-                *ngIf="auth.canViewOrderSalePrice"
-                [class.text-right]="auth.canViewAccountBalance">
-                <p class="text-[10px] uppercase text-gray-500">Venta</p>
-                <p class="font-bold text-teal-600 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
-              </div>
-              <div>
-                <p class="text-[10px] uppercase text-gray-500">Costo</p>
-                <p class="font-semibold text-gray-900 tabular-nums">{{ formatMoney(totalCost) }}</p>
-              </div>
-              <div class="text-right">
-                <p class="text-[10px] uppercase text-gray-500">Ganancia</p>
-                <p
-                  class="font-semibold tabular-nums"
+              <div class="flex items-baseline justify-between gap-3">
+                <span class="text-[10px] uppercase text-gray-500 shrink-0">Ganancia</span>
+                <span
+                  class="font-semibold tabular-nums text-right"
                   [class.text-green-600]="displayOrderGanancia >= 0"
                   [class.text-red-600]="displayOrderGanancia < 0">
                   {{ formatMoney(displayOrderGanancia) }}
-                </p>
-                <p *ngIf="donationProfitPending" class="text-[9px] text-amber-600 leading-tight mt-0.5">
-                  Al entregar
-                </p>
+                  <span *ngIf="donationProfitPending" class="text-[9px] text-amber-600 font-normal"> (al entregar)</span>
+                </span>
               </div>
-              <div class="col-span-2 flex justify-between pt-1 border-t border-gray-100">
-                <span class="text-[10px] uppercase text-gray-500">Margen</span>
-                <span class="font-semibold text-teal-700 tabular-nums">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
+              <div class="flex items-baseline justify-between gap-3">
+                <span class="text-[10px] uppercase text-gray-500 shrink-0">Costo</span>
+                <span class="font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-right">{{ formatMoney(totalCost) }}</span>
               </div>
-            </div>
-
-            <div class="hidden sm:block space-y-3 mb-6 text-sm">
-              <div class="flex justify-between">
-                <span class="text-gray-500">Costo base</span>
-                <span class="text-gray-900 tabular-nums">{{ formatMoney(baseProductCost) }}</span>
+              <div class="flex items-baseline justify-between gap-3">
+                <span class="text-[10px] uppercase text-gray-500 shrink-0">Margen</span>
+                <span class="font-semibold text-teal-700 tabular-nums text-right">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
               </div>
-              <div class="flex justify-between">
-                <span class="text-gray-500">Personalización</span>
-                <span class="text-gray-900 tabular-nums">{{ formatMoney(customizationCostTotal) }}</span>
-              </div>
-              <div class="border-t border-gray-200 pt-3 flex justify-between font-bold text-gray-900">
-                <span>Costo total</span>
-                <span class="tabular-nums">{{ formatMoney(totalCost) }}</span>
-              </div>
-              <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="flex justify-between font-bold text-teal-700">
-                <span>Precio venta</span>
-                <span class="tabular-nums">{{ formatMoney(order.total || 0) }}</span>
+              <div *ngIf="auth.canViewOrderBalance" class="flex items-baseline justify-between gap-3 pt-1 border-t border-gray-100 dark:border-gray-800">
+                <span class="text-[10px] uppercase text-gray-500 shrink-0">Saldo</span>
+                <span class="font-bold text-orange-600 tabular-nums text-right">{{ formatMoney(order.saldo || 0) }}</span>
               </div>
             </div>
 
-            <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50">
+            <div class="hidden sm:block text-[11px] lg:text-xs">
+              <div class="space-y-1.5 pb-3 border-b border-gray-100 dark:border-gray-800">
+                <div class="flex justify-between gap-2">
+                  <span class="text-gray-500 dark:text-gray-400">Costo base</span>
+                  <span class="tabular-nums text-gray-800 dark:text-gray-200">{{ formatMoney(baseProductCost) }}</span>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <span class="text-gray-500 dark:text-gray-400">Personalización</span>
+                  <span class="tabular-nums text-gray-800 dark:text-gray-200">{{ formatMoney(customizationCostTotal) }}</span>
+                </div>
+                <div class="flex justify-between gap-2 pt-1.5 font-semibold text-gray-900 dark:text-gray-100">
+                  <span>Costo total</span>
+                  <span class="tabular-nums">{{ formatMoney(totalCost) }}</span>
+                </div>
+              </div>
+
+              <div
+                *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE"
+                class="py-3 border-b border-gray-100 dark:border-gray-800">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">
+                  Precio venta
+                </p>
+                <p class="text-xl font-bold text-teal-600 dark:text-teal-400 tabular-nums leading-none">
+                  {{ formatMoney(order.total || 0) }}
+                </p>
+              </div>
+            </div>
+
+            <div
+              *ngIf="auth.canViewOrderBalance"
+              class="mb-3 sm:mb-4 rounded-xl border border-gray-100 dark:border-gray-700/80 bg-gray-50/90 dark:bg-gray-800/35 p-2.5 sm:p-3">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
-                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
+                <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
                   [(ngModel)]="order.senia"
@@ -521,64 +549,103 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   [disabled]="isReadOnlyOrder"
                   (ngModelChange)="calculateTotals()"
                   min="0"
-                  class="w-full px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 bg-white text-lg sm:text-xl font-bold text-gray-900 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-                <p class="mt-1 text-xs text-gray-500 hidden sm:block">
+                  class="w-full h-8 sm:h-auto min-h-8 sm:min-h-0 box-border px-3 py-1 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-xs sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                <p class="mt-1 text-[10px] text-gray-500 dark:text-gray-400 hidden sm:block leading-snug">
                   Al guardar el pedido, se registra en caja con la fecha de hoy y queda bloqueada.
                 </p>
               </ng-container>
 
               <ng-container *ngIf="seniaBloqueada || isEditing">
-                <div class="flex items-center justify-between gap-2 mb-1 sm:mb-2">
-                  <span class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase">Pagos</span>
+                <div class="flex items-center justify-between gap-2 mb-2">
+                  <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Pagos</span>
                   <button
                     type="button"
                     (click)="openPaymentModal()"
-                    *ngIf="auth.canAccessCash"
+                    *ngIf="auth.canRegisterOrderPayments"
                     [disabled]="!canRegisterOrderPayment"
-                    class="text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 disabled:opacity-40 disabled:cursor-not-allowed">
+                    class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:text-teal-600 dark:hover:text-teal-300 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Pago
                   </button>
                 </div>
-                <div class="space-y-0.5 mb-1 sm:mb-3 max-h-14 sm:max-h-28 overflow-auto">
-                  <div
-                    *ngFor="let pago of order.pagos"
-                    class="flex items-center justify-between gap-2 text-[10px] sm:text-[11px] leading-tight text-gray-700">
-                    <span class="truncate min-w-0">
-                      {{ getPaymentLineLabel(pago) }}
-                      <span class="text-gray-500 hidden sm:inline">· {{ formatPaymentDate(pago.fecha) }}</span>
-                      <span *ngIf="shouldShowPaymentNotas(pago)" class="text-gray-500 hidden sm:inline">· {{ pago.notas }}</span>
-                    </span>
-                    <span class="text-[10px] sm:text-xs font-semibold text-gray-900 tabular-nums shrink-0">{{ formatMoney(pago.monto) }}</span>
+
+                <div
+                  *ngIf="orderPaymentProgressPercent > 0"
+                  class="mb-2.5"
+                  aria-hidden="true">
+                  <div class="h-1.5 rounded-full bg-gray-200/90 dark:bg-gray-700/80 overflow-hidden">
+                    <div
+                      class="h-full rounded-full bg-teal-500 dark:bg-teal-400 transition-[width] duration-300"
+                      [style.width.%]="orderPaymentProgressPercent">
+                    </div>
                   </div>
                 </div>
-                <div class="flex justify-between text-[10px] sm:text-xs text-gray-600">
+
+                <div class="space-y-1.5 mb-2">
+                  <div
+                    *ngFor="let pago of order.pagos"
+                    class="flex items-center gap-1.5 text-[10px] sm:text-[11px] leading-tight text-gray-700 dark:text-gray-300">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-baseline justify-between gap-2">
+                        <span class="truncate min-w-0 font-medium text-gray-800 dark:text-gray-200">
+                          {{ getPaymentLineLabel(pago) }}
+                        </span>
+                        <span class="text-[10px] sm:text-xs font-semibold text-gray-900 dark:text-gray-100 tabular-nums shrink-0">
+                          {{ formatMoney(pago.monto) }}
+                        </span>
+                      </div>
+                      <p class="text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                        {{ formatPaymentDate(pago.fecha) }}
+                        <span *ngIf="shouldShowPaymentNotas(pago)"> · {{ pago.notas }}</span>
+                      </p>
+                    </div>
+                    <button
+                      *ngIf="canRemovePayment(pago)"
+                      type="button"
+                      (click)="confirmRemovePayment(pago)"
+                      [disabled]="paymentRemovingId === pago.id"
+                      class="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40"
+                      title="Anular pago"
+                      aria-label="Anular pago">
+                      <span class="text-sm leading-none">×</span>
+                    </button>
+                  </div>
+                </div>
+                <p
+                  *ngIf="auth.canRegisterOrderPayments && (seniaBloqueada || isEditing) && order.pagos?.length"
+                  class="mb-2 text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                  Para corregir un monto, anulá el pago y registrá uno nuevo con + Pago.
+                </p>
+                <div class="flex justify-between text-[10px] text-gray-600 dark:text-gray-400">
                   <span>Pagado</span>
-                  <span class="tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
+                  <span class="tabular-nums font-medium text-gray-900 dark:text-gray-100">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
               </ng-container>
 
-              <div class="flex justify-between text-[10px] sm:text-xs text-gray-600 mt-1 sm:mt-2 pt-1 sm:pt-2 border-t border-gray-200">
-                <span>Saldo pendiente</span>
-                <span class="font-semibold text-orange-600 tabular-nums">{{ formatMoney(order.saldo || 0) }}</span>
+              <div class="flex justify-between items-baseline gap-2 mt-2 pt-2 border-t border-gray-200/80 dark:border-gray-700/80">
+                <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Saldo pendiente</span>
+                <span class="text-sm font-bold text-orange-600 dark:text-orange-400 tabular-nums">{{ formatMoney(pendingOrderSaldo) }}</span>
               </div>
             </div>
 
-            <div class="hidden sm:block space-y-2 mb-6 text-sm">
-              <div class="flex justify-between items-baseline gap-2">
-                <span class="text-gray-500">
+            <div class="hidden sm:grid grid-cols-2 gap-2 mb-4 text-[11px]">
+              <div class="rounded-lg border border-green-100 dark:border-green-900/50 bg-green-50/80 dark:bg-green-950/25 px-2.5 py-2">
+                <p class="text-[9px] font-semibold uppercase tracking-wide text-green-700/80 dark:text-green-400/80 mb-0.5">
                   Ganancia est.
-                  <span *ngIf="donationProfitPending" class="text-amber-600 font-normal text-xs"> (al entregar)</span>
-                </span>
-                <span
-                  class="font-bold tabular-nums"
-                  [class.text-green-600]="displayOrderGanancia >= 0"
-                  [class.text-red-600]="displayOrderGanancia < 0">
+                  <span *ngIf="donationProfitPending" class="normal-case text-amber-600 dark:text-amber-400"> (al entregar)</span>
+                </p>
+                <p
+                  class="text-sm font-bold tabular-nums leading-tight"
+                  [ngClass]="displayOrderGanancia >= 0
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-red-600 dark:text-red-400'">
                   {{ formatMoney(displayOrderGanancia) }}
-                </span>
+                </p>
               </div>
-              <div class="flex justify-between">
-                <span class="text-gray-500">Margen</span>
-                <span class="text-teal-700 tabular-nums">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
+              <div class="rounded-lg border border-teal-100 dark:border-teal-900/50 bg-teal-50/80 dark:bg-teal-950/25 px-2.5 py-2">
+                <p class="text-[9px] font-semibold uppercase tracking-wide text-teal-700/80 dark:text-teal-400/80 mb-0.5">Margen</p>
+                <p class="text-sm font-bold text-teal-700 dark:text-teal-400 tabular-nums leading-tight">
+                  {{ ((order.margen || 0) * 100).toFixed(1) }}%
+                </p>
               </div>
             </div>
 
@@ -606,12 +673,12 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             *ngIf="!auth.canViewEconomics"
             title="Resumen"
             variant="light"
-            class="sm:sticky sm:top-8">
+            class="sm:sticky sm:top-8 [&>div]:lg:p-4 [&>div_h2]:lg:text-base [&>div_h2]:lg:mb-3">
             <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4 flex items-baseline justify-between gap-3 sm:block">
               <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase sm:mb-1">Total venta</p>
               <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
             </div>
-            <div *ngIf="auth.canViewAccountBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
+            <div *ngIf="auth.canViewOrderBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
                 <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
                 <input
@@ -621,7 +688,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   [disabled]="isReadOnlyOrder"
                   (ngModelChange)="calculateTotals()"
                   min="0"
-                  class="w-full px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 text-base sm:text-lg font-bold tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                  class="w-full h-8 sm:h-auto min-h-8 sm:min-h-0 box-border px-3 py-1 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 bg-white dark:bg-gray-900 text-xs sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
                 <p class="text-xs text-gray-500 hidden sm:block">
                   Al guardar el pedido, la seña queda registrada y bloqueada.
                 </p>
@@ -632,18 +699,45 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   <button
                     type="button"
                     (click)="openPaymentModal()"
-                    *ngIf="auth.canAccessCash"
+                    *ngIf="auth.canRegisterOrderPayments"
                     [disabled]="!canRegisterOrderPayment"
                     class="text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Pago
                   </button>
+                </div>
+                <div
+                  *ngIf="orderPaymentProgressPercent > 0"
+                  class="mb-2"
+                  aria-hidden="true">
+                  <div class="h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                    <div
+                      class="h-full rounded-full bg-teal-500 transition-[width] duration-300"
+                      [style.width.%]="orderPaymentProgressPercent">
+                    </div>
+                  </div>
+                </div>
+                <div *ngIf="order.pagos?.length" class="space-y-1.5 mb-2">
+                  <div
+                    *ngFor="let pago of order.pagos"
+                    class="flex items-start gap-1.5 text-[10px] sm:text-xs leading-tight text-gray-700">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-baseline justify-between gap-2">
+                        <span class="truncate font-medium">{{ getPaymentLineLabel(pago) }}</span>
+                        <span class="font-semibold tabular-nums shrink-0">{{ formatMoney(pago.monto) }}</span>
+                      </div>
+                      <p class="text-[9px] sm:text-[10px] text-gray-400 mt-0.5">
+                        {{ formatPaymentDate(pago.fecha) }}
+                        <span *ngIf="shouldShowPaymentNotas(pago)"> · {{ pago.notas }}</span>
+                      </p>
+                    </div>
+                  </div>
                 </div>
                 <div class="flex justify-between text-xs sm:text-sm">
                   <span class="text-gray-600">Pagado</span>
                   <span class="font-semibold tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
                 <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200">
-                  <span class="text-gray-600">Saldo</span>
+                  <span class="text-gray-600 font-medium">Saldo pendiente</span>
                   <span class="font-semibold tabular-nums text-orange-600">{{ formatMoney(pendingOrderSaldo) }}</span>
                 </div>
               </ng-container>
@@ -693,7 +787,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           <div class="flex items-start justify-between gap-3 mb-4">
             <div class="min-w-0">
               <h2 class="text-base font-bold text-gray-900">Registrar pago</h2>
-              <p class="text-xs text-gray-500 mt-0.5">Se registra en caja hoy, asociado al cliente.</p>
+              <p class="text-xs text-gray-500 mt-0.5">Se imputa como cuota del pedido y se registra en caja hoy.</p>
             </div>
             <div class="shrink-0 text-right leading-tight">
               <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Saldo</p>
@@ -701,35 +795,11 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             </div>
           </div>
 
-          <div class="flex items-center gap-2 flex-wrap mb-2">
-            <div class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 shrink-0">
-              <button
-                type="button"
-                (click)="setPaymentModo('total')"
-                class="h-8 px-3 rounded-md text-xs font-semibold transition-colors whitespace-nowrap"
-                [class.bg-teal-600]="paymentModo === 'total'"
-                [class.text-white]="paymentModo === 'total'"
-                [class.shadow-sm]="paymentModo === 'total'"
-                [class.text-gray-600]="paymentModo !== 'total'"
-                [class.hover:bg-white]="paymentModo !== 'total'">
-                Saldo total
-              </button>
-              <button
-                type="button"
-                (click)="setPaymentModo('parcial')"
-                class="h-8 px-3 rounded-md text-xs font-semibold transition-colors whitespace-nowrap"
-                [class.bg-amber-500]="paymentModo === 'parcial'"
-                [class.text-white]="paymentModo === 'parcial'"
-                [class.shadow-sm]="paymentModo === 'parcial'"
-                [class.text-gray-600]="paymentModo !== 'parcial'"
-                [class.hover:bg-white]="paymentModo !== 'parcial'">
-                Parcial
-              </button>
-            </div>
-
-            <div *ngIf="paymentModo === 'parcial'" class="relative shrink-0">
+          <div class="mb-1">
+            <label class="block text-xs font-medium text-gray-500 mb-1.5">Monto a cobrar</label>
+            <div class="relative">
               <span
-                class="pointer-events-none absolute inset-y-0 left-2 flex items-center text-xs font-medium text-gray-400">
+                class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-medium text-gray-400">
                 $
               </span>
               <input
@@ -737,19 +807,15 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 [(ngModel)]="paymentMonto"
                 [ngModelOptions]="{ standalone: true }"
                 min="1"
+                [max]="paymentSaldoSnapshot"
                 placeholder="0"
                 aria-label="Monto a cobrar"
-                class="h-8 w-[5.25rem] pl-5 pr-1.5 rounded-md border border-gray-200 bg-white text-gray-900 text-sm font-medium tabular-nums outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                class="w-full h-11 pl-7 pr-3 rounded-xl border border-gray-200 bg-white text-gray-900 text-lg font-semibold tabular-nums outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
             </div>
-
-            <p *ngIf="paymentModo === 'total'" class="text-xs text-gray-500 min-w-0 flex-1">
-              Cobrás todo y cerrás el saldo.
+            <p class="text-[11px] text-gray-400 mt-1.5">
+              Hasta {{ formatMoney(paymentSaldoSnapshot) }}. El monto completo descuenta del saldo pendiente.
             </p>
           </div>
-
-          <p *ngIf="paymentModo === 'parcial'" class="text-[11px] text-gray-400 mb-0">
-            Si superás el saldo, el excedente va como pago extra en caja.
-          </p>
 
           <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
             <button
@@ -969,6 +1035,8 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       [orderId]="editingOrderId ?? ''"
       [orderLabel]="orderPageTitleBadge"
       [clientName]="selectedClientLabel || order.clienteNombre || ''"
+      [draftOrderLines]="orderLines"
+      [draftOrderLinesRevision]="stockPrepDraftRevision"
       (closed)="onStockPrepClosed()"
       (confirmed)="onStockPrepConfirmed($event)">
     </app-order-stock-preparation-panel>
@@ -996,12 +1064,23 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   readonly getOrderStatusBadgeClass = getOrderStatusBadgeClass;
   get orderStatusOptions() {
-    const key = JSON.stringify(this.appConfig.pedidos?.estados ?? []);
+    const normalizedEstado = normalizeOrderStatus(this.order.estado, this.appConfig.pedidos);
+    const key = `${JSON.stringify(this.appConfig.pedidos?.estados ?? [])}\u0001${normalizedEstado}`;
     if (key === this.orderStatusOptionsKey) {
       return this.orderStatusOptionsCache;
     }
     this.orderStatusOptionsKey = key;
-    this.orderStatusOptionsCache = getOrderWorkflowStatusOptionsForSelect(this.appConfig.pedidos);
+    let options = getOrderWorkflowStatusOptionsForSelect(this.appConfig.pedidos);
+    if (normalizedEstado === 'borrador') {
+      options = [
+        {
+          value: 'borrador',
+          label: getOrderStatusLabel('borrador', this.appConfig.pedidos),
+        },
+        ...options,
+      ];
+    }
+    this.orderStatusOptionsCache = options;
     return this.orderStatusOptionsCache;
   }
   readonly controlsStockForCatalogItem = (item: StockItem) =>
@@ -1014,8 +1093,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderStatusOptionsKey = '';
   selectedClientLabel = '';
   pendingClientName = '';
-  private orderReturnTo: 'orders' | 'stock' = 'orders';
+  private orderReturnTo: 'orders' | 'stock' | 'cash' = 'orders';
   private orderReturnStockTab: 'productos' | 'movimientos' | 'reservas' = 'movimientos';
+  private orderCashReturnContext: CashReturnContext | null = null;
   creatingClient = false;
   clientModalOpen = false;
   clientModalPrefillNombre = '';
@@ -1034,14 +1114,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderTableColumnsKey = '';
   private catalogPriceOptionsCache = new Map<string, Array<{ label: string; price: number }>>();
   private loadOrderRequestId = 0;
+  private orderFormRevision = 0;
+  private syncedOrderFormRevision = 0;
   orderPhotos: OrderPhoto[] = [];
   priceCatalogEntries: PriceCatalogEntry[] = [];
   extraCostsModalIndex: number | null = null;
   paymentModalOpen = false;
-  paymentModo: 'total' | 'parcial' = 'total';
   paymentMonto: number | null = null;
   paymentSaldoSnapshot = 0;
   paymentSubmitting = false;
+  paymentRemovingId: string | null = null;
   orderSaveState: 'idle' | 'saving' | 'success' = 'idle';
   orderSaveAction: 'draft' | 'submit' | null = null;
   orderSaveBannerText = '';
@@ -1050,6 +1132,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private savedOrderEstado = '';
   private orderFormLocked = false;
   stockPrepOpen = false;
+  stockPrepDraftRevision = 0;
   stockDiscountDialogOpen = false;
   stockDiscountPreview: OrderStockDiscountPreview | null = null;
   stockDiscountSelectedScope: OrderPhysicalStockScope = 'solo_reservado';
@@ -1069,9 +1152,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get canReviewStock(): boolean {
     return (
       this.isEditing &&
-      !this.isReadOnlyOrder &&
       !this.isCancelledOrder &&
-      orderConfigUsesReservedStock(this.appConfig)
+      (this.canEditOrderContent || this.auth.canChangeOrderStatus) &&
+      orderConfigUsesReservedStock(this.appConfig) &&
+      orderHasStockControlledLines(this.orderLines)
     );
   }
 
@@ -1084,7 +1168,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get orderPhysicalDiscountHint(): string | null {
-    if (!this.isEditing || this.isReadOnlyOrder || !this.canReviewStock) return null;
+    if (!this.isEditing || !this.canEditOrderStatus || !this.canReviewStock) return null;
     const next = normalizeOrderStatus(this.orderEstadoDisplay);
     const scope = resolveOrderPhysicalStockScope(this.appConfig.pedidos, next);
     const trigger = this.appConfig.pedidos.estadoDescuentaStock;
@@ -1230,7 +1314,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get orderBackLabel(): string {
-    return this.orderReturnTo === 'stock' ? 'Volver a stock' : 'Volver a pedidos';
+    if (this.orderReturnTo === 'stock') return 'Volver a stock';
+    if (this.orderReturnTo === 'cash') return 'Volver a caja';
+    return 'Volver a pedidos';
   }
 
   get orderPageTitle(): string {
@@ -1248,6 +1334,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return '';
   }
 
+  get activityEntityLabel(): string {
+    const badge = this.orderPageTitleBadge.trim();
+    return badge ? `Pedido #${badge}` : 'Pedido';
+  }
+
   get orderPageSubtitle(): string {
     if (this.isCancelledOrder) {
       return 'Solo lectura. Este pedido no se puede modificar; creá uno nuevo si necesitás continuar.';
@@ -1263,6 +1354,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   goBack() {
+    if (this.orderReturnTo === 'cash' && this.orderCashReturnContext) {
+      void this.router.navigate(['/cash'], {
+        queryParams: buildCashReopenQueryParams(this.orderCashReturnContext),
+      });
+      return;
+    }
     if (this.orderReturnTo === 'stock') {
       void this.router.navigate(['/stock'], {
         queryParams: {
@@ -1316,12 +1413,42 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return !this.isCancelledOrder && this.auth.canEditRecords;
   }
 
+  get canEditOrderContent(): boolean {
+    return !this.isCancelledOrder && !this.isLockedOrder && this.auth.canEditRecords;
+  }
+
+  get canEditOrderStatus(): boolean {
+    if (this.isCancelledOrder || this.isLockedOrder) return false;
+    return this.auth.canEditRecords || this.auth.canChangeOrderStatus;
+  }
+
+  get canSaveStatusOnly(): boolean {
+    if (!this.isStatusOnlyOrderEditor) return false;
+    if (!this.isEditing || !this.editingOrderId) return false;
+    const current = normalizeOrderStatus(this.order.estado, this.appConfig.pedidos);
+    const saved = normalizeOrderStatus(this.savedOrderEstado, this.appConfig.pedidos);
+    return current !== saved;
+  }
+
+  /** Operador con permiso de cambiar estado pero sin edición general del pedido. */
+  get isStatusOnlyOrderEditor(): boolean {
+    return this.auth.canChangeOrderStatus && !this.auth.canEditRecords;
+  }
+
+  get canSaveOrder(): boolean {
+    return this.canEditOrderContent || this.canSaveStatusOnly;
+  }
+
   get canEditOrderPhotos(): boolean {
     return this.canEditOrderDescription;
   }
 
   get orderPhotosEnabled(): boolean {
-    return this.appConfig.pedidos?.fotosReferenciaHabilitadas !== false;
+    return this.auth.hasModule('order_photos') && usesOrderReferencePhotos(this.appConfig);
+  }
+
+  get orderPhotosPrintEnabled(): boolean {
+    return this.auth.hasModule('order_photos') && usesOrderReferencePhotosPrint(this.appConfig);
   }
 
   get hasPendingDescriptionChange(): boolean {
@@ -1364,9 +1491,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   get isReadOnlyOrder(): boolean {
-    if (this.isCancelledOrder || this.isLockedOrder) return true;
-    if (this.isEditing && !this.auth.canEditRecords) return true;
-    return false;
+    return !this.canEditOrderContent;
   }
 
   get canDuplicateOrder(): boolean {
@@ -1381,7 +1506,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   /** Hay al menos una acción para mostrar arriba a la derecha (guardar/duplicar/imprimir/etc.). */
   get hasOrderHeaderActions(): boolean {
     return (
-      !this.isReadOnlyOrder ||
+      this.canSaveOrder ||
       this.canSaveLockedDescription ||
       this.canDuplicateOrder ||
       (this.isEditing && this.auth.canPrintOrders)
@@ -1392,8 +1517,15 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return this.resolveCurrentOrderBalance().saldo;
   }
 
+  get orderPaymentProgressPercent(): number {
+    const total = Number(this.order.total) || 0;
+    if (total <= 0) return 0;
+    const pagado = this.getTotalPagado();
+    return Math.min(100, Math.max(0, Math.round((pagado / total) * 1000) / 10));
+  }
+
   get canRegisterOrderPayment(): boolean {
-    if (!this.editingOrderId || !this.auth.canAccessCash || this.isCancelledOrder) {
+    if (!this.editingOrderId || !this.auth.canRegisterOrderPayments || this.isCancelledOrder) {
       return false;
     }
     return this.pendingOrderSaldo > 0;
@@ -1446,6 +1578,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (next === transitionPrevious) {
       this.pendingEntregaModo = null;
       this.order.estado = newEstado;
+      this.markOrderFormDirty();
       return;
     }
 
@@ -1480,6 +1613,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       this.promptEntregaModo(
         () => {
           this.order.estado = 'entregado';
+          this.markOrderFormDirty();
         },
         () => {
           this.pendingEntregaModo = null;
@@ -1490,6 +1624,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     this.order.estado = newEstado;
+    this.markOrderFormDirty();
   }
 
   private promptEntregaModo(onChosen: () => void, onCancel: () => void) {
@@ -1541,6 +1676,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   cancelStockDiscountDialog() {
     this.closeStockDiscountDialog();
     this.pendingSaveEstado = null;
+    this.order.estado = this.savedOrderEstado || this.order.estado;
     this.resetOrderSaveState();
   }
 
@@ -1554,7 +1690,22 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!this.editingOrderId || !this.canReviewStock) return;
     this.stockPrepFromEstadoChange = false;
     this.pendingEstadoChange = null;
+    this.syncAllOrderLineStockReservationFields();
+    this.stockPrepDraftRevision++;
     this.stockPrepOpen = true;
+  }
+
+  private syncAllOrderLineStockReservationFields() {
+    for (const line of this.orderLines) {
+      syncOrderLineStockReservationFields(line);
+    }
+  }
+
+  private notifyOrderLinesStockDraftChanged() {
+    this.syncAllOrderLineStockReservationFields();
+    if (this.stockPrepOpen) {
+      this.stockPrepDraftRevision++;
+    }
   }
 
   onStockPrepClosed() {
@@ -1581,6 +1732,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
     this.orderService.getOrder(this.editingOrderId).subscribe({
       next: (order) => {
+        if (this.shouldBlockStaleOrderReload()) return;
         this.order.estadoStock = order.estadoStock ?? result.estadoStock;
         this.order.stockPreparado = order.stockPreparado ?? result.stockPreparado;
         if (order.items?.length) {
@@ -1767,7 +1919,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   hasOrderLineMeta(line: OrderLineItem): boolean {
-    if (line.stockItemId) return true;
+    if (line.stockItemId && this.lineControlsStock(line)) return true;
     if (this.useDetailedExtraCosts && this.auth.canEditPersonalization) return true;
     return this.auth.canViewPriceCatalog && this.getCatalogPriceOptions(line).length > 0;
   }
@@ -1833,6 +1985,15 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   private syncOrderReturnNavigation(): void {
     const returnTo = this.route.snapshot.queryParamMap.get('returnTo');
+    if (returnTo === 'cash') {
+      const ctx = parseCashReturnContext(this.route.snapshot.queryParamMap);
+      if (ctx) {
+        this.orderReturnTo = 'cash';
+        this.orderCashReturnContext = ctx;
+        this.orderReturnStockTab = 'movimientos';
+        return;
+      }
+    }
     if (returnTo === 'stock') {
       this.orderReturnTo = 'stock';
       const tab = this.route.snapshot.queryParamMap.get('stockTab');
@@ -1840,10 +2001,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         tab === 'movimientos' || tab === 'reservas' || tab === 'productos'
           ? tab
           : 'movimientos';
+      this.orderCashReturnContext = null;
       return;
     }
     this.orderReturnTo = 'orders';
     this.orderReturnStockTab = 'movimientos';
+    this.orderCashReturnContext = null;
   }
 
   private readOrderPreview(orderId: string): Order | null {
@@ -1855,6 +2018,17 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private startEditingOrder(orderId: string) {
+    const alreadyEditingSame =
+      this.editingOrderId === orderId &&
+      this.orderPageReady &&
+      (this.loadedOrderSnapshot !== null || this.orderLines.length > 0);
+
+    if (alreadyEditingSame) {
+      if (this.orderSaveState === 'saving') return;
+      this.loadOrder(orderId);
+      return;
+    }
+
     this.editingOrderId = orderId;
     this.orderLines = [];
     this.invalidateOrderLinesViewCache();
@@ -1884,6 +2058,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       this.applyLoadedOrder(instant, { includeLines: instantHasLines });
       if (instantHasLines) {
         this.orderDetailLoading = false;
+      } else if ((instant.productoNombres?.length ?? 0) > 0) {
+        // Compatibilidad con caché vieja del listado (sin ítems): no bloqueamos toda la sección.
+        this.orderDetailLoading = false;
       }
     } else {
       this.order = this.emptyOrder();
@@ -1897,7 +2074,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderHasLinePayload(order: Order | null | undefined): boolean {
     if (!order) return false;
     if (order.stockItemId) return true;
-    return this.coerceOrderItems(order.items).length > 0;
+    return coerceOrderLineItems(order.items).length > 0;
   }
 
   private refreshClients() {
@@ -1950,6 +2127,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.pendingClientName = option.label;
     this.selectedClientLabel = option.label;
     this.mergeClientOption(option.value, option.label);
+    this.markOrderFormDirty();
   }
 
   quickCreateClient(name: string) {
@@ -2030,6 +2208,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
     this.calculateTotals();
     this.enrichOrderLinesWithStock({ debounceMs: 0 });
+    this.markOrderFormSynced();
     clearOrderFormDraft();
     this.refreshClients();
     return true;
@@ -2118,6 +2297,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   printCurrentOrder() {
     if (!this.auth.canPrintOrders || !this.loadedOrderSnapshot?.id) return;
 
+    const lineItems = this.orderLines.length
+      ? this.orderLines
+      : orderLineItemsForPrint(this.loadedOrderSnapshot);
+
     const snapshot: Order = {
       ...this.loadedOrderSnapshot,
       clienteId: this.order.clienteId ?? this.loadedOrderSnapshot.clienteId,
@@ -2131,7 +2314,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       pagos: this.order.pagos ?? this.loadedOrderSnapshot.pagos,
       stockPreparado: this.order.stockPreparado ?? this.loadedOrderSnapshot.stockPreparado,
       estadoStock: this.order.estadoStock ?? this.loadedOrderSnapshot.estadoStock,
-      items: (this.orderLines.length ? this.orderLines : this.loadedOrderSnapshot.items).map((line) => ({
+      items: lineItems.map((line) => ({
         ...line,
         cantidadReservada: line.cantidadReservada,
         cantidadFaltante: line.cantidadFaltante,
@@ -2150,23 +2333,47 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   onOrderFechaChange(value: string) {
     this.order.createdAt = dateInputToIso(value);
+    this.markOrderFormDirty();
   }
 
   onFechaEntregaChange(value: string) {
     if (!value) {
       this.order.fechaEntrega = new Date().toISOString();
+      this.markOrderFormDirty();
       return;
     }
     this.order.fechaEntrega = dateInputToIso(value);
+    this.markOrderFormDirty();
   }
 
   onOrderProductSelected(item: StockItem) {
     if (!this.ensureEditable('agregar productos')) return;
-    this.addProduct(item);
+    this.addOrIncrementProduct(item, 1);
   }
 
-  addProduct(item: StockItem) {
-    if (!item.id || this.addedOrderProductIds.includes(item.id)) return;
+  onOrderProductQuantitySelected(event: { item: StockItem; quantity: number }) {
+    if (!this.ensureEditable('agregar productos')) return;
+    this.addOrIncrementProduct(event.item, event.quantity);
+  }
+
+  private addOrIncrementProduct(item: StockItem, quantity: number) {
+    if (!item.id || quantity <= 0) return;
+
+    const existing = this.orderLines.find((line) => line.stockItemId === item.id);
+    if (existing) {
+      existing.cantidad = (Number(existing.cantidad) || 0) + quantity;
+      this.invalidateOrderLinesViewCache();
+      this.notifyOrderLinesStockDraftChanged();
+      this.calculateTotals();
+      this.markOrderFormDirty();
+      return;
+    }
+
+    this.addProduct(item, quantity);
+  }
+
+  addProduct(item: StockItem, initialQty = 1) {
+    if (!item.id) return;
 
     const costoUnitario = Number(item.costo) || 0;
     const precioSugerido = Number(item.precioSugerido) || costoUnitario * 2;
@@ -2174,7 +2381,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const line: OrderLineItem = {
       stockItemId: item.id,
       nombre: item.nombre,
-      cantidad: 1,
+      cantidad: initialQty,
       costoUnitario,
       costosExtra: [],
       precioVenta: null,
@@ -2186,7 +2393,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.attachCatalogToLine(line, item);
     this.orderLines.push(line);
     this.invalidateOrderLinesViewCache();
+    this.notifyOrderLinesStockDraftChanged();
     this.calculateTotals();
+    this.markOrderFormDirty();
   }
 
   getCatalogPriceOptions(line: OrderLineItem): Array<{ label: string; price: number }> {
@@ -2285,12 +2494,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return this.orderTableColumnsCache;
     }
     this.orderTableColumnsKey = key;
-    this.orderTableColumnsCache = buildTransactionTableColumns(ORDER_FORM_TABLE_COLUMNS, {
-      unitCost: this.auth.hasPermission(this.permissions.STOCK_VIEW_COSTS),
-      personalization: this.auth.hasPermission(this.permissions.ORDERS_PERSONALIZATION),
-      unitSale: this.auth.hasPermission(this.permissions.ORDERS_VIEW_SALE_PRICE),
-      actions: !this.isReadOnlyOrder,
-    });
+    this.orderTableColumnsCache = buildTransactionTableColumns(
+      ORDER_FORM_TABLE_COLUMNS,
+      {
+        unitCost: this.auth.hasPermission(this.permissions.STOCK_VIEW_COSTS),
+        personalization: this.auth.hasPermission(this.permissions.ORDERS_PERSONALIZATION),
+        unitSale: this.auth.hasPermission(this.permissions.ORDERS_VIEW_SALE_PRICE),
+        actions: !this.isReadOnlyOrder,
+      },
+      ORDER_FORM_COLUMN_WEIGHTS
+    );
     return this.orderTableColumnsCache;
   }
 
@@ -2341,16 +2554,20 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!line) return;
     if (event.field === 'quantity') {
       line.cantidad = event.value;
+      this.notifyOrderLinesStockDraftChanged();
       this.calculateTotals();
+      this.markOrderFormDirty();
       return;
     }
     if (event.field === 'personalization') {
       this.setLinePersUnitCost(line, event.value);
+      this.markOrderFormDirty();
       return;
     }
     if (event.field === 'unitSale') {
       line.precioVenta = event.value;
       this.calculateTotals();
+      this.markOrderFormDirty();
     }
   }
 
@@ -2373,13 +2590,16 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderLinesTable?.clearNumericDraftsForIndex(index);
     this.orderLines.splice(index, 1);
     this.invalidateOrderLinesViewCache();
+    this.notifyOrderLinesStockDraftChanged();
     this.calculateTotals();
+    this.markOrderFormDirty();
   }
 
   onLineQuantityChange(line: OrderLineItem) {
     if (!line.cantidad || line.cantidad < 1) {
       line.cantidad = 1;
     }
+    this.notifyOrderLinesStockDraftChanged();
     this.calculateTotals();
   }
 
@@ -2467,6 +2687,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       pagos: this.order.pagos ?? this.loadedOrderSnapshot?.pagos,
       seniaBloqueada: this.order.seniaBloqueada ?? this.loadedOrderSnapshot?.seniaBloqueada,
       movimientoSeniaId: this.order.movimientoSeniaId ?? this.loadedOrderSnapshot?.movimientoSeniaId,
+      items: this.orderLines.map((line) => ({
+        cantidad: Number(line.cantidad) || 0,
+        precioVenta: line.precioVenta,
+      })),
     });
   }
 
@@ -2481,15 +2705,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   getTotalPagado(): number {
-    if (this.order.pagos?.length) {
-      return this.order.pagos
-        .filter((pago) => pago.tipo !== 'extra')
-        .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
-    }
-    if (this.seniaBloqueada || this.order.movimientoSeniaId) {
-      return Number(this.order.totalPagado ?? this.order.senia) || 0;
-    }
-    return 0;
+    return this.resolveCurrentOrderBalance().pagado;
   }
 
   get paymentFechaHoyLabel(): string {
@@ -2506,9 +2722,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   getPaymentLabel(pago: OrderPayment): string {
     if (pago.tipo === 'seña') return 'Seña';
     if (pago.notas === 'Pago total') return 'Pago total';
-    if (pago.tipo === 'cuota') return 'Cuota';
-    if (pago.tipo === 'extra') return 'Pago extra';
-    return 'Pago';
+    if (pago.tipo === 'pago') return 'Pago';
+    return 'Cuota';
   }
 
   getPaymentLineLabel(pago: OrderPayment): string {
@@ -2531,19 +2746,71 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return `Cobro venta #${match[1]}`;
   }
 
-  setPaymentModo(modo: 'total' | 'parcial') {
-    this.paymentModo = modo;
-    if (modo === 'total') {
-      this.paymentMonto = this.paymentSaldoSnapshot;
-    } else if (this.paymentMonto == null || this.paymentMonto === this.paymentSaldoSnapshot) {
-      this.paymentMonto = null;
-    }
+  canRemovePayment(pago: OrderPayment): boolean {
+    if (!this.auth.canAccessCash || !this.editingOrderId || !pago.id) return false;
+    if (this.isCancelledOrder || this.isLockedOrder) return false;
+    if (this.extractVentaCobroLabel(pago.notas)) return false;
+    if (pago.tipo === 'pago' && pago.notas === 'Pago total') return false;
+    return true;
+  }
+
+  confirmRemovePayment(pago: OrderPayment) {
+    if (!this.canRemovePayment(pago) || !this.editingOrderId || !pago.id) return;
+
+    const label = this.getPaymentLineLabel(pago);
+    this.dialogService
+      .confirm({
+        title: 'Anular pago',
+        message:
+          `Se quitará ${label} por ${this.formatMoney(pago.monto)} del pedido y se eliminará el ingreso en caja.\n\n` +
+          'Podés registrar un pago nuevo después con + Pago.',
+        confirmLabel: 'Anular pago',
+        variant: 'danger',
+      })
+      .subscribe((confirmed) => {
+        if (!confirmed) return;
+        this.paymentRemovingId = pago.id ?? null;
+        this.orderService.removeOrderPayment(this.editingOrderId!, pago.id!).subscribe({
+          next: (result) => {
+            this.order.pagos = result.pagos ?? [];
+            this.order.totalPagado = result.totalPagado;
+            this.order.saldo = result.saldo;
+            if (result.seniaBloqueada != null) {
+              this.order.seniaBloqueada = result.seniaBloqueada;
+            }
+            if (result.movimientoSeniaId !== undefined) {
+              this.order.movimientoSeniaId = result.movimientoSeniaId;
+            }
+            this.syncOrderBalance();
+            if (this.loadedOrderSnapshot) {
+              this.loadedOrderSnapshot = {
+                ...this.loadedOrderSnapshot,
+                pagos: this.order.pagos,
+                totalPagado: this.order.totalPagado,
+                saldo: this.order.saldo,
+                seniaBloqueada: this.order.seniaBloqueada,
+                movimientoSeniaId: this.order.movimientoSeniaId,
+              };
+            }
+            this.paymentRemovingId = null;
+          },
+          error: (err: HttpErrorResponse) => {
+            this.paymentRemovingId = null;
+            this.dialogService.alert({
+              title: 'No se pudo anular',
+              message:
+                typeof err.error?.error === 'string'
+                  ? err.error.error
+                  : 'No se pudo anular el pago. Intentá de nuevo.',
+            });
+          },
+        });
+      });
   }
 
   openPaymentModal() {
     if (!this.ensurePaymentAllowed()) return;
     this.paymentSaldoSnapshot = this.pendingOrderSaldo;
-    this.paymentModo = 'total';
     this.paymentMonto = this.paymentSaldoSnapshot;
     this.paymentSubmitting = false;
     this.paymentModalOpen = true;
@@ -2555,10 +2822,37 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   submitPayment() {
+    void this.submitPaymentAsync();
+  }
+
+  private async submitPaymentAsync() {
     if (!this.ensurePaymentAllowed() || this.paymentSubmitting) return;
 
-    const saldo = this.paymentSaldoSnapshot;
-    const monto = this.paymentModo === 'total' ? saldo : Number(this.paymentMonto);
+    if (this.isOrderFormDirty()) {
+      this.paymentSubmitting = true;
+      try {
+        await this.ensureOrderSavedForPayment();
+        this.paymentSaldoSnapshot = this.pendingOrderSaldo;
+      } catch {
+        this.paymentSubmitting = false;
+        return;
+      }
+      this.paymentSubmitting = false;
+    }
+
+    this.calculateTotals();
+    const saldo = this.resolveCurrentOrderBalance().saldo;
+    this.paymentSaldoSnapshot = saldo;
+
+    if (saldo <= 0) {
+      this.dialogService.alert({
+        title: 'Sin saldo pendiente',
+        message: 'Este pedido ya no tiene saldo pendiente. Actualizá la pantalla e intentá de nuevo.',
+      });
+      return;
+    }
+
+    const monto = Number(this.paymentMonto);
 
     if (!monto || monto <= 0) {
       this.dialogService.alert({
@@ -2569,35 +2863,27 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     if (monto > saldo) {
-      const extra = monto - saldo;
-      this.dialogService
-        .confirm({
-          title: 'Pago mayor al saldo',
-          message: `El monto supera el saldo pendiente (${this.formatMoney(saldo)}). ¿Registrar ${this.formatMoney(saldo)} del pedido y ${this.formatMoney(extra)} como pago extra en caja?`,
-          confirmLabel: 'Sí, registrar',
-        })
-        .subscribe((confirmed) => {
-          if (confirmed) this.registerPayment(monto, true);
-        });
+      this.dialogService.alert({
+        title: 'Monto demasiado alto',
+        message: `El monto no puede superar el saldo pendiente (${this.formatMoney(saldo)}).`,
+      });
       return;
     }
 
-    this.registerPayment(monto, false);
+    this.registerPayment(monto);
   }
 
   formatMoney(value?: number | null): string {
     return formatMoneyValue(value);
   }
 
-  private registerPayment(monto: number, allowExtra: boolean) {
+  private registerPayment(monto: number) {
     if (!this.editingOrderId || this.paymentSubmitting) return;
 
     this.paymentSubmitting = true;
     this.orderService
       .addOrderPayment(this.editingOrderId, {
         monto,
-        tipo: this.paymentModo === 'parcial' ? 'cuota' : 'pago',
-        allowExtra,
       })
       .subscribe({
         next: (result) => {
@@ -2654,8 +2940,15 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   submitOrder() {
     if (!this.ensureEditable('confirmar el pedido')) return;
-    if (!this.validateClient()) return;
-    if (!this.validateProducts()) return;
+    if (!this.canSaveOrder) {
+      this.dialogService.alert({
+        title: 'Sin permiso',
+        message: 'No tenés permiso para guardar cambios en este pedido.',
+      });
+      return;
+    }
+    if (this.canEditOrderContent && !this.validateClient()) return;
+    if (this.canEditOrderContent && !this.validateProducts()) return;
 
     this.lockedDescriptionSave = false;
     this.confirmBeforeOrderSubmit(() => this.finalizeOrderSubmit());
@@ -2671,7 +2964,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private confirmBeforeOrderSubmit(onConfirm: () => void): void {
-    const donation = this.isDonationOrder;
+    const donation = this.shouldConfirmDonationOnSave;
     const delivery = this.isEditing && this.isDeliveryPendingSave;
     const estado = this.resolveSubmitEstado();
 
@@ -2827,6 +3120,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return totalVenta === 0;
   }
 
+  /** En borrador no pedimos confirmación de donación; al confirmar/guardar pedido activo sí. */
+  private get shouldConfirmDonationOnSave(): boolean {
+    if (!this.isDonationOrder) return false;
+    if (this.isDraftOrder) return false;
+    return normalizeOrderStatus(this.savedOrderEstado ?? this.order.estado) !== 'borrador';
+  }
+
   /** Ganancia visible: en donaciones pendientes de entrega no se descuenta todavía. */
   get displayOrderGanancia(): number {
     if (this.donationProfitPending) return 0;
@@ -2845,7 +3145,65 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderSaveAction = action;
     this.orderSaveState = 'saving';
     this.orderSaveBannerText = '';
+    this.invalidatePendingOrderReload();
     return true;
+  }
+
+  private markOrderFormDirty(): void {
+    this.orderFormRevision++;
+  }
+
+  private markOrderFormSynced(): void {
+    this.syncedOrderFormRevision = this.orderFormRevision;
+  }
+
+  private isOrderFormDirty(): boolean {
+    return this.orderFormRevision !== this.syncedOrderFormRevision;
+  }
+
+  /** Cancela GETs de detalle que podrían pisar cambios locales o un guardado reciente. */
+  private invalidatePendingOrderReload(): void {
+    this.loadOrderRequestId++;
+  }
+
+  private shouldBlockStaleOrderReload(): boolean {
+    if (this.orderSaveState === 'saving' || this.orderSaveState === 'success') return true;
+    if (this.isOrderFormDirty()) return true;
+    if (this.pendingEntregaModo || this.isDeliveryPendingSave) return true;
+    return false;
+  }
+
+  private syncLoadedOrderSnapshotFromForm(): void {
+    if (!this.editingOrderId) return;
+    const snapshot: Order = {
+      ...(this.loadedOrderSnapshot ?? { id: this.editingOrderId, clienteId: this.order.clienteId }),
+      id: this.editingOrderId,
+      clienteId: this.order.clienteId,
+      clienteNombre: (this.selectedClientLabel ?? this.order.clienteNombre ?? '').trim(),
+      descripcion: this.order.descripcion ?? '',
+      estado: this.order.estado ?? 'pendiente',
+      createdAt: this.order.createdAt,
+      fechaEntrega: this.order.fechaEntrega,
+      total: Number(this.order.total) || 0,
+      costoReal: Number(this.order.costoReal) || 0,
+      gananciaEstimada: Number(this.order.gananciaEstimada) || 0,
+      margen: Number(this.order.margen) || 0,
+      senia: Number(this.order.senia) || 0,
+      totalPagado: Number(this.order.totalPagado) || 0,
+      saldo: Number(this.order.saldo) || 0,
+      pagos: this.order.pagos ?? [],
+      seniaBloqueada: this.order.seniaBloqueada,
+      movimientoSeniaId: this.order.movimientoSeniaId,
+      stockDescontado: this.order.stockDescontado,
+      stockPreparado: this.order.stockPreparado,
+      estadoStock: this.order.estadoStock,
+      ventaId: this.order.ventaId,
+      entregaConSaldo: this.order.entregaConSaldo,
+      items: this.orderLines,
+      fotos: this.orderPhotos,
+    };
+    this.loadedOrderSnapshot = snapshot;
+    this.orderService.patchCachedOrder(this.editingOrderId, snapshot);
   }
 
   private resetOrderSaveState() {
@@ -2889,6 +3247,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
               descripcion: this.order.descripcion?.trim() ?? '',
             };
           }
+          this.markOrderFormSynced();
+          this.syncLoadedOrderSnapshotFromForm();
           this.finishOrderSaveSuccess();
         },
         error: (err: HttpErrorResponse) => {
@@ -3067,6 +3427,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
+    if (!orderHasStockControlledLines(this.orderLines)) {
+      onReady();
+      return;
+    }
+
     const stockFullyConsumed = orderStockFullyConsumed(this.orderLines);
     const crossesStock = shouldConsumeStockOnStatusChange({
       previousEstado: previous,
@@ -3110,13 +3475,27 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     });
   }
 
-  private executePersistOrder(estado: string, descuentoFisicoAlcance?: OrderPhysicalStockScope) {
-    if (!this.ensureEditable('guardar el pedido')) {
-      this.resetOrderSaveState();
-      this.pendingSaveEstado = null;
-      return;
+  private buildOrderPersistPayload(
+    estado: string,
+    descuentoFisicoAlcance?: OrderPhysicalStockScope
+  ): Partial<Order> & {
+    descuentoFisicoAlcance?: OrderPhysicalStockScope;
+    esDonacion?: boolean;
+    entregaModo?: OrderEntregaModo;
+  } {
+    if (this.isEditing && this.isStatusOnlyOrderEditor) {
+      const statusPayload: Partial<Order> & {
+        descuentoFisicoAlcance?: OrderPhysicalStockScope;
+        entregaModo?: OrderEntregaModo;
+      } = { estado };
+      if (descuentoFisicoAlcance) {
+        statusPayload.descuentoFisicoAlcance = descuentoFisicoAlcance;
+      }
+      if (this.pendingEntregaModo && isOrderDeliveryEstado(estado)) {
+        statusPayload.entregaModo = this.pendingEntregaModo;
+      }
+      return statusPayload;
     }
-    this.calculateTotals();
 
     const firstLine = this.orderLines[0];
     const orderTotal = Number(this.order.total) || 0;
@@ -3126,8 +3505,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       entregaModo?: OrderEntregaModo;
     } = {
       clienteId: this.order.clienteId!,
-      // Guardamos el nombre denormalizado para que la grilla no tenga que
-      // resolver cada cliente contra Firestore al listar pedidos.
       clienteNombre: (this.selectedClientLabel ?? this.order.clienteNombre ?? '').trim(),
       descripcion: this.order.descripcion?.trim() ?? '',
       estado,
@@ -3147,6 +3524,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           cantidad: Number(line.cantidad) || 1,
           costoUnitario: Number(line.costoUnitario) || 0,
           costoPersonalizacion: customizationTotal,
+          controlaStock: line.controlaStock,
           costosExtra: (line.costosExtra ?? [])
             .filter((extra) => extra.nombre?.trim() || extra.costo)
             .map((extra) => ({
@@ -3174,6 +3552,45 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       payload.entregaModo = this.pendingEntregaModo;
     }
 
+    return payload;
+  }
+
+  private async ensureOrderSavedForPayment(): Promise<void> {
+    if (!this.editingOrderId || !this.isOrderFormDirty()) return;
+    if (!this.ensureEditable('guardar el pedido')) {
+      throw new Error('locked');
+    }
+
+    this.calculateTotals();
+    const estado = this.order.estado ?? 'pendiente';
+    const payload = this.buildOrderPersistPayload(estado);
+
+    try {
+      const result = await firstValueFrom(
+        this.orderService.updateOrder(this.editingOrderId, payload)
+      );
+      this.applyOrderUpdateResult(result as OrderUpdateResult);
+      this.markOrderFormSynced();
+      this.syncLoadedOrderSnapshotFromForm();
+    } catch {
+      this.dialogService.alert({
+        title: 'Guardá el pedido',
+        message:
+          'Hay cambios sin guardar que afectan el saldo. Guardá el pedido e intentá registrar el pago de nuevo.',
+      });
+      throw new Error('save_failed');
+    }
+  }
+
+  private executePersistOrder(estado: string, descuentoFisicoAlcance?: OrderPhysicalStockScope) {
+    if (!this.ensureEditable('guardar el pedido')) {
+      this.resetOrderSaveState();
+      this.pendingSaveEstado = null;
+      return;
+    }
+    this.calculateTotals();
+
+    const payload = this.buildOrderPersistPayload(estado, descuentoFisicoAlcance);
     const request = this.editingOrderId
       ? this.orderService.updateOrder(this.editingOrderId, payload)
       : this.orderService.createOrder(payload as Order);
@@ -3182,6 +3599,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       next: (result) => {
         this.pendingSaveEstado = null;
         this.pendingEntregaModo = null;
+        this.invalidatePendingOrderReload();
         const createdId = 'id' in result ? result.id : undefined;
         const wasNew = !this.editingOrderId;
         if (createdId && wasNew) {
@@ -3191,6 +3609,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.applyOrderUpdateResult(result as OrderUpdateResult);
         this.isDraftOrder = estado === 'borrador';
         this.savedOrderEstado = this.order.estado ?? estado;
+        this.markOrderFormSynced();
+        this.syncLoadedOrderSnapshotFromForm();
         if (orderIsLockedForEdit(this.order.estado, this.order) || !!(result as OrderUpdateResult).locked) {
           this.orderFormLocked = true;
           if (this.loadedOrderSnapshot) {
@@ -3210,7 +3630,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           this.orderSaveAction === 'submit' &&
           estado !== 'borrador' &&
           !!this.editingOrderId &&
-          orderConfigUsesReservedStock(this.appConfig);
+          orderConfigUsesReservedStock(this.appConfig) &&
+          orderHasStockControlledLines(this.orderLines);
 
         this.finishOrderSaveSuccess();
         this.flushPendingOrderPhotosInBackground();
@@ -3331,12 +3752,28 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     };
   }
 
+  private loadOrderPhotoUrlsIfNeeded(orderId: string, order: Order) {
+    const photos = order.fotos ?? [];
+    if (!photos.length || photos.some((photo) => String(photo.url ?? '').trim())) return;
+
+    this.orderService.getOrder(orderId, { includePhotoUrls: true }).subscribe({
+      next: (fullOrder) => {
+        if (this.editingOrderId !== orderId) return;
+        this.orderPhotos = fullOrder.fotos ?? [];
+        if (this.loadedOrderSnapshot?.id === orderId) {
+          this.loadedOrderSnapshot = { ...this.loadedOrderSnapshot, fotos: this.orderPhotos };
+        }
+      },
+    });
+  }
+
   private loadOrder(orderId: string) {
     const requestId = ++this.loadOrderRequestId;
     this.orderService.getOrder(orderId).subscribe({
       next: (order) => {
         if (requestId !== this.loadOrderRequestId) return;
         if (this.editingOrderId !== orderId) return;
+        if (this.shouldBlockStaleOrderReload()) return;
 
         if (!this.auth.canViewOrder(order.estado)) {
           this.orderDetailLoading = false;
@@ -3351,6 +3788,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.applyLoadedOrder(order);
         this.orderPageReady = true;
         this.orderDetailLoading = false;
+        this.loadOrderPhotoUrlsIfNeeded(orderId, order);
       },
       error: () => {
         if (requestId !== this.loadOrderRequestId) return;
@@ -3366,14 +3804,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private coerceOrderItems(raw: unknown): OrderLineItem[] {
-    let items: OrderLineItem[] = [];
-    if (Array.isArray(raw)) {
-      items = raw.filter((line) => line && typeof line === 'object') as OrderLineItem[];
-    } else if (raw && typeof raw === 'object') {
-      items = Object.values(raw as Record<string, OrderLineItem>).filter(
-        (line) => line && typeof line === 'object'
-      );
-    }
+    let items = coerceOrderLineItems(raw);
     if (items.length > NewOrderComponent.MAX_ORDER_LINES) {
       items = items.slice(0, NewOrderComponent.MAX_ORDER_LINES);
     }
@@ -3413,6 +3844,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderPhotos = order.fotos ?? [];
     this.savedOrderEstado = this.order.estado ?? 'pendiente';
     this.orderFormLocked = orderIsLockedForEdit(order.estado, order);
+    this.markOrderFormSynced();
 
     if (!includeLines) {
       this.calculateTotals();
@@ -3627,7 +4059,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private ensurePaymentAllowed(): boolean {
-    if (!this.auth.canAccessCash) return false;
+    if (!this.auth.canRegisterOrderPayments) return false;
     if (this.isCancelledOrder) {
       this.dialogService.alert({
         title: 'Pedido cancelado',

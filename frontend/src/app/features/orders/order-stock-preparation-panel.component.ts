@@ -1,7 +1,8 @@
-import { Component, EventEmitter, Input, Output, inject, OnChanges } from '@angular/core';
+import { Component, EventEmitter, Input, Output, inject, OnChanges, SimpleChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
+  OrderLineItem,
   OrderService,
   OrderStockPreparationLine,
   OrderStockPreparationView,
@@ -11,6 +12,7 @@ import { DialogService } from '../../core/services/dialog.service';
 import {
   buildSuggestedStockAllocations,
   getStockPrepPendiente,
+  mergeDraftOrderIntoStockPrepView,
   splitProductDisplayName,
 } from '../../core/utils/order-stock-prep';
 import {
@@ -278,6 +280,10 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
   @Input() orderId = '';
   @Input() orderLabel = '';
   @Input() clientName = '';
+  /** Líneas del formulario (pueden diferir del pedido guardado hasta pulsar Guardar). */
+  @Input() draftOrderLines: OrderLineItem[] | null = null;
+  /** Se incrementa al cambiar cantidades o ítems para refrescar el panel abierto. */
+  @Input() draftOrderLinesRevision = 0;
   @Output() closed = new EventEmitter<void>();
   @Output() confirmed = new EventEmitter<{ estadoStock: string; stockPreparado: boolean }>();
 
@@ -314,9 +320,18 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
     return this.draftLines.filter((line) => this.getFaltante(line) > 0).length;
   }
 
-  ngOnChanges(): void {
-    if (this.open && this.orderId) {
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['open']?.currentValue && this.open && this.orderId) {
       this.load();
+      return;
+    }
+    if (
+      (changes['draftOrderLines'] || changes['draftOrderLinesRevision']) &&
+      this.open &&
+      this.view &&
+      !this.loading
+    ) {
+      this.syncFromDraftOrderLines();
     }
   }
 
@@ -387,6 +402,7 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
       next: (view) => {
         if (generation !== this.loadGeneration) return;
         this.applyView(view);
+        this.syncFromDraftOrderLines();
         this.loading = false;
       },
       error: () => {
@@ -399,6 +415,16 @@ export class OrderStockPreparationPanelComponent implements OnChanges {
         this.cancel();
       },
     });
+  }
+
+  private syncFromDraftOrderLines() {
+    if (!this.view) return;
+    const draftLines = this.draftOrderLines ?? [];
+    const merged = mergeDraftOrderIntoStockPrepView(this.view, draftLines);
+    this.applyView(merged, true);
+    for (const line of this.draftLines) {
+      this.syncLineTotals(line, 'reservar');
+    }
   }
 
   private applyView(view: OrderStockPreparationView, preserveInputs = false) {

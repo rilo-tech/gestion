@@ -34,6 +34,11 @@ import { ModulePageHeaderComponent } from '../../shared/components/module-page-h
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 @Component({
   selector: 'app-users',
@@ -236,6 +241,10 @@ export class UsersComponent implements OnInit {
 
   users: AppUser[] = [];
   loadingUsers = false;
+  loadingMoreUsers = false;
+  usersHasMore = false;
+  usersCursor: string | null = null;
+  private readonly listLoadSession = new ProgressiveListSession();
   searchQuery = '';
   usersPage = 1;
   userModalOpen = false;
@@ -359,19 +368,50 @@ export class UsersComponent implements OnInit {
   }
 
   private loadUsers() {
+    const loadToken = this.listLoadSession.next();
     this.loadingUsers = true;
     this.usersPage = 1;
-    this.userService.getUsers().subscribe({
-      next: (users) => {
-        this.users = users;
+    this.userService.getUsersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.users = page.items;
+        this.usersHasMore = page.hasMore;
+        this.usersCursor = page.nextCursor;
         this.loadingUsers = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingUsersInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loadingUsers = false;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudieron cargar los usuarios.',
         });
+      },
+    });
+  }
+
+  private loadRemainingUsersInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.usersHasMore || !this.usersCursor || this.loadingMoreUsers) return;
+
+    this.loadingMoreUsers = true;
+    this.userService.getUsersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.usersCursor).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.users = [...this.users, ...page.items];
+        this.usersHasMore = page.hasMore;
+        this.usersCursor = page.nextCursor;
+        this.loadingMoreUsers = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingUsersInBackground(loadToken);
+        }
+      },
+      error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.loadingMoreUsers = false;
       },
     });
   }

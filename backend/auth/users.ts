@@ -18,6 +18,7 @@ export interface StoredUser {
   permisos: string[];
   activo: boolean;
   tema?: ThemePreference;
+  colaboradorId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -33,6 +34,7 @@ export interface PublicUser {
   hasPassword: boolean;
   hasGoogle: boolean;
   tema?: ThemePreference;
+  colaboradorId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -57,6 +59,12 @@ function normalizeTheme(value: unknown): ThemePreference {
   return value === 'dark' ? 'dark' : 'light';
 }
 
+function normalizeColaboradorId(value: unknown, rol: UserRole): string | null {
+  if (rol !== 'staff') return null;
+  const id = String(value ?? '').trim();
+  return id || null;
+}
+
 function mapStoredUser(id: string, data: Record<string, unknown>): StoredUser {
   const rol: UserRole =
     data.rol === 'supervisor' || data.rol === 'admin' ? data.rol : 'staff';
@@ -72,6 +80,7 @@ function mapStoredUser(id: string, data: Record<string, unknown>): StoredUser {
     permisos: rol === 'staff' ? sanitizeStaffPermissions(data.permisos) : [],
     activo: data.activo !== false,
     tema: normalizeTheme(data.tema),
+    colaboradorId: normalizeColaboradorId(data.colaboradorId, rol),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -89,6 +98,7 @@ export function toPublicUser(user: StoredUser): PublicUser {
     hasPassword: !!user.passwordHash,
     hasGoogle: !!user.googleId,
     tema: user.tema ?? 'light',
+    colaboradorId: user.colaboradorId ?? null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -120,6 +130,30 @@ export async function listUsers(businessId: string): Promise<PublicUser[]> {
   return snapshot.docs
     .map((doc) => toPublicUser(mapStoredUser(doc.id, doc.data())))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+export async function listUsersPage(
+  businessId: string,
+  limit: number,
+  cursor?: string
+): Promise<{ items: PublicUser[]; nextCursor: string | null; hasMore: boolean }> {
+  await ensureDefaultSupervisor(businessId);
+
+  let query = usersCollection(businessId).orderBy('nombre').limit(limit + 1);
+
+  if (cursor) {
+    const cursorSnap = await usersCollection(businessId).doc(cursor).get();
+    if (cursorSnap.exists) {
+      query = query.startAfter(cursorSnap);
+    }
+  }
+
+  const snapshot = await query.get();
+  const hasMore = snapshot.docs.length > limit;
+  const docs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+  const items = docs.map((doc) => toPublicUser(mapStoredUser(doc.id, doc.data() ?? {})));
+  const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
+  return { items, nextCursor, hasMore };
 }
 
 export async function getStoredUser(
@@ -188,6 +222,24 @@ export async function linkGoogleId(
     googleId,
     updatedAt: new Date().toISOString(),
   });
+}
+
+export async function assertColaboradorLinkAvailable(
+  businessId: string,
+  colaboradorId: string | null | undefined,
+  excludeUserId?: string
+): Promise<void> {
+  const id = String(colaboradorId ?? '').trim();
+  if (!id) return;
+
+  const snapshot = await usersCollection(businessId).where('colaboradorId', '==', id).get();
+  for (const doc of snapshot.docs) {
+    if (excludeUserId && doc.id === excludeUserId) continue;
+    const data = doc.data() as Record<string, unknown>;
+    if (data.rol !== 'staff') continue;
+    if (data.activo === false) continue;
+    throw new Error('COLABORADOR_ALREADY_LINKED');
+  }
 }
 
 export async function assertUserLoginAndEmailAvailable(

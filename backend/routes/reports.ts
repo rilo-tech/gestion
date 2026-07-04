@@ -1,11 +1,12 @@
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
-import { requirePermission } from '../auth/middleware.ts';
+import { requirePermission, requireBusinessModule } from '../auth/middleware.ts';
 import { userHasPermission } from '../auth/constants.ts';
 import type { UserRole } from '../auth/constants.ts';
 import { buildBusinessReport, parseReportFilters } from '../utils/reports.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessModule('reports'));
 
 router.get(
   '/:businessId',

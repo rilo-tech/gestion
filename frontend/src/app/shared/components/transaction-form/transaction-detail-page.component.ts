@@ -11,7 +11,7 @@ import { FormScreenHeaderComponent } from '../form-shell/form-screen-header.comp
       class="fixed top-14 left-0 right-0 bottom-0 lg:left-64 z-40 flex flex-col bg-gray-50 dark:bg-gray-950 min-h-0 overflow-y-auto"
       role="dialog"
       aria-modal="true">
-      <div class="p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
+      <div class="transaction-form-page-shell p-4 sm:p-6 lg:p-8 pb-20 sm:pb-24">
         <div class="max-w-7xl mx-auto w-full">
           <app-form-screen-header
             [title]="title"

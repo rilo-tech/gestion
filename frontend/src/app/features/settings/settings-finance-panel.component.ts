@@ -62,7 +62,7 @@ interface TarjetaMedioGroupView {
       <div [class]="sectionsListClass">
         <app-config-setting-card
           title="Medios de pago"
-          description="Definí el nombre y si cada medio genera egreso de caja al instante, cuentas a pagar, o ambos según corresponda."
+          description="Nombre del medio y si impacta caja al instante, cuenta a pagar o ambos."
           [listCount]="config.finanzas.mediosPago.length"
           [sectionCollapse]="true"
           [listExpanded]="isFinanceSectionOpen('medios')"
@@ -149,7 +149,7 @@ interface TarjetaMedioGroupView {
 
         <app-config-setting-card
           title="Configurar cuentas"
-          description="Una lista por cada medio de pago que requiere cuenta (arriba). Editá el nombre y el impacto del gasto: negocio, personal o ambos."
+          description="Cuentas por medio (tarjetas, bancos). Impacto: negocio, personal o ambos."
           [listCount]="config.finanzas.tarjetas.length"
           [sectionCollapse]="true"
           [listExpanded]="isFinanceSectionOpen('tarjetas')"
@@ -206,7 +206,7 @@ interface TarjetaMedioGroupView {
 
         <app-config-setting-card
           title="Conceptos de ingreso"
-          description="Opciones desplegables al registrar ingresos manuales en Caja. Si no cargás ninguno, el concepto queda como texto libre."
+          description="Lista para ingresos manuales en Caja. Sin opciones, queda texto libre."
           [listCount]="config.finanzas.conceptosIngreso.length"
           [sectionCollapse]="true"
           [listExpanded]="isFinanceSectionOpen('conceptosIngreso')"
@@ -254,7 +254,7 @@ interface TarjetaMedioGroupView {
 
         <app-config-setting-card
           title="Notas de crédito y débito"
-          description="Habilitá comprobantes adicionales en los formularios de Compras y Ventas. Si están desactivados, los formularios se ven igual que siempre."
+          description="Tipos extra en Compras y Ventas. Si no los activás, los formularios no cambian."
           [listCount]="comprobantesActivosCount"
           [sectionCollapse]="true"
           [listExpanded]="isFinanceSectionOpen('comprobantes')"
@@ -269,9 +269,9 @@ interface TarjetaMedioGroupView {
                 [disabled]="saving"
                 class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
               <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
-                <span class="font-semibold">Nota de crédito</span>
-                <span [class]="configSettingDescClass">
-                  Devoluciones: en compras saca stock y baja el saldo; en ventas reingresa stock y genera saldo a favor del cliente.
+                <span class="font-semibold block">Nota de crédito</span>
+                <span class="block text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                  Devoluciones: ajusta stock y saldo en compras y ventas.
                 </span>
               </span>
             </label>
@@ -283,9 +283,9 @@ interface TarjetaMedioGroupView {
                 [disabled]="saving"
                 class="mt-0.5 rounded border-gray-300 text-teal-600 focus:ring-teal-500 shrink-0" />
               <span class="leading-snug text-sm text-gray-700 dark:text-gray-300">
-                <span class="font-semibold">Nota de débito</span>
-                <span [class]="configSettingDescClass">
-                  Ajustes que aumentan el saldo. Mueve stock igual que una factura.
+                <span class="font-semibold block">Nota de débito</span>
+                <span class="block text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                  Aumenta el saldo; mueve stock como una factura.
                 </span>
               </span>
             </label>

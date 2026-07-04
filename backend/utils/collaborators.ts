@@ -488,16 +488,21 @@ export async function syncCollaboratorPaymentCash(
 export async function buildCollaboratorsPeriodSummary(
   businessId: string,
   from: string,
-  to: string
+  to: string,
+  colaboradorId?: string
 ): Promise<CollaboratorsPeriodSummary> {
   const fromDate = parseDateOnly(from) ?? parseDateOnly(defaultFromDate())!;
   const toDate = parseDateOnly(to, true) ?? parseDateOnly(defaultToDate(), true)!;
+  const scopedCollaboratorId = String(colaboradorId ?? '').trim();
 
-  const [collaborators, movementsSnap, extraTipos] = await Promise.all([
+  const [allCollaborators, movementsSnap, extraTipos] = await Promise.all([
     listCollaborators(businessId),
     movementsCollection(businessId).get(),
     loadCollaboratorExtraTipos(businessId),
   ]);
+  const collaborators = scopedCollaboratorId
+    ? allCollaborators.filter((item) => item.id === scopedCollaboratorId)
+    : allCollaborators;
 
   const movements = movementsSnap.docs.map((doc) => ({
     id: doc.id,

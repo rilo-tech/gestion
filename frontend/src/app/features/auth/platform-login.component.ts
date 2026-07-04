@@ -5,7 +5,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled } from '../../core/config/firebase';
-import { GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
+import { GOOGLE_LOGIN_SCOPE_KEY, GOOGLE_LOGIN_UI_ENABLED } from '../../core/constants/google-auth-storage';
 import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 
 @Component({
@@ -54,13 +54,14 @@ import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
           </button>
         </form>
 
-        <div class="my-6 flex items-center gap-3">
+        <div *ngIf="googleLoginUiEnabled" class="my-6 flex items-center gap-3">
           <div class="h-px flex-1 bg-gray-800"></div>
           <span class="text-xs text-gray-500 uppercase">o</span>
           <div class="h-px flex-1 bg-gray-800"></div>
         </div>
 
         <button
+          *ngIf="googleLoginUiEnabled"
           type="button"
           (click)="submitGoogleLogin()"
           [disabled]="loading || googleRedirectPending"
@@ -68,12 +69,12 @@ import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
           {{ googleRedirectPending ? 'Volviendo de Google...' : 'Continuar con Google' }}
         </button>
 
-        <p class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
+        <p *ngIf="googleLoginUiEnabled" class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
           Tu email de Google debe estar registrado en el superadmin de plataforma. Podés cargarlo en Mi cuenta
           después del primer ingreso con contraseña.
         </p>
 
-        <p *ngIf="isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
+        <p *ngIf="googleLoginUiEnabled && isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
           Modo desarrollo: Google usa el emulador local (no es la cuenta real). Tras confirmar el email
           volvés acá y entrás automáticamente.
         </p>
@@ -86,6 +87,7 @@ export class PlatformLoginComponent implements OnInit {
   private router = inject(Router);
 
   readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
+  readonly googleLoginUiEnabled = GOOGLE_LOGIN_UI_ENABLED;
 
   login = '';
   password = '';

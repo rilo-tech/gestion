@@ -5,7 +5,13 @@ import {
   PublicBusinessInfo,
   PublicPlanInfo,
   SubscriptionPayment,
+  BusinessSubscriptionInfo,
 } from './business.service';
+import type {
+  SubscriptionModuleId,
+  SubscriptionModulesMap,
+  SubscriptionModuleMeta,
+} from '../../../../../shared/subscription-modules.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -14,6 +20,9 @@ export interface CreateBusinessPayload {
   nombre: string;
   planId: string;
   enPrueba?: boolean;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  suscripcion?: BusinessSubscriptionInfo;
   supervisor: {
     nombre: string;
     email?: string;
@@ -27,6 +36,57 @@ export interface UpdateBusinessPayload {
   planId?: string;
   estadoSuscripcion?: SubscriptionStatus;
   enPrueba?: boolean;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  trialStatus?: 'active' | 'expired' | 'converted' | 'cancelled';
+  historyNote?: string;
+  suscripcion?: BusinessSubscriptionInfo;
+}
+
+export interface SubscriptionHistoryEntry {
+  id: string;
+  date: string;
+  changedBy?: string;
+  changeType: string;
+  note?: string;
+  previousPlanId?: string;
+  newPlanId?: string;
+  previousTrialStatus?: string | null;
+  newTrialStatus?: string | null;
+  previousEnPrueba?: boolean;
+  newEnPrueba?: boolean;
+}
+
+export interface UpdatePlanResponse {
+  plan: PublicPlanInfo;
+  affectedBusinessCount: number;
+  applyToExistingBusinesses: boolean;
+  frozenBusinessCount: number;
+  clearedFrozenCount: number;
+}
+
+export interface PlatformTrialRow {
+  businessId: string;
+  nombre: string;
+  ownerName: string | null;
+  phone: string | null;
+  phoneVerified: boolean;
+  email: string | null;
+  emailVerified: boolean;
+  whatsappOptIn: boolean;
+  planNombre: string;
+  trialStartDate: string | null;
+  trialEndDate: string | null;
+  trialDaysRemaining: number | null;
+  trialStatus: string | null;
+  source: string | null;
+  lastLoginAt: string | null;
+  usage: {
+    ordersCount: number;
+    salesCount: number;
+    productsCount: number;
+    cashMovementsCount: number;
+  };
 }
 
 export interface CreatePlanPayload {
@@ -36,6 +96,12 @@ export interface CreatePlanPayload {
   limiteOperadores: number;
   limiteUsuariosTotal?: number;
   precioMensual?: number;
+  precioBaseMensual?: number;
+  precioPorAdministrador?: number;
+  precioPorOperador?: number;
+  modulosIncluidos?: SubscriptionModulesMap;
+  preciosAddonModulo?: Partial<Record<SubscriptionModuleId, number>>;
+  maxAmbitosCaja?: number;
   activo?: boolean;
 }
 
@@ -45,7 +111,14 @@ export interface UpdatePlanPayload {
   limiteOperadores?: number;
   limiteUsuariosTotal?: number;
   precioMensual?: number;
+  precioBaseMensual?: number;
+  precioPorAdministrador?: number;
+  precioPorOperador?: number;
+  modulosIncluidos?: SubscriptionModulesMap;
+  preciosAddonModulo?: Partial<Record<SubscriptionModuleId, number>>;
+  maxAmbitosCaja?: number;
   activo?: boolean;
+  applyToExistingBusinesses?: boolean;
 }
 
 export interface RegisterSubscriptionPaymentPayload {
@@ -61,6 +134,10 @@ export interface RegisterSubscriptionPaymentPayload {
 export class PlatformService {
   private http = inject(HttpClient);
 
+  getModuleCatalog(): Observable<SubscriptionModuleMeta[]> {
+    return this.http.get<SubscriptionModuleMeta[]>('/api/platform/modules');
+  }
+
   getPlans(): Observable<PublicPlanInfo[]> {
     return this.http.get<PublicPlanInfo[]>('/api/platform/plans');
   }
@@ -69,8 +146,8 @@ export class PlatformService {
     return this.http.post<PublicPlanInfo>('/api/platform/plans', payload);
   }
 
-  updatePlan(planId: string, payload: UpdatePlanPayload): Observable<PublicPlanInfo> {
-    return this.http.patch<PublicPlanInfo>(`/api/platform/plans/${planId}`, payload);
+  updatePlan(planId: string, payload: UpdatePlanPayload): Observable<UpdatePlanResponse> {
+    return this.http.patch<UpdatePlanResponse>(`/api/platform/plans/${planId}`, payload);
   }
 
   getBusinesses(): Observable<PublicBusinessInfo[]> {
@@ -102,6 +179,21 @@ export class PlatformService {
     return this.http.get<SubscriptionPayment[]>(
       `/api/platform/businesses/${businessId}/payments`
     );
+  }
+
+  getSubscriptionHistory(businessId: string): Observable<SubscriptionHistoryEntry[]> {
+    return this.http.get<SubscriptionHistoryEntry[]>(
+      `/api/platform/businesses/${businessId}/subscription-history`
+    );
+  }
+
+  getTrials(
+    status: 'active' | 'expiring' | 'expired' | 'all' = 'active',
+    source?: string
+  ): Observable<PlatformTrialRow[]> {
+    const params = new URLSearchParams({ status });
+    if (source) params.set('source', source);
+    return this.http.get<PlatformTrialRow[]>(`/api/platform/trials?${params}`);
   }
 
   registerBusinessPayment(

@@ -9,32 +9,32 @@ import {
   ActivityService,
 } from '../../../core/services/activity.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { IconActionComponent } from '../icon-action/icon-action.component';
+import { IconToolbarButtonComponent } from '../icon-toolbar/icon-toolbar-button.component';
 import { TransactionModalComponent } from '../transaction-modal/transaction-modal.component';
 
 @Component({
   selector: 'app-activity-log-trigger',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, IconActionComponent, TransactionModalComponent],
+  host: { class: 'inline-flex shrink-0' },
+  imports: [CommonModule, LucideAngularModule, IconToolbarButtonComponent, TransactionModalComponent],
   template: `
-    <app-icon-action
+    <app-icon-toolbar-button
+      icon="history"
       label="Actividad"
-      [iconOnly]="true"
       variant="outline"
       (clicked)="openModal()">
-      <i-lucide name="history" class="w-4 h-4"></i-lucide>
-    </app-icon-action>
+    </app-icon-toolbar-button>
 
     <app-transaction-modal
       [open]="modalOpen"
-      [title]="'Actividad · ' + moduleLabel"
+      [title]="modalTitle"
       [subtitle]="modalSubtitle"
       maxWidthClass="max-w-2xl"
       (closed)="closeModal()">
       <div *ngIf="loading" class="py-12 text-center text-sm text-gray-400">Cargando actividad...</div>
       <div *ngIf="!loading && errorMessage" class="py-8 text-center text-sm text-red-600">{{ errorMessage }}</div>
       <div *ngIf="!loading && !errorMessage && entries.length === 0" class="py-12 text-center text-sm text-gray-400">
-        Todavía no hay acciones registradas en este módulo.
+        {{ emptyMessage }}
       </div>
       <div *ngIf="!loading && entries.length > 0" class="space-y-2 max-h-[min(28rem,60vh)] overflow-y-auto pr-1">
         <article
@@ -61,6 +61,9 @@ import { TransactionModalComponent } from '../transaction-modal/transaction-moda
 })
 export class ActivityLogTriggerComponent {
   @Input({ required: true }) module!: ActivityModule;
+  @Input() entityId: string | null = null;
+  @Input() entityLabel = '';
+  @Input() limit?: number;
 
   private activityService = inject(ActivityService);
   readonly auth = inject(AuthService);
@@ -72,14 +75,37 @@ export class ActivityLogTriggerComponent {
   errorMessage = '';
   entries: ActivityLogEntry[] = [];
 
+  get isEntityScope(): boolean {
+    return !!this.entityId?.trim();
+  }
+
   get moduleLabel(): string {
     return ACTIVITY_MODULE_LABELS[this.module] ?? this.module;
   }
 
+  get modalTitle(): string {
+    if (this.isEntityScope) {
+      const label = this.entityLabel.trim();
+      return label ? `Actividad · ${label}` : 'Actividad de la transacción';
+    }
+    return `Actividad · ${this.moduleLabel}`;
+  }
+
   get modalSubtitle(): string {
+    if (this.isEntityScope) {
+      return this.auth.isPrivileged
+        ? 'Historial de acciones sobre esta transacción.'
+        : 'Tus acciones sobre esta transacción.';
+    }
     return this.auth.isPrivileged
-      ? 'Acciones de todos los usuarios en este módulo.'
-      : 'Solo tus acciones en este módulo.';
+      ? 'Últimos movimientos del módulo.'
+      : 'Tus últimos movimientos en este módulo.';
+  }
+
+  get emptyMessage(): string {
+    return this.isEntityScope
+      ? 'Todavía no hay acciones registradas para esta transacción.'
+      : 'Todavía no hay acciones registradas en este módulo.';
   }
 
   openModal() {
@@ -122,7 +148,16 @@ export class ActivityLogTriggerComponent {
   private loadEntries() {
     this.loading = true;
     this.errorMessage = '';
-    this.activityService.getModuleActivity(this.module).subscribe({
+    const entityId = this.entityId?.trim() || null;
+    const request = entityId
+      ? this.activityService.getEntityActivity(
+          this.module,
+          entityId,
+          this.limit ?? 120
+        )
+      : this.activityService.getModuleActivity(this.module, this.limit ?? 10);
+
+    request.subscribe({
       next: (entries) => {
         this.entries = entries;
         this.loading = false;

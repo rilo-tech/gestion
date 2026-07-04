@@ -333,8 +333,9 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             </app-config-setting-card>
 
             <app-config-setting-card
+              *ngIf="auth.hasModule('order_photos')"
               title="Fotos de referencia"
-              description="Adjuntar imágenes al pedido, imprimirlas y limpieza automática."
+              description="Adjuntar imágenes al pedido y limpieza automática."
               [listCount]="null"
               [sectionCollapse]="true"
               [listExpanded]="isConfigSectionOpen('pedidos.fotos')"
@@ -352,7 +353,24 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
                   <span>
                     <span class="block text-xs font-medium text-gray-900">Usar fotos en pedidos</span>
                     <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
-                      Muestra el botón para adjuntar fotos al pedido y las incluye en el imprimible.
+                      Muestra el adjunto de fotos en el formulario del pedido.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  *ngIf="config.pedidos.fotosReferenciaHabilitadas"
+                  class="flex items-start gap-2 cursor-pointer pl-5">
+                  <input
+                    type="checkbox"
+                    [(ngModel)]="config.pedidos.fotosReferenciaEnImpresion"
+                    name="pedidosFotosReferenciaEnImpresion"
+                    [disabled]="savingPedidos"
+                    (change)="persistPedidosSettings()"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary mt-0.5">
+                  <span>
+                    <span class="block text-xs font-medium text-gray-900">Imprimir fotos en hoja A4</span>
+                    <span class="block text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      Las incluye abajo del imprimible, en la misma hoja A4.
                     </span>
                   </span>
                 </label>
@@ -529,7 +547,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         <div [class]="configSectionsListClass">
         <app-config-setting-card
           title="Etiquetas de caja"
-          description="Caja principal del negocio (pedidos, ventas y cobros automáticos). Podés renombrarla y agregar pestañas para movimientos manuales."
+          [description]="cajaAmbitosCardDescription"
           [listCount]="config.caja.ambitos.length"
           [sectionCollapse]="true"
               [listExpanded]="isConfigSectionOpen('caja.ambitos')"
@@ -540,7 +558,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             [items]="cajaAmbitoListItems"
             labelMode="input"
             addPlaceholder="Ej. Personal, Caja chica..."
-            [disabled]="savingCajaAmbito"
+            [disabled]="savingCajaAmbito || !canAddCajaAmbito"
             inputName="cajaAmbitoDraft"
             (add)="addCajaAmbitoFromList($event)"
             (remove)="removeCajaAmbitoById($event)"
@@ -804,7 +822,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas' && activeModuleId !== 'colaboradores'"
         class="mt-6 sm:mt-8">
         <app-form-save-footer
-          [saving]="saving"
+          [saving]="isActiveModuleSaving()"
           [successMessage]="saveSuccessMessage"
           [centerOnLarge]="true"
           (saveClick)="saveConfig()">
@@ -825,7 +843,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private dialogService = inject(DialogService);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
-  private auth = inject(AuthService);
+  readonly auth = inject(AuthService);
 
   config: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   activeModuleId: ConfigModule['id'] | null = null;
@@ -890,7 +908,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   private expandedConfigSectionKey: string | null = null;
   private readonly defaultConfigSectionByModule: Partial<Record<ConfigModule['id'], string>> = {
-    pedidos: 'pedidos.estados',
     caja: 'caja.ambitos',
     stock: 'stock.tipos',
     clientes: 'clientes.etiquetas',
@@ -1122,6 +1139,27 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }));
   }
 
+  get effectiveMaxCajaAmbitos(): number {
+    const limit =
+      this.auth.currentBusiness?.limitesEfectivos?.maxAmbitosCaja ??
+      this.auth.currentBusiness?.plan?.maxAmbitosCaja;
+    if (limit == null) return 99;
+    if (limit <= 0) return 1;
+    return limit;
+  }
+
+  get canAddCajaAmbito(): boolean {
+    return this.config.caja.ambitos.length < this.effectiveMaxCajaAmbitos;
+  }
+
+  get cajaAmbitosCardDescription(): string {
+    const base =
+      'Caja principal del negocio (pedidos, ventas y cobros automáticos). Podés renombrarla y agregar pestañas para movimientos manuales.';
+    const used = this.config.caja.ambitos.length;
+    const max = this.effectiveMaxCajaAmbitos;
+    return `${base} Tu plan permite hasta ${max} etiqueta${max === 1 ? '' : 's'} (${used}/${max}).`;
+  }
+
   get stockTipoListItems(): ConfigEditableListItem[] {
     return this.config.stock.tipos.map((tipo) => ({
       id: tipo.grupo,
@@ -1298,7 +1336,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
       const defaults = DEFAULT_ORDER_ESTADOS.find((item) => item.value === row.value);
       row.label = defaults?.label ?? row.value;
     }
-    this.schedulePedidosPersist();
   }
 
   trackPedidoStockRuleRow(_index: number, row: PedidoStockRuleRow): string {
@@ -1427,7 +1464,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
           row.exigeStockDisabled = false;
         }
         row.mobileSummary = this.buildPedidoStockRuleSummary(row);
-        this.schedulePedidosPersist();
       });
   }
 
@@ -1436,7 +1472,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     row.exigeStock = checked;
     this.syncEstadosExigenStockFromRuleRows();
     row.mobileSummary = this.buildPedidoStockRuleSummary(row);
-    this.schedulePedidosPersist();
   }
 
   private syncEstadosExigenStockFromRuleRows(): void {
@@ -1505,6 +1540,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
   addCajaAmbito() {
     const label = this.cajaAmbitoDraft.trim();
     if (!label || this.savingCajaAmbito) return;
+
+    if (!this.canAddCajaAmbito) {
+      this.dialogService.alert({
+        title: 'Límite del plan',
+        message: `Tu plan permite hasta ${this.effectiveMaxCajaAmbitos} etiqueta${
+          this.effectiveMaxCajaAmbitos === 1 ? '' : 's'
+        } de caja. Contactá al administrador de plataforma para ampliarlo.`,
+      });
+      return;
+    }
 
     const exists = this.config.caja.ambitos.some(
       (item) => item.label.trim().toLowerCase() === label.toLowerCase()
@@ -1836,6 +1881,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   saveActiveModule() {
     if (this.activeModuleId === 'pedidos') {
+      this.config.pedidos.fotosRetencionDias = normalizeOrderPhotoRetentionDays(
+        this.config.pedidos.fotosRetencionDias
+      );
       this.flushPedidosPersist();
       return;
     }
@@ -2322,6 +2370,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   saveConfig() {
+    if (this.activeModuleId === 'pedidos') {
+      this.saveActiveModule();
+      return;
+    }
     this.applyPendingPrefijoDraftsToConfig();
     this.persistConfig(true);
   }
@@ -2349,36 +2401,27 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   onImpresionDosViasChange() {
-    this.persistPedidosSettings();
+    // Sin guardado automático; usar Guardar.
   }
 
   onFotosReferenciaSettingsChange() {
     if (!this.config.pedidos.fotosReferenciaHabilitadas) {
       this.config.pedidos.fotosEliminacionAutomatica = false;
     }
-    this.persistPedidosSettings();
   }
 
   onFotosRetencionSettingsChange() {
     this.config.pedidos.fotosRetencionDias = normalizeOrderPhotoRetentionDays(
       this.config.pedidos.fotosRetencionDias
     );
-    this.persistPedidosSettings();
   }
 
   persistPedidosSettings() {
-    this.schedulePedidosPersist();
+    // Sin guardado automático; usar Guardar.
   }
 
   schedulePedidosPersist() {
-    if (this.activeModuleId !== 'pedidos') return;
-    if (this.pedidosPersistTimer) {
-      clearTimeout(this.pedidosPersistTimer);
-    }
-    this.pedidosPersistTimer = setTimeout(() => {
-      this.pedidosPersistTimer = undefined;
-      this.flushPedidosPersist();
-    }, SettingsComponent.PEDIDOS_PERSIST_DEBOUNCE_MS);
+    // Sin guardado automático; usar Guardar.
   }
 
   private flushPedidosPersist(confirmConfigRemovals = false) {
@@ -2397,6 +2440,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
           this.config = config;
           this.refreshPedidosViewState();
           this.savingPedidos = false;
+          this.showSaveSuccess('Configuración guardada correctamente.');
         },
         error: (error) => {
           if (seq !== this.pedidosPersistSeq) return;

@@ -15,18 +15,26 @@ import { DialogService } from '../../core/services/dialog.service';
 import { TransactionModalComponent } from '../../shared/components/transaction-modal/transaction-modal.component';
 import { ConceptRefLinksComponent } from '../../shared/components/concept-ref-links/concept-ref-links.component';
 import {
-  IconActionComponent,
-  ICON_TOOLBAR_OUTLINE_LINK_CLASS,
   LIST_TOOLBAR_ROW_CLASS,
   PAGE_SHELL_CLASS,
   TABLE_MIN_WIDTH_CLASS,
   TABLE_SCROLL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
-import { LucideAngularModule } from 'lucide-angular';
+import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar/icon-toolbar-button.component';
+import { COMPACT_LIST_TRAILING_ROW_CLASS } from '../../shared/components/compact-list/compact-list.constants';
 import { AuthService } from '../../core/services/auth.service';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
+import { FormFooterComponent } from '../../shared/components/form-shell/form-footer.component';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  getCajaAmbitos,
+  getDefaultCashAmbitoId,
+  usesCashAmbitoSeparation,
+} from '../../core/services/catalog-config.service';
+import { SegmentedControlComponent } from '../../shared/components/segmented-control/segmented-control.component';
 
 type CollectTarget =
   | { kind: 'pedido'; item: ClientAccountOrder }
@@ -41,12 +49,13 @@ type CollectMode = 'client' | 'item';
     CommonModule,
     FormsModule,
     RouterLink,
-    LucideAngularModule,
     TransactionModalComponent,
-    IconActionComponent,
+    IconToolbarButtonComponent,
     ConceptRefLinksComponent,
     ListSearchFieldComponent,
     FormPageHeaderComponent,
+    FormFooterComponent,
+    SegmentedControlComponent,
   ],
   template: `
     <div [class]="pageShellClass + ' pb-20 sm:pb-24'">
@@ -58,7 +67,7 @@ type CollectMode = 'client' | 'item';
         backAriaLabel="Volver a clientes"
         (backClick)="goBack()"
         [hasHeaderActions]="true">
-        <div headerActions [class]="listToolbarRowClass + ' w-full sm:w-auto'">
+        <div headerActions [class]="listToolbarRowClass + ' w-full sm:w-auto sm:justify-end'">
           <app-list-search-field
             mode="filter"
             [(query)]="searchQuery"
@@ -67,100 +76,110 @@ type CollectMode = 'client' | 'item';
             [constrainWidth]="false"
             extraClass="sm:hidden flex-1 min-w-0">
           </app-list-search-field>
-          <app-icon-action
+          <app-icon-toolbar-button
             *ngIf="auth.canAccessCash && account?.debe"
+            icon="wallet"
             label="Cobrar cuenta"
+            variant="orange-outline"
+            [disabled]="collectSaving"
             (clicked)="openClientCollectModal()">
-            <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
-          </app-icon-action>
-          <a
+          </app-icon-toolbar-button>
+          <app-icon-toolbar-button
             *ngIf="clientId"
-            [routerLink]="['/clients', clientId, 'edit']"
-            [class]="iconToolbarOutlineLinkClass"
-            aria-label="Editar datos"
-            title="Editar datos">
-            <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-            <span class="hidden sm:inline">Editar datos</span>
-          </a>
+            icon="pencil"
+            label="Editar datos"
+            variant="outline"
+            (clicked)="goEditClient()">
+          </app-icon-toolbar-button>
         </div>
       </app-form-page-header>
 
       <div *ngIf="loading" class="py-16 text-center text-gray-400">Cargando historial...</div>
 
       <ng-container *ngIf="!loading && account">
-        <div *ngIf="auth.canViewAccountBalance" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-          <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
+        <div *ngIf="auth.canViewAccountBalance" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-4">
+          <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm">
+            <p class="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Saldo pendiente</p>
             <p
-              class="text-xl sm:text-2xl font-bold tabular-nums"
+              class="text-lg sm:text-xl font-bold tabular-nums leading-tight"
               [class.text-orange-600]="account.debe"
-              [class.text-gray-900]="!account.debe">
+              [class.text-gray-900]="!account.debe"
+              [class.dark:text-gray-100]="!account.debe">
               {{ formatMoney(account.saldoTotal) }}
             </p>
           </div>
-          <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Total facturado</p>
-            <p class="text-xl sm:text-2xl font-bold tabular-nums text-gray-900">
+          <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm">
+            <p class="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Total facturado</p>
+            <p class="text-lg sm:text-xl font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-tight">
               {{ formatMoney(account.totalFacturado || 0) }}
             </p>
           </div>
-          <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Total cobrado</p>
-            <p class="text-xl sm:text-2xl font-bold tabular-nums text-teal-700">
+          <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm">
+            <p class="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Total cobrado</p>
+            <p class="text-lg sm:text-xl font-bold tabular-nums text-teal-700 dark:text-teal-400 leading-tight">
               {{ formatMoney(account.totalCobrado || 0) }}
             </p>
           </div>
-          <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm col-span-2 lg:col-span-1">
-            <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Desglose deuda</p>
-            <p class="text-sm text-gray-600">Pedidos: {{ formatMoney(account.saldoPedidos) }}</p>
-            <p class="text-sm text-gray-600">Mostrador: {{ formatMoney(account.saldoVentasMostrador) }}</p>
+          <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm col-span-2 lg:col-span-1">
+            <p class="text-[10px] font-semibold text-gray-400 uppercase mb-0.5">Desglose deuda</p>
+            <p class="text-xs text-gray-600 dark:text-gray-300 leading-snug">Pedidos: {{ formatMoney(account.saldoPedidos) }}</p>
+            <p class="text-xs text-gray-600 dark:text-gray-300 leading-snug">Mostrador: {{ formatMoney(account.saldoVentasMostrador) }}</p>
           </div>
         </div>
 
-        <section *ngIf="auth.canViewAccountBalance && pendingItems.length" class="mb-6 rounded-xl border border-orange-100 bg-orange-50 p-4 sm:p-5">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-            <h2 class="text-sm font-bold text-orange-900">Saldos pendientes de cobro</h2>
-            <p class="text-xs text-orange-800">
-              Podés cobrar uno por uno o usar «Cobrar cuenta» para aplicar un pago a varios saldos.
+        <section
+          *ngIf="auth.canViewAccountBalance && pendingItems.length"
+          class="mb-4 rounded-xl border border-orange-100 dark:border-orange-900/40 bg-orange-50 dark:bg-orange-950/30 overflow-hidden">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-0.5 px-3 py-2 border-b border-orange-100 dark:border-orange-900/30">
+            <h2 class="text-xs font-bold text-orange-900 dark:text-orange-200">Saldos pendientes de cobro</h2>
+            <p class="text-[10px] text-orange-800 dark:text-orange-300/90 leading-snug">
+              Cobrá uno por uno o usá «Cobrar cuenta».
             </p>
           </div>
-          <div class="space-y-2">
+          <div class="divide-y divide-orange-100/80 dark:divide-orange-900/30">
             <div
               *ngFor="let entry of pendingItems"
-              class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg bg-white/80 border border-orange-100 px-4 py-3">
+              class="flex items-center gap-2 px-2.5 py-1.5 min-h-[34px] bg-white/70 dark:bg-gray-900/50">
               <a
                 [routerLink]="getPendingItemRoute(entry.target)"
                 [queryParams]="getPendingItemQueryParams(entry.target)"
-                class="min-w-0 group">
-                <p class="font-medium text-gray-900 group-hover:text-teal-700">{{ entry.label }}</p>
-                <p class="text-xs text-gray-500 truncate group-hover:text-teal-600">{{ entry.detail }}</p>
+                class="min-w-0 flex-1 group">
+                <p class="text-xs font-medium text-gray-900 dark:text-gray-100 leading-snug truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                  {{ entry.label }}<span *ngIf="entry.fecha" class="font-normal text-gray-500 dark:text-gray-400"> · {{ formatDate(entry.fecha) }}</span>
+                </p>
+                <p class="text-[10px] text-gray-500 dark:text-gray-400 truncate leading-snug">{{ entry.detail }}</p>
               </a>
-              <div class="flex items-center gap-3 shrink-0">
-                <span class="font-bold tabular-nums text-orange-700">{{ formatMoney(entry.saldo) }}</span>
-                <app-icon-action
+              <div [class]="compactListTrailingClass">
+                <span class="text-xs font-bold tabular-nums text-orange-700 dark:text-orange-400">
+                  {{ formatMoney(entry.saldo) }}
+                </span>
+                <app-icon-toolbar-button
                   *ngIf="auth.canAccessCash"
+                  icon="wallet"
                   label="Cobrar"
+                  variant="ghost-teal"
+                  size="row"
+                  [disabled]="collectSaving"
                   (clicked)="openCollectModal(entry.target)">
-                  <i-lucide name="wallet" class="w-4 h-4"></i-lucide>
-                </app-icon-action>
+                </app-icon-toolbar-button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="mb-6 bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <h2 class="text-sm font-bold text-gray-900 px-4 py-3 border-b border-gray-100">
+        <section class="mb-4 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+          <h2 class="text-xs font-bold text-gray-900 dark:text-gray-100 px-3 py-2 border-b border-gray-100 dark:border-gray-800">
             Historial de cobros (caja)
           </h2>
-          <div *ngIf="!(account.historialPagos?.length)" class="px-4 py-10 text-center text-gray-400 text-sm">
+          <div *ngIf="!(account.historialPagos?.length)" class="px-3 py-6 text-center text-gray-400 text-xs">
             Todavía no hay cobros registrados para este cliente.
           </div>
-          <div *ngIf="account.historialPagos?.length" class="divide-y divide-gray-50">
+          <div *ngIf="account.historialPagos?.length" class="divide-y divide-gray-50 dark:divide-gray-800">
             <div
               *ngFor="let pago of account.historialPagos"
-              class="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              class="px-2.5 py-1.5 min-h-[34px] flex items-center justify-between gap-2">
               <div class="min-w-0">
-                <p class="text-sm font-medium text-gray-900">
+                <p class="text-xs font-medium text-gray-900 dark:text-gray-100 leading-snug">
                   <app-concept-ref-links
                     [text]="pago.concepto"
                     [pedidoId]="pago.pedidoId"
@@ -169,14 +188,14 @@ type CollectMode = 'client' | 'item';
                     [ventaLabel]="pago.ventaLabel">
                   </app-concept-ref-links>
                 </p>
-                <p class="text-xs text-gray-500">
+                <p class="text-[10px] text-gray-500 dark:text-gray-400 leading-snug">
                   {{ formatDate(pago.fecha) }}
                   <span *ngIf="pago.medio"> · {{ pago.medio }}</span>
                 </p>
               </div>
-              <div class="flex items-center gap-3 shrink-0">
-                <span class="font-bold tabular-nums text-teal-700">{{ formatMoney(pago.monto) }}</span>
-              </div>
+              <span class="text-xs font-bold tabular-nums text-teal-700 dark:text-teal-400 shrink-0">
+                {{ formatMoney(pago.monto) }}
+              </span>
             </div>
           </div>
         </section>
@@ -198,6 +217,7 @@ type CollectMode = 'client' | 'item';
                 <thead class="bg-gray-50 text-xs uppercase text-gray-400">
                   <tr>
                     <th class="px-4 py-3">Pedido</th>
+                    <th class="hidden sm:table-cell px-4 py-3">Fecha</th>
                     <th class="px-4 py-3">Estado</th>
                     <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right">Total</th>
                     <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right">Saldo</th>
@@ -210,6 +230,10 @@ type CollectMode = 'client' | 'item';
                         #{{ pedido.numeroPedidoLabel }}
                       </a>
                       <p class="text-xs text-gray-500 truncate">{{ pedido.descripcion || '—' }}</p>
+                      <p class="text-[10px] text-gray-400 sm:hidden">{{ formatPedidoFecha(pedido) }}</p>
+                    </td>
+                    <td class="hidden sm:table-cell px-4 py-3 text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                      {{ formatPedidoFecha(pedido) }}
                     </td>
                     <td class="px-4 py-3 text-gray-600">{{ pedido.estado || '—' }}</td>
                     <td *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right tabular-nums">{{ formatMoney(pedido.total) }}</td>
@@ -218,10 +242,10 @@ type CollectMode = 'client' | 'item';
                     </td>
                   </tr>
                   <tr *ngIf="account.pedidos.length === 0">
-                    <td [attr.colspan]="2 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">Sin pedidos visibles.</td>
+                    <td [attr.colspan]="3 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">Sin pedidos visibles.</td>
                   </tr>
                   <tr *ngIf="account.pedidos.length > 0 && filteredPedidos.length === 0">
-                    <td [attr.colspan]="2 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">
+                    <td [attr.colspan]="3 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">
                       No hay pedidos que coincidan con la búsqueda.
                     </td>
                   </tr>
@@ -237,6 +261,7 @@ type CollectMode = 'client' | 'item';
                 <thead class="bg-gray-50 text-xs uppercase text-gray-400">
                   <tr>
                     <th class="px-4 py-3">Venta</th>
+                    <th class="hidden sm:table-cell px-4 py-3">Fecha</th>
                     <th class="hidden sm:table-cell px-4 py-3">Origen</th>
                     <th *ngIf="auth.canViewOrderSalePrice" class="hidden sm:table-cell px-4 py-3 text-right">Total</th>
                     <th *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-4 py-3 text-right">Saldo</th>
@@ -252,9 +277,14 @@ type CollectMode = 'client' | 'item';
                         #{{ venta.ventaLabel }}
                       </a>
                       <p class="text-xs text-gray-500 sm:hidden truncate">
+                        {{ formatDate(venta.fecha) }}
+                        ·
                         <ng-container *ngIf="venta.origen === 'pedido'">Pedido #{{ venta.numeroPedidoLabel || '—' }}</ng-container>
                         <ng-container *ngIf="venta.origen !== 'pedido'">Mostrador</ng-container>
                       </p>
+                    </td>
+                    <td class="hidden sm:table-cell px-4 py-3 text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                      {{ formatDate(venta.fecha) }}
                     </td>
                     <td class="hidden sm:table-cell px-4 py-3 text-gray-600">
                       <a
@@ -271,10 +301,10 @@ type CollectMode = 'client' | 'item';
                     </td>
                   </tr>
                   <tr *ngIf="account.ventas.length === 0">
-                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin ventas.</td>
+                    <td [attr.colspan]="3 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">Sin ventas.</td>
                   </tr>
                   <tr *ngIf="account.ventas.length > 0 && filteredVentas.length === 0">
-                    <td colspan="4" class="px-4 py-8 text-center text-gray-400">
+                    <td [attr.colspan]="3 + (auth.canViewOrderSalePrice ? 1 : 0) + (auth.canViewAccountBalance ? 1 : 0)" class="px-4 py-8 text-center text-gray-400">
                       No hay ventas que coincidan con la búsqueda.
                     </td>
                   </tr>
@@ -291,8 +321,8 @@ type CollectMode = 'client' | 'item';
       [title]="collectModalTitle"
       [subtitle]="collectModalSubtitle"
       maxWidthClass="max-w-md"
-      (closed)="closeCollectModal()">
-      <div class="space-y-4">
+      (closed)="onCollectModalClosed()">
+      <div class="space-y-4" [class.opacity-60]="collectSaving" [class.pointer-events-none]="collectSaving">
         <div class="rounded-lg bg-gray-50 border border-gray-100 p-3 text-sm space-y-2">
           <div class="flex justify-between gap-4">
             <span class="text-gray-500">
@@ -335,27 +365,33 @@ type CollectMode = 'client' | 'item';
             <option value="otro">Otro</option>
           </select>
         </div>
+        <div *ngIf="showCollectAmbitoSelector">
+          <span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Caja</span>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-2 leading-snug">
+            La venta no tiene caja asignada. Elegí dónde registrar el ingreso.
+          </p>
+          <app-segmented-control
+            ariaLabel="Caja"
+            size="sm"
+            [options]="cajaAmbitos"
+            [(value)]="collectAmbito">
+          </app-segmented-control>
+        </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notas (opcional)</label>
           <input
             [(ngModel)]="collectNotas"
-            class="w-full px-4 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-teal-500">
+            class="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 text-sm outline-none focus:ring-2 focus:ring-teal-500">
         </div>
-      </div>
-      <div class="form-actions flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-6 pt-2">
-        <button
-          type="button"
-          (click)="closeCollectModal()"
-          class="form-btn-secondary rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50">
-          Cancelar
-        </button>
-        <button
-          type="button"
-          (click)="submitCollect()"
-          [disabled]="collectSaving"
-          class="form-btn-primary rounded-xl bg-teal-600 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
-          {{ collectSaving ? 'Guardando...' : 'Registrar en caja' }}
-        </button>
+        <app-form-footer
+          mode="modal"
+          saveLabel="Registrar en caja"
+          [saving]="collectSaving"
+          [saveDisabled]="collectSaving"
+          footerClass="mt-2 pointer-events-auto"
+          (cancelClick)="onCollectModalClosed()"
+          (saveClick)="submitCollect()">
+        </app-form-footer>
       </div>
     </app-transaction-modal>
   `,
@@ -367,7 +403,7 @@ export class ClientHistorialComponent implements OnInit {
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly listToolbarRowClass = LIST_TOOLBAR_ROW_CLASS;
-  readonly iconToolbarOutlineLinkClass = ICON_TOOLBAR_OUTLINE_LINK_CLASS;
+  readonly compactListTrailingClass = COMPACT_LIST_TRAILING_ROW_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly tableMinWidthClass = TABLE_MIN_WIDTH_CLASS;
   readonly auth = inject(AuthService);
@@ -379,6 +415,10 @@ export class ClientHistorialComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private navigationBack = inject(NavigationBackService);
+  private catalogConfig = inject(CatalogConfigService);
+
+  appConfig = DEFAULT_APP_CONFIG;
+  collectAmbito = getDefaultCashAmbitoId(DEFAULT_APP_CONFIG);
 
   clientId = '';
   clientName = 'Cliente';
@@ -446,6 +486,22 @@ export class ClientHistorialComponent implements OnInit {
     return preview;
   }
 
+  get usesAmbitoSeparation(): boolean {
+    return usesCashAmbitoSeparation(this.appConfig);
+  }
+
+  get cajaAmbitos() {
+    return getCajaAmbitos(this.appConfig);
+  }
+
+  get showCollectAmbitoSelector(): boolean {
+    if (!this.usesAmbitoSeparation) return false;
+    if (this.collectMode === 'item') {
+      return this.collectTarget?.kind === 'venta' && !this.collectTarget.item.ambito;
+    }
+    return this.allocationTouchesUnmarkedVenta();
+  }
+
   get filteredPedidos(): ClientAccountOrder[] {
     const pedidos = (this.account?.pedidos ?? []).filter((pedido) =>
       this.auth.canViewOrder(pedido.estado)
@@ -458,6 +514,8 @@ export class ClientHistorialComponent implements OnInit {
         pedido.numeroPedidoLabel,
         pedido.descripcion,
         pedido.estado,
+        pedido.fecha,
+        pedido.fechaEntrega,
         String(pedido.total),
         String(pedido.saldo),
       ]
@@ -482,6 +540,7 @@ export class ClientHistorialComponent implements OnInit {
         venta.ventaLabel,
         venta.numeroPedidoLabel,
         origen,
+        venta.fecha,
         String(venta.total),
         String(venta.saldoPendiente),
       ]
@@ -493,6 +552,12 @@ export class ClientHistorialComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.catalogConfig.appConfig$.subscribe((config) => {
+      this.appConfig = config;
+      this.collectAmbito = getDefaultCashAmbitoId(config);
+    });
+    this.catalogConfig.getAppConfig().subscribe();
+
     this.route.paramMap.subscribe((params) => {
       const id = params.get('id');
       if (!id) {
@@ -506,6 +571,11 @@ export class ClientHistorialComponent implements OnInit {
 
   goBack(): void {
     this.navigationBack.back(['/clients']);
+  }
+
+  goEditClient(): void {
+    if (!this.clientId) return;
+    this.router.navigate(['/clients', this.clientId, 'edit']);
   }
 
   loadAccount() {
@@ -537,7 +607,7 @@ export class ClientHistorialComponent implements OnInit {
         label: `Pedido #${pedido.numeroPedidoLabel}`,
         detail: pedido.descripcion || pedido.estado || 'Pedido',
         saldo: pedido.saldo,
-        fecha: pedido.fechaEntrega || '',
+        fecha: pedido.fecha || pedido.fechaEntrega || '',
         target: { kind: 'pedido', item: pedido },
       });
     }
@@ -557,11 +627,15 @@ export class ClientHistorialComponent implements OnInit {
     this.pendingItems = items;
   }
 
-  formatDate(value?: string): string {
+  formatDate(value?: string | null): string {
     if (!value) return '—';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleDateString('es-AR');
+  }
+
+  formatPedidoFecha(pedido: ClientAccountOrder): string {
+    return this.formatDate(pedido.fecha || pedido.fechaEntrega);
   }
 
   getPendingItemRoute(target: CollectTarget): string[] {
@@ -593,32 +667,70 @@ export class ClientHistorialComponent implements OnInit {
   }
 
   openClientCollectModal() {
+    if (this.collectSaving) return;
     if (!(Number(this.account?.saldoTotal) > 0)) return;
     this.collectMode = 'client';
     this.collectTarget = null;
     this.collectMonto = Number(this.account?.saldoTotal) || 0;
-    this.collectMedio = 'efectivo';
-    this.collectNotas = '';
+    this.resetCollectFormFields();
     this.collectModalOpen = true;
   }
 
   openCollectModal(target: CollectTarget) {
+    if (this.collectSaving) return;
     this.collectMode = 'item';
     this.collectTarget = target;
     this.collectMonto =
       target.kind === 'pedido' ? target.item.saldo : target.item.saldoPendiente;
-    this.collectMedio = 'efectivo';
-    this.collectNotas = '';
+    this.resetCollectFormFields();
     this.collectModalOpen = true;
   }
 
+  private resetCollectFormFields() {
+    this.collectMedio = 'efectivo';
+    this.collectNotas = '';
+    this.collectAmbito = getDefaultCashAmbitoId(this.appConfig);
+  }
+
+  private allocationTouchesUnmarkedVenta(): boolean {
+    const monto = Number(this.collectMonto);
+    if (!Number.isFinite(monto) || monto <= 0) {
+      return this.pendingItems.some(
+        (entry) => entry.target.kind === 'venta' && !entry.target.item.ambito
+      );
+    }
+
+    let remaining = monto;
+    const sorted = [...this.pendingItems].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    for (const entry of sorted) {
+      if (remaining <= 0) break;
+      const apply = Math.min(remaining, entry.saldo);
+      if (apply <= 0) continue;
+      if (entry.target.kind === 'venta' && !entry.target.item.ambito) return true;
+      remaining -= apply;
+    }
+    return false;
+  }
+
+  private buildCollectAmbitoPayload(): string | undefined {
+    return this.showCollectAmbitoSelector ? this.collectAmbito : undefined;
+  }
+
   closeCollectModal() {
+    if (this.collectSaving) return;
     this.collectModalOpen = false;
     this.collectTarget = null;
     this.collectMode = 'item';
   }
 
+  onCollectModalClosed() {
+    if (this.collectSaving) return;
+    this.closeCollectModal();
+  }
+
   submitCollect() {
+    if (this.collectSaving) return;
+
     const monto = Number(this.collectMonto);
     if (!Number.isFinite(monto) || monto <= 0) {
       this.dialogService.alert({
@@ -636,7 +748,16 @@ export class ClientHistorialComponent implements OnInit {
       return;
     }
 
+    if (this.showCollectAmbitoSelector && !this.collectAmbito) {
+      this.dialogService.alert({
+        title: 'Caja requerida',
+        message: 'Seleccioná la caja donde registrar el cobro.',
+      });
+      return;
+    }
+
     this.collectSaving = true;
+    const ambito = this.buildCollectAmbitoPayload();
 
     if (this.collectMode === 'client') {
       this.clientService
@@ -644,6 +765,7 @@ export class ClientHistorialComponent implements OnInit {
           monto,
           medioPago: this.collectMedio,
           notas: this.collectNotas.trim() || undefined,
+          ambito,
         })
         .subscribe({
           next: () => this.onCollectSuccess(),
@@ -676,6 +798,7 @@ export class ClientHistorialComponent implements OnInit {
         monto,
         medioPago: this.collectMedio,
         notas: this.collectNotas.trim() || undefined,
+        ambito,
       })
       .subscribe({
         next: () => this.onCollectSuccess(),

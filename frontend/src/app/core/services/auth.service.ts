@@ -23,6 +23,7 @@ import { firebaseAuth, googleAuthProvider, isAuthEmulatorEnabled } from '../conf
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../constants/google-auth-storage';
 import { getGoogleRedirectResultOnce } from '../utils/google-auth-redirect';
 import { PublicBusinessInfo } from './business.service';
+import type { SubscriptionModuleId } from '../../../../../shared/subscription-modules.ts';
 import {
   AUTH_BUSINESS_STORAGE_KEY,
   AUTH_TOKEN_STORAGE_KEY,
@@ -50,6 +51,7 @@ export interface SessionUser {
   tema?: 'light' | 'dark';
   hasPassword?: boolean;
   hasGoogle?: boolean;
+  colaboradorId?: string | null;
 }
 
 @Injectable({
@@ -157,16 +159,24 @@ export class AuthService {
     return this.hasPermission(PERMISSIONS.ECONOMICS_VIEW);
   }
 
+  get canViewStockPrices(): boolean {
+    return this.hasPermission(PERMISSIONS.STOCK_VIEW_PRICES);
+  }
+
+  get canChangeOrderStatus(): boolean {
+    return this.hasPermission(PERMISSIONS.ORDERS_CHANGE_STATUS);
+  }
+
   get canViewEconomics(): boolean {
-    return this.hasPermission(PERMISSIONS.ECONOMICS_VIEW);
+    return this.hasModule('economics') && this.hasPermission(PERMISSIONS.ECONOMICS_VIEW);
   }
 
   get canViewReports(): boolean {
-    return this.hasPermission(PERMISSIONS.REPORTS_VIEW);
+    return this.hasModule('reports') && this.hasPermission(PERMISSIONS.REPORTS_VIEW);
   }
 
   get canAccessCash(): boolean {
-    return this.hasPermission(PERMISSIONS.CASH_ACCESS);
+    return this.hasModule('caja') && this.hasPermission(PERMISSIONS.CASH_ACCESS);
   }
 
   get canViewAccountBalance(): boolean {
@@ -179,6 +189,16 @@ export class AuthService {
 
   get canViewOrderSalePrice(): boolean {
     return this.hasPermission(PERMISSIONS.ORDERS_VIEW_SALE_PRICE);
+  }
+
+  /** Pagos y saldo pendiente en pedidos (precio de venta o saldos de cuenta). */
+  get canViewOrderBalance(): boolean {
+    return this.canViewAccountBalance || this.canViewOrderSalePrice;
+  }
+
+  /** Registrar pagos en pedidos (caja completa o precio de venta en pedidos). */
+  get canRegisterOrderPayments(): boolean {
+    return this.canAccessCash || this.canViewOrderSalePrice;
   }
 
   get canViewAllOrders(): boolean {
@@ -206,27 +226,43 @@ export class AuthService {
   }
 
   get canAccessSales(): boolean {
-    return this.canCreateSales || this.canViewSalesHistory;
+    return this.hasModule('core') && (this.canCreateSales || this.canViewSalesHistory);
   }
 
   get canAccessPurchases(): boolean {
-    return this.hasPermission(PERMISSIONS.PURCHASES_ACCESS);
+    return this.hasModule('core') && this.hasPermission(PERMISSIONS.PURCHASES_ACCESS);
   }
 
   get canAccessPayables(): boolean {
-    return this.hasPermission(PERMISSIONS.PAYABLES_ACCESS);
+    return this.hasModule('payables') && this.hasPermission(PERMISSIONS.PAYABLES_ACCESS);
   }
 
   get canAccessCollaborators(): boolean {
-    return this.hasPermission(PERMISSIONS.COLLABORATORS_ACCESS);
+    return this.hasModule('collaborators') && this.hasPermission(PERMISSIONS.COLLABORATORS_ACCESS);
+  }
+
+  /** Colaborador vinculado al operador (configurado por el administrador). */
+  get linkedCollaboratorId(): string | null {
+    const id = String(this.currentUser?.colaboradorId ?? '').trim();
+    return id || null;
+  }
+
+  /** Operador que solo puede ver/gestionar sus propias horas. */
+  get isOwnCollaboratorScope(): boolean {
+    if (this.isPrivileged) return false;
+    return !!this.linkedCollaboratorId && this.canAccessCollaborators;
   }
 
   get canViewPriceCatalog(): boolean {
-    return this.hasPermission(PERMISSIONS.PRICES_VIEW);
+    return this.hasModule('price_catalog') && this.hasPermission(PERMISSIONS.PRICES_VIEW);
   }
 
   get canManagePriceCatalog(): boolean {
-    return this.hasPermission(PERMISSIONS.PRICES_MANAGE);
+    return this.hasModule('price_catalog') && this.hasPermission(PERMISSIONS.PRICES_MANAGE);
+  }
+
+  get canAccessOrders(): boolean {
+    return this.hasModule('pedidos');
   }
 
   canViewOrder(estado?: string): boolean {
@@ -282,6 +318,11 @@ export class AuthService {
         scope: options?.scope ?? 'company',
       })
       .pipe(tap((session) => this.applySession(session)));
+  }
+
+  /** Establece sesión tras registro autoservicio (token ya emitido por backend). */
+  establishTrialSession(session: AuthSession): void {
+    this.applySession(session);
   }
 
   loginWithGoogle(businessId: string): Observable<AuthSession> {
@@ -428,6 +469,30 @@ export class AuthService {
     const user = this.currentUser;
     if (!user || user.activo === false) return false;
     return userHasPermission(user.rol as UserRole, user.permisos, permission);
+  }
+
+  hasModule(moduleId: SubscriptionModuleId): boolean {
+    if (this.isPlatformAdmin) return true;
+    const entitlements = this.currentBusiness?.entitlements;
+    if (!entitlements) return true;
+    if (moduleId === 'core') return true;
+    return entitlements[moduleId] === true;
+  }
+
+  get isTrialExpired(): boolean {
+    return this.currentBusiness?.trialStatus === 'expired';
+  }
+
+  get isTrialExpiringSoon(): boolean {
+    return (
+      this.currentBusiness?.trialExpiringSoon === true &&
+      this.currentBusiness?.trialStatus === 'active'
+    );
+  }
+
+  get trialDaysRemaining(): number | null {
+    const days = this.currentBusiness?.trialDaysRemaining;
+    return days === null || days === undefined ? null : days;
   }
 
   private shouldUseGoogleRedirect(): boolean {

@@ -17,25 +17,60 @@ import {
   type PublicPlanInfo,
 } from './plans.ts';
 import {
+  parseBusinessSubscription,
+  resolveBusinessSubscription,
+  sanitizeBusinessSubscriptionPayload,
+  type BusinessSubscriptionRecord,
+  type ResolvedBusinessSubscription,
+} from './subscription-entitlements.ts';
+import type {
+  ModuleOverridesMap,
+  MonthlyFeeBreakdown,
+  SubscriptionModulesMap,
+} from '../../shared/subscription-modules.ts';
+import {
   getSubscriptionPaymentSummary,
   currentPeriodo,
   type SubscriptionPaymentRecord,
   type SubscriptionPaymentStatus,
 } from './subscription-payments.ts';
+import {
+  buildTrialFieldUpdates,
+  isTrialActiveForBilling,
+  syncExpiredTrialStatus,
+} from './trial-business.ts';
+import { buildFrozenPlanSnapshot } from './plan-snapshot.ts';
+import { resolveTrialState } from '../../shared/trial-state.ts';
+import type {
+  TrialContactVerification,
+  TrialLifecycle,
+  BusinessSource,
+} from '../../shared/trial-registration.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
+
+export type TrialStatus = import('../../shared/trial-state.ts').TrialStatus;
 
 export interface BusinessRecord {
   id: string;
   nombre: string;
   planId: string;
   estadoSuscripcion: SubscriptionStatus;
-  /** Período de prueba: acceso al sistema sin exigir pago mensual en control de cobros. */
+  /** Período de prueba comercial (no altera módulos ni config del cliente). */
   enPrueba?: boolean;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  trialStatus?: TrialStatus | null;
+  source?: BusinessSource;
+  contactVerification?: TrialContactVerification;
+  lifecycle?: TrialLifecycle;
+  suscripcion?: BusinessSubscriptionRecord;
   creadoPor?: string;
   createdAt?: string;
   updatedAt?: string;
 }
+
+export type PublicBusinessSubscription = BusinessSubscriptionRecord;
 
 export interface PublicBusinessInfo {
   id: string;
@@ -46,10 +81,29 @@ export interface PublicBusinessInfo {
   estadoPago: SubscriptionPaymentStatus;
   periodoPagoActual: string;
   montoMensualEsperado: number;
+  cuotaDesglose: MonthlyFeeBreakdown;
+  entitlements: SubscriptionModulesMap;
+  modulosOverride: ModuleOverridesMap;
+  limitesEfectivos: {
+    limiteAdministradores: number;
+    limiteOperadores: number;
+    limiteUsuariosTotal: number;
+    maxAmbitosCaja: number;
+  };
+  suscripcion: PublicBusinessSubscription;
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
   enPrueba: boolean;
+  trialStartDate?: string | null;
+  trialEndDate?: string | null;
+  trialStatus?: TrialStatus | null;
+  trialDaysRemaining?: number | null;
+  trialExpiringSoon?: boolean;
+  trialBillingActive?: boolean;
+  source?: BusinessSource;
+  contactVerification?: TrialContactVerification;
+  lifecycle?: TrialLifecycle;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
@@ -66,9 +120,16 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'planId',
   'estadoSuscripcion',
   'enPrueba',
+  'trialStartDate',
+  'trialEndDate',
+  'trialStatus',
   'creadoPor',
   'updatedAt',
 ]);
+
+function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
+}
 
 function businessRef(businessId: string) {
   return db.collection('negocios').doc(businessId);
@@ -93,10 +154,48 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
     planId: resolvePlanId(data),
     estadoSuscripcion: normalizeStatus(data.estadoSuscripcion),
     enPrueba: data.enPrueba === true,
+    trialStartDate:
+      typeof data.trialStartDate === 'string' ? data.trialStartDate.slice(0, 10) : undefined,
+    trialEndDate:
+      typeof data.trialEndDate === 'string' ? data.trialEndDate.slice(0, 10) : undefined,
+    trialStatus:
+      data.trialStatus === 'active' ||
+      data.trialStatus === 'expired' ||
+      data.trialStatus === 'converted' ||
+      data.trialStatus === 'cancelled'
+        ? data.trialStatus
+        : undefined,
+    source:
+      data.source === 'self_service_trial' ||
+      data.source === 'manual_platform' ||
+      data.source === 'imported'
+        ? data.source
+        : undefined,
+    contactVerification:
+      data.contactVerification && typeof data.contactVerification === 'object'
+        ? (data.contactVerification as TrialContactVerification)
+        : undefined,
+    lifecycle:
+      data.lifecycle && typeof data.lifecycle === 'object'
+        ? (data.lifecycle as TrialLifecycle)
+        : undefined,
+    suscripcion: parseBusinessSubscription(data),
     creadoPor: data.creadoPor ? String(data.creadoPor) : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
   };
+}
+
+async function resolveForBusiness(
+  business: BusinessRecord,
+  plan?: PlanRecord
+): Promise<{ plan: PlanRecord; resolved: ResolvedBusinessSubscription }> {
+  const resolvedPlan = plan ?? (await getPlanOrDefault(business.planId));
+  const resolved = resolveBusinessSubscription(
+    resolvedPlan,
+    business.suscripcion ?? {}
+  );
+  return { plan: resolvedPlan, resolved };
 }
 
 export function isAdministratorRole(rol: UserRole): boolean {
@@ -126,6 +225,13 @@ export function sanitizeBusinessPayload(
     if (payload.enPrueba !== undefined) {
       next.enPrueba = payload.enPrueba === true;
     }
+    if (
+      payload.trialStartDate !== undefined ||
+      payload.trialEndDate !== undefined ||
+      payload.trialStatus !== undefined
+    ) {
+      Object.assign(next, buildTrialFieldUpdates(payload, undefined));
+    }
   }
 
   return next;
@@ -143,6 +249,15 @@ export async function getBusinessPlan(businessId: string): Promise<PlanRecord> {
   const business =
     (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
   return getPlanOrDefault(business.planId);
+}
+
+export async function getBusinessSubscription(
+  businessId: string
+): Promise<ResolvedBusinessSubscription> {
+  const business =
+    (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
+  const { resolved } = await resolveForBusiness(business);
+  return resolved;
 }
 
 export async function ensureDefaultBusiness(
@@ -179,7 +294,13 @@ export async function createBusiness(
     planId?: string;
     estadoSuscripcion?: SubscriptionStatus;
     enPrueba?: boolean;
+    trialStartDate?: string;
+    trialEndDate?: string;
+    trialStatus?: TrialStatus | null;
     creadoPor?: string;
+    source?: BusinessSource;
+    contactVerification?: TrialContactVerification;
+    lifecycle?: TrialLifecycle;
   }
 ): Promise<BusinessRecord> {
   const ref = businessRef(businessId);
@@ -191,12 +312,26 @@ export async function createBusiness(
   const planId = payload.planId?.trim() || DEFAULT_PLAN_ID;
   await getPlanOrDefault(planId);
 
+  const trialFields = buildTrialFieldUpdates(
+    {
+      enPrueba: payload.enPrueba,
+      trialStartDate: payload.trialStartDate,
+      trialEndDate: payload.trialEndDate,
+      trialStatus: payload.trialStatus,
+    },
+    undefined
+  );
+
   const record = {
     nombre: payload.nombre.trim(),
     planId,
     estadoSuscripcion: normalizeStatus(payload.estadoSuscripcion ?? 'activa'),
     enPrueba: payload.enPrueba === true,
+    ...trialFields,
     creadoPor: payload.creadoPor ?? 'platform',
+    source: payload.source ?? 'manual_platform',
+    ...(payload.contactVerification ? { contactVerification: payload.contactVerification } : {}),
+    ...(payload.lifecycle ? { lifecycle: payload.lifecycle } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -206,9 +341,16 @@ export async function createBusiness(
 
 export async function updateBusiness(
   businessId: string,
-  payload: Partial<BusinessRecord>,
-  options?: { allowSubscriptionFields?: boolean }
+  payload: Partial<BusinessRecord> & { suscripcion?: BusinessSubscriptionRecord },
+  options?: { allowSubscriptionFields?: boolean; changedBy?: string; historyNote?: string }
 ): Promise<BusinessRecord> {
+  const ref = businessRef(businessId);
+  const doc = await ref.get();
+  if (!doc.exists) {
+    throw new Error('BUSINESS_NOT_FOUND');
+  }
+  const before = mapBusiness(doc.id, doc.data() as Record<string, unknown>);
+
   const sanitized = sanitizeBusinessPayload(
     payload as Record<string, unknown>,
     options
@@ -218,26 +360,58 @@ export async function updateBusiness(
     await getPlanOrDefault(sanitized.planId);
   }
 
+  const subscriptionPatch = sanitizeBusinessSubscriptionPayload(
+    payload as Record<string, unknown>
+  );
+
+  const trialUpdates = buildTrialFieldUpdates(payload as Record<string, unknown>, before);
+
   const updates: Record<string, unknown> = {
     ...sanitized,
+    ...trialUpdates,
     updatedAt: new Date().toISOString(),
   };
 
   Object.keys(updates).forEach((key) => {
-    if (!BUSINESS_MUTABLE_FIELDS.has(key) && key !== 'updatedAt') {
+    if (key === 'updatedAt' || key === 'suscripcion') return;
+    if (!BUSINESS_MUTABLE_FIELDS.has(key)) {
       delete updates[key];
     }
   });
 
-  const ref = businessRef(businessId);
-  const doc = await ref.get();
-  if (!doc.exists) {
-    throw new Error('BUSINESS_NOT_FOUND');
+  if (subscriptionPatch && options?.allowSubscriptionFields) {
+    const current = parseBusinessSubscription(doc.data() as Record<string, unknown>);
+    const effectivePlanId = sanitized.planId ?? before.planId;
+    const plan = await getPlanOrDefault(effectivePlanId);
+    const planChanged = Boolean(sanitized.planId && sanitized.planId !== before.planId);
+    const mergedSub: BusinessSubscriptionRecord = {
+      ...current,
+      ...subscriptionPatch,
+    };
+
+    if (planChanged || !current.planFrozen) {
+      mergedSub.planFrozen = buildFrozenPlanSnapshot(plan);
+    }
+
+    updates.suscripcion = omitUndefinedFields(mergedSub);
   }
 
   await ref.update(updates);
-  const next = await ref.get();
-  return mapBusiness(next.id, next.data() as Record<string, unknown>);
+  let after = mapBusiness(businessId, (await ref.get()).data() as Record<string, unknown>);
+  after = await syncExpiredTrialStatus(after);
+
+  if (options?.allowSubscriptionFields) {
+    const { recordBusinessSubscriptionChange } = await import('./subscription-history.ts');
+    await recordBusinessSubscriptionChange({
+      businessId,
+      changedBy: options.changedBy,
+      before,
+      after,
+      note: options.historyNote,
+    });
+  }
+
+  return after;
 }
 
 export async function listBusinesses(): Promise<BusinessRecord[]> {
@@ -257,6 +431,7 @@ type PublicBusinessInfoOptions = {
 function buildPublicBusinessInfo(
   business: BusinessRecord,
   plan: PlanRecord,
+  resolved: ResolvedBusinessSubscription,
   counts: {
     administradoresActivos: number;
     operadoresActivos: number;
@@ -271,6 +446,8 @@ function buildPublicBusinessInfo(
     ultimoPagoMonto?: number;
   }
 ): PublicBusinessInfo {
+  const limits = resolved.limits;
+  const trial = resolveTrialState(business);
   return {
     id: business.id,
     nombre: business.nombre,
@@ -279,21 +456,40 @@ function buildPublicBusinessInfo(
     estadoSuscripcion: business.estadoSuscripcion,
     estadoPago: paymentSummary.estadoPago,
     periodoPagoActual: paymentSummary.periodoActual,
-    montoMensualEsperado: paymentSummary.montoEsperado,
+    montoMensualEsperado: resolved.montoMensualEsperado,
+    cuotaDesglose: resolved.cuota,
+    entitlements: resolved.entitlements,
+    modulosOverride: resolved.moduleOverrides,
+    limitesEfectivos: {
+      limiteAdministradores: limits.limiteAdministradores,
+      limiteOperadores: limits.limiteOperadores,
+      limiteUsuariosTotal: limits.limiteUsuariosTotal,
+      maxAmbitosCaja: limits.maxAmbitosCaja,
+    },
+    suscripcion: resolved.suscripcion,
     ultimoPagoPeriodo: paymentSummary.ultimoPagoPeriodo,
     ultimoPagoFecha: paymentSummary.ultimoPagoFecha,
     ultimoPagoMonto: paymentSummary.ultimoPagoMonto,
     enPrueba: business.enPrueba === true,
+    trialStartDate: trial.trialStartDate,
+    trialEndDate: trial.trialEndDate,
+    trialStatus: trial.trialStatus,
+    trialDaysRemaining: trial.daysRemaining,
+    trialExpiringSoon: trial.isExpiringSoon,
+    trialBillingActive: trial.isTrialBillingActive,
+    source: business.source,
+    contactVerification: business.contactVerification,
+    lifecycle: business.lifecycle,
     createdAt: business.createdAt,
     administradoresActivos: counts.administradoresActivos,
     operadoresActivos: counts.operadoresActivos,
     usuariosActivos: counts.usuariosActivos,
     administradoresDisponibles: Math.max(
       0,
-      plan.limiteAdministradores - counts.administradoresActivos
+      limits.limiteAdministradores - counts.administradoresActivos
     ),
-    operadoresDisponibles: Math.max(0, plan.limiteOperadores - counts.operadoresActivos),
-    usuariosDisponibles: Math.max(0, plan.limiteUsuariosTotal - counts.usuariosActivos),
+    operadoresDisponibles: Math.max(0, limits.limiteOperadores - counts.operadoresActivos),
+    usuariosDisponibles: Math.max(0, limits.limiteUsuariosTotal - counts.usuariosActivos),
   };
 }
 
@@ -302,18 +498,20 @@ export function buildNewBusinessPublicInfo(
   business: BusinessRecord,
   plan: PlanRecord
 ): PublicBusinessInfo {
+  const resolved = resolveBusinessSubscription(plan, business.suscripcion ?? {});
   return buildPublicBusinessInfo(
     business,
     plan,
+    resolved,
     {
       administradoresActivos: 1,
       operadoresActivos: 0,
       usuariosActivos: 1,
     },
     {
-      estadoPago: business.enPrueba ? 'al_dia' : 'pendiente',
+      estadoPago: isTrialActiveForBilling(business) ? 'al_dia' : 'pendiente',
       periodoActual: currentPeriodo(),
-      montoEsperado: plan.precioMensual,
+      montoEsperado: resolved.montoMensualEsperado,
     }
   );
 }
@@ -324,21 +522,22 @@ export async function toSessionBusinessInfo(
 ): Promise<PublicBusinessInfo> {
   const business =
     existing ?? (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
-  const plan = await getPlanOrDefault(business.planId);
+  const { plan, resolved } = await resolveForBusiness(business);
   const periodoActual = currentPeriodo();
 
   return buildPublicBusinessInfo(
     business,
     plan,
+    resolved,
     {
       administradoresActivos: 0,
       operadoresActivos: 0,
       usuariosActivos: 0,
     },
     {
-      estadoPago: business.enPrueba ? 'al_dia' : 'pendiente',
+      estadoPago: isTrialActiveForBilling(business) ? 'al_dia' : 'pendiente',
       periodoActual,
-      montoEsperado: plan.precioMensual,
+      montoEsperado: resolved.montoMensualEsperado,
     }
   );
 }
@@ -347,11 +546,17 @@ export async function toPublicBusinessInfo(
   businessId: string,
   options?: PublicBusinessInfoOptions
 ): Promise<PublicBusinessInfo> {
-  const business =
+  let business =
     options?.business ??
     (await getBusiness(businessId)) ??
     (await ensureDefaultBusiness(businessId));
-  const plan = options?.plan ?? (await getPlanOrDefault(business.planId));
+  business = await syncExpiredTrialStatus(business);
+  const { plan, resolved } = options?.plan
+    ? {
+        plan: options.plan,
+        resolved: resolveBusinessSubscription(options.plan, business.suscripcion ?? {}),
+      }
+    : await resolveForBusiness(business, options?.plan);
   const includeUsage = options?.includeUsage !== false;
   const includePayments = options?.includePayments !== false;
 
@@ -364,15 +569,17 @@ export async function toPublicBusinessInfo(
           usuariosActivos: 0,
         }),
     includePayments
-      ? getSubscriptionPaymentSummary(businessId, plan.precioMensual)
+      ? getSubscriptionPaymentSummary(businessId, resolved.montoMensualEsperado)
       : Promise.resolve({
-          estadoPago: (business.enPrueba ? 'al_dia' : 'pendiente') as SubscriptionPaymentStatus,
+          estadoPago: (isTrialActiveForBilling(business)
+            ? 'al_dia'
+            : 'pendiente') as SubscriptionPaymentStatus,
           periodoActual: currentPeriodo(),
-          montoEsperado: plan.precioMensual,
+          montoEsperado: resolved.montoMensualEsperado,
         }),
   ]);
 
-  return buildPublicBusinessInfo(business, plan, counts, paymentSummary);
+  return buildPublicBusinessInfo(business, plan, resolved, counts, paymentSummary);
 }
 
 export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
@@ -383,15 +590,17 @@ export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
 
   return Promise.all(
     businesses.map(async (business) => {
+      const synced = await syncExpiredTrialStatus(business);
       const plan =
-        plansById.get(business.planId) ??
+        plansById.get(synced.planId) ??
         plansById.get(DEFAULT_PLAN_ID) ??
-        (await getPlanOrDefault(business.planId));
+        (await getPlanOrDefault(synced.planId));
+      const resolved = resolveBusinessSubscription(plan, synced.suscripcion ?? {});
       const [counts, paymentSummary] = await Promise.all([
-        getActiveUserCounts(business.id),
-        getSubscriptionPaymentSummary(business.id, plan.precioMensual),
+        getActiveUserCounts(synced.id),
+        getSubscriptionPaymentSummary(synced.id, resolved.montoMensualEsperado),
       ]);
-      return buildPublicBusinessInfo(business, plan, counts, paymentSummary);
+      return buildPublicBusinessInfo(synced, plan, resolved, counts, paymentSummary);
     })
   );
 }
@@ -425,24 +634,25 @@ export async function assertCanAddUser(
   rol: UserRole
 ): Promise<{ business: BusinessRecord; plan: PlanRecord }> {
   const business = await assertBusinessActive(businessId);
-  const plan = await getPlanOrDefault(business.planId);
+  const { plan, resolved } = await resolveForBusiness(business);
+  const limits = resolved.limits;
 
   if (isAdministratorRole(rol)) {
     const administradoresActivos = await countActiveAdministrators(businessId);
-    if (administradoresActivos >= plan.limiteAdministradores) {
+    if (administradoresActivos >= limits.limiteAdministradores) {
       throw new Error('ADMIN_LIMIT_REACHED');
     }
   }
 
   if (rol === 'staff') {
     const operadoresActivos = await countActiveOperators(businessId);
-    if (operadoresActivos >= plan.limiteOperadores) {
+    if (operadoresActivos >= limits.limiteOperadores) {
       throw new Error('OPERATOR_LIMIT_REACHED');
     }
   }
 
   const usuariosActivos = await countActiveUsers(businessId);
-  if (usuariosActivos >= plan.limiteUsuariosTotal) {
+  if (usuariosActivos >= limits.limiteUsuariosTotal) {
     throw new Error('USER_LIMIT_REACHED');
   }
 
@@ -455,7 +665,10 @@ export async function assertCanActivateUser(
   currentUserId?: string
 ): Promise<void> {
   await assertBusinessActive(businessId);
-  const plan = await getBusinessPlan(businessId);
+  const business = await getBusiness(businessId);
+  if (!business) throw new Error('BUSINESS_NOT_FOUND');
+  const { resolved } = await resolveForBusiness(business);
+  const limits = resolved.limits;
 
   if (isAdministratorRole(rol)) {
     let administradoresActivos = await countActiveAdministrators(businessId);
@@ -473,7 +686,7 @@ export async function assertCanActivateUser(
         administradoresActivos -= 1;
       }
     }
-    if (administradoresActivos >= plan.limiteAdministradores) {
+    if (administradoresActivos >= limits.limiteAdministradores) {
       throw new Error('ADMIN_LIMIT_REACHED');
     }
   }
@@ -490,7 +703,7 @@ export async function assertCanActivateUser(
         operadoresActivos -= 1;
       }
     }
-    if (operadoresActivos >= plan.limiteOperadores) {
+    if (operadoresActivos >= limits.limiteOperadores) {
       throw new Error('OPERATOR_LIMIT_REACHED');
     }
   }
@@ -505,7 +718,7 @@ export async function assertCanActivateUser(
       usuariosActivos -= 1;
     }
   }
-  if (usuariosActivos >= plan.limiteUsuariosTotal) {
+  if (usuariosActivos >= limits.limiteUsuariosTotal) {
     throw new Error('USER_LIMIT_REACHED');
   }
 }

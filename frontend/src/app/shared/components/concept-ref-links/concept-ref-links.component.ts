@@ -22,7 +22,15 @@ import { buildConceptSegments } from '../../utils/concept-ref-links';
         <a
           *ngSwitchCase="'venta'"
           [routerLink]="['/sales']"
-          [queryParams]="{ ventaId: segment.ventaId }"
+          [queryParams]="getVentaQueryParams(segment.ventaId)"
+          (click)="$event.stopPropagation()"
+          class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
+          {{ segment.ref }}
+        </a>
+        <a
+          *ngSwitchCase="'compra'"
+          [routerLink]="['/purchases', segment.compraId]"
+          [queryParams]="compraQueryParams"
           (click)="$event.stopPropagation()"
           class="text-teal-600 font-semibold hover:text-teal-800 hover:underline">
           {{ segment.ref }}
@@ -35,16 +43,29 @@ export class ConceptRefLinksComponent {
   @Input({ required: true }) text!: string;
   @Input() pedidoId?: string | null;
   @Input() ventaId?: string | null;
+  @Input() compraId?: string | null;
   @Input() numeroPedidoLabel?: string | null;
   @Input() ventaLabel?: string | null;
+  @Input() compraLabel?: string | null;
   @Input() pedidoQueryParams: Record<string, string> | null = null;
+  @Input() ventaQueryParams: Record<string, string> | null = null;
+  @Input() compraQueryParams: Record<string, string> | null = null;
 
   get segments() {
     return buildConceptSegments(this.text, {
       pedidoId: this.pedidoId,
       ventaId: this.ventaId,
+      compraId: this.compraId,
       numeroPedidoLabel: this.numeroPedidoLabel,
       ventaLabel: this.ventaLabel,
+      compraLabel: this.compraLabel,
     });
+  }
+
+  getVentaQueryParams(ventaId: string): Record<string, string> {
+    return {
+      ventaId,
+      ...(this.ventaQueryParams ?? {}),
+    };
   }
 }

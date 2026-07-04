@@ -12,7 +12,7 @@ export type OrderEstadoConfig = {
 export const DEFAULT_ORDER_ESTADOS: OrderEstadoConfig[] = [
   { value: 'borrador', label: 'Borrador', sistema: true },
   { value: 'pendiente', label: 'Pendiente', sistema: true },
-  { value: 'en_produccion', label: 'En producción', sistema: true },
+  { value: 'en_produccion', label: 'En proceso', sistema: true },
   { value: 'listo', label: 'Listo', sistema: true },
   { value: 'entregado', label: 'Entregado', sistema: true },
   { value: 'cancelado', label: 'Cancelado', sistema: true },
@@ -44,8 +44,10 @@ export type OrderPedidosConfig = {
   costosExtraPredeterminados: OrderExtraCostPreset[];
   /** Si es true (default), pedidos y descuentos pueden dejar stock negativo. */
   permitirStockNegativo: boolean;
-  /** Permite adjuntar fotos de referencia en pedidos e imprimirlas. */
+  /** Permite adjuntar fotos de referencia en pedidos. */
   fotosReferenciaHabilitadas: boolean;
+  /** Incluye las fotos de referencia en el imprimible del pedido. */
+  fotosReferenciaEnImpresion: boolean;
   /** Elimina fotos de pedido más viejas que fotosRetencionDias (job diario). */
   fotosEliminacionAutomatica: boolean;
   /** Días de retención cuando fotosEliminacionAutomatica está activa (7–365). */
@@ -69,6 +71,7 @@ export const DEFAULT_ORDER_PEDIDOS_CONFIG: OrderPedidosConfig = {
   costosExtraPredeterminados: [],
   permitirStockNegativo: true,
   fotosReferenciaHabilitadas: true,
+  fotosReferenciaEnImpresion: true,
   fotosEliminacionAutomatica: false,
   fotosRetencionDias: 30,
 };
@@ -98,6 +101,15 @@ export function normalizeOrderEstadoValue(estado?: string): string {
     .replace(/\s+/g, '_');
 }
 
+function isLegacyEnProduccionLabel(label: string): boolean {
+  const normalized = String(label ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return normalized === 'en produccion';
+}
+
 export function normalizeOrderEstados(raw: unknown): OrderEstadoConfig[] {
   const saved = Array.isArray(raw) ? raw : [];
   const labelByValue = new Map<string, string>();
@@ -124,6 +136,9 @@ export function normalizeOrderEstados(raw: unknown): OrderEstadoConfig[] {
       if (lower.includes('saldo') || lower.includes('total')) {
         label = defaults.label;
       }
+    }
+    if (defaults.value === 'en_produccion' && savedLabel && isLegacyEnProduccionLabel(savedLabel)) {
+      label = defaults.label;
     }
     return {
       ...defaults,
@@ -244,6 +259,7 @@ export function normalizeOrderPedidosConfig(pedidos: Record<string, unknown> = {
     costosExtraPredeterminados: normalizeOrderExtraCostPresets(pedidos.costosExtraPredeterminados),
     permitirStockNegativo: pedidos.permitirStockNegativo !== false,
     fotosReferenciaHabilitadas: pedidos.fotosReferenciaHabilitadas !== false,
+    fotosReferenciaEnImpresion: pedidos.fotosReferenciaEnImpresion !== false,
     fotosEliminacionAutomatica: pedidos.fotosEliminacionAutomatica === true,
     fotosRetencionDias: normalizeOrderPhotoRetentionDays(
       pedidos.fotosRetencionDias ?? DEFAULT_ORDER_PHOTO_RETENTION_DAYS

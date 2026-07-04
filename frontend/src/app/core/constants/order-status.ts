@@ -12,7 +12,7 @@ export { getOrderStatusCardEstados, ORDER_STATUS_CARD_LIMIT };
 export const ORDER_STATUS_OPTIONS = [
   { value: 'borrador', label: 'Borrador' },
   { value: 'pendiente', label: 'Pendiente' },
-  { value: 'en_produccion', label: 'En producción' },
+  { value: 'en_produccion', label: 'En proceso' },
   { value: 'listo', label: 'Listo' },
   { value: 'entregado', label: 'Entregado' },
   { value: 'cancelado', label: 'Cancelado' },

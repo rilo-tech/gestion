@@ -19,6 +19,7 @@ export interface StockItem {
   talle?: string;
   color?: string;
   codigo?: string;
+  codigoBarras?: string;
   stockActual: number;
   stockMinimo?: number;
   stockReservado?: number;
@@ -106,6 +107,18 @@ export interface StockReservationGroup {
 
 export interface PaginatedStockItems {
   items: StockItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface PaginatedStockMovements {
+  items: StockMovement[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface PaginatedStockReservations {
+  rows: StockReservationRow[];
   nextCursor: string | null;
   hasMore: boolean;
 }
@@ -282,6 +295,15 @@ export class StockService {
     return this.http.get<StockMovement[]>(`/api/stock/${this.businessId}/movements`);
   }
 
+  getMovementsPage(limit = 120, cursor?: string): Observable<PaginatedStockMovements> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    return this.http.get<PaginatedStockMovements>(
+      `/api/stock/${this.businessId}/movements`,
+      { params }
+    );
+  }
+
   searchStock(query: string, limit = 20): Observable<StockItem[]> {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -343,6 +365,25 @@ export class StockService {
     }>(`/api/stock/${this.businessId}/codigo-check?${params}`);
   }
 
+  checkBarcodeAvailability(
+    codigoBarras: string,
+    options?: { excludeId?: string }
+  ): Observable<{ available: boolean }> {
+    const params = new URLSearchParams({ codigoBarras: codigoBarras.trim() });
+    const excludeId = options?.excludeId?.trim();
+    if (excludeId) params.set('excludeId', excludeId);
+    return this.http.get<{ available: boolean }>(
+      `/api/stock/${this.businessId}/barcode-check?${params}`
+    );
+  }
+
+  getItemByBarcode(code: string): Observable<StockItem> {
+    const params = new URLSearchParams({ code: code.trim() });
+    return this.http
+      .get<StockItem>(`/api/stock/${this.businessId}/by-barcode?${params}`)
+      .pipe(tap((item) => this.cacheItem(item)));
+  }
+
   getItem(itemId: string): Observable<StockItem> {
     return this.http
       .get<StockItem>(`/api/stock/${this.businessId}/${itemId}`)
@@ -402,6 +443,20 @@ export class StockService {
     const params = stockItemId ? `?stockItemId=${encodeURIComponent(stockItemId)}` : '';
     return this.http.get<{ rows: StockReservationRow[]; grouped: StockReservationGroup[] }>(
       `/api/stock/${this.businessId}/reservations${params}`
+    );
+  }
+
+  getReservationsPage(
+    limit = 30,
+    cursor?: string,
+    stockItemId?: string
+  ): Observable<PaginatedStockReservations> {
+    const params: Record<string, string> = { paged: '1', limit: String(limit) };
+    if (cursor) params.cursor = cursor;
+    if (stockItemId) params.stockItemId = stockItemId;
+    return this.http.get<PaginatedStockReservations>(
+      `/api/stock/${this.businessId}/reservations`,
+      { params }
     );
   }
 }

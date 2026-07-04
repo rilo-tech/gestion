@@ -4,15 +4,15 @@ import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
 import { ThemeService } from '../../../core/services/theme.service';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-topbar',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule],
+  imports: [CommonModule, LucideAngularModule, RouterLink],
   template: `
     <header
-      class="relative z-[90] h-14 shrink-0 border-b border-gray-100 bg-white/90 backdrop-blur-sm px-3 sm:px-6 flex items-center justify-between gap-3">
+      class="relative z-[90] min-h-14 shrink-0 border-b border-gray-100 dark:border-gray-800 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm px-3 sm:px-6 py-1 flex items-center justify-between gap-2 lg:h-14 lg:py-0">
       <button
         type="button"
         class="lg:hidden inline-flex items-center justify-center w-10 h-10 rounded-lg text-gray-600 hover:bg-gray-100"
@@ -22,19 +22,24 @@ import { Router } from '@angular/router';
         <i-lucide [name]="nav.mobileMenuOpen() ? 'x' : 'menu'" class="w-5 h-5"></i-lucide>
       </button>
 
-      <div class="flex-1 min-w-0 lg:hidden">
-        <p class="text-sm font-semibold text-gray-900 truncate">{{ auth.appBrandTitle }}</p>
+      <div class="flex-1 min-w-0 lg:hidden pr-1">
+        <a
+          [routerLink]="auth.homeRoute"
+          (click)="nav.closeMobileMenu()"
+          class="block min-w-0 text-[11px] font-semibold tracking-tight text-gray-900 dark:text-gray-100 leading-none truncate whitespace-nowrap hover:text-teal-700 dark:hover:text-teal-400 active:opacity-80">
+          {{ auth.appBrandTitle }}
+        </a>
       </div>
 
       <div class="inline-flex items-center gap-1.5 sm:gap-2.5 ml-auto">
-        <button
+        <a
           *ngIf="auth.canManageSettings"
-          type="button"
-          (click)="openSettings()"
+          routerLink="/settings"
           title="Configuración"
-          class="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          aria-label="Configuración"
+          class="lg:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100">
           <i-lucide name="settings" class="w-4 h-4"></i-lucide>
-        </button>
+        </a>
 
         <button
           type="button"
@@ -87,10 +92,6 @@ export class TopbarComponent {
   openAppearance() {
     const route = this.auth.isPlatformAdmin ? '/platform/apariencia' : '/apariencia';
     this.router.navigate([route]);
-  }
-
-  openSettings() {
-    this.router.navigate(['/settings']);
   }
 
   logout() {

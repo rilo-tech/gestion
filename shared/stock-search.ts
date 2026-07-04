@@ -6,6 +6,7 @@ export interface StockSearchEntry {
   talle?: string;
   color?: string;
   codigo?: string;
+  codigoBarras?: string;
   costo?: number;
   stockActual?: number;
   stockReservado?: number;
@@ -45,6 +46,7 @@ export function buildStockSearchHaystack(item: StockSearchEntry): string {
     item.talle,
     item.color,
     item.codigo,
+    item.codigoBarras,
   ]
     .map((value) => normalizeSearchText(value))
     .filter(Boolean)
@@ -61,12 +63,25 @@ export function scoreStockSearchMatch(
   const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
   const codigoQuery = compactCodigo(query);
   const codigo = compactCodigo(item.codigo);
+  const codigoBarras = compactCodigo(item.codigoBarras);
   const haystack = buildStockSearchHaystack(item);
   const words = haystackWords(haystack);
   const name = normalizeSearchText(item.nombre);
 
+  if (codigoBarras && codigoQuery && codigoBarras === codigoQuery) {
+    return 200;
+  }
+
+  if (codigo && codigoQuery && codigo === codigoQuery) {
+    return 160;
+  }
+
   if (codigo && codigoQuery && codigo.startsWith(codigoQuery)) {
     return 120 + (codigo === codigoQuery ? 40 : Math.max(0, 20 - codigo.length));
+  }
+
+  if (codigoBarras && codigoQuery && codigoBarras.startsWith(codigoQuery)) {
+    return 110 + (codigoBarras === codigoQuery ? 30 : Math.max(0, 15 - codigoBarras.length));
   }
 
   if (codigo && codigoQuery && codigo.includes(codigoQuery)) {
@@ -81,6 +96,7 @@ export function scoreStockSearchMatch(
   if (name.startsWith(tokens[0] ?? '')) score += 25;
   if (tokens.length > 1 && name.includes(normalizedQuery)) score += 10;
   if (codigo && codigoQuery && codigo.includes(codigoQuery)) score += 15;
+  if (codigoBarras && codigoQuery && codigoBarras.includes(codigoQuery)) score += 12;
   return score;
 }
 
@@ -102,12 +118,25 @@ export function scoreStockListSearchMatch(
   const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
   const codigoQuery = compactCodigo(query);
   const codigo = compactCodigo(item.codigo);
+  const codigoBarras = compactCodigo(item.codigoBarras);
   const nameHaystack = buildStockListSearchHaystack(item);
   const words = haystackWords(nameHaystack);
   const name = normalizeSearchText(item.nombre);
 
+  if (codigoBarras && codigoQuery && codigoBarras === codigoQuery) {
+    return 200;
+  }
+
+  if (codigo && codigoQuery && codigo === codigoQuery) {
+    return 160;
+  }
+
   if (codigo && codigoQuery && codigo.startsWith(codigoQuery)) {
     return 120 + (codigo === codigoQuery ? 40 : Math.max(0, 20 - codigo.length));
+  }
+
+  if (codigoBarras && codigoQuery && codigoBarras.startsWith(codigoQuery)) {
+    return 110 + (codigoBarras === codigoQuery ? 30 : Math.max(0, 15 - codigoBarras.length));
   }
 
   if (codigo && codigoQuery && codigo.includes(codigoQuery)) {
@@ -121,6 +150,7 @@ export function scoreStockListSearchMatch(
   let score = 40;
   if (name.startsWith(tokens[0] ?? '')) score += 25;
   if (tokens.length > 1 && name.includes(normalizedQuery)) score += 10;
+  if (codigoBarras && codigoQuery && codigoBarras.includes(codigoQuery)) score += 12;
   return score;
 }
 

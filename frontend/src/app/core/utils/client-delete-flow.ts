@@ -18,12 +18,12 @@ export function handleClientDeleteError(
   const suggestDeactivate =
     httpErr.status === 409 && httpErr.error?.suggestDeactivate === true;
 
-  if (!suggestDeactivate) {
-    dialogService.alert({ title: 'Error', message });
+  if (suggestDeactivate) {
+    dialogService.alert({ title: 'No se puede eliminar', message });
     return;
   }
 
-  offerClientDeactivation(clientId, clientName, message, clientService, dialogService, onSuccess);
+  dialogService.alert({ title: 'Error', message });
 }
 
 export function confirmClientDeletion(
@@ -36,10 +36,12 @@ export function confirmClientDeletion(
   clientService.getClientDeletionGuard(clientId).subscribe({
     next: (guard) => {
       if (!guard.canDelete) {
-        const message =
-          guard.message?.trim() ||
-          'Este cliente tiene transacciones asociadas. No se puede eliminar del sistema.';
-        offerClientDeactivation(clientId, clientName, message, clientService, dialogService, onSuccess);
+        dialogService.alert({
+          title: 'No se puede eliminar',
+          message:
+            guard.message?.trim() ||
+            'Este cliente tiene transacciones asociadas. No se puede eliminar del sistema.',
+        });
         return;
       }
 
@@ -75,30 +77,3 @@ export function confirmClientDeletion(
   });
 }
 
-function offerClientDeactivation(
-  clientId: string,
-  clientName: string,
-  message: string,
-  clientService: ClientService,
-  dialogService: DialogService,
-  onSuccess: () => void
-): void {
-  dialogService
-    .confirm({
-      title: 'No se puede eliminar',
-      message: `${message} ¿Marcar a ${clientName} como inactivo?`,
-      confirmLabel: 'Marcar inactivo',
-      variant: 'danger',
-    })
-    .subscribe((confirmed) => {
-      if (!confirmed) return;
-      clientService.setClientActive(clientId, false).subscribe({
-        next: () => onSuccess(),
-        error: () =>
-          dialogService.alert({
-            title: 'Error',
-            message: 'No se pudo desactivar el cliente.',
-          }),
-      });
-    });
-}

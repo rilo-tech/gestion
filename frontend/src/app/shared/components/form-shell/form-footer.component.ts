@@ -38,18 +38,9 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
 
       <div *ngSwitchDefault [class]="actionsWrapperClass">
         <div
-          *ngIf="mode === 'inline' && (deleteLabel || secondaryActionLabel)"
+          *ngIf="mode === 'inline' && deleteLabel"
           class="flex flex-wrap items-center gap-3">
           <button
-            *ngIf="secondaryActionLabel"
-            type="button"
-            (click)="secondaryActionClick.emit()"
-            [disabled]="secondaryActionDisabled"
-            class="text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 min-h-[44px] sm:min-h-0 disabled:opacity-60">
-            {{ secondarySaving ? 'Guardando...' : secondaryActionLabel }}
-          </button>
-          <button
-            *ngIf="deleteLabel"
             type="button"
             (click)="deleteClick.emit()"
             class="text-sm font-medium text-red-600 hover:text-red-700 min-h-[44px] sm:min-h-0">
@@ -73,20 +64,23 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
             aria-live="polite">
             {{ successMessage }}
           </p>
-          <div class="flex justify-end gap-3 flex-wrap">
+          <div class="flex justify-end gap-3 flex-wrap form-footer-primary-actions">
             <button
-              *ngIf="secondaryActionLabel && mode === 'modal'"
+              *ngIf="secondaryActionLabel"
               type="button"
               (click)="secondaryActionClick.emit()"
               [disabled]="secondaryActionDisabled"
-              class="text-sm font-medium text-gray-600 hover:text-gray-800 min-h-[44px] sm:min-h-0 disabled:opacity-60">
+              [class]="secondaryActionButtonClass"
+              data-footer-action="secondary">
               {{ secondarySaving ? 'Guardando...' : secondaryActionLabel }}
             </button>
             <button
               *ngIf="showCancel"
               type="button"
               (click)="cancelClick.emit()"
-              [class]="formCancelClass">
+              [disabled]="saving"
+              [class]="formCancelClass + (saving ? ' opacity-60 cursor-not-allowed' : '')"
+              data-footer-action="cancel">
               {{ cancelLabel }}
             </button>
             <button
@@ -94,6 +88,7 @@ export type FormFooterMode = 'inline' | 'modal' | 'sidebar';
               [attr.type]="saveAsSubmit ? 'submit' : 'button'"
               [disabled]="saving || saveDisabled"
               [class]="resolvedSaveButtonClass"
+              data-footer-action="primary"
               (click)="onSaveButtonClick($event)">
               {{ saving ? 'Guardando...' : saveLabel }}
             </button>
@@ -140,6 +135,13 @@ export class FormFooterComponent {
 
   get resolvedSaveButtonClass(): string {
     return this.saveButtonClass || this.formSubmitClass;
+  }
+
+  get secondaryActionButtonClass(): string {
+    if (this.mode === 'inline') {
+      return `${this.formCancelClass} form-btn-draft disabled:opacity-60`;
+    }
+    return 'text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 min-h-[44px] sm:min-h-0 disabled:opacity-60';
   }
 
   get actionsWrapperClass(): string {

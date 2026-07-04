@@ -9,9 +9,18 @@ import { formatOrderStockMotivo } from '../utils/stock-movimientos.ts';
 import { productControlsStock } from '../utils/stock-product.ts';
 import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import { requireBusinessModule } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { getBusinessSubscription } from '../auth/business.ts';
+import { businessHasModule } from '../auth/subscription-entitlements.ts';
+import { isPrivilegedRole, userHasPermission } from '../auth/constants.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
+import {
+  resolveOrderBalance,
+  sumPagosHaciaTotal,
+} from '../../shared/order-balance.ts';
+import { reconcileOrderPayments } from '../utils/order-payment-reconcile.ts';
 import {
   applyOrderStockPreparation,
   buildStockPreparationView,
@@ -27,6 +36,7 @@ import {
   mergeOrderItemsPreservingStock,
   reconcileOrderStockOnItemsChange,
   normalizeOrderItemsStock,
+  enrichOrderItemsStockControl,
   orderStockItemsEquivalent,
   collectChangedStockProductIds,
   syncPendingOrdersAfterStockChange,
@@ -61,12 +71,27 @@ import {
 } from '../utils/order-photos.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessModule('pedidos'));
 
 async function loadOrderPedidosConfig(businessId: string) {
   const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
   const data = appDoc.exists ? (appDoc.data() as Record<string, unknown>) : {};
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
   return normalizeOrderPedidosConfig(pedidos);
+}
+
+async function assertOrderPhotosModule(
+  businessId: string,
+  res: express.Response
+): Promise<boolean> {
+  const resolved = await getBusinessSubscription(businessId);
+  if (!businessHasModule(resolved, 'order_photos')) {
+    res.status(403).json({
+      error: 'El módulo de fotos en pedidos no está incluido en la suscripción.',
+    });
+    return false;
+  }
+  return true;
 }
 
 async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
@@ -81,7 +106,7 @@ function estadoMatchesStockTrigger(estado: string | undefined, trigger: string):
 
 type OrderPayment = {
   id: string;
-  tipo: 'seña' | 'cuota' | 'pago' | 'extra';
+  tipo: 'seña' | 'cuota' | 'pago';
   monto: number;
   fecha: string;
   movimientoCajaId?: string;
@@ -138,15 +163,21 @@ function sumPagos(pagos: OrderPayment[] = []) {
   return pagos.reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
 }
 
-function sumPagosHaciaTotal(pagos: OrderPayment[] = []) {
-  return pagos
-    .filter((pago) => pago.tipo !== 'extra')
-    .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
+function coerceStoredOrderItems(raw: unknown): OrderLine[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((line) => line && typeof line === 'object') as OrderLine[];
+  }
+  if (raw && typeof raw === 'object') {
+    return Object.values(raw as Record<string, OrderLine>).filter(
+      (line) => line && typeof line === 'object'
+    );
+  }
+  return [];
 }
 
 /** Respuesta liviana para la grilla de pedidos (sin detalle de líneas ni costos extra). */
 function toOrderListSummary(id: string, data: Record<string, unknown>) {
-  const items = Array.isArray(data.items) ? data.items : [];
+  const items = coerceStoredOrderItems(data.items);
   const pagos = Array.isArray(data.pagos) ? data.pagos : [];
 
   return {
@@ -179,7 +210,7 @@ function toOrderListSummary(id: string, data: Record<string, unknown>) {
     productoNombres: items
       .map((line) => String((line as Record<string, unknown>).nombre ?? '').trim())
       .filter(Boolean),
-    items: [],
+    items: normalizeOrderItemsStock(items),
   };
 }
 
@@ -258,6 +289,81 @@ function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   if (pago.movimientoCajaId) clean.movimientoCajaId = pago.movimientoCajaId;
   if (pago.notas) clean.notas = pago.notas;
   return clean;
+}
+
+function findStoredOrderPayment(order: OrderRecord, pagoId: string): OrderPayment | null {
+  const stored = (order.pagos ?? []).filter((pago) => pago && typeof pago === 'object') as OrderPayment[];
+  const direct = stored.find((pago) => pago.id === pagoId);
+  if (direct) return direct;
+
+  if (
+    order.movimientoSeniaId &&
+    pagoId === `pago_senia_${order.movimientoSeniaId}`
+  ) {
+    return {
+      id: pagoId,
+      tipo: 'seña',
+      monto: Number(order.senia) || 0,
+      fecha: new Date().toISOString(),
+      movimientoCajaId: order.movimientoSeniaId,
+    };
+  }
+
+  return null;
+}
+
+function validateOrderPaymentRemoval(
+  order: OrderRecord,
+  pago: OrderPayment,
+  pagosAfterRemoval: OrderPayment[]
+): string | null {
+  if (isCancelledStatus(order.estado)) {
+    return 'No se pueden anular pagos en un pedido cancelado.';
+  }
+  if (isEntregadoTotalStatus(order.estado, order)) {
+    return 'El pedido está entregado y cerrado. No se pueden anular pagos.';
+  }
+
+  const notas = String(pago.notas ?? '');
+  if (/venta\s*#/i.test(notas)) {
+    return 'Este cobro está vinculado a una venta. Anulalo desde Ventas.';
+  }
+  if (pago.tipo === 'pago' && notas === 'Pago total') {
+    return 'No se puede anular el pago de entrega desde el pedido.';
+  }
+  if (pago.tipo === 'seña') {
+    const others = pagosAfterRemoval.filter((row) => (Number(row.monto) || 0) > 0);
+    if (others.length > 0) {
+      return 'Anulá primero las cuotas antes de quitar la seña.';
+    }
+  }
+  if (!pago.movimientoCajaId) {
+    return 'Este pago no tiene movimiento de caja asociado.';
+  }
+  return null;
+}
+
+async function syncOrderLinkedVentaSaldo(
+  businessId: string,
+  order: OrderRecord,
+  saldo: number,
+  total: number
+): Promise<void> {
+  const ventaId = order.ventaId ? String(order.ventaId).trim() : '';
+  if (!ventaId) return;
+
+  const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
+  const ventaSnap = await ventaRef.get();
+  if (!ventaSnap.exists) return;
+
+  const ventaData = ventaSnap.data() ?? {};
+  const totalVenta = Number(ventaData.total) || total;
+  const montoCobrado = Math.max(0, totalVenta - saldo);
+  await ventaRef.update({
+    montoCobrado,
+    saldoPendiente: saldo,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 function normalizeEstado(estado?: string) {
@@ -930,15 +1036,47 @@ router.get('/:businessId/:orderId', async (req, res) => {
     const doc = await db.collection(`negocios/${businessId}/pedidos`).doc(orderId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Order not found' });
     const data = doc.data() as Record<string, unknown>;
-    const items = normalizeOrderItemsStock((data.items as OrderLine[] | undefined) ?? []);
+    const items = normalizeOrderItemsStock(coerceStoredOrderItems(data.items));
 
-    let clienteNombre = '';
     const clienteId = String(data.clienteId ?? '').trim();
-    if (clienteId) {
+    let clienteNombre = String(data.clienteNombre ?? '').trim();
+    if (clienteId && !clienteNombre) {
       const clientSnap = await db.collection(`negocios/${businessId}/clientes`).doc(clienteId).get();
       if (clientSnap.exists) {
         clienteNombre = String(clientSnap.data()?.nombre ?? '').trim();
       }
+    }
+
+    const includePhotoUrls = String(req.query.photoUrls ?? '') === '1';
+    const storedPhotos = normalizeOrderPhotos(data.fotos);
+    let fotos = storedPhotos.map((photo) => ({ ...photo, url: '' }));
+    if (includePhotoUrls && storedPhotos.length) {
+      try {
+        fotos = await resolveOrderPhotoUrls(storedPhotos);
+      } catch {
+        // Si falla Storage, devolvemos el pedido igual (sin bloquear lectura ni impresión).
+      }
+    }
+
+    const reconciled = reconcileOrderPayments({
+      total: data.total,
+      senia: data.senia,
+      totalPagado: data.totalPagado,
+      pagos: Array.isArray(data.pagos) ? data.pagos : [],
+      seniaBloqueada: data.seniaBloqueada,
+      movimientoSeniaId: data.movimientoSeniaId,
+      items,
+      saldo: data.saldo,
+    });
+
+    if (reconciled.changed) {
+      await doc.ref.update({
+        pagos: reconciled.pagos,
+        total: reconciled.total,
+        totalPagado: reconciled.totalPagado,
+        saldo: reconciled.saldo,
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     res.json({
@@ -946,8 +1084,12 @@ router.get('/:businessId/:orderId', async (req, res) => {
       ...data,
       items,
       clienteNombre,
-      fotos: await resolveOrderPhotoUrls(normalizeOrderPhotos(data.fotos)),
+      fotos,
       estadoStock: computeOrderStockStatus(items),
+      pagos: reconciled.pagos,
+      total: reconciled.total,
+      totalPagado: reconciled.totalPagado,
+      saldo: reconciled.saldo,
     });
   } catch (error) {
     res.status(500).json({ error: 'Error fetching order' });
@@ -962,7 +1104,7 @@ router.post('/:businessId', async (req, res) => {
     const isDraft = isDraftStatus(orderData.estado);
 
     const total = Number(orderData.total) || 0;
-    const normalizedItems = normalizeOrderItemsStock(orderData.items ?? []);
+    const normalizedItems = await enrichOrderItemsStockControl(businessId, orderData.items ?? []);
 
     let orderNumberPatch: Partial<OrderRecord> = {};
     if (!isDraft) {
@@ -1046,10 +1188,13 @@ router.post('/:businessId', async (req, res) => {
 
 router.post('/:businessId/:orderId/pagos', async (req, res) => {
   try {
+    const paymentAllowed = assertStaffOrderPaymentAllowed(req as AuthenticatedRequest);
+    if (!paymentAllowed.ok) {
+      return res.status(paymentAllowed.status).json({ error: paymentAllowed.error });
+    }
+
     const { businessId, orderId } = req.params;
     const monto = Number(req.body.monto) || 0;
-    const tipo = req.body.tipo === 'cuota' ? 'cuota' : 'pago';
-    const allowExtra = req.body.allowExtra === true;
     const notas = String(req.body.notas ?? '').trim();
 
     if (monto <= 0) {
@@ -1068,98 +1213,87 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       return res.status(400).json({ error: 'Confirmá el pedido antes de registrar pagos.' });
     }
 
-    const total = Number(order.total) || 0;
     const pagosBase = normalizePagos(order);
-    const pagadoActual = sumPagosHaciaTotal(pagosBase);
-    const saldoPedido = Math.max(0, total - pagadoActual);
+    const balance = resolveOrderBalance({
+      total: order.total,
+      senia: order.senia,
+      totalPagado: order.totalPagado,
+      pagos: pagosBase,
+      seniaBloqueada: order.seniaBloqueada,
+      movimientoSeniaId: order.movimientoSeniaId,
+      items: order.items,
+    });
+    const total = balance.total;
+    const saldoPedido = balance.saldo;
+
+    const storedTotal = Number(order.total) || 0;
+    const storedSaldo = Number(order.saldo) || 0;
+    if (
+      Math.abs(total - storedTotal) > 0.009 ||
+      Math.abs(saldoPedido - storedSaldo) > 0.009
+    ) {
+      await orderRef.update({
+        total,
+        saldo: saldoPedido,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     if (saldoPedido <= 0) {
       return res.status(403).json({ error: 'Este pedido no tiene saldo pendiente.' });
     }
 
-    if (monto > saldoPedido && !allowExtra) {
+    if (monto > saldoPedido) {
       return res.status(400).json({
         error: `El monto supera el saldo pendiente ($${saldoPedido}).`,
         saldoPedido,
-        extra: monto - saldoPedido,
       });
     }
 
     const orderLabel = resolveOrderLabel(order);
-    const nuevosPagos: OrderPayment[] = [];
     const timestamp = Date.now();
+    const movimientoCajaId = await createCashIncome(businessId, {
+      monto,
+      concepto: `Cuota pedido #${orderLabel}`,
+      origenId: orderId,
+      origenTipo: 'pedido_cuota',
+      clienteId: order.clienteId,
+      pedidoId: orderId,
+      numeroPedido: order.numeroPedido,
+      numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
+    });
 
-    if (monto > saldoPedido && allowExtra) {
-      if (saldoPedido > 0) {
-        const movimientoSaldoId = await createCashIncome(businessId, {
-          monto: saldoPedido,
-          concepto: `${tipo === 'cuota' ? 'Cuota' : 'Pago'} pedido #${orderLabel}`,
-          origenId: orderId,
-          origenTipo: `pedido_${tipo}`,
-          clienteId: order.clienteId,
-          pedidoId: orderId,
-          numeroPedido: order.numeroPedido,
-          numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
-        });
-
-        nuevosPagos.push({
-          id: `pago_${timestamp}`,
-          tipo,
-          monto: saldoPedido,
-          fecha: new Date().toISOString(),
-          movimientoCajaId: movimientoSaldoId,
-          notas: notas || undefined,
-        });
-      }
-
-      const extraMonto = monto - saldoPedido;
-      const movimientoExtraId = await createCashIncome(businessId, {
-        monto: extraMonto,
-        concepto: `Pago extra pedido #${orderLabel}`,
-        origenId: orderId,
-        origenTipo: 'pedido_extra',
-        clienteId: order.clienteId,
-        pedidoId: orderId,
-        numeroPedido: order.numeroPedido,
-        numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
-      });
-
-      nuevosPagos.push({
-        id: `pago_${timestamp + 1}`,
-        tipo: 'extra',
-        monto: extraMonto,
-        fecha: new Date().toISOString(),
-        movimientoCajaId: movimientoExtraId,
-      });
-    } else {
-      const label = tipo === 'cuota' ? 'Cuota' : 'Pago';
-      const movimientoCajaId = await createCashIncome(businessId, {
-        monto,
-        concepto: `${label} pedido #${orderLabel}`,
-        origenId: orderId,
-        origenTipo: `pedido_${tipo}`,
-        clienteId: order.clienteId,
-        pedidoId: orderId,
-        numeroPedido: order.numeroPedido,
-        numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
-      });
-
-      nuevosPagos.push({
+    const nuevosPagos: OrderPayment[] = [
+      {
         id: `pago_${timestamp}`,
-        tipo,
+        tipo: 'cuota',
         monto,
         fecha: new Date().toISOString(),
         movimientoCajaId,
         notas: notas || undefined,
-      });
-    }
+      },
+    ];
 
     const pagos = [...pagosBase, ...nuevosPagos].map(sanitizePagoForFirestore);
-    const totalPagado = sumPagos(pagos);
-    const saldo = Math.max(0, total - sumPagosHaciaTotal(pagos));
+    const totalPagado = sumPagosHaciaTotal(
+      pagos.map((pago) => ({
+        tipo: String(pago.tipo ?? 'pago'),
+        monto: Number(pago.monto) || 0,
+      }))
+    );
+    const saldo = resolveOrderBalance({
+      total,
+      senia: order.senia,
+      totalPagado,
+      pagos,
+      seniaBloqueada: true,
+      movimientoSeniaId: order.movimientoSeniaId,
+      items: order.items,
+    }).saldo;
 
     await orderRef.update({
       pagos,
+      total,
       totalPagado,
       saldo,
       seniaBloqueada: true,
@@ -1206,9 +1340,96 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
   }
 });
 
+router.delete('/:businessId/:orderId/pagos/:pagoId', async (req, res) => {
+  try {
+    const { businessId, orderId, pagoId } = req.params;
+    const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found' });
+
+    const order = orderSnap.data() as OrderRecord;
+    const pago = findStoredOrderPayment(order, pagoId);
+    if (!pago) return res.status(404).json({ error: 'Pago no encontrado.' });
+
+    const storedPagos = [...(order.pagos ?? [])].filter(
+      (row) => row && typeof row === 'object'
+    ) as OrderPayment[];
+    const pagosAfterRemoval = storedPagos.filter((row) => row.id !== pago.id);
+    const removalError = validateOrderPaymentRemoval(order, pago, pagosAfterRemoval);
+    if (removalError) {
+      return res.status(403).json({ error: removalError });
+    }
+
+    if (pago.movimientoCajaId) {
+      const movementRef = db
+        .collection(`negocios/${businessId}/movimientos_caja`)
+        .doc(pago.movimientoCajaId);
+      const movementSnap = await movementRef.get();
+      if (movementSnap.exists) {
+        await movementRef.delete();
+      }
+    }
+
+    const balance = resolveOrderBalance({
+      total: order.total,
+      senia: order.senia,
+      pagos: pagosAfterRemoval,
+      seniaBloqueada: order.seniaBloqueada,
+      movimientoSeniaId:
+        pago.tipo === 'seña' || pago.movimientoCajaId === order.movimientoSeniaId
+          ? null
+          : order.movimientoSeniaId,
+      items: order.items,
+    });
+
+    const updatePayload: Record<string, unknown> = {
+      pagos: pagosAfterRemoval.map(sanitizePagoForFirestore),
+      total: balance.total,
+      totalPagado: balance.pagado,
+      saldo: balance.saldo,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (pago.tipo === 'seña' || pago.movimientoCajaId === order.movimientoSeniaId) {
+      updatePayload.movimientoSeniaId = null;
+      updatePayload.seniaBloqueada = false;
+    }
+
+    await orderRef.update(updatePayload);
+    await syncOrderLinkedVentaSaldo(businessId, order, balance.saldo, balance.total);
+
+    const orderLabel = resolveOrderLabel(order);
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'delete',
+      entityType: 'pedido',
+      entityId: orderId,
+      entityLabel: orderLabel,
+      summary: `Anuló pago de $${Number(pago.monto) || 0} en pedido #${orderLabel}`,
+    });
+
+    res.json({
+      id: orderId,
+      pagos: pagosAfterRemoval,
+      totalPagado: balance.pagado,
+      saldo: balance.saldo,
+      seniaBloqueada: updatePayload.seniaBloqueada ?? order.seniaBloqueada,
+      movimientoSeniaId:
+        updatePayload.movimientoSeniaId !== undefined
+          ? updatePayload.movimientoSeniaId
+          : order.movimientoSeniaId,
+    });
+  } catch (error) {
+    console.error('Error removing order payment:', error);
+    const message = error instanceof Error ? error.message : 'Error removing payment';
+    res.status(500).json({ error: message });
+  }
+});
+
 router.post('/:businessId/:orderId/fotos', async (req, res) => {
   try {
     const { businessId, orderId } = req.params;
+    if (!(await assertOrderPhotosModule(businessId, res))) return;
     const pedidosConfig = await loadOrderPedidosConfig(businessId);
     if (!pedidosConfig.fotosReferenciaHabilitadas) {
       return res.status(403).json({ error: 'Las fotos de referencia están desactivadas en configuración.' });
@@ -1265,6 +1486,7 @@ router.post('/:businessId/:orderId/fotos', async (req, res) => {
 router.delete('/:businessId/:orderId/fotos/:photoId', async (req, res) => {
   try {
     const { businessId, orderId, photoId } = req.params;
+    if (!(await assertOrderPhotosModule(businessId, res))) return;
     const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
     const orderSnap = await orderRef.get();
     if (!orderSnap.exists) return res.status(404).json({ error: 'Order not found' });
@@ -1304,6 +1526,62 @@ router.delete('/:businessId/:orderId/fotos/:photoId', async (req, res) => {
   }
 });
 
+function assertStaffOrderPaymentAllowed(
+  req: AuthenticatedRequest
+): { ok: true } | { ok: false; status: number; error: string } {
+  const auth = req.auth;
+  if (!auth || auth.scope !== 'company') return { ok: true };
+
+  const user = auth.user;
+  if (isPrivilegedRole(user.rol)) return { ok: true };
+  if (userHasPermission(user.rol, user.permisos, 'records.edit')) return { ok: true };
+  if (userHasPermission(user.rol, user.permisos, 'cash.access')) return { ok: true };
+  if (userHasPermission(user.rol, user.permisos, 'orders.viewSalePrice')) return { ok: true };
+
+  return {
+    ok: false,
+    status: 403,
+    error: 'No tenés permiso para registrar pagos en pedidos.',
+  };
+}
+
+function assertStaffOrderUpdateAllowed(
+  req: AuthenticatedRequest,
+  patch: Record<string, unknown>
+): { ok: true } | { ok: false; status: number; error: string } {
+  const auth = req.auth;
+  if (!auth || auth.scope !== 'company') return { ok: true };
+
+  const user = auth.user;
+  if (isPrivilegedRole(user.rol)) return { ok: true };
+
+  if (userHasPermission(user.rol, user.permisos, 'records.edit')) {
+    return { ok: true };
+  }
+
+  if (!userHasPermission(user.rol, user.permisos, 'orders.changeStatus')) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'No tenés permiso para modificar pedidos.',
+    };
+  }
+
+  const allowedKeys = new Set(['estado', 'descuentoFisicoAlcance', 'entregaModo']);
+  const disallowed = Object.keys(patch).filter(
+    (key) => patch[key] !== undefined && !allowedKeys.has(key)
+  );
+  if (disallowed.length > 0) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Solo podés cambiar el estado del pedido.',
+    };
+  }
+
+  return { ok: true };
+}
+
 router.patch('/:businessId/:orderId', async (req, res) => {
   try {
     const { businessId, orderId } = req.params;
@@ -1317,6 +1595,13 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     if (!existingDoc.exists) return res.status(404).json({ error: 'Order not found' });
 
     const existingOrder = existingDoc.data() as OrderRecord;
+    const permissionCheck = assertStaffOrderUpdateAllowed(
+      req as AuthenticatedRequest,
+      orderData as Record<string, unknown>
+    );
+    if (!permissionCheck.ok) {
+      return res.status(permissionCheck.status).json({ error: permissionCheck.error });
+    }
     if (
       incomingFecha !== undefined &&
       incomingFecha !== null &&
@@ -1451,6 +1736,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
         orderData.items ?? [],
         existingOrder.items ?? []
       );
+      orderData.items = await enrichOrderItemsStockControl(businessId, orderData.items);
       mergedOrder.items = orderData.items;
 
       if (!isDraftStatus(mergedEstado)) {

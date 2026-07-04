@@ -14,7 +14,9 @@ export const ASSIGNABLE_PERMISSIONS = [
   'orders.personalization',
   'orders.viewAll',
   'orders.viewDelivered',
+  'orders.changeStatus',
   'orders.print',
+  'stock.viewPrices',
   'sales.create',
   'sales.viewHistory',
   'sales.viewSummary',
@@ -28,10 +30,7 @@ export const ASSIGNABLE_PERMISSIONS = [
 
 export type AssignablePermission = (typeof ASSIGNABLE_PERMISSIONS)[number];
 
-export const DEFAULT_STAFF_PERMISSIONS: AssignablePermission[] = [
-  'orders.personalization',
-  'orders.viewSalePrice',
-];
+export const DEFAULT_STAFF_PERMISSIONS: AssignablePermission[] = [];
 
 export type UserRole = 'supervisor' | 'admin' | 'staff';
 export type ThemePreference = 'light' | 'dark';

@@ -1,11 +1,11 @@
 import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/config/firebase';
-import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../../core/constants/google-auth-storage';
+import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY, GOOGLE_LOGIN_UI_ENABLED } from '../../core/constants/google-auth-storage';
 import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
@@ -16,7 +16,7 @@ import {
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   styles: [
     `
       .login-field:-webkit-autofill,
@@ -89,13 +89,14 @@ import {
           </button>
         </form>
 
-        <div class="my-6 flex items-center gap-3">
+        <div *ngIf="googleLoginUiEnabled" class="my-6 flex items-center gap-3">
           <div class="h-px flex-1 bg-gray-800"></div>
           <span class="text-xs text-gray-500 uppercase">o</span>
           <div class="h-px flex-1 bg-gray-800"></div>
         </div>
 
         <button
+          *ngIf="googleLoginUiEnabled"
           type="button"
           (click)="submitGoogleLogin()"
           [disabled]="submitting || googleRedirectPending"
@@ -103,18 +104,23 @@ import {
           {{ googleRedirectPending ? 'Volviendo de Google...' : 'Continuar con Google' }}
         </button>
 
-        <p class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
+        <p *ngIf="googleLoginUiEnabled" class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
           Cargá el código de empresa antes de usar Google. Tu email debe estar registrado en Mi cuenta.
         </p>
 
-        <p *ngIf="!isFirebaseClientConfigured && !isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
+        <p *ngIf="googleLoginUiEnabled && !isFirebaseClientConfigured && !isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
           Google no está configurado: falta <span class="font-mono">VITE_FIREBASE_API_KEY</span> en el
           <span class="font-mono">.env</span> de la raíz del repo. Reiniciá el servidor después de guardarlo.
         </p>
 
-        <p *ngIf="isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
+        <p *ngIf="googleLoginUiEnabled && isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
           Modo desarrollo: Google usa el emulador local (no es la cuenta real). Tras confirmar el email
           volvés al login y entrás automáticamente.
+        </p>
+
+        <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
+          ¿Querés probar el sistema?
+          <a routerLink="/probar-gratis" class="text-teal-400 font-semibold hover:underline">20 días gratis</a>
         </p>
       </div>
     </div>
@@ -127,6 +133,7 @@ export class LoginComponent implements OnInit {
 
   readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
   readonly isFirebaseClientConfigured = isFirebaseClientConfigured;
+  readonly googleLoginUiEnabled = GOOGLE_LOGIN_UI_ENABLED;
 
   businessCode = '';
   login = '';

@@ -85,6 +85,10 @@ interface PayableAccountCardHeader extends PayableInstallmentGroupSummary {
   tarjetaLabel: string;
   /** Suma de todas las cuotas pendientes/vencidas de la cuenta (todos los meses). */
   totalBalancePending: number;
+  /** Cuotas impagas en toda la cuenta (todos los meses). */
+  totalUnpaidCount: number;
+  /** Cuotas impagas con vencimiento hoy o posterior. */
+  futureUnpaidCount: number;
 }
 
 interface PayableAccountPurchaseHeader extends PayableInstallmentGroupSummary {
@@ -113,8 +117,9 @@ interface PayableAccountMonthStatement {
 interface PayableAccountCardEntry {
   key: string;
   header: PayableAccountCardHeader;
-  /** Cuotas del mes corriente (una por compra en el resumen del mes). */
+  /** Cuotas del mes corriente; se cargan al expandir la fila. */
   currentMonth: PayableAccountMonthStatement | null;
+  /** Meses con saldo pendiente; se calculan bajo demanda al pagar. */
   monthStatements: PayableAccountMonthStatement[];
 }
 
@@ -402,18 +407,16 @@ interface PayableObligationGroupEntry {
             </ng-container>
           </div>
           <div [class]="desktopListSearchWrapClass + ' border-0 hidden sm:block'">
-            <div class="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-              <div class="sm:flex-1 sm:min-w-[12rem]">
-                <app-list-search-field
-                  mode="filter"
-                  [query]="searchQuery"
-                  (queryChange)="onSearchQueryChange($event)"
-                  name="searchQuery"
-                  [placeholder]="viewTab === 'month' ? 'Buscar cuota, cuenta, compra...' : (viewTab === 'account' ? 'Buscar cuenta o compra...' : 'Buscar préstamo o cuota...')"
-                  extraClass="w-full">
-                </app-list-search-field>
-              </div>
-              <div class="flex shrink-0 flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 sm:pl-4 sm:border-l border-gray-200 dark:border-gray-700">
+            <div class="flex flex-wrap items-center gap-3 sm:gap-4">
+              <app-list-search-field
+                mode="filter"
+                [query]="searchQuery"
+                (queryChange)="onSearchQueryChange($event)"
+                name="searchQuery"
+                [placeholder]="viewTab === 'month' ? 'Buscar cuota, cuenta, compra...' : (viewTab === 'account' ? 'Buscar cuenta o compra...' : 'Buscar préstamo o cuota...')">
+              </app-list-search-field>
+              <div
+                class="flex w-full sm:w-auto shrink-0 flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 sm:ml-auto sm:pl-4 sm:border-l border-gray-200 dark:border-gray-700">
                 <select
                   *ngIf="viewTab === 'month'"
                   [(ngModel)]="mesEstadoFilter"
@@ -502,11 +505,11 @@ interface PayableObligationGroupEntry {
           <ng-container *ngIf="viewTab === 'account'">
             <ng-container *ngFor="let card of accountViewCards">
               <app-compact-list-row (activate)="toggleAccountCardExpand(card.key)">
-                <div compactTitle class="compact-list-title truncate font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+                <div compactTitle class="compact-list-title font-medium text-gray-900 dark:text-gray-100 flex items-start gap-1.5 min-w-0">
                   <i-lucide
                     [name]="isAccountCardExpanded(card.key) ? 'chevron-down' : 'chevron-right'"
-                    class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
-                  {{ card.header.tarjetaLabel }}
+                    class="w-3.5 h-3.5 shrink-0 text-gray-400 mt-0.5"></i-lucide>
+                  <span class="min-w-0 truncate whitespace-nowrap" [title]="card.header.tarjetaLabel">{{ card.header.tarjetaLabel }}</span>
                 </div>
                 <div compactSubtitle class="compact-list-subtitle truncate">
                   {{ accountCardSubtitle(card) }}
@@ -524,14 +527,14 @@ interface PayableObligationGroupEntry {
                     </span>
                   </ng-template>
                   <button
-                    *ngIf="card.header.pendingCount > 0"
+                    *ngIf="card.header.totalUnpaidCount > 0"
                     type="button"
                     (click)="openPayCardStatementForCard(card); $event.stopPropagation()"
                     class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap text-right">
                     Pagar
                   </button>
                   <span
-                    *ngIf="card.header.pendingCount === 0"
+                    *ngIf="card.header.totalUnpaidCount === 0"
                     class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
                     [ngClass]="estadoBadgeClass(card.header.summaryEstado)">
                     Al día
@@ -607,11 +610,6 @@ interface PayableObligationGroupEntry {
                     [name]="isObligationExpanded(group.key) ? 'chevron-down' : 'chevron-right'"
                     class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
                   <span class="truncate min-w-0">{{ group.header.beneficiario }}</span>
-                  <span
-                    *ngIf="group.header.isPrestamo"
-                    class="inline-flex shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300">
-                    Préstamo
-                  </span>
                   <span
                     class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
                     [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
@@ -761,19 +759,19 @@ interface PayableObligationGroupEntry {
 
           <app-module-data-table
             *ngIf="viewTab === 'account'"
-            minWidthClass="max-w-full">
+            minWidthClass="min-w-[72rem]">
             <colgroup>
-              <col class="w-[2.5rem]" />
-              <col class="w-[10rem]" />
-              <col class="w-[13rem]" />
-              <col class="w-[6.5rem]" />
-              <col class="w-[7rem]" />
-              <col class="w-[6.5rem]" />
-              <col class="w-[5.5rem]" />
+              <col style="width: 2.5rem" />
+              <col style="width: 20rem" />
+              <col style="width: 13rem" />
+              <col style="width: 5.25rem" />
+              <col style="width: 10rem" />
+              <col style="width: 8rem" />
+              <col style="width: 4.75rem" />
             </colgroup>
             <thead app-module-table-head>
               <th app-module-table-head-cell></th>
-              <th app-module-table-head-cell>Cuenta</th>
+              <th app-module-table-head-cell [nowrap]="true">Cuenta</th>
               <th app-module-table-head-cell>Resumen</th>
               <th app-module-table-head-cell [nowrap]="true">Próx. venc.</th>
               <th app-module-table-head-cell align="right" [nowrap]="true">Próx. resumen</th>
@@ -792,8 +790,12 @@ interface PayableObligationGroupEntry {
                       [name]="isAccountCardExpanded(card.key) ? 'chevron-down' : 'chevron-right'"
                       class="w-4 h-4 text-gray-500 mx-auto"></i-lucide>
                   </td>
-                  <td app-module-table-cell>
-                    <span class="font-medium text-gray-900 dark:text-gray-100 truncate block">{{ card.header.tarjetaLabel }}</span>
+                  <td app-module-table-cell extraClass="max-w-0 overflow-hidden">
+                    <span
+                      class="font-medium text-gray-900 dark:text-gray-100 block truncate whitespace-nowrap"
+                      [title]="card.header.tarjetaLabel">
+                      {{ card.header.tarjetaLabel }}
+                    </span>
                   </td>
                   <td app-module-table-cell extraClass="text-gray-600 text-sm min-w-0">
                     <span class="block truncate" [title]="accountCardSubtitle(card)">
@@ -809,7 +811,7 @@ interface PayableObligationGroupEntry {
                     </span>
                     <span *ngIf="!card.header.nextDueDate" class="text-gray-400">—</span>
                   </td>
-                  <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+                  <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums text-gray-900 dark:text-gray-100 whitespace-nowrap">
                     <ng-container *ngIf="cardNextResumenStatement(card) as nextStmt; else accountCardTotalPendingDesktop">
                       <span class="block">{{ formatMoney(nextStmt.totalPending) }}</span>
                       <span class="block text-[10px] font-normal text-gray-500 dark:text-gray-400 capitalize">{{ formatMes(nextStmt.mes) }}</span>
@@ -823,14 +825,14 @@ interface PayableObligationGroupEntry {
                   </td>
                   <td app-module-table-cell align="right">
                     <button
-                      *ngIf="card.header.pendingCount > 0"
+                      *ngIf="card.header.totalUnpaidCount > 0"
                       type="button"
                       (click)="openPayCardStatementForCard(card); $event.stopPropagation()"
                       class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
                       Pagar
                     </button>
                     <span
-                      *ngIf="card.header.pendingCount === 0"
+                      *ngIf="card.header.totalUnpaidCount === 0"
                       class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
                       [ngClass]="estadoBadgeClass(card.header.summaryEstado)">
                       Al día
@@ -961,11 +963,6 @@ interface PayableObligationGroupEntry {
                   </td>
                   <td app-module-table-cell>
                     <span class="font-medium text-gray-900 dark:text-gray-100 truncate block">{{ group.header.beneficiario }}</span>
-                    <span
-                      *ngIf="group.header.isPrestamo"
-                      class="inline-flex mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-violet-100 text-violet-800">
-                      Préstamo
-                    </span>
                   </td>
                   <td app-module-table-cell [nowrap]="true" extraClass="text-gray-600 text-sm whitespace-nowrap">
                     {{ obligationGroupSubtitle(group) }}
@@ -1064,7 +1061,9 @@ interface PayableObligationGroupEntry {
         </div>
       </app-compact-data-list>
 
-      <div *ngIf="mensualObligations.length > 0" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div
+        *ngIf="viewTab === 'month' && mensualObligations.length > 0"
+        class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-4">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
           <h2 class="text-sm font-semibold text-gray-900">Gastos fijos mensuales</h2>
           <p class="text-xs text-gray-500 mt-1">Sueldos, servicios y otros pagos que se repiten cada mes.</p>
@@ -1214,7 +1213,7 @@ interface PayableObligationGroupEntry {
           Elegí el mes del resumen. Solo se incluyen cuotas pendientes que vencen en ese mes (las ya pagadas no entran).
         </p>
         <button
-          *ngFor="let stmt of card.monthStatements"
+          *ngFor="let stmt of cardMonthStatements(card)"
           type="button"
           (click)="selectPayCardMonthStatement(card, stmt)"
           class="w-full flex items-center justify-between gap-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 px-4 py-3 text-left hover:border-teal-300 dark:hover:border-teal-700 transition-colors">
@@ -1348,8 +1347,12 @@ export class PayablesComponent implements OnInit, OnDestroy {
   payCuotaDetalle = '';
   loadingInstallments = true;
   private allInstallmentsCache: PayableInstallment[] | null = null;
+  private accountInstallmentsCacheKey = '';
+  private accountInstallmentsCache: PayableInstallment[] | null = null;
   private monthInstallmentsCacheKey = '';
   private monthInstallmentsCache: PayableInstallment[] | null = null;
+  private cardMonthStatementsCache = new Map<string, PayableAccountMonthStatement[]>();
+  private accountCardDetailsLoaded = new Set<string>();
   monthInstallmentSummary: PayableInstallmentMonthSummary | null = null;
 
   readonly payCardSave = new TransactionSaveFeedback();
@@ -1482,6 +1485,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
     this.expandedAccountCardKeys = {};
     this.expandedAccountMonthKeys = {};
     this.expandedAccountPurchaseKeys = {};
+    this.cardMonthStatementsCache.clear();
+    this.accountCardDetailsLoaded.clear();
 
     if (this.cuentaFilter && this.usesAmbitoSeparation) {
       const sample = this.installments.find((row) => row.tarjetaId === this.cuentaFilter);
@@ -1593,6 +1598,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
     );
 
     if (this.viewTab === 'account') {
+      this.cardMonthStatementsCache.clear();
+      this.accountCardDetailsLoaded.clear();
       this.tarjetaFilterOptions = this.buildTarjetaFilterOptions();
       this.accountViewCards = this.buildAccountCardEntries(
         this.sortInstallments(this.rowsMatchingFilters({ applyCuenta: true }))
@@ -1603,8 +1610,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
         this.sortInstallments(this.rowsMatchingFilters({ applyObligacion: true }))
       );
       this.obligacionFilterOptions = this.buildObligacionFilterOptions();
-      this.mensualObligations = this.buildMensualObligations();
     }
+    this.mensualObligations = this.buildMensualObligations();
 
     const kpiScope = this.buildKpiScopeInstallments();
     this.kpiScopePrefix = this.buildKpiScopePrefix();
@@ -1705,19 +1712,27 @@ export class PayablesComponent implements OnInit, OnDestroy {
       .map(([key, cardRows]) => {
         const sortedCardRows = this.sortInstallments(cardRows);
         const first = sortedCardRows[0];
-        const currentMonth = this.buildMonthStatementForMes(key, sortedCardRows, currentMes);
-        const headerSummary = currentMonth
-          ? this.buildInstallmentGroupSummary(currentMonth.rows)
-          : {
-              count: 0,
-              purchaseCount: 0,
-              pendingCount: 0,
-              totalPending: 0,
-              nextDueDate: '',
-              summaryEstado: 'pagada' as PayableDisplayEstado,
-            };
+        const mesRows = sortedCardRows.filter((row) => this.installmentMesKey(row) === currentMes);
+        const headerSummary =
+          mesRows.length > 0
+            ? this.buildInstallmentGroupSummary(mesRows)
+            : {
+                count: 0,
+                purchaseCount: 0,
+                pendingCount: 0,
+                totalPending: 0,
+                nextDueDate: '',
+                summaryEstado: 'pagada' as PayableDisplayEstado,
+              };
         const allUnpaid = sortedCardRows.filter((row) => row.displayEstado !== 'pagada');
+        const today = new Date().toISOString().slice(0, 10);
+        const futureUnpaid = allUnpaid.filter(
+          (row) => (row.fechaVencimiento?.slice(0, 10) ?? '') >= today
+        );
         const totalBalancePending = allUnpaid.reduce((sum, row) => sum + row.monto, 0);
+        const unpaidSummary = allUnpaid.length
+          ? this.buildInstallmentGroupSummary(allUnpaid)
+          : headerSummary;
         return {
           key,
           header: {
@@ -1725,9 +1740,13 @@ export class PayablesComponent implements OnInit, OnDestroy {
             tarjetaId: first?.tarjetaId ?? '',
             tarjetaLabel: first?.tarjetaLabel ?? first?.beneficiario ?? 'Cuenta',
             totalBalancePending,
+            totalUnpaidCount: allUnpaid.length,
+            futureUnpaidCount: futureUnpaid.length,
+            nextDueDate: unpaidSummary.nextDueDate || headerSummary.nextDueDate,
+            summaryEstado: unpaidSummary.summaryEstado,
           },
-          currentMonth,
-          monthStatements: this.buildCardMonthStatements(key, sortedCardRows),
+          currentMonth: null,
+          monthStatements: [],
         };
       })
       .sort((a, b) => {
@@ -1918,8 +1937,40 @@ export class PayablesComponent implements OnInit, OnDestroy {
       pendingCount: pending.length,
       totalPending: pending.reduce((sum, row) => sum + row.monto, 0),
       rows: sorted,
-      purchases: this.buildAccountPurchaseEntries(`${cardKey}|${mes}`, sorted),
+      purchases: [],
     };
+  }
+
+  private getInstallmentRowsForAccountCard(cardKey: string): PayableInstallment[] {
+    const [tarjetaId, ambito] = cardKey.split('|');
+    return this.sortInstallments(
+      this.getScopedInstallments().filter((row) => {
+        if (!row.tarjetaId || row.tarjetaId !== tarjetaId) return false;
+        return (row.ambito ?? 'negocio').trim().toLowerCase() === ambito;
+      })
+    );
+  }
+
+  cardMonthStatements(card: PayableAccountCardEntry): PayableAccountMonthStatement[] {
+    const cached = this.cardMonthStatementsCache.get(card.key);
+    if (cached) return cached;
+    const built = this.buildCardMonthStatements(card.key, this.getInstallmentRowsForAccountCard(card.key));
+    this.cardMonthStatementsCache.set(card.key, built);
+    return built;
+  }
+
+  private ensureAccountCardDetails(cardKey: string): void {
+    if (this.accountCardDetailsLoaded.has(cardKey)) return;
+    const card = this.accountViewCards.find((entry) => entry.key === cardKey);
+    if (!card) return;
+    if (!card.currentMonth) {
+      card.currentMonth = this.buildMonthStatementForMes(
+        cardKey,
+        this.getInstallmentRowsForAccountCard(cardKey),
+        this.accountViewMesKey()
+      );
+    }
+    this.accountCardDetailsLoaded.add(cardKey);
   }
 
   private buildCardMonthStatements(
@@ -1945,7 +1996,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
           pendingCount: pending.length,
           totalPending: pending.reduce((sum, row) => sum + row.monto, 0),
           rows: sorted,
-          purchases: this.buildAccountPurchaseEntries(`${cardKey}|${mes}`, sorted),
+          purchases: [],
         };
       })
       .filter((stmt) => stmt.pendingCount > 0)
@@ -1971,6 +2022,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
     const card = cards[0];
     this.expandedAccountCardKeys = { ...this.expandedAccountCardKeys, [card.key]: true };
+    this.ensureAccountCardDetails(card.key);
   }
 
   cardNextResumenStatement(card: PayableAccountCardEntry): PayableAccountMonthStatement | null {
@@ -1980,11 +2032,21 @@ export class PayablesComponent implements OnInit, OnDestroy {
   accountCardSubtitle(card: PayableAccountCardEntry): string {
     const h = card.header;
     const mes = this.formatMes(this.accountViewMesKey());
-    return `${h.purchaseCount} compra(s) en ${mes} · ${h.pendingCount} cuota(s) pend.`;
+    const monthPart = `${h.purchaseCount} compra(s) en ${mes}`;
+    if (h.pendingCount > 0) {
+      return `${monthPart} · ${h.pendingCount} cuota(s) pend.`;
+    }
+    if (h.futureUnpaidCount > 0) {
+      return `${monthPart} · ${h.futureUnpaidCount} cuota(s) a vencer`;
+    }
+    if (h.totalUnpaidCount > 0) {
+      return `${monthPart} · ${h.totalUnpaidCount} cuota(s) pend. en total`;
+    }
+    return `${monthPart} · Al día`;
   }
 
   cardPayResumenHint(card: PayableAccountCardEntry): string | null {
-    const stmts = card.monthStatements.filter((stmt) => stmt.pendingCount > 0);
+    const stmts = this.cardMonthStatements(card).filter((stmt) => stmt.pendingCount > 0);
     if (stmts.length === 0) return null;
     if (stmts.length === 1) {
       return `${this.formatMes(stmts[0].mes)} · ${this.formatMoney(stmts[0].totalPending)}`;
@@ -2061,8 +2123,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
       return;
     }
     if (tab === 'account') {
-      this.loadInstallmentsForCurrentView(true);
-      this.loadCardStatements();
+      this.loadInstallmentsForCurrentView();
+      queueMicrotask(() => this.loadCardStatements());
       return;
     }
     if (this.allInstallmentsCache) {
@@ -2307,6 +2369,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
   onMesFilterChange(): void {
     if (this.viewTab === 'month') {
       this.loadInstallmentsForCurrentView();
+    } else if (this.viewTab === 'account') {
+      this.accountInstallmentsCacheKey = '';
+      this.cardMonthStatementsCache.clear();
+      this.accountCardDetailsLoaded.clear();
+      this.loadInstallmentsForCurrentView();
     } else {
       this.syncPayablesView();
     }
@@ -2357,7 +2424,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
       ...this.expandedAccountCardKeys,
       [key]: next,
     };
-    if (!next) {
+    if (next) {
+      this.ensureAccountCardDetails(key);
+    } else {
       this.collapseNestedForAccount(key);
     }
   }
@@ -2404,9 +2473,21 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   openPayCardStatementForCard(card: PayableAccountCardEntry): void {
+    this.ensureAccountCardDetails(card.key);
     const stmt = card.currentMonth;
-    if (!stmt || stmt.pendingCount === 0) return;
-    this.openPayCardStatementForMonth(card, stmt);
+    if (stmt && stmt.pendingCount > 0) {
+      this.openPayCardStatementForMonth(card, stmt);
+      return;
+    }
+    const pendingStmts = this.cardMonthStatements(card).filter((entry) => entry.pendingCount > 0);
+    if (pendingStmts.length === 1) {
+      this.openPayCardStatementForMonth(card, pendingStmts[0]);
+      return;
+    }
+    if (pendingStmts.length > 1) {
+      this.payCardMonthPickerCard = card;
+      this.payCardMonthPickerOpen = true;
+    }
   }
 
   openPayCardStatementForMonth(
@@ -2769,27 +2850,43 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   private invalidateInstallmentsCache(): void {
     this.allInstallmentsCache = null;
+    this.accountInstallmentsCache = null;
+    this.accountInstallmentsCacheKey = '';
     this.monthInstallmentsCacheKey = '';
     this.monthInstallmentsCache = null;
     this.monthInstallmentSummary = null;
+    this.cardMonthStatementsCache.clear();
+    this.accountCardDetailsLoaded.clear();
   }
 
   private loadData(reconcile = false): void {
-    this.loadCardStatements();
+    if (this.viewTab === 'month') {
+      this.loadCardStatements();
+    } else {
+      queueMicrotask(() => this.loadCardStatements());
+    }
     this.payables.getObligations().subscribe({
       next: (obligations) => {
         this.obligations = obligations;
         this.syncPayablesView();
+        this.loadInstallmentsForCurrentView(reconcile);
       },
       error: () => {
         this.obligations = [];
+        this.syncPayablesView();
+        this.loadInstallmentsForCurrentView(reconcile);
       },
     });
-    this.loadInstallmentsForCurrentView(reconcile);
   }
 
-  private installmentsScopeForView(): 'month' | 'all' {
-    return this.viewTab === 'month' ? 'month' : 'all';
+  private installmentsScopeForView(): 'month' | 'all' | 'account' {
+    if (this.viewTab === 'month') return 'month';
+    if (this.viewTab === 'account') return 'account';
+    return 'all';
+  }
+
+  private accountInstallmentsCacheToken(): string {
+    return this.accountViewMesKey();
   }
 
   private installmentsQueryAmbito(): string | undefined {
@@ -2807,11 +2904,25 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   private loadInstallmentsForCurrentView(reconcile = false): void {
     const scope = this.installmentsScopeForView();
-    const mes = scope === 'month' ? this.mesFilter.trim() : undefined;
-    const cacheToken = scope === 'month' ? this.monthInstallmentsCacheToken() : 'all';
+    const mes =
+      scope === 'month'
+        ? this.mesFilter.trim()
+        : scope === 'account'
+          ? this.accountViewMesKey()
+          : undefined;
+    const monthCacheToken = scope === 'month' ? this.monthInstallmentsCacheToken() : '';
+    const accountCacheToken = scope === 'account' ? this.accountInstallmentsCacheToken() : '';
 
-    if (scope === 'month' && !reconcile && this.monthInstallmentsCache && this.monthInstallmentsCacheKey === cacheToken) {
+    if (scope === 'month' && !reconcile && this.monthInstallmentsCache && this.monthInstallmentsCacheKey === monthCacheToken) {
       this.installments = this.monthInstallmentsCache;
+      this.loadingInstallments = false;
+      this.syncPayablesView();
+      return;
+    }
+
+    if (scope === 'account' && !reconcile && this.accountInstallmentsCache && this.accountInstallmentsCacheKey === accountCacheToken) {
+      this.installments = this.accountInstallmentsCache;
+      this.monthInstallmentSummary = null;
       this.loadingInstallments = false;
       this.syncPayablesView();
       return;
@@ -2840,20 +2951,24 @@ export class PayablesComponent implements OnInit, OnDestroy {
           if (scope === 'month') {
             this.monthInstallmentSummary = response.monthSummary ?? null;
             this.monthInstallmentsCache = this.installments;
-            this.monthInstallmentsCacheKey = cacheToken;
+            this.monthInstallmentsCacheKey = monthCacheToken;
+          } else if (scope === 'account') {
+            this.monthInstallmentSummary = null;
+            this.accountInstallmentsCache = this.installments;
+            this.accountInstallmentsCacheKey = accountCacheToken;
           } else {
             this.monthInstallmentSummary = null;
             this.allInstallmentsCache = this.installments;
           }
           this.loadingInstallments = false;
-          this.syncPayablesView();
+          queueMicrotask(() => this.syncPayablesView());
         },
         error: () => {
           this.installments = [];
           this.monthInstallmentSummary = null;
           this.loadingInstallments = false;
           this.payablesViewCacheKey = '';
-          this.syncPayablesView();
+          queueMicrotask(() => this.syncPayablesView());
           this.dialog.alert({ message: 'No se pudieron cargar los vencimientos.' });
         },
       });

@@ -36,6 +36,11 @@ import { CompactDataListComponent } from '../../shared/components/compact-list/c
 import { ListLoadMoreComponent } from '../../shared/components/list-load-more/list-load-more.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 @Component({
   selector: 'app-suppliers',
@@ -246,6 +251,7 @@ export class SuppliersComponent implements OnInit {
   loadingMoreSuppliers = false;
   suppliersHasMore = false;
   suppliersCursor: string | null = null;
+  private readonly listLoadSession = new ProgressiveListSession();
   searchQuery = '';
   suppliersPage = 1;
   supplierModalOpen = false;
@@ -377,16 +383,22 @@ export class SuppliersComponent implements OnInit {
   }
 
   loadSuppliers() {
+    const loadToken = this.listLoadSession.next();
     this.loading = true;
     this.suppliersPage = 1;
-    this.supplierService.getSuppliersPage(this.listPageSize).subscribe({
+    this.supplierService.getSuppliersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.suppliers = page.items;
         this.suppliersHasMore = page.hasMore;
         this.suppliersCursor = page.nextCursor;
         this.loading = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingSuppliersInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loading = false;
         this.dialogService.alert({
           title: 'Error',
@@ -396,11 +408,36 @@ export class SuppliersComponent implements OnInit {
     });
   }
 
+  private loadRemainingSuppliersInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.suppliersHasMore || !this.suppliersCursor || this.loadingMoreSuppliers) return;
+
+    this.loadingMoreSuppliers = true;
+    this.supplierService
+      .getSuppliersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.suppliersCursor)
+      .subscribe({
+        next: (page) => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.suppliers = [...this.suppliers, ...page.items];
+          this.suppliersHasMore = page.hasMore;
+          this.suppliersCursor = page.nextCursor;
+          this.loadingMoreSuppliers = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingSuppliersInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.listLoadSession.isActive(loadToken)) return;
+          this.loadingMoreSuppliers = false;
+        },
+      });
+  }
+
   loadMoreSuppliers() {
     if (!this.suppliersHasMore || this.loadingMoreSuppliers) return;
     this.loadingMoreSuppliers = true;
     this.supplierService
-      .getSuppliersPage(this.listPageSize, this.suppliersCursor ?? undefined)
+      .getSuppliersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.suppliersCursor ?? undefined)
       .subscribe({
         next: (page) => {
           this.suppliers = [...this.suppliers, ...page.items];

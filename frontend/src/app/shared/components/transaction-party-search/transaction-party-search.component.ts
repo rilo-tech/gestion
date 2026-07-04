@@ -130,15 +130,19 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
 
   ngOnChanges(changes: SimpleChanges) {
     const scopeChanged = changes['scopeKey'] && !changes['scopeKey'].firstChange;
-    if (changes['labeledOptions'] || changes['fallbackLabel'] || scopeChanged) {
-      this.syncOptionsSnapshot();
+    const fallbackChanged =
+      !!changes['fallbackLabel'] && !changes['fallbackLabel'].firstChange;
+    const optionsChanged =
+      !!changes['labeledOptions'] && this.syncOptionsSnapshotIfChanged();
+
+    if (optionsChanged || fallbackChanged || scopeChanged) {
       if (scopeChanged) {
         this.menuOpen = false;
         this.activeIndex = -1;
         this.menuPointerMoved = false;
         this.menuPointerStartY = null;
       }
-      if (!this.inputFocused) {
+      if (!this.inputFocused && (optionsChanged || fallbackChanged || scopeChanged)) {
         this.syncQueryFromValue();
       }
       if (this.menuOpen && this.query.trim().length >= this.minChars) {
@@ -512,12 +516,17 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
     this.query = fallback;
   }
 
-  private syncOptionsSnapshot() {
+  private syncOptionsSnapshotIfChanged(): boolean {
     const key = (this.labeledOptions ?? [])
       .map((option) => `${option.value}\u0001${option.label}`)
       .join('\u0002');
-    if (key === this.optionsSnapshot) return;
+    if (key === this.optionsSnapshot) return false;
     this.optionsSnapshot = key;
+    return true;
+  }
+
+  private syncOptionsSnapshot() {
+    this.syncOptionsSnapshotIfChanged();
   }
 
   private scrollActiveIntoView() {

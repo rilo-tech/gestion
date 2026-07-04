@@ -67,17 +67,24 @@ import { ModulePageHeaderComponent } from '../../shared/components/module-page-h
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import { StockBarcodeAdjustPanelComponent } from './stock-barcode-adjust-panel.component';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 type StockTab = 'productos' | 'movimientos' | 'reservas';
 
 @Component({
   selector: 'app-stock',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConceptRefLinksComponent, HasPermissionDirective, ListPaginationComponent, ListRowActionsComponent, CompactListRowComponent, CompactInlineStatsComponent, ModulePageHeaderComponent, CompactDataListComponent, ListSearchFieldComponent],
+  imports: [CommonModule, LucideAngularModule, FormsModule, RouterLink, ConceptRefLinksComponent, HasPermissionDirective, ListPaginationComponent, ListRowActionsComponent, CompactListRowComponent, CompactInlineStatsComponent, ModulePageHeaderComponent, CompactDataListComponent, ListSearchFieldComponent, StockBarcodeAdjustPanelComponent],
   template: `
     <div [class]="pageShellClass">
       <app-module-page-header
         title="Stock & Inventario"
+        [compactMobile]="true"
         [showMobileSearch]="activeTab === 'productos' || activeTab === 'movimientos' || activeTab === 'reservas'"
         [searchQuery]="headerSearchQuery"
         (searchQueryChange)="onHeaderSearchChange($event)"
@@ -86,8 +93,8 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         [showRefresh]="true"
         [refreshing]="loadingItems || loadingMoreProducts"
         (refreshClick)="reloadList()">
-        <p headerExtra class="mt-2">
-          <a routerLink="/stock/faltantes" class="text-sm font-semibold text-orange-700 hover:text-orange-900 hover:underline">
+        <p headerExtra class="mt-1 sm:mt-2">
+          <a routerLink="/stock/faltantes" class="text-xs sm:text-sm font-semibold text-orange-700 dark:text-orange-400 hover:text-orange-900 dark:hover:text-orange-300 hover:underline leading-tight">
             Ver faltantes para comprar
           </a>
         </p>
@@ -100,7 +107,24 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           <i-lucide name="plus" class="w-4 h-4"></i-lucide>
           <span class="hidden sm:inline">Nuevo producto</span>
         </a>
+        <button
+          *ngIf="auth.canEditRecords"
+          type="button"
+          headerActions
+          [class]="iconActionLinkClass"
+          aria-label="Ajuste stock por código"
+          title="Ajuste stock por código"
+          (click)="openBarcodeAdjust()">
+          <i-lucide name="scan-barcode" class="w-4 h-4"></i-lucide>
+          <span class="hidden sm:inline">Ajuste stock</span>
+        </button>
       </app-module-page-header>
+
+      <app-stock-barcode-adjust-panel
+        [open]="barcodeAdjustOpen"
+        (closed)="barcodeAdjustOpen = false"
+        (adjusted)="onBarcodeStockAdjusted($event)">
+      </app-stock-barcode-adjust-panel>
 
       <div class="mb-4 border-b border-gray-100 dark:border-gray-800">
         <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
@@ -249,6 +273,12 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 Mín.
               </th>
               <th
+                *ngIf="auth.canViewStockPrices"
+                data-col-weight="7"
+                class="hidden lg:table-cell px-2 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-right whitespace-nowrap">
+                Precio
+              </th>
+              <th
                 *appHasPermission="permissions.STOCK_VIEW_COSTS"
                 data-col-weight="7"
                 class="hidden xl:table-cell px-2 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">
@@ -311,6 +341,11 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               </td>
               <td class="px-0.5 py-3 text-xs text-gray-600 tabular-nums text-center whitespace-nowrap">
                 {{ stockUnitsLabel(item, 'minimo') }}
+              </td>
+              <td
+                *ngIf="auth.canViewStockPrices"
+                class="hidden lg:table-cell px-2 py-3 text-sm text-teal-700 tabular-nums text-right whitespace-nowrap">
+                {{ formatMoney(item.precioSugerido || 0) }}
               </td>
               <td
                 *appHasPermission="permissions.STOCK_VIEW_COSTS"
@@ -384,23 +419,44 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             aria-hidden="true"></span>
           Eliminando movimiento…
         </p>
-        <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50 space-y-1.5 sm:space-y-2">
-          <div class="grid grid-cols-1 gap-2 sm:flex sm:flex-row sm:items-center sm:gap-3">
-            <app-list-search-field
-              mode="filter"
-              [(query)]="movementSearchQuery"
-              (queryChange)="onMovementsSearchChange()"
-              name="movementSearchQuery"
-              placeholder="Buscar por producto o motivo..."
-              [constrainWidth]="false"
-              extraClass="hidden sm:block sm:flex-1 sm:min-w-0 sm:max-w-3xl">
-            </app-list-search-field>
-            <div class="grid grid-cols-2 gap-2 sm:contents">
+        <div class="px-3 py-2 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40">
+          <div class="sm:hidden grid grid-cols-2 gap-2">
+            <select
+              [(ngModel)]="movementTipoFilter"
+              (ngModelChange)="movementsPage = 1"
+              name="movementTipoFilterMobile"
+              class="min-w-0 w-full px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white dark:bg-gray-900">
+              <option value="all">Todos los tipos</option>
+              <option value="entrada">{{ getTipoLabel('entrada') }}</option>
+              <option value="salida">{{ getTipoLabel('salida') }}</option>
+            </select>
+            <select
+              [(ngModel)]="movementOrigenFilter"
+              (ngModelChange)="movementsPage = 1"
+              name="movementOrigenFilterMobile"
+              class="min-w-0 w-full px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white dark:bg-gray-900">
+              <option value="all">Todos los orígenes</option>
+              <option *ngFor="let origen of stockOrigenes" [value]="origen.grupo">{{ origen.nombre }}</option>
+            </select>
+          </div>
+          <div class="hidden sm:flex sm:flex-row sm:items-center gap-3 sm:gap-4">
+            <div class="sm:flex-1 sm:min-w-[12rem]">
+              <app-list-search-field
+                mode="filter"
+                [(query)]="movementSearchQuery"
+                (queryChange)="onMovementsSearchChange()"
+                name="movementSearchQuery"
+                placeholder="Buscar por producto o motivo..."
+                [constrainWidth]="false"
+                extraClass="w-full">
+              </app-list-search-field>
+            </div>
+            <div class="flex shrink-0 flex-row items-center gap-3 sm:gap-4 sm:pl-4 sm:border-l border-gray-200 dark:border-gray-700">
               <select
                 [(ngModel)]="movementTipoFilter"
                 (ngModelChange)="movementsPage = 1"
                 name="movementTipoFilter"
-                class="min-w-0 w-full sm:w-auto px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+                class="w-auto min-w-[9.5rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
                 <option value="all">Todos los tipos</option>
                 <option value="entrada">{{ getTipoLabel('entrada') }}</option>
                 <option value="salida">{{ getTipoLabel('salida') }}</option>
@@ -409,7 +465,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                 [(ngModel)]="movementOrigenFilter"
                 (ngModelChange)="movementsPage = 1"
                 name="movementOrigenFilter"
-                class="min-w-0 w-full sm:w-auto px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary bg-white">
+                class="w-auto min-w-[12rem] px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-teal-500">
                 <option value="all">Todos los orígenes</option>
                 <option *ngFor="let origen of stockOrigenes" [value]="origen.grupo">{{ origen.nombre }}</option>
               </select>
@@ -837,9 +893,20 @@ export class StockComponent implements OnInit, OnDestroy {
   productsNextCursor: string | null = null;
   private productsLoadMorePageBefore = 0;
   private productsLoadMoreTotalPagesBefore = 0;
+  private readonly productsLoadSession = new ProgressiveListSession();
   loadingMovements = false;
+  movementsHasMore = false;
+  movementsNextCursor: string | null = null;
+  barcodeAdjustOpen = false;
+  loadingMoreMovements = false;
+  private readonly movementsLoadSession = new ProgressiveListSession();
   deletingMovementId: string | null = null;
   loadingReservations = false;
+  loadingMoreReservations = false;
+  reservationsHasMore = false;
+  reservationsNextCursor: string | null = null;
+  private readonly reservationsLoadSession = new ProgressiveListSession();
+  private reservationsProductFilter = '';
   private movementsLoaded = false;
   private reservationsLoaded = false;
   transferReservationRow: StockReservationRow | null = null;
@@ -1231,6 +1298,7 @@ export class StockComponent implements OnInit, OnDestroy {
   get productTableDesktopColspan(): number {
     let cols = 7;
     if (this.showCodigoColumn) cols += 1;
+    if (this.auth.canViewStockPrices) cols += 1;
     if (this.auth.canViewStockCosts) cols += 1;
     if (this.auth.isAdmin) cols += 1;
     return cols;
@@ -1271,7 +1339,7 @@ export class StockComponent implements OnInit, OnDestroy {
   stockMobileStats(item: StockItem): CompactInlineStat[] {
     const reserved = Number(item.stockReservado) || 0;
     const available = getStockDisponible(item);
-    return [
+    const stats: CompactInlineStat[] = [
       {
         label: 'Dep',
         value: String(item.stockActual ?? 0),
@@ -1288,6 +1356,14 @@ export class StockComponent implements OnInit, OnDestroy {
         tone: available <= 0 ? 'danger' : 'accent',
       },
     ];
+    if (this.auth.canViewStockPrices) {
+      stats.push({
+        label: 'Precio',
+        value: this.formatStockMoney(Number(item.precioSugerido) || 0),
+        tone: 'accent',
+      });
+    }
+    return stats;
   }
 
   getOrigenLabel(movement: StockMovement): string {
@@ -1439,6 +1515,31 @@ export class StockComponent implements OnInit, OnDestroy {
   openEditItem(item: StockItem) {
     if (!item.id) return;
     this.router.navigate(['/stock', item.id, 'edit']);
+  }
+
+  openBarcodeAdjust() {
+    this.barcodeAdjustOpen = true;
+  }
+
+  onBarcodeStockAdjusted(item: StockItem) {
+    if (!item.id) return;
+    const idx = this.items.findIndex((row) => row.id === item.id);
+    if (idx >= 0) {
+      this.items = [
+        ...this.items.slice(0, idx),
+        { ...this.items[idx], ...item },
+        ...this.items.slice(idx + 1),
+      ];
+    }
+    const searchIdx = this.searchResultItems.findIndex((row) => row.id === item.id);
+    if (searchIdx >= 0) {
+      this.searchResultItems = [
+        ...this.searchResultItems.slice(0, searchIdx),
+        { ...this.searchResultItems[searchIdx], ...item },
+        ...this.searchResultItems.slice(searchIdx + 1),
+      ];
+    }
+    this.loadStockMetrics(true);
   }
 
   duplicateItem(item: StockItem, event: Event) {
@@ -1601,89 +1702,251 @@ export class StockComponent implements OnInit, OnDestroy {
   private loadStock(refreshMetrics = false, append = false) {
     if (append) {
       this.loadingMoreProducts = true;
-    } else {
-      this.loadingItems = true;
-      this.productsPage = 1;
-      this.productsNextCursor = null;
+      this.stockService
+        .getStockPage(
+          PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+          this.productsNextCursor ?? undefined
+        )
+        .subscribe({
+          next: (page) => this.applyStockPage(page, refreshMetrics, true),
+          error: () => this.onStockPageError(true),
+        });
+      return;
     }
 
+    const loadToken = this.productsLoadSession.next();
+    this.loadingItems = true;
+    this.productsPage = 1;
+    this.productsNextCursor = null;
+
+    this.stockService.getStockPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.productsLoadSession.isActive(loadToken)) return;
+        this.applyStockPage(page, refreshMetrics, false);
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingProductsInBackground(loadToken, refreshMetrics);
+        }
+      },
+      error: () => {
+        if (!this.productsLoadSession.isActive(loadToken)) return;
+        this.onStockPageError(false);
+      },
+    });
+  }
+
+  private loadRemainingProductsInBackground(loadToken: number, refreshMetrics: boolean) {
+    if (!this.productsLoadSession.isActive(loadToken)) return;
+    if (!this.productsHasMore || !this.productsNextCursor || this.loadingMoreProducts) return;
+
+    this.loadingMoreProducts = true;
     this.stockService
-      .getStockPage(120, append ? this.productsNextCursor ?? undefined : undefined)
+      .getStockPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.productsNextCursor)
       .subscribe({
         next: (page) => {
-          const incoming = page.items ?? [];
-          const merged = append
-            ? this.sortItemsByName([
-                ...this.items,
-                ...incoming.filter((item) => !this.items.some((existing) => existing.id === item.id)),
-              ])
-            : this.sortItemsByName(incoming);
-          this.items = merged;
-          this.productsHasMore = page.hasMore;
-          this.productsNextCursor = page.nextCursor;
-          if (append && this.productsLoadMoreTotalPagesBefore > 0) {
-            if (this.productsLoadMorePageBefore >= this.productsLoadMoreTotalPagesBefore) {
-              this.productsPage = Math.min(
-                this.productsLoadMorePageBefore + 1,
-                totalListPages(this.filteredItems.length, this.listPageSize)
-              );
-            }
-            this.productsLoadMorePageBefore = 0;
-            this.productsLoadMoreTotalPagesBefore = 0;
-          }
-          this.loadingItems = false;
-          this.loadingMoreProducts = false;
-          if (refreshMetrics) {
-            this.loadStockMetrics(true);
-          } else if (!this.stockMetrics.updatedAt) {
-            this.applyMetricsFromLoadedItems();
+          if (!this.productsLoadSession.isActive(loadToken)) return;
+          this.applyStockPage(page, refreshMetrics, true);
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingProductsInBackground(loadToken, refreshMetrics);
           }
         },
         error: () => {
-          this.loadingItems = false;
+          if (!this.productsLoadSession.isActive(loadToken)) return;
           this.loadingMoreProducts = false;
-          this.productsLoadMorePageBefore = 0;
-          this.productsLoadMoreTotalPagesBefore = 0;
+        },
+      });
+  }
+
+  private applyStockPage(
+    page: { items?: StockItem[]; hasMore: boolean; nextCursor: string | null },
+    refreshMetrics: boolean,
+    append: boolean
+  ) {
+    const incoming = page.items ?? [];
+    const merged = append
+      ? this.sortItemsByName([
+          ...this.items,
+          ...incoming.filter((item) => !this.items.some((existing) => existing.id === item.id)),
+        ])
+      : this.sortItemsByName(incoming);
+    this.items = merged;
+    this.productsHasMore = page.hasMore;
+    this.productsNextCursor = page.nextCursor;
+    if (append && this.productsLoadMoreTotalPagesBefore > 0) {
+      if (this.productsLoadMorePageBefore >= this.productsLoadMoreTotalPagesBefore) {
+        this.productsPage = Math.min(
+          this.productsLoadMorePageBefore + 1,
+          totalListPages(this.filteredItems.length, this.listPageSize)
+        );
+      }
+      this.productsLoadMorePageBefore = 0;
+      this.productsLoadMoreTotalPagesBefore = 0;
+    }
+    this.loadingItems = false;
+    this.loadingMoreProducts = false;
+    if (refreshMetrics) {
+      this.loadStockMetrics(true);
+    } else if (!this.stockMetrics.updatedAt) {
+      this.applyMetricsFromLoadedItems();
+    }
+  }
+
+  private onStockPageError(append: boolean) {
+    this.loadingItems = false;
+    this.loadingMoreProducts = false;
+    this.productsLoadMorePageBefore = 0;
+    this.productsLoadMoreTotalPagesBefore = 0;
+    if (!append) {
+      this.dialogService.alert({
+        title: 'Error',
+        message: 'No se pudieron cargar los productos.',
+      });
+    }
+  }
+
+  private loadMovements() {
+    const loadToken = this.movementsLoadSession.next();
+    this.loadingMovements = true;
+    this.stockService
+      .getMovementsPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE)
+      .pipe(finalize(() => {
+        this.deletingMovementId = null;
+      }))
+      .subscribe({
+        next: (page) => {
+          if (!this.movementsLoadSession.isActive(loadToken)) return;
+          this.movements = page.items;
+          this.movementsHasMore = page.hasMore;
+          this.movementsNextCursor = page.nextCursor;
+          this.movementsLoaded = true;
+          this.loadingMovements = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingMovementsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.movementsLoadSession.isActive(loadToken)) return;
+          this.loadingMovements = false;
           this.dialogService.alert({
             title: 'Error',
-            message: 'No se pudieron cargar los productos.',
+            message: 'No se pudieron cargar los movimientos de stock.',
           });
         },
       });
   }
 
-  private loadMovements() {
-    this.loadingMovements = true;
-    this.stockService.getMovements().pipe(finalize(() => {
-      this.deletingMovementId = null;
-    })).subscribe({
-      next: (movements) => {
-        this.movements = movements;
-        this.movementsLoaded = true;
-        this.loadingMovements = false;
-      },
-      error: () => {
-        this.loadingMovements = false;
-        this.dialogService.alert({
-          title: 'Error',
-          message: 'No se pudieron cargar los movimientos de stock.',
-        });
-      },
-    });
+  private loadRemainingMovementsInBackground(loadToken: number) {
+    if (!this.movementsLoadSession.isActive(loadToken)) return;
+    if (!this.movementsHasMore || !this.movementsNextCursor || this.loadingMoreMovements) return;
+
+    this.loadingMoreMovements = true;
+    this.stockService
+      .getMovementsPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.movementsNextCursor)
+      .pipe(finalize(() => {
+        this.deletingMovementId = null;
+      }))
+      .subscribe({
+        next: (page) => {
+          if (!this.movementsLoadSession.isActive(loadToken)) return;
+          this.movements = [...this.movements, ...page.items];
+          this.movementsHasMore = page.hasMore;
+          this.movementsNextCursor = page.nextCursor;
+          this.loadingMoreMovements = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingMovementsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.movementsLoadSession.isActive(loadToken)) return;
+          this.loadingMoreMovements = false;
+        },
+      });
   }
 
   private loadReservations(stockItemId?: string) {
+    const loadToken = this.reservationsLoadSession.next();
     this.loadingReservations = true;
-    this.stockService.getReservations(stockItemId).subscribe({
-      next: (data) => {
-        this.reservationRows = data.rows;
-        this.reservationsLoaded = true;
-        this.loadingReservations = false;
-      },
-      error: () => {
-        this.loadingReservations = false;
-      },
+    this.loadingMoreReservations = false;
+    this.reservationRows = [];
+    this.reservationsHasMore = false;
+    this.reservationsNextCursor = null;
+    this.reservationsProductFilter = stockItemId ?? '';
+    this.reservationsLoaded = false;
+
+    this.stockService
+      .getReservationsPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE, undefined, stockItemId)
+      .subscribe({
+        next: (page) => {
+          if (!this.reservationsLoadSession.isActive(loadToken)) return;
+          this.reservationRows = page.rows;
+          this.reservationsHasMore = page.hasMore;
+          this.reservationsNextCursor = page.nextCursor;
+          this.loadingReservations = false;
+          this.reservationsLoaded = !page.hasMore;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingReservationsInBackground(loadToken);
+          }
+        },
+        error: () => {
+          if (!this.reservationsLoadSession.isActive(loadToken)) return;
+          this.loadingReservations = false;
+          this.loadingMoreReservations = false;
+        },
+      });
+  }
+
+  private loadRemainingReservationsInBackground(loadToken: number) {
+    if (!this.reservationsLoadSession.isActive(loadToken)) return;
+    if (!this.reservationsHasMore || !this.reservationsNextCursor || this.loadingMoreReservations) {
+      return;
+    }
+
+    this.loadingMoreReservations = true;
+    this.stockService
+      .getReservationsPage(
+        PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+        this.reservationsNextCursor,
+        this.reservationsProductFilter || undefined
+      )
+      .subscribe({
+        next: (page) => {
+          if (!this.reservationsLoadSession.isActive(loadToken)) return;
+          this.reservationRows = this.mergeReservationRows(this.reservationRows, page.rows);
+          this.reservationsHasMore = page.hasMore;
+          this.reservationsNextCursor = page.nextCursor;
+          this.loadingMoreReservations = false;
+          if (page.hasMore && page.nextCursor) {
+            this.loadRemainingReservationsInBackground(loadToken);
+          } else {
+            this.reservationsLoaded = true;
+          }
+        },
+        error: () => {
+          if (!this.reservationsLoadSession.isActive(loadToken)) return;
+          this.loadingMoreReservations = false;
+        },
+      });
+  }
+
+  private mergeReservationRows(
+    existing: StockReservationRow[],
+    incoming: StockReservationRow[]
+  ): StockReservationRow[] {
+    const merged = [...existing];
+    for (const row of incoming) {
+      const duplicate = merged.some(
+        (item) =>
+          item.orderId === row.orderId &&
+          item.lineIndex === row.lineIndex &&
+          item.stockItemId === row.stockItemId
+      );
+      if (!duplicate) merged.push(row);
+    }
+    merged.sort((a, b) => {
+      const byProduct = a.productoNombre.localeCompare(b.productoNombre, 'es');
+      if (byProduct !== 0) return byProduct;
+      return a.orderLabel.localeCompare(b.orderLabel, 'es');
     });
+    return merged;
   }
 
   reservationTargetKey(target: ReservationTargetOrder): string {

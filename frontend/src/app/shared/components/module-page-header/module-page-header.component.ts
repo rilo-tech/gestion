@@ -16,38 +16,44 @@ import {
   standalone: true,
   imports: [CommonModule, LucideAngularModule, IconActionComponent, ActivityLogTriggerComponent, ListSearchFieldComponent],
   template: `
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-      <div class="min-w-0">
-        <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">{{ title }}</h1>
-        <p *ngIf="description" [class]="descriptionClass">{{ description }}</p>
-        <ng-content select="[headerExtra]"></ng-content>
+    <div class="mb-6 sm:mb-8 flex flex-col gap-4 sm:block">
+      <div class="flex items-center sm:items-start justify-between gap-3 sm:gap-4 min-w-0">
+        <div class="min-w-0 flex-1">
+          <h1 [class]="titleClass">{{ title }}</h1>
+          <p *ngIf="description" [class]="descriptionClass">{{ description }}</p>
+          <ng-content select="[headerExtra]"></ng-content>
+        </div>
+        <div [class]="toolbarRowClass + ' shrink-0'">
+          <app-icon-action
+            *ngIf="showRefresh"
+            label="Actualizar"
+            [iconOnly]="true"
+            variant="outline"
+            [disabled]="refreshing"
+            (clicked)="refreshClick.emit()">
+            <i-lucide
+              name="refresh-cw"
+              class="w-4 h-4"
+              [class.animate-spin]="refreshing"></i-lucide>
+          </app-icon-action>
+          <app-activity-log-trigger
+            *ngIf="activityModule"
+            [module]="activityModule"
+            [limit]="10">
+          </app-activity-log-trigger>
+          <ng-content select="[headerActions]"></ng-content>
+        </div>
       </div>
-      <div [class]="toolbarRowClass + ' w-full sm:w-auto sm:shrink-0'">
-        <app-list-search-field
-          *ngIf="showMobileSearch"
-          mode="filter"
-          [query]="searchQuery"
-          (queryChange)="onSearchChange($event)"
-          [name]="searchFieldName"
-          [placeholder]="searchPlaceholder"
-          [constrainWidth]="false"
-          class="sm:hidden flex-1 min-w-0">
-        </app-list-search-field>
-        <app-icon-action
-          *ngIf="showRefresh"
-          label="Actualizar"
-          [iconOnly]="true"
-          variant="outline"
-          [disabled]="refreshing"
-          (clicked)="refreshClick.emit()">
-          <i-lucide
-            name="refresh-cw"
-            class="w-4 h-4"
-            [class.animate-spin]="refreshing"></i-lucide>
-        </app-icon-action>
-        <app-activity-log-trigger *ngIf="activityModule" [module]="activityModule"></app-activity-log-trigger>
-        <ng-content select="[headerActions]"></ng-content>
-      </div>
+      <app-list-search-field
+        *ngIf="showMobileSearch"
+        mode="filter"
+        [query]="searchQuery"
+        (queryChange)="onSearchChange($event)"
+        [name]="searchFieldName"
+        [placeholder]="searchPlaceholder"
+        [constrainWidth]="false"
+        class="sm:hidden w-full">
+      </app-list-search-field>
     </div>
   `,
 })
@@ -62,6 +68,7 @@ export class ModulePageHeaderComponent {
   @Input() searchFieldName = 'moduleSearchMobile';
   @Input() activityModule: ActivityModule | null = null;
   @Input() hideDescriptionOnMobile = true;
+  @Input() compactMobile = false;
   @Input() showRefresh = false;
   @Input() refreshing = false;
 
@@ -70,6 +77,14 @@ export class ModulePageHeaderComponent {
 
   get descriptionClass(): string {
     return this.hideDescriptionOnMobile ? PAGE_DESC_CLASS : PAGE_DESC_CLASS.replace('desc-lg-only', '');
+  }
+
+  get titleClass(): string {
+    const base = 'font-bold text-gray-900 dark:text-gray-100 sm:text-2xl sm:truncate-none';
+    if (this.compactMobile) {
+      return `${base} text-sm leading-snug`;
+    }
+    return `${base} text-xl truncate`;
   }
 
   onSearchChange(value: string) {

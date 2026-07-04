@@ -38,6 +38,7 @@ import {
   enrichPurchasePago,
   findMedioPagoInConfig,
   findTarjetaInConfig,
+  mediosPagoIdsEquivalent,
   type CategoriaGastoConfig,
   type ConceptoIngresoConfig,
   type MedioPagoComportamiento,
@@ -72,8 +73,14 @@ import {
 } from '../../../../../shared/product-code-config.ts';
 import {
   DEFAULT_COMPROBANTES_CONFIG,
+  comprobanteBorradorTitulo,
+  comprobanteConfirmarLabel,
+  comprobanteNuevoTitulo,
+  comprobanteRegistrarLabel,
+  comprobanteTipoHint,
   getComprobantesDisponibles,
   hasComprobantesExtra,
+  isComprobanteTipoActivo,
   normalizeComprobanteTipo,
   type ComprobanteModulo,
   type ComprobanteTipoId,
@@ -123,6 +130,7 @@ export {
   enrichPurchasePago,
   findMedioPagoInConfig,
   findTarjetaInConfig,
+  mediosPagoIdsEquivalent,
   medioPagoGeneratesImmediateCash,
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
@@ -222,8 +230,10 @@ export interface AppConfig {
     costosExtraPredeterminados: OrderExtraCostPreset[];
     /** Si es true (default), pedidos y descuentos pueden dejar stock negativo. */
     permitirStockNegativo: boolean;
-    /** Permite adjuntar fotos de referencia en pedidos e imprimirlas. */
+    /** Permite adjuntar fotos de referencia en pedidos. */
     fotosReferenciaHabilitadas: boolean;
+    /** Incluye las fotos de referencia en el imprimible del pedido. */
+    fotosReferenciaEnImpresion: boolean;
     /** Elimina fotos de pedido más viejas que fotosRetencionDias (job diario). */
     fotosEliminacionAutomatica: boolean;
     fotosRetencionDias: number;
@@ -291,6 +301,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     costosExtraPredeterminados: [],
     permitirStockNegativo: true,
     fotosReferenciaHabilitadas: true,
+    fotosReferenciaEnImpresion: true,
     fotosEliminacionAutomatica: false,
     fotosRetencionDias: 30,
   },
@@ -317,7 +328,15 @@ export type {
   ComprobanteTipoOption,
   ComprobantesConfig,
 };
-export { normalizeComprobanteTipo };
+export {
+  comprobanteBorradorTitulo,
+  comprobanteConfirmarLabel,
+  comprobanteNuevoTitulo,
+  comprobanteRegistrarLabel,
+  comprobanteTipoHint,
+  isComprobanteTipoActivo,
+  normalizeComprobanteTipo,
+};
 export {
   DEFAULT_COLLABORATOR_EXTRA_TIPOS,
   normalizeCollaboratorExtraTipos,
@@ -383,6 +402,10 @@ export function usesOrderPrintLineCheckboxes(config: AppConfig): boolean {
 
 export function usesOrderReferencePhotos(config: AppConfig): boolean {
   return config.pedidos?.fotosReferenciaHabilitadas !== false;
+}
+
+export function usesOrderReferencePhotosPrint(config: AppConfig): boolean {
+  return usesOrderReferencePhotos(config) && config.pedidos?.fotosReferenciaEnImpresion !== false;
 }
 
 export function getOrderPedidosSettings(config: AppConfig) {
@@ -559,8 +582,8 @@ export function getMediosPagoConCuentaHija(config: AppConfig): MedioPagoConfig[]
 export function getTarjetasForMedio(config: AppConfig, medioPagoId: string): TarjetaConfig[] {
   const key = medioPagoId.trim().toLowerCase();
   if (!key) return [];
-  return getTarjetasActivas(config).filter(
-    (tarjeta) => String(tarjeta.medioPagoId ?? '').trim().toLowerCase() === key
+  return getTarjetasActivas(config).filter((tarjeta) =>
+    mediosPagoIdsEquivalent(tarjeta.medioPagoId, key)
   );
 }
 

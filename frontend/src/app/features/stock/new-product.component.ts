@@ -24,6 +24,8 @@ import { Subscription, combineLatest } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormFooterComponent, FormScreenHeaderComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { BarcodeScanButtonComponent } from '../../shared/components/barcode-scanner/barcode-scan-button.component';
+import { normalizeBarcodeKey } from '../../core/utils/barcode-key';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
 import {
@@ -34,7 +36,7 @@ import {
 @Component({
   selector: 'app-new-product',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, HasPermissionDirective, SelectOnFocusDirective, FormFooterComponent, RecordActionToolbarComponent, FormScreenHeaderComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, RouterLink, SearchableSelectComponent, HasPermissionDirective, SelectOnFocusDirective, FormFooterComponent, RecordActionToolbarComponent, FormScreenHeaderComponent, BarcodeScanButtonComponent],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 pb-24 sm:pb-32">
       <app-form-screen-header
@@ -113,8 +115,33 @@ import {
                   </p>
                 </div>
 
+                <div class="lg:col-span-8 lg:col-start-1 lg:row-start-3 min-w-0">
+                  <label class="block text-sm font-medium text-gray-700 mb-0.5">Código de barras</label>
+                  <div class="flex items-stretch gap-2">
+                    <input
+                      [(ngModel)]="codigoBarras"
+                      name="codigoBarras"
+                      placeholder="EAN, UPC u otro (opcional)"
+                      (ngModelChange)="onCodigoBarrasInput()"
+                      (blur)="onCodigoBarrasBlur()"
+                      [disabled]="formReadOnly"
+                      [class]="formControlClass + ' flex-1 min-w-0 tabular-nums'">
+                    <app-barcode-scan-button
+                      *ngIf="!formReadOnly"
+                      size="header"
+                      label="Escanear código de barras"
+                      modalTitle="Escanear código de barras"
+                      modalHint="Asigná el código leído a este producto."
+                      (scanned)="onBarcodeScanned($event)">
+                    </app-barcode-scan-button>
+                  </div>
+                  <p *ngIf="codigoBarrasDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug mt-0.5">
+                    {{ codigoBarrasDuplicadoWarning }}
+                  </p>
+                </div>
+
                 <div class="grid grid-cols-2 gap-3 lg:contents">
-                  <div class="lg:col-span-4 lg:row-start-3 min-w-0">
+                  <div class="lg:col-span-4 lg:row-start-4 min-w-0">
                     <label class="block text-sm font-medium text-gray-700 mb-0.5">Color</label>
                     <app-searchable-select
                       [(ngModel)]="item.color"
@@ -124,7 +151,7 @@ import {
                       plainPlaceholder="Ej. Negro">
                     </app-searchable-select>
                   </div>
-                  <div class="lg:col-span-4 lg:row-start-3 min-w-0">
+                  <div class="lg:col-span-4 lg:row-start-4 min-w-0">
                     <label class="block text-sm font-medium text-gray-700 mb-0.5">Talle</label>
                     <app-searchable-select
                       [(ngModel)]="item.talle"
@@ -258,7 +285,7 @@ import {
                     [disabled]="formReadOnly"
                     [class]="formControlClass">
                 </div>
-                <div class="min-w-0">
+                <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="min-w-0">
                   <label class="block text-sm font-medium text-gray-700 mb-0.5">Costo</label>
                   <input
                     type="number"
@@ -276,7 +303,7 @@ import {
                 <ng-container *ngIf="canEditStockActualInline">Stock inicial: al guardar no genera movimiento. </ng-container>
                 <ng-container *ngIf="!canEditStockActualInline">Stock actual: solo por movimientos. </ng-container>
               </p>
-              <p class="text-[11px] text-gray-400 leading-snug">
+              <p *appHasPermission="permissions.STOCK_VIEW_COSTS" class="text-[11px] text-gray-400 leading-snug">
                 Costo base del producto al cargarlo en un pedido.
               </p>
               <div class="space-y-3">
@@ -315,24 +342,17 @@ import {
             </div>
           </section>
 
-          <section *appHasPermission="permissions.STOCK_VIEW_COSTS" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-            <h2 class="text-lg font-bold mb-4">Precio de venta</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
-                <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugerido" min="0"
-                       [disabled]="formReadOnly"
-                       [class]="formControlClass">
-              </div>
-            </div>
-          </section>
-          <section *ngIf="!auth.canViewStockCosts" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <section *ngIf="auth.canViewStockPrices" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
             <h2 class="text-lg font-bold mb-4">Precio sugerido</h2>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Precio sugerido</label>
-              <input type="number" [(ngModel)]="item.precioSugerido" name="precioSugeridoPublic" min="0"
-                     [disabled]="formReadOnly"
-                     [class]="formControlClass">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Precio de venta sugerido</label>
+              <input
+                type="number"
+                [(ngModel)]="item.precioSugerido"
+                name="precioSugerido"
+                min="0"
+                [disabled]="formReadOnly"
+                [class]="formControlClass">
             </div>
           </section>
         </div>
@@ -361,7 +381,7 @@ import {
                 <span class="text-gray-400">Stock negativo</span>
                 <span>{{ permitirStockNegativo ? 'Permitido' : 'Bloqueado' }}</span>
               </div>
-              <div class="flex justify-between text-sm">
+              <div *appHasPermission="permissions.STOCK_VIEW_COSTS" class="flex justify-between text-sm">
                 <span class="text-gray-400">Costo de compra</span>
                 <span>{{ formatMoney(item.costo || 0) }}</span>
               </div>
@@ -412,6 +432,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
   /** Contexto de retorno cuando se abre el producto desde otro formulario. */
   private returnTo: string | null = null;
   private returnOrderId: string | null = null;
+  private returnSaleId: string | null = null;
+  private returnPurchaseId: string | null = null;
+  private returnPurchaseDraftId: string | null = null;
   saving = false;
   saveSuccessMessage = '';
   stockAdjustmentSuccessMessage = '';
@@ -427,6 +450,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
   /** Stock persistido en servidor; define si el campo queda bloqueado (> 0). */
   private persistedStockActual = 0;
   codigo = '';
+  codigoBarras = '';
+  savedCodigoBarras = '';
+  codigoBarrasDuplicadoWarning = '';
   savedCodigo = '';
   savedCategoria = '';
   nextCodePreview = '';
@@ -434,6 +460,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   codigoDuplicadoWarning = '';
   private previewSub?: Subscription;
   private codigoCheckSub?: Subscription;
+  private barcodeCheckSub?: Subscription;
   item = {
     tipo: '',
     categoria: '',
@@ -455,7 +482,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   /** Cuando hay contexto de retorno usamos navegación explícita al origen. */
   get backLabel(): string {
-    return this.returnTo === 'orders' ? 'Volver al pedido' : 'Volver al stock';
+    if (this.returnTo === 'orders') return 'Volver al pedido';
+    if (this.returnTo === 'sales') return 'Volver a la venta';
+    if (this.returnTo === 'purchases') return 'Volver a la compra';
+    return 'Volver al stock';
   }
 
   onBackClick(): void {
@@ -466,16 +496,50 @@ export class NewProductComponent implements OnInit, OnDestroy {
       this.router.navigate(commands, { queryParams: { restoreDraft: '1' } });
       return;
     }
+    if (this.returnTo === 'sales') {
+      const commands = this.returnSaleId ? ['/sales', this.returnSaleId, 'edit'] : ['/sales/new'];
+      this.router.navigate(commands, { queryParams: { restoreDraft: '1' } });
+      return;
+    }
+    if (this.returnTo === 'purchases') {
+      if (this.returnPurchaseId) {
+        this.router.navigate(['/purchases', this.returnPurchaseId, 'edit'], {
+          queryParams: { restoreDraft: '1' },
+        });
+        return;
+      }
+      const queryParams: Record<string, string> = { restoreDraft: '1' };
+      if (this.returnPurchaseDraftId) {
+        queryParams['draftId'] = this.returnPurchaseDraftId;
+      }
+      this.router.navigate(['/purchases/new'], { queryParams });
+      return;
+    }
     this.navigationBack.back(['/stock']);
   }
 
   /** Conserva el contexto de retorno al refrescar la URL tras guardar. */
   private returnQueryParams(): Record<string, string> | undefined {
-    if (this.returnTo !== 'orders') return undefined;
-    return {
-      returnTo: 'orders',
-      ...(this.returnOrderId ? { orderId: this.returnOrderId } : {}),
-    };
+    if (this.returnTo === 'orders') {
+      return {
+        returnTo: 'orders',
+        ...(this.returnOrderId ? { orderId: this.returnOrderId } : {}),
+      };
+    }
+    if (this.returnTo === 'sales') {
+      return {
+        returnTo: 'sales',
+        ...(this.returnSaleId ? { saleId: this.returnSaleId } : {}),
+      };
+    }
+    if (this.returnTo === 'purchases') {
+      return {
+        returnTo: 'purchases',
+        ...(this.returnPurchaseId ? { purchaseId: this.returnPurchaseId } : {}),
+        ...(this.returnPurchaseDraftId ? { purchaseDraftId: this.returnPurchaseDraftId } : {}),
+      };
+    }
+    return undefined;
   }
 
   ngOnInit() {
@@ -493,6 +557,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
       const duplicateId = query.get('duplicate');
       this.returnTo = query.get('returnTo');
       this.returnOrderId = query.get('orderId');
+      this.returnSaleId = query.get('saleId');
+      this.returnPurchaseId = query.get('purchaseId');
+      this.returnPurchaseDraftId = query.get('purchaseDraftId');
 
       if (id) {
         this.editingItemId = id;
@@ -508,12 +575,20 @@ export class NewProductComponent implements OnInit, OnDestroy {
       }
 
       this.resetForm();
+      const barcodeFromQuery = normalizeBarcodeKey(query.get('codigoBarras'));
+      if (barcodeFromQuery) {
+        this.codigoBarras = barcodeFromQuery;
+        this.refreshCodigoBarrasAvailability();
+      }
     });
   }
 
   private resetForm() {
     this.nombreBase = '';
     this.codigo = '';
+    this.codigoBarras = '';
+    this.savedCodigoBarras = '';
+    this.codigoBarrasDuplicadoWarning = '';
     this.savedCodigo = '';
     this.savedCategoria = '';
     this.nextCodePreview = '';
@@ -547,6 +622,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.routeSub?.unsubscribe();
     this.previewSub?.unsubscribe();
     this.codigoCheckSub?.unsubscribe();
+    this.barcodeCheckSub?.unsubscribe();
     if (this.saveSuccessTimeout) clearTimeout(this.saveSuccessTimeout);
     if (this.stockAdjustmentSuccessTimeout) clearTimeout(this.stockAdjustmentSuccessTimeout);
   }
@@ -739,6 +815,48 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.refreshCodigoAvailability();
   }
 
+  onCodigoBarrasInput() {
+    this.codigoBarrasDuplicadoWarning = '';
+  }
+
+  onCodigoBarrasBlur() {
+    this.refreshCodigoBarrasAvailability();
+  }
+
+  onBarcodeScanned(code: string) {
+    this.codigoBarras = normalizeBarcodeKey(code);
+    this.codigoBarrasDuplicadoWarning = '';
+    this.refreshCodigoBarrasAvailability();
+  }
+
+  private refreshCodigoBarrasAvailability() {
+    this.barcodeCheckSub?.unsubscribe();
+    const codigoBarras = normalizeBarcodeKey(this.codigoBarras);
+    if (!codigoBarras) {
+      this.codigoBarrasDuplicadoWarning = '';
+      return;
+    }
+    if (this.isEditing && codigoBarras === this.savedCodigoBarras) {
+      this.codigoBarrasDuplicadoWarning = '';
+      return;
+    }
+
+    this.barcodeCheckSub = this.stockService
+      .checkBarcodeAvailability(codigoBarras, {
+        excludeId: this.editingItemId ?? undefined,
+      })
+      .subscribe({
+        next: (result) => {
+          this.codigoBarrasDuplicadoWarning = result.available
+            ? ''
+            : `El código de barras «${codigoBarras}» ya está asignado a otro producto.`;
+        },
+        error: () => {
+          this.codigoBarrasDuplicadoWarning = '';
+        },
+      });
+  }
+
   private shouldSendManualCodigo(): boolean {
     if (!this.item.categoria?.trim()) return true;
     return !this.canAutoAssignCodigo;
@@ -859,6 +977,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const barcode = normalizeBarcodeKey(this.codigoBarras);
+    if (barcode && this.codigoBarrasDuplicadoWarning) {
+      this.dialogService.alert({
+        title: 'Código de barras en uso',
+        message: this.codigoBarrasDuplicadoWarning,
+      });
+      return;
+    }
+
     if (this.needsAutoCodigoConfirmOnSave) {
       this.confirmAutoCodigoAssignment(() => this.executeSave(false));
       return;
@@ -962,6 +1089,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
       payload.codigo = this.codigo.trim() || undefined;
     }
 
+    const codigoBarras = normalizeBarcodeKey(this.codigoBarras);
+    payload.codigoBarras = codigoBarras || undefined;
+
     if (this.formReadOnly) return;
 
     const manualCodigoSent = Boolean(payload.codigo);
@@ -983,6 +1113,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
           const finishEdit = () => {
             this.persistedStockActual = stockActual;
             this.savedCategoria = this.item.categoria?.trim() ?? '';
+            this.savedCodigoBarras = normalizeBarcodeKey(this.codigoBarras);
             this.stockService.notifyCatalogChanged({
               item: { id: this.editingItemId, ...payload },
             });
@@ -1108,6 +1239,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
     if (cached) {
       this.applyProductFields(cached);
       this.codigo = '';
+      this.codigoBarras = '';
+      this.savedCodigoBarras = '';
       this.refreshCodigoPreview();
     }
 
@@ -1157,6 +1290,9 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
     this.nombreBase = nombreBase;
     this.codigo = product.codigo?.trim() ?? '';
+    this.codigoBarras = normalizeBarcodeKey(product.codigoBarras);
+    this.savedCodigoBarras = this.codigoBarras;
+    this.codigoBarrasDuplicadoWarning = '';
     this.savedCodigo = this.codigo;
     this.savedCategoria = product.categoria?.trim() ?? '';
     this.item = {

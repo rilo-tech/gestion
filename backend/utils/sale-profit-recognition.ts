@@ -1,4 +1,5 @@
 import { sumLineExtraCosts } from './line-extra-costs.ts';
+import { consolidateExtraPagosIntoCuotas } from '../../shared/order-payment-consolidate.ts';
 
 type SaleLineExtraCost = { costo?: number };
 type SaleLine = {
@@ -66,11 +67,13 @@ export function resolveSaleSaldoPendiente(sale: Record<string, unknown>): number
 
 function normalizeOrderPayments(order: Record<string, unknown> | null | undefined): OrderPayment[] {
   if (!order) return [];
-  return (Array.isArray(order.pagos) ? order.pagos : [])
+  const pagos = (Array.isArray(order.pagos) ? order.pagos : [])
     .filter((entry) => entry && typeof entry === 'object')
     .map((entry) => entry as OrderPayment)
-    .filter((pago) => pago.tipo !== 'extra' && (Number(pago.monto) || 0) > 0)
-    .sort((a, b) => String(a.fecha ?? '').localeCompare(String(b.fecha ?? '')));
+    .filter((pago) => (Number(pago.monto) || 0) > 0);
+  return consolidateExtraPagosIntoCuotas(pagos).sort((a, b) =>
+    String(a.fecha ?? '').localeCompare(String(b.fecha ?? ''))
+  );
 }
 
 /** Fecha ISO en la que la venta quedó totalmente cobrada; null si aún tiene saldo. */

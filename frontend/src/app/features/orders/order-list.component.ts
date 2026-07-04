@@ -21,7 +21,7 @@ import {
   ORDER_STATUS_OPTIONS,
 } from '../../core/constants/order-status';
 import type { OrderEstadoConfig } from '../../core/constants/order-config';
-import { normalizeOrderEstadoValue } from '../../core/constants/order-config';
+import { normalizeOrderEstadoValue, orderHasStockControlledLines } from '../../core/constants/order-config';
 import {
   getOrderStockStatusBadgeClass,
   getOrderStockStatusLabel,
@@ -55,13 +55,13 @@ import { ListLoadMoreComponent } from '../../shared/components/list-load-more/li
 import { ListRowActionsComponent } from '../../shared/components/list-row-actions/list-row-actions.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
 
 type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
-
-/** Página chica para el primer render (carga percibida rápida). */
-const ORDER_LIST_FIRST_PAGE_SIZE = 40;
-/** Páginas grandes para completar el resto en segundo plano (menos round-trips). */
-const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
 
 @Component({
   selector: 'app-orders',
@@ -92,7 +92,31 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
       </app-module-page-header>
 
       <div
-        class="module-summary-kpis grid gap-3 sm:gap-4 mb-6 sm:mb-8"
+        class="sm:hidden mb-3 px-2"
+        (click)="$event.stopPropagation()">
+        <div class="grid grid-cols-3 gap-1.5">
+          <button
+            *ngFor="let card of mobileStatusEstados; let i = index; trackBy: trackStatusCard"
+            type="button"
+            [disabled]="!canShowStatusCard(card.value)"
+            (click)="toggleStatusCardFilter(card.value, $event)"
+            [class]="mobileStatusChipClass(card.value, i)">
+            <span
+              class="block text-[9px] font-semibold uppercase leading-tight truncate"
+              [ngClass]="getOrderStatusCardTitleClass(i)">
+              {{ getMobileEstadoChipLabel(card.value) }}
+            </span>
+            <span
+              class="block text-[11px] font-bold tabular-nums leading-tight mt-0.5"
+              [ngClass]="getOrderStatusCardValueClass(i)">
+              {{ statusCounts[card.value] ?? 0 }}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        class="module-summary-kpis hidden sm:grid gap-3 sm:gap-4 mb-6 sm:mb-8"
         [ngClass]="statusCardGridClass"
         (click)="$event.stopPropagation()">
         <button
@@ -111,15 +135,16 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
 
       <div
         *ngIf="statusCardFilter"
-        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 text-sm text-teal-800">
-        <span>
-          Mostrando solo pedidos en «{{ getOrderEstadoCardLabel(statusCardFilter) }}».
-          Hacé click fuera de las tarjetas para ver todos.
+        class="mb-3 sm:mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg sm:rounded-xl border border-teal-100 dark:border-teal-900/50 bg-teal-50 dark:bg-teal-950/40 px-3 py-2 sm:px-4 sm:py-3 text-xs sm:text-sm text-teal-800 dark:text-teal-200">
+        <span class="min-w-0 truncate">
+          <span class="sm:hidden">Filtrado: </span>
+          <span class="hidden sm:inline">Mostrando solo pedidos en «{{ getOrderEstadoCardLabel(statusCardFilter) }}». Hacé click fuera de las tarjetas para ver todos.</span>
+          <span class="sm:hidden font-semibold">{{ getOrderEstadoCardLabel(statusCardFilter) }}</span>
         </span>
         <button
           type="button"
           (click)="clearStatusCardFilter(); $event.stopPropagation()"
-          class="font-semibold text-teal-700 hover:underline">
+          class="shrink-0 font-semibold text-teal-700 dark:text-teal-300 hover:underline">
           Ver todos
         </button>
       </div>
@@ -134,7 +159,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
       <div
         *ngIf="!auth.canViewAllOrders"
         class="mb-4 rounded-xl border border-purple-100 bg-purple-50 px-4 py-3 text-sm text-purple-800">
-        Solo ves pedidos en producción. Pedí acceso al administrador para ver el resto o los entregados.
+        Solo ves pedidos en proceso. Pedí acceso al administrador para ver el resto o los entregados.
       </div>
 
       <app-compact-data-list [showSearch]="true">
@@ -190,7 +215,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
             <col />
             <col class="w-[5.5rem]" />
             <col class="w-[8.5rem]" />
-            <col *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance" class="w-[7rem]" />
+            <col *ngIf="auth.canViewOrderBalance" class="w-[7rem]" />
             <col class="w-[5.5rem]" />
           </colgroup>
           <thead>
@@ -233,10 +258,10 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                 </button>
               </th>
               <th
-                *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance"
+                *ngIf="auth.canViewOrderBalance"
                 class="hidden sm:table-cell"
                 [class]="desktopThClass">
-                {{ auth.canViewOrderSalePrice && auth.canViewAccountBalance ? 'Total / Saldo' : (auth.canViewOrderSalePrice ? 'Total' : 'Saldo') }}
+                {{ auth.canViewOrderSalePrice ? 'Total / Saldo' : 'Saldo' }}
               </th>
               <th class="hidden sm:table-cell text-right" [class]="desktopThClass">Acciones</th>
             </tr>
@@ -273,7 +298,7 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                     {{ getOrderStatusListLabel(order) }}
                   </span>
                   <span
-                    *ngIf="order.stockPreparado || order.estadoStock"
+                    *ngIf="orderShowsStockStatus(order) && (order.stockPreparado || order.estadoStock)"
                     class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold border"
                     [title]="getOrderStockStatusLabel(order.estadoStock)"
                     [ngClass]="getOrderStockStatusBadgeClass(order.estadoStock)">
@@ -282,14 +307,14 @@ const ORDER_LIST_BACKGROUND_PAGE_SIZE = 300;
                 </div>
               </td>
               <td
-                *ngIf="auth.canViewOrderSalePrice || auth.canViewAccountBalance"
+                *ngIf="auth.canViewOrderBalance"
                 class="hidden sm:table-cell"
                 [class]="desktopTdClass">
                 <div *ngIf="auth.canViewOrderSalePrice" class="font-semibold text-gray-900 tabular-nums">
                   {{ formatMoney(order.total) }}
                 </div>
                 <div
-                  *ngIf="auth.canViewAccountBalance"
+                  *ngIf="auth.canViewOrderBalance"
                   class="text-[10px] font-medium tabular-nums"
                   [class.text-orange-500]="getOrderSaldo(order) > 0"
                   [class.text-gray-400]="!(getOrderSaldo(order) > 0)">
@@ -427,11 +452,27 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   private searchDebounce?: ReturnType<typeof setTimeout>;
   private backgroundLoadToken = 0;
+  private readonly listLoadSession = new ProgressiveListSession();
 
   get statusCardEstados(): OrderEstadoConfig[] {
     return getOrderStatusCardEstados(this.appConfig.pedidos).filter((card) =>
       this.canShowStatusCard(card.value)
     );
+  }
+
+  /** Los 5 estados en celular (sin filtrar permisos; los no permitidos quedan deshabilitados). */
+  get mobileStatusEstados(): OrderEstadoConfig[] {
+    return getOrderStatusCardEstados(this.appConfig.pedidos);
+  }
+
+  getMobileEstadoChipLabel(value: string): string {
+    const normalized = normalizeOrderEstadoValue(value);
+    if (normalized === 'borrador') return 'Borrador';
+    if (normalized === 'pendiente') return 'Pendiente';
+    if (normalized === 'en_produccion') return 'En proceso';
+    if (normalized === 'listo') return 'Listo';
+    if (normalized === 'entregado' || normalized === 'entregado_con_saldo') return 'Entregado';
+    return this.getOrderEstadoCardLabel(value);
   }
 
   get statusCardGridClass(): string {
@@ -490,11 +531,25 @@ export class OrderListComponent implements OnInit, OnDestroy {
     return this.auth.canViewAllOrders;
   }
 
+  orderShowsStockStatus(order: Order): boolean {
+    return orderHasStockControlledLines(order.items ?? []);
+  }
+
   setStatusCardFilter(status: string, event: Event) {
     event.stopPropagation();
     this.statusCardFilter = status;
     this.ordersPage = 1;
     this.rebuildDisplayOrders();
+  }
+
+  toggleStatusCardFilter(status: string, event: Event) {
+    event.stopPropagation();
+    if (!this.canShowStatusCard(status)) return;
+    if (this.statusCardFilter === status) {
+      this.clearStatusCardFilter();
+      return;
+    }
+    this.setStatusCardFilter(status, event);
   }
 
   clearStatusCardFilter() {
@@ -508,6 +563,26 @@ export class OrderListComponent implements OnInit, OnDestroy {
     const base = `bg-gray-50 p-4 rounded-xl border text-left w-full transition-all cursor-pointer hover:shadow-sm ${borderClass}`;
     if (this.statusCardFilter !== status) return base;
     return `${base} ring-2 ring-teal-500 ring-offset-2 shadow-md`;
+  }
+
+  mobileStatusChipClass(status: string, index: number): string {
+    const base =
+      'w-full min-w-0 text-left rounded-lg px-2 py-1.5 border transition-colors active:scale-[0.98] disabled:opacity-35 disabled:cursor-not-allowed bg-white dark:bg-gray-900';
+    const borderClasses = [
+      'border-gray-200 dark:border-gray-700',
+      'border-blue-200 dark:border-blue-900/50',
+      'border-purple-200 dark:border-purple-900/50',
+      'border-green-200 dark:border-green-900/50',
+      'border-teal-200 dark:border-teal-900/50',
+    ];
+    const borderClass = borderClasses[index % borderClasses.length] ?? borderClasses[0];
+    const active = this.statusCardFilter === status;
+
+    if (active) {
+      return `${base} ring-1 ring-teal-500/40 border-teal-500 bg-teal-50 dark:bg-teal-950/50 dark:border-teal-600`;
+    }
+
+    return `${base} ${borderClass}`;
   }
 
   trackOrder(_index: number, order: Order): string {
@@ -685,11 +760,11 @@ export class OrderListComponent implements OnInit, OnDestroy {
    */
   private fetchOrders() {
     this.loading = true;
-    this.backgroundLoadToken += 1;
+    this.backgroundLoadToken = this.listLoadSession.next();
     const token = this.backgroundLoadToken;
     this.cdr.markForCheck();
 
-    this.orderService.getOrdersPage(ORDER_LIST_FIRST_PAGE_SIZE).subscribe({
+    this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
         if (token !== this.backgroundLoadToken) return;
         this.orders = page.items;
@@ -715,7 +790,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     if (!this.ordersHasMore || !this.ordersNextCursor) return;
 
     this.orderService
-      .getOrdersPage(ORDER_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
+      .getOrdersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
       .subscribe({
         next: (page) => {
           if (token !== this.backgroundLoadToken) return;
@@ -735,7 +810,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     if (!this.ordersHasMore || !this.ordersNextCursor || this.loadingMore || this.loading) return;
     this.loadingMore = true;
     this.orderService
-      .getOrdersPage(ORDER_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
+      .getOrdersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
       .subscribe({
         next: (page) => {
           this.orders = [...this.orders, ...page.items];
@@ -797,13 +872,16 @@ export class OrderListComponent implements OnInit, OnDestroy {
     if (!this.auth.canPrintOrders || !order.id || this.printingOrderId === order.id) return;
     this.printingOrderId = order.id;
 
-    this.orderService.getOrder(order.id).subscribe({
+    this.orderService.getOrder(order.id, { includePhotoUrls: true }).subscribe({
       next: (fullOrder) => {
         this.orderPrintService.printOrders([fullOrder], this.clientsById);
         this.printingOrderId = null;
       },
       error: () => {
-        this.orderPrintService.printOrders([order], this.clientsById);
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo cargar el pedido para imprimir.',
+        });
         this.printingOrderId = null;
       },
     });

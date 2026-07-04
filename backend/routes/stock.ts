@@ -19,8 +19,8 @@ import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   listStockReservations,
+  listStockReservationsPage,
   listStockShortages,
-  ensureStockReservationsSynced,
   reconcileOrderStockFromProductReservations,
   syncPendingOrdersAfterStockChange,
 } from '../utils/order-stock-reservations.ts';
@@ -35,6 +35,9 @@ import {
   regenerateProductCodesForCategory,
   resolveCodigoForUpdate,
   findStockItemByCodigo,
+  findStockItemByBarcode,
+  findStockItemByCodigoBarras,
+  normalizeBarcodeKey,
   loadProductosCodigoConfig,
 } from '../utils/product-code.ts';
 import { findPrefijoOwnerForCodigo } from '../../shared/product-code-config.ts';
@@ -150,9 +153,20 @@ router.post('/:businessId', async (req, res) => {
       return res.status(codigoResult.status).json({ error: codigoResult.error });
     }
 
+    const codigoBarras = normalizeBarcodeKey(itemData.codigoBarras);
+    if (codigoBarras) {
+      const duplicateBarcode = await findStockItemByCodigoBarras(businessId, codigoBarras);
+      if (duplicateBarcode) {
+        return res.status(409).json({
+          error: `Ya existe un producto con el código de barras «${codigoBarras}».`,
+        });
+      }
+    }
+
     const docRef = await db.collection(`negocios/${businessId}/stock`).add({
       ...itemData,
       ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : {}),
+      ...(codigoBarras ? { codigoBarras } : {}),
       stockActual,
       stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
       stockReservado: 0,
@@ -203,6 +217,7 @@ const STOCK_SEARCH_INDEX_FIELDS = [
   'talle',
   'color',
   'codigo',
+  'codigoBarras',
   'costo',
   'stockActual',
   'stockReservado',
@@ -392,8 +407,22 @@ router.get('/:businessId/faltantes', async (req, res) => {
 router.get('/:businessId/reservations', async (req, res) => {
   try {
     const { businessId } = req.params;
-    await ensureStockReservationsSynced(businessId);
     const stockItemId = String(req.query.stockItemId ?? '').trim() || undefined;
+    const paged = String(req.query.paged ?? '') === '1';
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : undefined;
+      const cursor = String(req.query.cursor ?? '').trim() || undefined;
+      const page = await listStockReservationsPage(businessId, {
+        stockItemIdFilter: stockItemId,
+        limit,
+        cursor,
+      });
+      return res.json(page);
+    }
+
     const data = await listStockReservations(businessId, stockItemId);
     res.json(data);
   } catch (error) {
@@ -415,6 +444,39 @@ router.post('/:businessId/reconcile-reservations', async (req, res) => {
 router.get('/:businessId/movements', async (req, res) => {
   try {
     const { businessId } = req.params;
+    const paged = String(req.query.paged ?? '') === '1';
+    if (paged) {
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
+        : 120;
+      const cursor = String(req.query.cursor ?? '').trim();
+
+      let query = db
+        .collection(`negocios/${businessId}/movimientos_stock`)
+        .orderBy('fecha', 'desc')
+        .limit(limit + 1);
+
+      if (cursor) {
+        const cursorSnap = await db
+          .collection(`negocios/${businessId}/movimientos_stock`)
+          .doc(cursor)
+          .get();
+        if (cursorSnap.exists) {
+          query = query.startAfter(cursorSnap);
+        }
+      }
+
+      const snapshot = await query.get();
+      const hasMore = snapshot.docs.length > limit;
+      const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
+      const movements = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const enriched = await enrichStockMovements(businessId, movements);
+      const nextCursor =
+        hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
+      return res.json({ items: enriched, nextCursor, hasMore });
+    }
+
     const snapshot = await db
       .collection(`negocios/${businessId}/movimientos_stock`)
       .orderBy('fecha', 'desc')
@@ -571,6 +633,48 @@ router.get('/:businessId/codigo-check', async (req, res) => {
   }
 });
 
+router.get('/:businessId/by-barcode', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const code = String(req.query.code ?? '').trim();
+    if (!code) {
+      return res.status(400).json({ error: 'Indicá el código de barras.' });
+    }
+
+    const found = await findStockItemByBarcode(businessId, code);
+    if (!found) {
+      return res.status(404).json({ error: 'No se encontró un producto con ese código.' });
+    }
+
+    res.json({ id: found.id, ...found.data });
+  } catch (error) {
+    console.error('Error fetching stock item by barcode:', error);
+    res.status(500).json({ error: 'Error al buscar por código de barras.' });
+  }
+});
+
+router.get('/:businessId/barcode-check', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const codigoBarras = normalizeBarcodeKey(req.query.codigoBarras);
+    const excludeId = String(req.query.excludeId ?? '').trim();
+
+    if (!codigoBarras) {
+      return res.json({ available: true });
+    }
+
+    const duplicate = await findStockItemByCodigoBarras(
+      businessId,
+      codigoBarras,
+      excludeId || undefined
+    );
+    res.json({ available: !duplicate });
+  } catch (error) {
+    console.error('Error checking barcode:', error);
+    res.status(500).json({ error: 'Error al verificar el código de barras.' });
+  }
+});
+
 // Get one stock item
 router.get('/:businessId/:itemId', async (req, res) => {
   try {
@@ -622,6 +726,20 @@ router.put('/:businessId/:itemId', async (req, res) => {
       return res.status(codigoResult.status).json({ error: codigoResult.error });
     }
 
+    const codigoBarras = normalizeBarcodeKey(itemData.codigoBarras);
+    if (codigoBarras) {
+      const duplicateBarcode = await findStockItemByCodigoBarras(
+        businessId,
+        codigoBarras,
+        itemId
+      );
+      if (duplicateBarcode) {
+        return res.status(409).json({
+          error: `Ya existe otro producto con el código de barras «${codigoBarras}».`,
+        });
+      }
+    }
+
     const previousStock = Number(existingData.stockActual) || 0;
     const controlsStock = productControlsStock(itemData);
     const requestedStock = controlsStock ? Math.max(0, Number(itemData.stockActual) || 0) : 0;
@@ -631,6 +749,7 @@ router.put('/:businessId/:itemId', async (req, res) => {
     await itemRef.update({
       ...itemData,
       ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : { codigo: '' }),
+      codigoBarras: codigoBarras || '',
       stockActual: nextStock,
       stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
       stockReservado: controlsStock ? Number(itemData.stockReservado) || 0 : 0,

@@ -21,6 +21,7 @@ import {
   USER_ROLE_LABELS,
   UserRole,
   sanitizeStaffPermissions,
+  userHasPermission,
 } from '../../core/constants/permissions';
 import { LucideAngularModule } from 'lucide-angular';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
@@ -113,8 +114,9 @@ export interface UserFormSaveEvent {
                   class="flex items-start gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2.5 cursor-pointer hover:border-teal-100">
                   <input
                     type="checkbox"
-                    [checked]="hasPermissionSelected(perm.key)"
-                    (change)="togglePermission(perm.key, $any($event.target).checked)"
+                    [ngModel]="isStaffPermissionEnabled(perm.key)"
+                    (ngModelChange)="setStaffPermission(perm.key, $event)"
+                    [name]="'userPerm-' + (userId || 'new') + '-' + perm.key"
                     class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500">
                   <span class="min-w-0">
                     <span class="block text-sm font-medium text-gray-800">{{ perm.label }}</span>
@@ -175,16 +177,17 @@ export class UserFormPanelComponent implements OnChanges {
   }
 
   hasPermissionSelected(permission: Permission): boolean {
-    return (this.userForm.permisos ?? []).includes(permission);
+    return userHasPermission('staff', this.userForm.permisos, permission);
   }
 
-  togglePermission(permission: Permission, checked: boolean) {
-    const current = new Set(this.userForm.permisos ?? []);
-    if (checked) {
-      current.add(permission);
-    } else {
-      current.delete(permission);
-    }
+  isStaffPermissionEnabled(permission: Permission): boolean {
+    return this.hasPermissionSelected(permission);
+  }
+
+  setStaffPermission(permission: Permission, enabled: boolean) {
+    const current = new Set<Permission>(sanitizeStaffPermissions(this.userForm.permisos));
+    if (enabled) current.add(permission);
+    else current.delete(permission);
     this.userForm.permisos = [...current];
   }
 

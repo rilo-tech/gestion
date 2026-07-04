@@ -21,10 +21,12 @@ import {
   payCardStatement,
 } from '../utils/card-statements.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import { requireBusinessModule } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessModule('payables'));
 router.use('/:businessId', requirePermission('payables.access'));
 
 async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
@@ -41,7 +43,14 @@ router.get('/:businessId/installments', async (req, res) => {
   try {
     const mes = String(req.query.mes ?? '').trim().slice(0, 7);
     const scopeRaw = String(req.query.scope ?? '').trim().toLowerCase();
-    const scope = scopeRaw === 'all' ? 'all' : mes ? 'month' : 'all';
+    const scope =
+      scopeRaw === 'account'
+        ? 'account'
+        : scopeRaw === 'all'
+          ? 'all'
+          : mes
+            ? 'month'
+            : 'all';
     const estadoRaw = String(req.query.estado ?? '').trim().toLowerCase();
     const displayEstado =
       estadoRaw === 'pendiente' || estadoRaw === 'pagada' || estadoRaw === 'vencida'

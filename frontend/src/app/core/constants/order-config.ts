@@ -11,7 +11,7 @@ export interface OrderEstadoConfig {
 export const DEFAULT_ORDER_ESTADOS: OrderEstadoConfig[] = [
   { value: 'borrador', label: 'Borrador', sistema: true },
   { value: 'pendiente', label: 'Pendiente', sistema: true },
-  { value: 'en_produccion', label: 'En producción', sistema: true },
+  { value: 'en_produccion', label: 'En proceso', sistema: true },
   { value: 'listo', label: 'Listo', sistema: true },
   { value: 'entregado', label: 'Entregado', sistema: true },
   { value: 'cancelado', label: 'Cancelado', sistema: true },
@@ -46,8 +46,10 @@ export interface OrderPedidosConfigShape {
   estadosExigenStockCompleto?: string[];
   costosExtraPredeterminados?: OrderExtraCostPreset[];
   permitirStockNegativo?: boolean;
-  /** Permite adjuntar fotos de referencia en pedidos e imprimirlas. */
+  /** Permite adjuntar fotos de referencia en pedidos. */
   fotosReferenciaHabilitadas?: boolean;
+  /** Incluye las fotos de referencia en el imprimible del pedido. */
+  fotosReferenciaEnImpresion?: boolean;
   fotosEliminacionAutomatica?: boolean;
   fotosRetencionDias?: number;
 }
@@ -68,6 +70,15 @@ export function slugifyOrderEstadoValue(label: string): string {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return slug || 'estado';
+}
+
+function isLegacyEnProduccionLabel(label: string): boolean {
+  const normalized = String(label ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return normalized === 'en produccion';
 }
 
 export function normalizeOrderEstados(raw: OrderEstadoConfig[] | undefined): OrderEstadoConfig[] {
@@ -94,6 +105,9 @@ export function normalizeOrderEstados(raw: OrderEstadoConfig[] | undefined): Ord
       if (lower.includes('saldo') || lower.includes('total')) {
         label = defaults.label;
       }
+    }
+    if (defaults.value === 'en_produccion' && savedLabel && isLegacyEnProduccionLabel(savedLabel)) {
+      label = defaults.label;
     }
     return {
       ...defaults,
@@ -244,6 +258,7 @@ export function normalizeOrderPedidosConfig(
     costosExtraPredeterminados: normalizeOrderExtraCostPresets(pedidos.costosExtraPredeterminados),
     permitirStockNegativo: pedidos.permitirStockNegativo !== false,
     fotosReferenciaHabilitadas: pedidos.fotosReferenciaHabilitadas !== false,
+    fotosReferenciaEnImpresion: pedidos.fotosReferenciaEnImpresion !== false,
     fotosEliminacionAutomatica: pedidos.fotosEliminacionAutomatica === true,
     fotosRetencionDias: normalizeOrderPhotoRetentionDays(
       pedidos.fotosRetencionDias ?? DEFAULT_ORDER_PHOTO_RETENTION_DAYS
@@ -317,6 +332,22 @@ export function orderHasPendingPhysicalStock(
     const cantidadPedida = Number(line.cantidad) || 0;
     const cantidadUsada = Math.max(0, Number(line.cantidadUsada) || 0);
     return cantidadUsada < cantidadPedida;
+  });
+}
+
+/** True si el pedido tiene al menos una línea con producto que controla stock físico. */
+export function orderHasStockControlledLines(
+  items: Array<{
+    stockItemId?: string;
+    cantidad?: number;
+    controlaStock?: boolean;
+  }> = []
+): boolean {
+  return items.some((line) => {
+    if (line.controlaStock === false) return false;
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) return false;
+    return (Number(line.cantidad) || 0) > 0;
   });
 }
 

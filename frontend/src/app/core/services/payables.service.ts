@@ -122,7 +122,7 @@ export class PayablesService {
 
   getInstallments(options?: {
     mes?: string;
-    scope?: 'month' | 'all';
+    scope?: 'month' | 'all' | 'account';
     reconcile?: boolean;
     displayEstado?: PayableDisplayEstado;
     ambito?: string;

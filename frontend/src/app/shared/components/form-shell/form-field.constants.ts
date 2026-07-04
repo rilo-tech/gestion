@@ -1,3 +1,7 @@
+/** Medio de pago y monto 50/50 en móvil; mitades iguales desde sm. */
+export const FORM_PAYMENT_METHOD_AMOUNT_GRID_CLASS =
+  'grid grid-cols-2 gap-2 items-start sm:gap-4';
+
 /** Grid de pares de pago en móvil (medio+cuenta, cuotas+fecha). */
 export const FORM_PAYMENT_PAIR_GRID_CLASS =
   'grid grid-cols-2 gap-2 sm:gap-4 items-start';

@@ -17,8 +17,13 @@ import {
 } from '../utils/sale-profit-recognition.ts';
 import {
   getBusinessCashAmbitoId,
+  normalizeMovementAmbito,
+  parseCashAmbitoOrNull,
   resolveCashReversalAmbito,
+  usesCashAmbitoSeparationFromCaja,
 } from '../utils/caja-ambitos.ts';
+import { resolveVentaCashAmbito, resolveVentasCashAmbitoMap } from '../utils/client-collections.ts';
+import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
 import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
 import { productControlsStock } from '../utils/stock-product.ts';
 import {
@@ -31,9 +36,16 @@ import {
 } from '../utils/line-extra-costs.ts';
 import {
   comprobanteStockDireccion,
+  computeComprobanteSaldoPendiente,
+  esNotaComprobante,
   esNotaCredito,
+  isComprobanteTipoActivo,
+  normalizeComprobantesConfig,
   normalizeComprobanteTipo,
+  normalizeNotaMotivo,
+  saleLineMovesStock,
   type ComprobanteTipoId,
+  type NotaMotivoId,
 } from '../../shared/comprobantes-config.ts';
 
 const router = createCompanyRouter();
@@ -44,9 +56,65 @@ async function loadCajaConfig(businessId: string): Promise<Record<string, unknow
   return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
 }
 
+async function loadComprobantesConfig(businessId: string) {
+  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  if (!appDoc.exists) return normalizeComprobantesConfig(undefined);
+  return normalizeComprobantesConfig(appDoc.data()?.comprobantes);
+}
+
+function parseNotaFields(body: Record<string, unknown>) {
+  const motivo = normalizeNotaMotivo(body.motivo);
+  const descripcionMotivo = String(body.descripcionMotivo ?? '').trim();
+  const comprobanteRelacionadoId = String(body.comprobanteRelacionadoId ?? '').trim() || null;
+  return { motivo, descripcionMotivo, comprobanteRelacionadoId };
+}
+
+function validateNotaFields(
+  tipoComprobante: ComprobanteTipoId,
+  params: {
+    motivo: NotaMotivoId | '';
+    descripcionMotivo: string;
+    isDraft: boolean;
+  }
+): string | null {
+  if (params.isDraft || !esNotaComprobante(tipoComprobante)) return null;
+  if (!params.motivo) {
+    return 'Seleccioná el motivo de la nota.';
+  }
+  if (params.motivo === 'otro' && !params.descripcionMotivo) {
+    return 'Describí el motivo cuando elegís «Otro».';
+  }
+  return null;
+}
+
+async function validateComprobanteRelacionadoVenta(
+  businessId: string,
+  comprobanteRelacionadoId: string | null,
+  clienteId: string
+): Promise<string | null> {
+  if (!comprobanteRelacionadoId) return null;
+
+  const snap = await db.collection(`negocios/${businessId}/ventas`).doc(comprobanteRelacionadoId).get();
+  if (!snap.exists) {
+    return 'La venta relacionada no existe.';
+  }
+
+  const data = snap.data() ?? {};
+  if (String(data.clienteId ?? '').trim() !== clienteId) {
+    return 'La venta relacionada debe ser del mismo cliente.';
+  }
+  if (normalizeComprobanteTipo(data.tipoComprobante) !== 'factura') {
+    return 'Solo podés vincular una factura de venta.';
+  }
+  if (isDraftStatus(String(data.estado ?? ''))) {
+    return 'La venta relacionada no puede estar en borrador.';
+  }
+  return null;
+}
+
 type OrderPayment = {
   id: string;
-  tipo: 'seña' | 'cuota' | 'pago' | 'extra';
+  tipo: 'seña' | 'cuota' | 'pago';
   monto: number;
   fecha: string;
   movimientoCajaId?: string;
@@ -96,6 +164,9 @@ type SaleLine = {
   costoUnitario?: number;
   costoPersonalizacion?: number;
   costosExtra?: SaleLineExtraCost[];
+  tipoLinea?: 'producto' | 'concepto';
+  descripcion?: string;
+  mueveStock?: boolean;
 };
 
 function normalizeEstado(estado?: string) {
@@ -136,12 +207,6 @@ function normalizePagos(order: OrderRecord): OrderPayment[] {
     });
   }
   return pagos;
-}
-
-function sumPagosHaciaTotal(pagos: OrderPayment[] = []) {
-  return pagos
-    .filter((pago) => pago.tipo !== 'extra')
-    .reduce((acc, pago) => acc + (Number(pago.monto) || 0), 0);
 }
 
 function getPagadoHaciaPedido(order: OrderRecord): number {
@@ -253,6 +318,7 @@ async function createCashIncome(
     numeroPedido?: number | null;
     numeroPedidoLabel?: string | null;
     ventaLabel?: string | null;
+    ambito?: string;
   }
 ) {
   const caja = await loadCajaConfig(businessId);
@@ -261,7 +327,7 @@ async function createCashIncome(
     monto: params.monto,
     medio: params.medio ?? 'efectivo',
     concepto: params.concepto,
-    ambito: getBusinessCashAmbitoId(caja),
+    ambito: normalizeMovementAmbito(params.ambito, caja),
     fecha: new Date().toISOString(),
     origenId: params.origenId,
     origenTipo: params.origenTipo,
@@ -514,12 +580,18 @@ function buildMostradorDraftFields(params: {
   timestamp: string;
   businessId: string;
   tipoComprobante: ComprobanteTipoId;
+  motivo?: NotaMotivoId | '';
+  descripcionMotivo?: string;
+  comprobanteRelacionadoId?: string | null;
 }) {
   return {
     origen: 'mostrador',
     pedidoId: null,
     estado: 'borrador',
     tipoComprobante: params.tipoComprobante,
+    motivo: params.motivo || null,
+    descripcionMotivo: params.descripcionMotivo || null,
+    comprobanteRelacionadoId: params.comprobanteRelacionadoId ?? null,
     clienteId: params.clienteId,
     items: params.items,
     total: params.total,
@@ -527,7 +599,7 @@ function buildMostradorDraftFields(params: {
     gananciaEstimada: params.economics.gananciaEstimada,
     totalPagadoAnterior: 0,
     montoCobrado: params.montoCobrado,
-    saldoPendiente: Math.max(0, params.total - params.montoCobrado),
+    saldoPendiente: computeComprobanteSaldoPendiente(params.total, params.montoCobrado),
     medioPago: params.medioPago,
     notas: params.notas,
     fecha: params.timestamp,
@@ -624,8 +696,11 @@ async function confirmMostradorSaleDraft(
     await ventaRef.update({ movimientoCajaId });
   }
 
-  const saldoPendiente = Math.max(0, total - montoCobrado);
-  const compromisoId = await maybeCreateCompromisoPago(businessId, {
+  const saldoPendiente = computeComprobanteSaldoPendiente(total, montoCobrado);
+  const compromisoId =
+    esNotaCredito(tipoComprobante)
+      ? null
+      : await maybeCreateCompromisoPago(businessId, {
     body: reqBody,
     saldoPendiente,
     clienteId,
@@ -664,6 +739,8 @@ async function applyStockForVenta(
     : `Venta mostrador #${ventaLabel}`;
 
   for (const line of items) {
+    if (!saleLineMovesStock(line)) continue;
+
     const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
     const itemSnap = await itemRef.get();
     if (!itemSnap.exists) {
@@ -749,56 +826,79 @@ async function buildMostradorItemsFromBody(
   businessId: string,
   rawItems: unknown
 ): Promise<{ items: SaleLine[]; total: number; error?: string }> {
-  const draftItems = (Array.isArray(rawItems) ? rawItems : [])
-    .map((line: Record<string, unknown>) => ({
-      stockItemId: String(line.stockItemId ?? '').trim(),
-      cantidad: Number(line.cantidad) || 0,
-      precioUnitario: Number(line.precioUnitario) || 0,
-      costoUnitario: Number(line.costoUnitario) || 0,
-      costosExtra: line.costosExtra,
-      costoPersonalizacion: Number(line.costoPersonalizacion) || 0,
-      nombre: String(line.nombre ?? '').trim(),
-    }))
-    .filter((line) => line.stockItemId && line.cantidad > 0);
-
-  if (draftItems.length === 0) {
-    return { items: [], total: 0, error: 'Agregá al menos un producto con cantidad.' };
-  }
-
+  const rawLines = Array.isArray(rawItems) ? rawItems : [];
   const items: SaleLine[] = [];
   let total = 0;
 
-  for (const line of draftItems) {
-    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(line.stockItemId);
+  for (const rawLine of rawLines) {
+    const line = rawLine as Record<string, unknown>;
+    const tipoLinea = String(line.tipoLinea ?? 'producto').trim().toLowerCase();
+    const cantidad = Number(line.cantidad) || 0;
+    const precioUnitario = Number(line.precioUnitario) || 0;
+    if (cantidad <= 0) continue;
+
+    if (tipoLinea === 'concepto') {
+      const descripcion = String(line.descripcion ?? line.nombre ?? '').trim();
+      if (!descripcion) continue;
+      const subtotal = cantidad * precioUnitario;
+      total += subtotal;
+      items.push({
+        tipoLinea: 'concepto',
+        stockItemId: '',
+        nombre: descripcion,
+        descripcion,
+        cantidad,
+        precioUnitario,
+        subtotal,
+        mueveStock: false,
+      });
+      continue;
+    }
+
+    const stockItemId = String(line.stockItemId ?? '').trim();
+    if (!stockItemId) continue;
+
+    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(stockItemId);
     const itemSnap = await itemRef.get();
     if (!itemSnap.exists) {
       return { items: [], total: 0, error: 'Uno de los productos seleccionados no existe.' };
     }
 
     const itemData = itemSnap.data() ?? {};
-    const subtotal = line.cantidad * line.precioUnitario;
+    const subtotal = cantidad * precioUnitario;
     total += subtotal;
     const costosExtra = normalizeLineExtraCosts(
-    line.costosExtra,
-    line.costoPersonalizacion,
-    cantidad
-  );
+      line.costosExtra,
+      line.costoPersonalizacion,
+      cantidad
+    );
     const costoPersonalizacion = sumLinePersonalizationCost({
       costosExtra,
       costoPersonalizacion: line.costoPersonalizacion,
-      cantidad: line.cantidad,
+      cantidad,
     });
+    const mueveStock = line.mueveStock !== false;
 
     items.push({
-      stockItemId: line.stockItemId,
-      nombre: line.nombre || String(itemData.nombre ?? 'Producto'),
-      cantidad: line.cantidad,
-      precioUnitario: line.precioUnitario,
+      tipoLinea: 'producto',
+      stockItemId,
+      nombre: String(line.nombre ?? '').trim() || String(itemData.nombre ?? 'Producto'),
+      cantidad,
+      precioUnitario,
       subtotal,
-      costoUnitario: line.costoUnitario || Number(itemData.costo) || 0,
+      costoUnitario: Number(line.costoUnitario) || Number(itemData.costo) || 0,
       costoPersonalizacion,
       costosExtra,
+      mueveStock,
     });
+  }
+
+  if (items.length === 0) {
+    return { items: [], total: 0, error: 'Agregá al menos un producto o concepto con importe.' };
+  }
+
+  if (total <= 0) {
+    return { items: [], total: 0, error: 'El importe total debe ser mayor a cero.' };
   }
 
   return { items, total };
@@ -812,6 +912,15 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
     if (sale.clienteId) clientIds.add(String(sale.clienteId));
     if (sale.pedidoId) orderIds.add(String(sale.pedidoId));
   }
+
+  const caja = await loadCajaConfig(businessId);
+  const ventaAmbitoMap = await resolveVentasCashAmbitoMap(
+    businessId,
+    sales
+      .filter((sale) => sale.id)
+      .map((sale) => ({ id: String(sale.id), data: sale })),
+    caja
+  );
 
   const clientMap = new Map<string, string>();
   await Promise.all(
@@ -856,6 +965,7 @@ async function enrichSales(businessId: string, sales: Record<string, unknown>[])
       numeroPedidoLabel: sale.numeroPedidoLabel ?? orderData?.numeroPedidoLabel ?? null,
       pedidoDescripcion: orderData?.descripcion ?? null,
       saldoPendiente,
+      ambito: sale.id ? (ventaAmbitoMap.get(String(sale.id)) ?? null) : null,
     };
   });
 }
@@ -1301,6 +1411,28 @@ router.post('/:businessId', async (req, res) => {
       return res.status(400).json({ error: 'Seleccioná un cliente para la venta.' });
     }
 
+    const comprobantesConfig = await loadComprobantesConfig(businessId);
+    if (!isDraft && !isComprobanteTipoActivo(comprobantesConfig, tipoComprobante)) {
+      return res.status(400).json({ error: 'Este tipo de comprobante no está habilitado en configuración.' });
+    }
+
+    const notaFields = parseNotaFields(req.body as Record<string, unknown>);
+    const notaError = validateNotaFields(tipoComprobante, { ...notaFields, isDraft });
+    if (notaError) {
+      return res.status(400).json({ error: notaError });
+    }
+
+    if (!isDraft) {
+      const relatedError = await validateComprobanteRelacionadoVenta(
+        businessId,
+        notaFields.comprobanteRelacionadoId,
+        clienteId
+      );
+      if (relatedError) {
+        return res.status(400).json({ error: relatedError });
+      }
+    }
+
     const built = await buildMostradorItemsFromBody(businessId, rawItems);
     let items = built.items;
     let total = built.total;
@@ -1319,7 +1451,9 @@ router.post('/:businessId', async (req, res) => {
 
     if (!isDraft && montoCobrado > total) {
       return res.status(400).json({
-        error: `El monto cobrado no puede superar el total de la venta ($${total}).`,
+        error: esNotaCredito(tipoComprobante)
+          ? `El monto devuelto no puede superar el total de la nota ($${total}).`
+          : `El monto cobrado no puede superar el total de la venta ($${total}).`,
       });
     }
 
@@ -1335,6 +1469,9 @@ router.post('/:businessId', async (req, res) => {
         timestamp,
         businessId,
         tipoComprobante,
+        motivo: notaFields.motivo,
+        descripcionMotivo: notaFields.descripcionMotivo,
+        comprobanteRelacionadoId: notaFields.comprobanteRelacionadoId,
       });
 
       if (draftVentaId) {
@@ -1374,12 +1511,15 @@ router.post('/:businessId', async (req, res) => {
 
     const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
 
-    const esDonacion = total === 0;
+    const esDonacion = total === 0 && !esNotaComprobante(tipoComprobante);
     const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
       origen: 'mostrador',
       pedidoId: null,
       estado: 'confirmada',
       tipoComprobante,
+      motivo: notaFields.motivo || null,
+      descripcionMotivo: notaFields.descripcionMotivo || null,
+      comprobanteRelacionadoId: notaFields.comprobanteRelacionadoId,
       numeroVenta,
       ventaLabel,
       clienteId,
@@ -1389,7 +1529,7 @@ router.post('/:businessId', async (req, res) => {
       gananciaEstimada: economics.gananciaEstimada,
       totalPagadoAnterior: 0,
       montoCobrado,
-      saldoPendiente: Math.max(0, total - montoCobrado),
+      saldoPendiente: computeComprobanteSaldoPendiente(total, montoCobrado),
       medioPago,
       notas: esDonacion ? (notas?.trim() ? `${notas.trim()} · Donación` : 'Donación') : notas,
       esDonacion,
@@ -1444,16 +1584,18 @@ router.post('/:businessId', async (req, res) => {
       await ventaRef.update({ movimientoCajaId });
     }
 
-    const saldoPendiente = Math.max(0, total - montoCobrado);
-    const compromisoId = await maybeCreateCompromisoPago(businessId, {
-      body: req.body,
-      saldoPendiente,
-      clienteId,
-      origenTipo: 'venta',
-      origenId: ventaRef.id,
-      referenciaLabel: `Venta mostrador #${ventaLabel}`,
-      ventaId: ventaRef.id,
-    });
+    const saldoPendiente = computeComprobanteSaldoPendiente(total, montoCobrado);
+    const compromisoId = esNotaCredito(tipoComprobante)
+      ? null
+      : await maybeCreateCompromisoPago(businessId, {
+          body: req.body,
+          saldoPendiente,
+          clienteId,
+          origenTipo: 'venta',
+          origenId: ventaRef.id,
+          referenciaLabel: `Venta mostrador #${ventaLabel}`,
+          ventaId: ventaRef.id,
+        });
 
     if (compromisoId) {
       await ventaRef.update({ compromisoPagoId: compromisoId });
@@ -1553,6 +1695,13 @@ router.post('/:businessId/:ventaId/cobros', async (req, res) => {
       });
     }
 
+    const tipoComprobante = normalizeComprobanteTipo(venta.tipoComprobante);
+    if (esNotaCredito(tipoComprobante)) {
+      return res.status(400).json({
+        error: 'Las notas de crédito no tienen saldo a cobrar; generan saldo a favor del cliente.',
+      });
+    }
+
     const saldoPendiente = Math.max(0, Number(venta.saldoPendiente) || 0);
     if (monto > saldoPendiente) {
       return res.status(400).json({
@@ -1563,35 +1712,62 @@ router.post('/:businessId/:ventaId/cobros', async (req, res) => {
 
     const ventaLabel = resolveSaleLabel(venta);
     const timestamp = new Date().toISOString();
-    const movimientoCajaId = await createCashIncome(businessId, {
-      monto,
-      concepto: `Cobro saldo venta #${ventaLabel}`,
-      origenId: ventaId,
-      origenTipo: 'venta_mostrador_cobro',
-      medio: medioPago,
-      clienteId: String(venta.clienteId ?? ''),
-      ventaId,
-      ventaLabel,
-      pedidoId: null,
-    });
+    let movimientoCajaId: string | null = null;
+    let montoCobrado = 0;
+    let nuevoSaldo = 0;
+    const caja = await loadCajaConfig(businessId);
+    const ventaAmbito = await resolveVentaCashAmbito(businessId, venta, caja);
+    const cobroAmbito =
+      ventaAmbito ??
+      (usesCashAmbitoSeparationFromCaja(caja)
+        ? parseCashAmbitoOrNull(req.body.ambito, caja)
+        : getBusinessCashAmbitoId(caja));
 
-    const montoCobrado = (Number(venta.montoCobrado) || 0) + monto;
-    const nuevoSaldo = Math.max(0, (Number(venta.total) || 0) - montoCobrado);
-    const cobrosExtra = Array.isArray(venta.cobros) ? [...venta.cobros] : [];
-    cobrosExtra.push({
-      id: `cobro_${Date.now()}`,
-      monto,
-      fecha: timestamp,
-      medioPago,
-      notas: notas || undefined,
-      movimientoCajaId,
-    });
+    if (!cobroAmbito) {
+      return res.status(400).json({ error: 'Seleccioná la caja donde registrar el cobro.' });
+    }
 
-    await ventaRef.update({
-      montoCobrado,
-      saldoPendiente: nuevoSaldo,
-      cobros: cobrosExtra,
-    });
+    try {
+      movimientoCajaId = await createCashIncome(businessId, {
+        monto,
+        concepto: `Cobro saldo venta #${ventaLabel}`,
+        origenId: ventaId,
+        origenTipo: 'venta_mostrador_cobro',
+        medio: medioPago,
+        clienteId: String(venta.clienteId ?? ''),
+        ventaId,
+        ventaLabel,
+        pedidoId: null,
+        ambito: cobroAmbito,
+      });
+
+      montoCobrado = (Number(venta.montoCobrado) || 0) + monto;
+      nuevoSaldo = Math.max(0, (Number(venta.total) || 0) - montoCobrado);
+      const cobrosExtra = Array.isArray(venta.cobros) ? [...venta.cobros] : [];
+      const nuevoCobro: Record<string, unknown> = {
+        id: `cobro_${Date.now()}`,
+        monto,
+        fecha: timestamp,
+        medioPago,
+        movimientoCajaId,
+      };
+      if (notas) nuevoCobro.notas = notas;
+      cobrosExtra.push(nuevoCobro);
+
+      await ventaRef.update({
+        montoCobrado,
+        saldoPendiente: nuevoSaldo,
+        cobros: cobrosExtra,
+      });
+    } catch (error) {
+      if (movimientoCajaId) {
+        await db
+          .doc(`negocios/${businessId}/movimientos_caja/${movimientoCajaId}`)
+          .delete()
+          .catch(() => undefined);
+      }
+      throw error;
+    }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'sales',
@@ -1611,7 +1787,9 @@ router.post('/:businessId/:ventaId/cobros', async (req, res) => {
     });
   } catch (error) {
     console.error('Error registering sale payment:', error);
-    res.status(500).json({ error: 'Error registering sale payment' });
+    const message =
+      error instanceof Error ? error.message : 'Error registering sale payment';
+    res.status(500).json({ error: message });
   }
 });
 

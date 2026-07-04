@@ -6,6 +6,7 @@ import { SalesService } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
 import { getCalendarMonthRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
+import { PROGRESSIVE_LIST_FIRST_PAGE_SIZE } from '../../core/utils/progressive-list-load';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
@@ -307,7 +308,7 @@ export class HomeComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.orderService.getOrdersPage(120).subscribe((page) => {
+    this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe((page) => {
       const visible = page.items
         .filter((order) => this.auth.canViewOrder(order.estado))
         .sort((a, b) => {

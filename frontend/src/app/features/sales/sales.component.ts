@@ -1,7 +1,7 @@
 import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink, type ParamMap } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   CreateSalePayload,
@@ -23,6 +23,12 @@ import {
   clearSalesFormDraft,
   saveSalesFormDraft,
 } from '../../core/utils/form-return-context';
+import {
+  buildCashReopenQueryParams,
+  buildCashReturnQueryParams,
+  parseCashReturnContext,
+  type CashReturnContext,
+} from '../../core/utils/cash-return-context';
 import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
@@ -48,7 +54,6 @@ import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { HasPermissionDirective } from '../../shared/directives/has-permission.directive';
 import { PERMISSIONS } from '../../core/constants/permissions';
-import { ActivityLogTriggerComponent } from '../../shared/components/activity-log-trigger/activity-log-trigger.component';
 import {
   TransactionLinesTableComponent,
   buildTransactionTableColumns,
@@ -69,6 +74,23 @@ import { ModulePageHeaderComponent } from '../../shared/components/module-page-h
 import { CompactDataListComponent } from '../../shared/components/compact-list/compact-data-list.component';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
+import {
+  PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
+  PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
+  ProgressiveListSession,
+} from '../../core/utils/progressive-list-load';
+import {
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  getCajaAmbitos,
+  getComprobantesActivos,
+  getDefaultCashAmbitoId,
+  usesCashAmbitoSeparation,
+  type ComprobanteTipoId,
+  type ComprobanteTipoOption,
+} from '../../core/services/catalog-config.service';
+import { SegmentedControlComponent } from '../../shared/components/segmented-control/segmented-control.component';
+import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search-field/list-search-field.component';
 
 type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
@@ -84,7 +106,6 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     TransactionModalComponent,
     IconActionComponent,
     HasPermissionDirective,
-    ActivityLogTriggerComponent,
     ListRowActionsComponent,
     ListPaginationComponent,
     ModalFormFooterComponent,
@@ -100,6 +121,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
     ModulePageHeaderComponent,
     CompactDataListComponent,
     ListSearchFieldComponent,
+    SegmentedControlComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -114,31 +136,62 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         [showRefresh]="true"
         [refreshing]="loading"
         (refreshClick)="loadSales()">
-        <app-icon-action
-          headerActions
-          *ngIf="auth.canCreateSales"
-          label="Venta mostrador"
-          (clicked)="openSaleModal('mostrador')">
-          <i-lucide name="plus" class="w-4 h-4"></i-lucide>
-        </app-icon-action>
+        <ng-container headerActions *ngIf="auth.canCreateSales">
+          <app-icon-action
+            *ngIf="!showComprobanteCreateMenu"
+            label="Venta mostrador"
+            (clicked)="openSaleModal('mostrador')">
+            <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+          </app-icon-action>
+          <div *ngIf="showComprobanteCreateMenu" class="relative shrink-0">
+            <button
+              type="button"
+              (click)="toggleSalesCreateMenu($event)"
+              [attr.aria-expanded]="salesCreateMenuOpen"
+              aria-haspopup="menu"
+              aria-label="Nueva venta, nota de crédito o débito"
+              [class]="salesCreateMenuButtonClass">
+              <i-lucide name="plus" class="w-4 h-4"></i-lucide>
+            </button>
+            <div
+              *ngIf="salesCreateMenuOpen"
+              class="fixed inset-0 z-10"
+              aria-hidden="true"
+              (click)="closeSalesCreateMenu()"></div>
+            <div
+              *ngIf="salesCreateMenuOpen"
+              role="menu"
+              class="absolute right-0 top-full z-20 mt-1 min-w-[11rem] overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1 shadow-lg">
+              <button
+                *ngFor="let option of comprobanteCreateOptions"
+                type="button"
+                role="menuitem"
+                (click)="openNewSaleFromMenu(option.id)"
+                class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800">
+                <i-lucide [name]="comprobanteCreateIcon(option.id)" class="w-4 h-4 shrink-0 text-teal-600"></i-lucide>
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+        </ng-container>
       </app-module-page-header>
 
-      <div *ngIf="auth.canViewSalesSummary" class="module-summary-kpis grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
-        <div class="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Ventas registradas</p>
-          <p class="text-2xl font-bold text-gray-900">{{ sales.length }}</p>
+      <div *ngIf="auth.canViewSalesSummary" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full items-start">
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Ventas registradas</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ sales.length }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Facturado</p>
-          <p class="text-2xl font-bold text-gray-900">{{ formatMoney(totalFacturado) }}</p>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Facturado</p>
+          <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ formatMoney(totalFacturado) }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Cobrado en ventas</p>
-          <p class="text-2xl font-bold text-teal-600">{{ formatMoney(totalCobradoEnVentas) }}</p>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Cobrado en ventas</p>
+          <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums leading-tight">{{ formatMoney(totalCobradoEnVentas) }}</p>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
-          <p class="text-xs font-semibold text-gray-400 uppercase mb-2">Saldo pendiente</p>
-          <p class="text-2xl font-bold text-orange-500">{{ formatMoney(totalSaldoPendiente) }}</p>
+        <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
+          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
+          <p class="text-xl sm:text-2xl font-bold text-orange-500 tabular-nums leading-tight">{{ formatMoney(totalSaldoPendiente) }}</p>
         </div>
       </div>
 
@@ -480,6 +533,18 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             <option value="otro">Otro</option>
           </select>
         </div>
+        <div *ngIf="showCollectAmbitoSelector">
+          <span class="block text-sm font-medium text-gray-700 mb-1">Caja</span>
+          <p class="text-xs text-gray-500 mb-2 leading-snug">
+            La venta no tiene caja asignada. Elegí dónde registrar el ingreso.
+          </p>
+          <app-segmented-control
+            ariaLabel="Caja"
+            size="sm"
+            [options]="cajaAmbitos"
+            [(value)]="collectAmbito">
+          </app-segmented-control>
+        </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
           <input
@@ -500,16 +565,19 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
       *ngIf="detailModalOpen"
       [title]="detailModalTitle"
       [subtitle]="detailModalSubtitle"
-      backLabel="Volver a ventas"
-      backAriaLabel="Volver a ventas"
+      [backLabel]="detailBackLabel"
+      [backAriaLabel]="detailBackLabel"
       [loading]="detailLoading"
       [hasContent]="!!detailSale"
       [hasHeaderActions]="!!detailSale"
       loadingMessage="Cargando venta..."
       refreshingMessage="Actualizando detalle..."
       (closeClick)="closeDetailModal()">
-      <div headerActions *ngIf="detailSale as sale">
+      <div headerActions *ngIf="detailSale as sale" class="inline-flex items-center gap-1 sm:gap-2">
         <app-record-action-toolbar
+          activityModule="sales"
+          [activityEntityId]="sale.id ?? null"
+          [activityEntityLabel]="getDetailSaleActivityLabel(sale)"
           [showDuplicate]="canDuplicateDetailSale(sale)"
           duplicateLabel="Duplicar venta"
           (duplicateClick)="duplicateDetailSale()"
@@ -619,10 +687,18 @@ export class SalesComponent implements OnInit {
   private router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
+  private catalogConfig = inject(CatalogConfigService);
+
+  appConfig = DEFAULT_APP_CONFIG;
+  collectAmbito = getDefaultCashAmbitoId(DEFAULT_APP_CONFIG);
 
   sales: Sale[] = [];
   searchQuery = '';
   salesPage = 1;
+  salesHasMore = false;
+  salesCursor: string | null = null;
+  loadingMoreSales = false;
+  private readonly listLoadSession = new ProgressiveListSession();
   eligibleOrders: EligibleOrderForSale[] = [];
   clients: Client[] = [];
   loading = true;
@@ -631,6 +707,10 @@ export class SalesComponent implements OnInit {
   saleModalMode: SaleModalMode = 'pedido';
   savingSale = false;
   editingSaleId: string | null = null;
+  salesCreateMenuOpen = false;
+
+  readonly salesCreateMenuButtonClass =
+    `inline-flex items-center justify-center rounded-lg bg-teal-600 text-white hover:bg-teal-700 w-[42px] p-0 transition-colors ${LIST_TOOLBAR_CONTROL_HEIGHT}`;
 
   collectModalOpen = false;
   collectingSale: Sale | null = null;
@@ -642,6 +722,8 @@ export class SalesComponent implements OnInit {
   detailModalOpen = false;
   detailSale: Sale | null = null;
   detailLoading = false;
+  private salesReturnTo: 'sales' | 'cash' = 'sales';
+  private cashReturnContext: CashReturnContext | null = null;
 
   readonly detailSaleTableColumns = buildTransactionTableColumns(SALE_DETAIL_TABLE_COLUMNS);
 
@@ -688,6 +770,10 @@ export class SalesComponent implements OnInit {
 
   get saleModalPrimaryLabel(): string {
     return 'Registrar entrega';
+  }
+
+  get detailBackLabel(): string {
+    return this.salesReturnTo === 'cash' ? 'Volver a caja' : 'Volver a ventas';
   }
 
   get detailModalTitle(): string {
@@ -751,6 +837,28 @@ export class SalesComponent implements OnInit {
     return Number(this.collectingSale?.saldoPendiente) || 0;
   }
 
+  get usesAmbitoSeparation(): boolean {
+    return usesCashAmbitoSeparation(this.appConfig);
+  }
+
+  get showComprobanteCreateMenu(): boolean {
+    return this.comprobanteCreateOptions.length > 1;
+  }
+
+  get comprobanteCreateOptions(): ComprobanteTipoOption[] {
+    return getComprobantesActivos(this.catalogConfig.appConfig, 'ventas');
+  }
+
+  get cajaAmbitos() {
+    return getCajaAmbitos(this.appConfig);
+  }
+
+  get showCollectAmbitoSelector(): boolean {
+    if (!this.usesAmbitoSeparation) return false;
+    if (!this.collectingSale || this.collectingSale.origen === 'pedido') return false;
+    return !this.collectingSale.ambito;
+  }
+
   get collectModalSubtitle(): string {
     if (!this.collectingSale) return '';
     const label = formatSaleLabel(this.collectingSale);
@@ -773,6 +881,12 @@ export class SalesComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.catalogConfig.appConfig$.subscribe((config) => {
+      this.appConfig = config;
+      this.collectAmbito = getDefaultCashAmbitoId(config);
+    });
+    this.catalogConfig.getAppConfig().subscribe();
+
     bindListPageRefreshOnReturn({
       listPath: '/sales',
       reload: () => this.loadSales(),
@@ -793,6 +907,8 @@ export class SalesComponent implements OnInit {
     // Pedidos elegibles: solo al abrir el modal «venta desde pedido».
 
     this.route.queryParamMap.subscribe((params) => {
+      this.syncSalesReturnContext(params);
+
       if (params.get('restoreDraft') === '1') {
         this.tryRestoreSalesFormDraft(params.get('clienteId'));
         this.clearSalesQueryParam('restoreDraft');
@@ -811,6 +927,17 @@ export class SalesComponent implements OnInit {
     });
   }
 
+  private syncSalesReturnContext(params: ParamMap) {
+    const ctx = parseCashReturnContext(params);
+    if (ctx) {
+      this.salesReturnTo = 'cash';
+      this.cashReturnContext = ctx;
+      return;
+    }
+    this.salesReturnTo = 'sales';
+    this.cashReturnContext = null;
+  }
+
   private clearSalesQueryParam(key: string) {
     this.router.navigate([], {
       relativeTo: this.route,
@@ -824,7 +951,11 @@ export class SalesComponent implements OnInit {
     this.salesService.getSale(ventaId).subscribe({
       next: (sale) => {
         if (sale.origen === 'pedido' && sale.pedidoId) {
-          this.router.navigate(['/orders', sale.pedidoId, 'edit']);
+          void this.router.navigate(['/orders', sale.pedidoId, 'edit'], {
+            queryParams: this.cashReturnContext
+              ? buildCashReturnQueryParams(this.cashReturnContext)
+              : undefined,
+          });
           this.clearSalesQueryParam('ventaId');
           return;
         }
@@ -871,6 +1002,22 @@ export class SalesComponent implements OnInit {
   }
 
   closeDetailModal() {
+    if (this.salesReturnTo === 'cash' && this.cashReturnContext) {
+      void this.router.navigate(['/cash'], {
+        queryParams: buildCashReopenQueryParams(this.cashReturnContext),
+      });
+      this.resetSalesReturnContext();
+      return;
+    }
+
+    this.detailModalOpen = false;
+    this.detailSale = null;
+    this.detailLoading = false;
+  }
+
+  private resetSalesReturnContext() {
+    this.salesReturnTo = 'sales';
+    this.cashReturnContext = null;
     this.detailModalOpen = false;
     this.detailSale = null;
     this.detailLoading = false;
@@ -958,6 +1105,10 @@ export class SalesComponent implements OnInit {
       'Extras: ' +
       extras.map((extra) => `${extra.nombre} $${extra.costo}`).join(' · ')
     );
+  }
+
+  getDetailSaleActivityLabel(sale: Sale): string {
+    return `Venta #${formatSaleLabel(sale)}`;
   }
 
   getDetailSaleMetaItems(sale: Sale): TransactionDetailMetaItem[] {
@@ -1050,25 +1201,7 @@ export class SalesComponent implements OnInit {
     if (!this.auth.canCreateSales) return;
 
     if (mode === 'mostrador') {
-      this.stockService.getStock().subscribe({
-        next: (items) => {
-          if (items.length === 0) {
-            this.dialogService.alert({
-              title: 'Sin productos',
-              message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
-            });
-            return;
-          }
-          this.router.navigate(['/sales/new']);
-        },
-        error: () => {
-          this.dialogService.alert({
-            title: 'Servidor no disponible',
-            message:
-              'No se pudo conectar con la API. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
-          });
-        },
-      });
+      this.navigateNewSale('factura');
       return;
     }
 
@@ -1107,6 +1240,50 @@ export class SalesComponent implements OnInit {
     this.editingSaleId = null;
   }
 
+  toggleSalesCreateMenu(event: Event): void {
+    event.stopPropagation();
+    this.salesCreateMenuOpen = !this.salesCreateMenuOpen;
+  }
+
+  closeSalesCreateMenu(): void {
+    this.salesCreateMenuOpen = false;
+  }
+
+  comprobanteCreateIcon(tipo: ComprobanteTipoId): string {
+    if (tipo === 'nota_credito') return 'file-minus';
+    if (tipo === 'nota_debito') return 'file-plus';
+    return 'receipt';
+  }
+
+  openNewSaleFromMenu(tipo: ComprobanteTipoId): void {
+    this.closeSalesCreateMenu();
+    this.navigateNewSale(tipo);
+  }
+
+  private navigateNewSale(tipoComprobante: ComprobanteTipoId): void {
+    this.stockService.getStock().subscribe({
+      next: (items) => {
+        if (items.length === 0) {
+          this.dialogService.alert({
+            title: 'Sin productos',
+            message: 'Cargá productos en Stock antes de registrar una venta de mostrador.',
+          });
+          return;
+        }
+        const queryParams =
+          tipoComprobante === 'factura' ? {} : { tipoComprobante };
+        this.router.navigate(['/sales/new'], { queryParams });
+      },
+      error: () => {
+        this.dialogService.alert({
+          title: 'Servidor no disponible',
+          message:
+            'No se pudo conectar con la API. Ejecutá npm run dev en la raíz del proyecto y recargá la página.',
+        });
+      },
+    });
+  }
+
   canEditSale(sale: Sale): boolean {
     return this.auth.canEditRecords && sale.origen === 'mostrador' && !!sale.id;
   }
@@ -1143,6 +1320,7 @@ export class SalesComponent implements OnInit {
     this.collectMonto = saldo;
     this.collectMedio = 'efectivo';
     this.collectNotas = '';
+    this.collectAmbito = getDefaultCashAmbitoId(this.appConfig);
     this.collectModalOpen = true;
   }
 
@@ -1171,7 +1349,16 @@ export class SalesComponent implements OnInit {
       return;
     }
 
+    if (this.showCollectAmbitoSelector && !this.collectAmbito) {
+      this.dialogService.alert({
+        title: 'Caja requerida',
+        message: 'Seleccioná la caja donde registrar el cobro.',
+      });
+      return;
+    }
+
     this.collectSaving = true;
+    const ambito = this.showCollectAmbitoSelector ? this.collectAmbito : undefined;
 
     if (this.collectingSale.origen === 'pedido' && this.collectingSale.pedidoId) {
       this.orderService
@@ -1192,6 +1379,7 @@ export class SalesComponent implements OnInit {
         monto,
         medioPago: this.collectMedio,
         notas: this.collectNotas.trim() || undefined,
+        ambito,
       })
       .subscribe({
         next: () => this.onCollectSuccess(),
@@ -1350,21 +1538,50 @@ export class SalesComponent implements OnInit {
       return;
     }
 
+    const loadToken = this.listLoadSession.next();
     this.loading = true;
     this.salesPage = 1;
-    // Traemos todas las ventas para que el buscador y las flechas de paginado
-    // recorran todo el historial, no solo la primera página cargada.
-    this.salesService.getSales().subscribe({
-      next: (sales) => {
-        this.sales = sales;
+    this.salesService.getSalesPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.sales = page.items;
+        this.salesHasMore = page.hasMore;
+        this.salesCursor = page.nextCursor;
         this.loading = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingSalesInBackground(loadToken);
+        }
       },
       error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
         this.loading = false;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudieron cargar las ventas.',
         });
+      },
+    });
+  }
+
+  private loadRemainingSalesInBackground(loadToken: number) {
+    if (!this.listLoadSession.isActive(loadToken)) return;
+    if (!this.salesHasMore || !this.salesCursor || this.loadingMoreSales) return;
+
+    this.loadingMoreSales = true;
+    this.salesService.getSalesPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.salesCursor).subscribe({
+      next: (page) => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.sales = [...this.sales, ...page.items];
+        this.salesHasMore = page.hasMore;
+        this.salesCursor = page.nextCursor;
+        this.loadingMoreSales = false;
+        if (page.hasMore && page.nextCursor) {
+          this.loadRemainingSalesInBackground(loadToken);
+        }
+      },
+      error: () => {
+        if (!this.listLoadSession.isActive(loadToken)) return;
+        this.loadingMoreSales = false;
       },
     });
   }

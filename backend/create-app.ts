@@ -17,6 +17,8 @@ import payablesRoutes from './routes/payables.ts';
 import activityRoutes from './routes/activity.ts';
 import reportsRoutes from './routes/reports.ts';
 import collaboratorsRoutes from './routes/collaborators.ts';
+import publicTrialRoutes from './routes/public-trial.ts';
+import billingRoutes from './routes/billing.ts';
 import { ensureDefaultSupervisor } from './auth/users.ts';
 import { ensureDefaultBusiness } from './auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './auth/platform.ts';
@@ -118,6 +120,8 @@ export function createApiApp(): express.Express {
   api.use('/activity', activityRoutes);
   api.use('/reports', reportsRoutes);
   api.use('/collaborators', collaboratorsRoutes);
+  api.use('/public/trial', publicTrialRoutes);
+  api.use('/billing', billingRoutes);
 
   app.use('/api', withBootstrap, api);
 

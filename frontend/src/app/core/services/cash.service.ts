@@ -30,6 +30,8 @@ export interface CashMovement {
   numeroPedidoLabel?: string | null;
   ventaId?: string | null;
   ventaLabel?: string | null;
+  compraId?: string | null;
+  compraLabel?: string | null;
   clienteId?: string | null;
   negocioId?: string;
 }
@@ -79,9 +81,16 @@ export class CashService {
     return this.http.get<CashMovement[]>(`/api/cash/${this.businessId}`);
   }
 
-  getMovementsPage(limit = 120, cursor?: string): Observable<PaginatedCashMovements> {
+  getMovementsPage(
+    limit = 120,
+    cursor?: string,
+    mes?: number,
+    anio?: number
+  ): Observable<PaginatedCashMovements> {
     const params: Record<string, string> = { paged: '1', limit: String(limit) };
     if (cursor) params.cursor = cursor;
+    if (mes != null) params.mes = String(mes);
+    if (anio != null) params.anio = String(anio);
     return this.http.get<PaginatedCashMovements>(`/api/cash/${this.businessId}`, { params });
   }
 
