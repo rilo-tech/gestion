@@ -7,6 +7,11 @@ import type {
   SubscriptionModuleId,
   SubscriptionModulesMap,
 } from '../../../../../shared/subscription-modules.ts';
+import type {
+  TrialContactVerification,
+  TrialLifecycle,
+} from '../../../../../shared/trial-registration.ts';
+import type { ClientPlatformAccess } from '../../../../../shared/platform-access.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 export type SubscriptionPaymentStatus = 'al_dia' | 'pendiente' | 'vencido';
@@ -86,6 +91,10 @@ export interface PublicBusinessInfo {
   administradoresDisponibles: number;
   operadoresDisponibles: number;
   usuariosDisponibles: number;
+  contactVerification?: TrialContactVerification | null;
+  lifecycle?: TrialLifecycle | null;
+  source?: string | null;
+  platformAccess?: ClientPlatformAccess;
 }
 
 export const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionStatus, string> = {

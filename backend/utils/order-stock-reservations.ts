@@ -34,6 +34,7 @@ function lineControlsStock(line: OrderLineStock): boolean {
 
 export type OrderStockRecord = {
   items?: OrderLineStock[];
+  estado?: string;
   estadoStock?: OrderStockStatus;
   stockPreparado?: boolean;
   stockDescontado?: boolean;
@@ -2416,6 +2417,49 @@ function aggregateOrderLinesByProduct(items: OrderLineStock[] = []): Map<string,
   return map;
 }
 
+/** Depósito ajustado por cantidad pedida (listo / ya descontado), no solo por cantidadUsada en línea. */
+function shouldAdjustDepositoByPedida(
+  order: OrderStockRecord,
+  stockDescontado: boolean,
+  stockPreparado: boolean
+): boolean {
+  if (stockDescontado) return true;
+  if (!stockPreparado) return false;
+  return normalizeOrderEstadoValue(order.estado) === 'listo';
+}
+
+function resolvePhysicalUnitsForReconcile(
+  aggregated: AggregatedOrderLineStock,
+  adjustByPedida: boolean,
+  side: 'existing' | 'updated'
+): number {
+  if (adjustByPedida) return aggregated.cantidadPedida;
+  if (side === 'existing') return aggregated.cantidadUsada;
+  return Math.min(aggregated.cantidadUsada, aggregated.cantidadPedida);
+}
+
+/** Reserva ajustada por cantidad pedida menos lo ya descontado del depósito. */
+function shouldAdjustReservaByPedida(
+  order: OrderStockRecord,
+  stockPreparado: boolean
+): boolean {
+  if (stockPreparado) return true;
+  return normalizeOrderItemsStock(order.items ?? []).some(
+    (line) => (Number(line.cantidadReservada) || 0) > 0
+  );
+}
+
+function resolveReservedUnitsForReconcile(
+  aggregated: AggregatedOrderLineStock,
+  adjustReservaByPedida: boolean,
+  physicalUnits: number
+): number {
+  if (adjustReservaByPedida) {
+    return Math.max(0, aggregated.cantidadPedida - physicalUnits);
+  }
+  return aggregated.cantidadReservada;
+}
+
 function orderHasStockLedgerActivity(order: OrderStockRecord): boolean {
   if (order.stockDescontado || order.stockPreparado) return true;
   return normalizeOrderItemsStock(order.items ?? []).some((line) => {
@@ -2598,6 +2642,12 @@ export async function reconcileOrderStockOnItemsChange(
   const stockByProduct = new Map<string, { cantidadUsada: number; cantidadReservada: number }>();
   const stockDescontado = !!existingOrder.stockDescontado;
   const stockPreparado = !!existingOrder.stockPreparado;
+  const adjustByPedida = shouldAdjustDepositoByPedida(
+    existingOrder,
+    stockDescontado,
+    stockPreparado
+  );
+  const adjustReservaByPedida = shouldAdjustReservaByPedida(existingOrder, stockPreparado);
   const allProductIds = new Set([...oldMap.keys(), ...newMap.keys()]);
 
   for (const stockItemId of allProductIds) {
@@ -2615,15 +2665,11 @@ export async function reconcileOrderStockOnItemsChange(
     };
     const nombre = neu.nombre || old.nombre;
 
-    let targetUsed = old.cantidadUsada;
-    if (stockDescontado) {
-      targetUsed = neu.cantidadPedida;
-    } else {
-      targetUsed = Math.min(old.cantidadUsada, neu.cantidadPedida);
-    }
+    const oldPhysical = resolvePhysicalUnitsForReconcile(old, adjustByPedida, 'existing');
+    const newPhysical = resolvePhysicalUnitsForReconcile(neu, adjustByPedida, 'updated');
 
-    const restoreUsed = Math.max(0, old.cantidadUsada - targetUsed);
-    const consumeUsed = Math.max(0, targetUsed - old.cantidadUsada);
+    const restoreUsed = Math.max(0, oldPhysical - newPhysical);
+    const consumeUsed = Math.max(0, newPhysical - oldPhysical);
 
     if (restoreUsed > 0) {
       await restoreOrderPhysicalUnits(
@@ -2647,35 +2693,44 @@ export async function reconcileOrderStockOnItemsChange(
     }
 
     let targetReserved = 0;
-    if (stockPreparado || old.cantidadReservada > 0) {
-      targetReserved = Math.max(0, neu.cantidadPedida - targetUsed);
-    }
-
-    const stockSnap = await db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get();
-    if (stockSnap.exists && productControlsStock(stockSnap.data() as Record<string, unknown>)) {
-      const stockData = stockSnap.data() as Record<string, unknown>;
-      const disponible = getStockDisponible(
-        Number(stockData.stockActual) || 0,
-        Number(stockData.stockReservado) || 0
+    const oldReserved = resolveReservedUnitsForReconcile(
+      old,
+      adjustReservaByPedida,
+      oldPhysical
+    );
+    if (adjustReservaByPedida || oldReserved > 0 || old.cantidadReservada > 0) {
+      targetReserved = resolveReservedUnitsForReconcile(
+        neu,
+        adjustReservaByPedida,
+        newPhysical
       );
-      const maxReserved = old.cantidadReservada + disponible;
-      targetReserved = Math.min(targetReserved, maxReserved);
-    }
 
-    const reserveDelta = targetReserved - old.cantidadReservada;
-    if (reserveDelta !== 0) {
-      await applyOrderReservationDelta(
-        businessId,
-        orderId,
-        existingOrder,
-        stockItemId,
-        reserveDelta,
-        nombre
-      );
+      const stockSnap = await db.collection(`negocios/${businessId}/stock`).doc(stockItemId).get();
+      if (stockSnap.exists && productControlsStock(stockSnap.data() as Record<string, unknown>)) {
+        const stockData = stockSnap.data() as Record<string, unknown>;
+        const disponible = getStockDisponible(
+          Number(stockData.stockActual) || 0,
+          Number(stockData.stockReservado) || 0
+        );
+        const maxReserved = oldReserved + disponible;
+        targetReserved = Math.min(targetReserved, maxReserved);
+      }
+
+      const reserveDelta = targetReserved - oldReserved;
+      if (reserveDelta !== 0) {
+        await applyOrderReservationDelta(
+          businessId,
+          orderId,
+          existingOrder,
+          stockItemId,
+          reserveDelta,
+          nombre
+        );
+      }
     }
 
     stockByProduct.set(stockItemId, {
-      cantidadUsada: targetUsed,
+      cantidadUsada: newPhysical,
       cantidadReservada: targetReserved,
     });
   }

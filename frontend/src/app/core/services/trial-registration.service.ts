@@ -11,12 +11,14 @@ export interface TrialRegisterPayload {
   ownerName: string;
   email: string;
   phone: string;
+  phoneCountryCode?: string;
   password?: string;
   loginUsername?: string;
   whatsappOptIn?: boolean;
   marketingEmailOptIn?: boolean;
   acceptTerms: boolean;
   website?: string;
+  trialProduct?: string;
   utmSource?: string;
   utmCampaign?: string;
   campaignSource?: string;
@@ -49,8 +51,8 @@ export class TrialRegistrationService {
     return this.http.post<{ registrationId: string }>('/api/public/trial/register', payload);
   }
 
-  sendPhoneCode(registrationId: string): Observable<{ ok: boolean; devCode?: string }> {
-    return this.http.post<{ ok: boolean; devCode?: string }>(
+  sendPhoneCode(registrationId: string): Observable<{ ok: boolean; emailSent?: boolean; devCode?: string }> {
+    return this.http.post<{ ok: boolean; emailSent?: boolean; devCode?: string }>(
       '/api/public/trial/send-phone-code',
       { registrationId }
     );

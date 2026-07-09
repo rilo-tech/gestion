@@ -3,8 +3,8 @@ import { checkRateLimit, clientIp } from '../utils/rate-limit.ts';
 import {
   registerTrialLead,
   completeTrialRegistration,
-  normalizePhone,
 } from '../auth/trial-registration-service.ts';
+import { formatPhoneDisplay } from '../../shared/phone.ts';
 import {
   getTrialRegistration,
   updateTrialRegistration,
@@ -24,6 +24,10 @@ import {
   logDevOtp,
   logDevEmailVerification,
 } from '../utils/trial-verification.ts';
+import {
+  sendTrialSignupCodeEmail,
+  sendTrialEmailVerificationLink,
+} from '../utils/transactional-email.ts';
 import { toPublicBusinessInfo, toSessionBusinessInfo } from '../auth/business.ts';
 
 const router = express.Router();
@@ -46,6 +50,13 @@ function mapTrialError(error: unknown): { status: number; message: string; code?
     PHONE_ALREADY_USED: { status: 409, message: 'Ese teléfono ya tiene una prueba activa o cuenta.' },
     REGISTRATION_NOT_FOUND: { status: 404, message: 'Registro no encontrado.' },
     PHONE_NOT_VERIFIED: { status: 400, message: 'Verificá tu teléfono antes de continuar.' },
+    EMAIL_NOT_VERIFIED: { status: 400, message: 'Verificá tu email antes de continuar.' },
+    EMAIL_SEND_FAILED: { status: 503, message: 'No se pudo enviar el email. Probá de nuevo en unos minutos.' },
+    EMAIL_NOT_CONFIGURED: {
+      status: 503,
+      message:
+        'El envío de email no está configurado en el servidor. Agregá RESEND_API_KEY al .env y reiniciá npm run dev.',
+    },
     REGISTRATION_ALREADY_COMPLETED: { status: 409, message: 'Este registro ya fue completado.' },
     TRIAL_PLAN_UNAVAILABLE: { status: 503, message: 'El plan de prueba no está disponible.' },
     OTP_RATE_LIMIT: { status: 429, message: 'Esperá un momento antes de pedir otro código.' },
@@ -70,7 +81,7 @@ router.post('/register', async (req, res) => {
     }
 
     const { registrationId } = await registerTrialLead(req.body, ip);
-    res.status(201).json({ registrationId, nextStep: 'verify_phone' });
+    res.status(201).json({ registrationId, nextStep: 'verify_email' });
   } catch (error) {
     const mapped = mapTrialError(error);
     res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
@@ -100,12 +111,16 @@ router.post('/send-phone-code', async (req, res) => {
       lastOtpSentAt: now,
     });
 
-    logDevOtp('send', registration.phone, code);
+    logDevOtp('send-email', registration.email, code);
 
-    const devExpose = process.env.TRIAL_OTP_DEV_MODE !== 'false';
+    const delivery = await sendTrialSignupCodeEmail(registration.email, code);
+    const devExpose =
+      process.env.TRIAL_OTP_DEV_MODE !== 'false' && (delivery.devOnly || !delivery.sent);
+
     res.json({
       ok: true,
-      phone: registration.phone,
+      email: registration.email,
+      emailSent: delivery.sent,
       ...(devExpose ? { devCode: code } : {}),
     });
   } catch (error) {
@@ -140,8 +155,8 @@ router.post('/verify-phone', async (req, res) => {
 
     const now = new Date().toISOString();
     await updateTrialRegistration(registrationId, {
-      phoneVerified: true,
-      phoneVerifiedAt: now,
+      emailVerified: true,
+      emailVerifiedAt: now,
       status: 'ready',
       phoneOtpHash: null,
       phoneOtpExpiresAt: null,
@@ -171,9 +186,13 @@ router.post('/send-email-verification', async (req, res) => {
     const url = buildEmailVerificationUrl(token);
     logDevEmailVerification(registration.email, url);
 
-    const devExpose = process.env.TRIAL_EMAIL_DEV_MODE !== 'false';
+    const delivery = await sendTrialEmailVerificationLink(registration.email, url);
+    const devExpose =
+      process.env.TRIAL_EMAIL_DEV_MODE !== 'false' && (delivery.devOnly || !delivery.sent);
+
     res.json({
       ok: true,
+      emailSent: delivery.sent,
       ...(devExpose ? { devVerificationUrl: url } : {}),
     });
   } catch (error) {
@@ -257,7 +276,7 @@ router.get('/registration/:registrationId', async (req, res) => {
     id: registration.id,
     businessName: registration.businessName,
     email: registration.email,
-    phone: normalizePhone(registration.phone),
+    phone: formatPhoneDisplay(registration.phone),
     phoneVerified: registration.phoneVerified,
     emailVerified: registration.emailVerified,
     status: registration.status,

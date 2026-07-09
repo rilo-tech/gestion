@@ -4,6 +4,7 @@ import { hashPassword } from '../auth/password.ts';
 import {
   createBusiness,
   buildNewBusinessPublicInfo,
+  getBusiness,
   listPublicBusinessInfos,
   listSubscriptionPayments,
   registerSubscriptionPayment,
@@ -28,12 +29,21 @@ import {
   freezePlanForExistingBusinesses,
 } from '../auth/plan-snapshot.ts';
 import { listSubscriptionHistory } from '../auth/subscription-history.ts';
-import { listPlatformTrials } from '../auth/platform-trials.ts';
+import {
+  adminReleaseTrialContactClaim,
+  listPlatformPendingTrialRegistrations,
+  listPlatformTrials,
+} from '../auth/platform-trials.ts';
 import {
   requireAuth,
   requireSuperadmin,
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
+import {
+  resolvePlatformAccessForBusiness,
+  sanitizePlatformAccessPatch,
+  platformAccessPayload,
+} from '../auth/platform-access.ts';
 
 const router = express.Router();
 
@@ -48,6 +58,32 @@ router.get('/trials', async (req, res) => {
   } catch (error) {
     console.error('Error listing platform trials:', error);
     res.status(500).json({ error: 'No se pudieron listar las pruebas.' });
+  }
+});
+
+router.get('/trial-registrations/pending', async (_req, res) => {
+  try {
+    const rows = await listPlatformPendingTrialRegistrations();
+    res.json({ registrations: rows });
+  } catch (error) {
+    console.error('Error listing pending trial registrations:', error);
+    res.status(500).json({ error: 'No se pudieron listar los registros pendientes.' });
+  }
+});
+
+router.delete('/trial-contact-claims/:type/:value', async (req, res) => {
+  try {
+    const type = req.params.type === 'phone' ? 'phone' : 'email';
+    const value = decodeURIComponent(req.params.value ?? '');
+    await adminReleaseTrialContactClaim(type, value);
+    res.json({ ok: true });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'CLAIM_BOUND_TO_BUSINESS') {
+      return res.status(409).json({ error: 'Ese contacto ya está vinculado a una empresa activa.' });
+    }
+    console.error('Error releasing trial contact claim:', error);
+    res.status(500).json({ error: 'No se pudo liberar el contacto.' });
   }
 });
 
@@ -355,6 +391,40 @@ router.get('/businesses/:businessId/subscription-history', async (req, res) => {
   } catch (error) {
     console.error('Error listing subscription history:', error);
     res.status(500).json({ error: 'No se pudo cargar el historial comercial.' });
+  }
+});
+
+router.get('/businesses/:businessId/platform-access', async (req, res) => {
+  try {
+    const business = await getBusiness(req.params.businessId);
+    if (!business) {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+    res.json(business.platformAccess ?? resolvePlatformAccessForBusiness({}));
+  } catch (error) {
+    console.error('Error fetching platform access:', error);
+    res.status(500).json({ error: 'No se pudo cargar el acceso de módulos.' });
+  }
+});
+
+router.put('/businesses/:businessId/platform-access', async (req, res) => {
+  try {
+    const business = await getBusiness(req.params.businessId);
+    if (!business) {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+    const patch = sanitizePlatformAccessPatch(req.body ?? {});
+    const next = platformAccessPayload({
+      ...(business.platformAccess ?? resolvePlatformAccessForBusiness({})),
+      ...patch,
+      erpCoreEnabled: true,
+    });
+    await updateBusiness(req.params.businessId, { platformAccess: next });
+    const updated = await toPublicBusinessInfo(req.params.businessId);
+    res.json(updated.platformAccess ?? next);
+  } catch (error) {
+    console.error('Error updating platform access:', error);
+    res.status(500).json({ error: 'No se pudo actualizar el acceso de módulos.' });
   }
 });
 

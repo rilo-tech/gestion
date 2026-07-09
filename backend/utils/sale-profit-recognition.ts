@@ -130,19 +130,43 @@ export function isIsoDateInCalendarMonth(iso: string, mes: number, anio: number)
   return parsed.getUTCFullYear() === anio && parsed.getUTCMonth() + 1 === mes;
 }
 
+/** Mes en que la ganancia debe contarse para KPI e informes. */
+export function resolveSaleProfitRecognizedAt(
+  sale: Record<string, unknown>,
+  order?: Record<string, unknown> | null
+): string | null {
+  if (isDonationSale(sale)) {
+    const deliveredAt = String(order?.entregadoAt ?? sale.fecha ?? '').trim();
+    return deliveredAt || null;
+  }
+
+  if (resolveSaleSaldoPendiente(sale) > 0) return null;
+
+  const total = Number(sale.total) || 0;
+  if (total <= 0) return null;
+
+  if (String(sale.origen ?? '') === 'pedido') {
+    const deliveredAt = String(order?.entregadoAt ?? sale.fecha ?? '').trim();
+    if (!deliveredAt) return null;
+
+    const fullyPaidAt = resolveSaleFullyPaidAt(sale, order);
+    if (!fullyPaidAt) return deliveredAt;
+
+    // Entregado ya saldado (cuotas previas o cobro al entregar): al confirmar entrega.
+    // Entregado con saldo y pagos posteriores: cuando el último pago cierra el total.
+    return fullyPaidAt > deliveredAt ? fullyPaidAt : deliveredAt;
+  }
+
+  return resolveSaleFullyPaidAt(sale, order);
+}
+
 export function isSaleProfitRecognizedInMonth(
   sale: Record<string, unknown>,
   mes: number,
   anio: number,
   order?: Record<string, unknown> | null
 ): boolean {
-  if (isDonationSale(sale)) {
-    const deliveredAt = String(sale.fecha ?? '').trim();
-    if (!deliveredAt) return false;
-    return isIsoDateInCalendarMonth(deliveredAt, mes, anio);
-  }
-
-  const fullyPaidAt = resolveSaleFullyPaidAt(sale, order);
-  if (!fullyPaidAt) return false;
-  return isIsoDateInCalendarMonth(fullyPaidAt, mes, anio);
+  const recognizedAt = resolveSaleProfitRecognizedAt(sale, order);
+  if (!recognizedAt) return false;
+  return isIsoDateInCalendarMonth(recognizedAt, mes, anio);
 }

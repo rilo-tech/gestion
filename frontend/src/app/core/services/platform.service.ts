@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 import {
   PublicBusinessInfo,
   PublicPlanInfo,
@@ -12,6 +12,7 @@ import type {
   SubscriptionModulesMap,
   SubscriptionModuleMeta,
 } from '../../../../../shared/subscription-modules.ts';
+import type { ClientPlatformAccess } from '../../../../../shared/platform-access.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -87,6 +88,20 @@ export interface PlatformTrialRow {
     productsCount: number;
     cashMovementsCount: number;
   };
+}
+
+export interface PlatformPendingTrialRegistration {
+  id: string;
+  businessName: string;
+  ownerName: string;
+  email: string;
+  phone: string;
+  pais: string;
+  ciudad: string;
+  status: string;
+  emailVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CreatePlanPayload {
@@ -175,6 +190,16 @@ export class PlatformService {
     );
   }
 
+  updatePlatformAccess(
+    businessId: string,
+    payload: Partial<Pick<ClientPlatformAccess, 'erpWebEnabled' | 'whatsappEnabled' | 'aiEnabled'>>
+  ): Observable<ClientPlatformAccess> {
+    return this.http.put<ClientPlatformAccess>(
+      `/api/platform/businesses/${businessId}/platform-access`,
+      payload
+    );
+  }
+
   getBusinessPayments(businessId: string): Observable<SubscriptionPayment[]> {
     return this.http.get<SubscriptionPayment[]>(
       `/api/platform/businesses/${businessId}/payments`
@@ -196,6 +221,19 @@ export class PlatformService {
     return this.http.get<PlatformTrialRow[]>(`/api/platform/trials?${params}`);
   }
 
+  getPendingTrialRegistrations(): Observable<PlatformPendingTrialRegistration[]> {
+    return this.http
+      .get<{ registrations: PlatformPendingTrialRegistration[] }>(
+        '/api/platform/trial-registrations/pending'
+      )
+      .pipe(map((res) => res.registrations ?? []));
+  }
+
+  releaseTrialContactClaim(type: 'email' | 'phone', value: string): Observable<{ ok: boolean }> {
+    const encoded = encodeURIComponent(value.trim().toLowerCase());
+    return this.http.delete<{ ok: boolean }>(`/api/platform/trial-contact-claims/${type}/${encoded}`);
+  }
+
   registerBusinessPayment(
     businessId: string,
     payload: RegisterSubscriptionPaymentPayload
@@ -204,5 +242,19 @@ export class PlatformService {
       `/api/platform/businesses/${businessId}/payments`,
       payload
     );
+  }
+
+  simulateWhatsappMessage(payload: {
+    businessId: string;
+    message: string;
+    phone?: string;
+  }): Observable<{
+    result: { reply: string; intent: string; executed: boolean; businessId?: string };
+    platformAccess: ClientPlatformAccess;
+  }> {
+    return this.http.post<{
+      result: { reply: string; intent: string; executed: boolean; businessId?: string };
+      platformAccess: ClientPlatformAccess;
+    }>('/api/platform/bot/simulate', payload);
   }
 }

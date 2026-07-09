@@ -18,7 +18,10 @@ import activityRoutes from './routes/activity.ts';
 import reportsRoutes from './routes/reports.ts';
 import collaboratorsRoutes from './routes/collaborators.ts';
 import publicTrialRoutes from './routes/public-trial.ts';
+import publicGeoRoutes from './routes/public-geo.ts';
 import billingRoutes from './routes/billing.ts';
+import whatsappWebhookRoutes from './routes/whatsapp-webhook.ts';
+import platformBotRoutes from './routes/platform-bot.ts';
 import { ensureDefaultSupervisor } from './auth/users.ts';
 import { ensureDefaultBusiness } from './auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './auth/platform.ts';
@@ -90,6 +93,8 @@ export function createApiApp(): express.Express {
     });
   });
 
+  app.use('/api/public/geo', publicGeoRoutes);
+
   const withBootstrap: express.RequestHandler = async (_req, res, next) => {
     try {
       await runApiBootstrap();
@@ -122,6 +127,8 @@ export function createApiApp(): express.Express {
   api.use('/collaborators', collaboratorsRoutes);
   api.use('/public/trial', publicTrialRoutes);
   api.use('/billing', billingRoutes);
+  api.use('/webhooks/whatsapp', whatsappWebhookRoutes);
+  api.use('/platform/bot', platformBotRoutes);
 
   app.use('/api', withBootstrap, api);
 

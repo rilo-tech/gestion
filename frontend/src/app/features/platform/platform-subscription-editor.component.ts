@@ -2,7 +2,7 @@ import { Component, EventEmitter, Input, OnChanges, OnInit, Output } from '@angu
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
-  SELLABLE_SUBSCRIPTION_MODULE_CATALOG,
+  PLATFORM_OVERRIDE_MODULE_CATALOG,
   SUBSCRIPTION_MODULE_CATALOG,
   calculateMonthlyFee,
   isModuleBillableAddon,
@@ -146,9 +146,10 @@ export type BusinessSubscriptionDraft = {
       </div>
 
       <div>
-        <h4 class="text-sm font-semibold text-gray-900 mb-2">Módulos extra y ajustes</h4>
+        <h4 class="text-sm font-semibold text-gray-900 mb-2">Módulos y funciones</h4>
         <p class="text-xs text-gray-500 mb-3">
-          Activá módulos adicionales para este cliente o desactivá los del plan. Podés fijar un precio mensual por módulo extra.
+          Activá o desactivá módulos para este cliente (pedidos, caja, fotos en pedidos, etc.).
+          «Como el plan» usa la plantilla; «Desactivar» en Fotos en pedidos oculta el adjunto de imágenes.
         </p>
         <div class="rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
           <div
@@ -214,7 +215,7 @@ export type BusinessSubscriptionDraft = {
   `,
 })
 export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
-  readonly moduleCatalog = SELLABLE_SUBSCRIPTION_MODULE_CATALOG;
+  readonly moduleCatalog = PLATFORM_OVERRIDE_MODULE_CATALOG;
 
   @Input({ required: true }) plan!: PublicPlanInfo;
   @Input() namePrefix = 'sub';

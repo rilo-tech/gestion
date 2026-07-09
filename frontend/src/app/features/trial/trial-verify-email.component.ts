@@ -14,7 +14,7 @@ import { TrialRegistrationService } from '../../core/services/trial-registration
         <p *ngIf="loading" class="text-gray-400">Verificando...</p>
         <p *ngIf="!loading && success" class="text-green-400">Email verificado correctamente.</p>
         <p *ngIf="!loading && error" class="text-red-400">{{ error }}</p>
-        <a *ngIf="!loading" routerLink="/" class="inline-block text-teal-400 hover:underline text-sm">
+        <a *ngIf="!loading" routerLink="/login" class="inline-block text-teal-400 hover:underline text-sm">
           Ir al inicio de sesión
         </a>
       </div>

@@ -162,7 +162,20 @@ export async function ensureDefaultPlans(): Promise<void> {
   for (const plan of DEFAULT_PLANS) {
     const ref = col.doc(plan.id);
     const doc = await ref.get();
-    if (doc.exists) continue;
+    if (doc.exists) {
+      const data = doc.data() as Record<string, unknown> | undefined;
+      const modules = normalizeModulesMap(
+        data?.modulosIncluidos as Partial<Record<string, boolean>> | undefined,
+        plan.id
+      );
+      if (modules.pedidos && modules.order_photos !== true) {
+        await ref.update({
+          modulosIncluidos: { ...modules, order_photos: true },
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      continue;
+    }
 
     await ref.set({
       ...plan,

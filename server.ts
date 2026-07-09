@@ -16,6 +16,15 @@ async function startServer() {
 
   if (process.env.NODE_ENV !== 'production') {
     console.log('[dev] Iniciando Vite…');
+    if (process.env.TRIAL_EMAIL_SEND_IN_DEV === 'true') {
+      if (process.env.RESEND_API_KEY?.trim()) {
+        console.log('[trial-email] Envío real en desarrollo activado (Resend)');
+      } else {
+        console.warn(
+          '[trial-email] TRIAL_EMAIL_SEND_IN_DEV=true pero falta RESEND_API_KEY en gestion/.env'
+        );
+      }
+    }
     const viteMode = 'development';
     const viteEnv = loadEnv(viteMode, path.resolve(__dirname), '');
     for (const [key, value] of Object.entries(viteEnv)) {

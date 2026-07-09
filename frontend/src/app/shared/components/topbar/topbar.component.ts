@@ -33,7 +33,7 @@ import { Router, RouterLink } from '@angular/router';
 
       <div class="inline-flex items-center gap-1.5 sm:gap-2.5 ml-auto">
         <a
-          *ngIf="auth.canManageSettings"
+          *ngIf="auth.canManageSettings && auth.canAccessErpWeb"
           routerLink="/settings"
           title="Configuración"
           aria-label="Configuración"
@@ -96,6 +96,6 @@ export class TopbarComponent {
 
   logout() {
     this.auth.logout();
-    this.router.navigate(['/']);
+    this.router.navigate(['/login']);
   }
 }

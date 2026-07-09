@@ -15,20 +15,21 @@ import { toPublicUser } from './users.ts';
 import { signAuthToken } from './jwt.ts';
 import type { TrialContactVerification, TrialLifecycle } from '../../shared/trial-registration.ts';
 import { CURRENT_TERMS_VERSION } from '../../shared/trial-registration.ts';
+import {
+  DEFAULT_PHONE_DIAL,
+  isValidE164Phone,
+  parsePhoneInput,
+} from '../../shared/phone.ts';
+import {
+  parseTrialProductFromBody,
+  platformAccessFromTrialProduct,
+} from './platform-access.ts';
+import type { TrialProductId } from '../../shared/platform-access.ts';
 
 const DEFAULT_TRIAL_PLAN_ID = process.env.TRIAL_DEFAULT_PLAN_ID ?? 'plan_intermedio';
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.startsWith('598')) return `+${digits}`;
-  if (digits.length === 8) return `+598${digits}`;
-  if (digits.length === 9 && digits.startsWith('0')) return `+598${digits.slice(1)}`;
-  return phone.trim().startsWith('+') ? `+${digits}` : `+${digits}`;
 }
 
 function loginFromEmail(email: string): string {
@@ -50,9 +51,6 @@ async function seedBusinessConfig(
       moneda: pais.toLowerCase().includes('uruguay') || pais === 'UY' ? 'UYU' : 'ARS',
       nombreComercial: '',
     },
-    pedidos: {
-      fotosReferenciaHabilitadas: false,
-    },
     onboarding: {
       rubro,
       completed: false,
@@ -73,8 +71,8 @@ export async function completeTrialRegistration(registrationId: string): Promise
   if (registration.status === 'completed' && registration.completedBusinessId) {
     throw new Error('REGISTRATION_ALREADY_COMPLETED');
   }
-  if (!registration.phoneVerified) {
-    throw new Error('PHONE_NOT_VERIFIED');
+  if (!registration.emailVerified) {
+    throw new Error('EMAIL_NOT_VERIFIED');
   }
 
   const plan = await getPlan(DEFAULT_TRIAL_PLAN_ID);
@@ -91,9 +89,9 @@ export async function completeTrialRegistration(registrationId: string): Promise
     emailVerifiedAt: registration.emailVerifiedAt ?? null,
     emailStatus: registration.emailVerified ? 'verified' : 'pending',
     phone: registration.phone,
-    phoneVerified: true,
-    phoneVerifiedAt: registration.phoneVerifiedAt ?? now,
-    phoneStatus: 'verified',
+    phoneVerified: false,
+    phoneVerifiedAt: null,
+    phoneStatus: 'pending',
     whatsappOptIn: registration.whatsappOptIn,
     whatsappOptInAt: registration.whatsappOptIn ? now : null,
     termsAcceptedAt: registration.termsAcceptedAt,
@@ -138,6 +136,9 @@ export async function completeTrialRegistration(registrationId: string): Promise
     source: 'self_service_trial',
     contactVerification,
     lifecycle,
+    platformAccess: platformAccessFromTrialProduct(
+      (registration.trialProduct as TrialProductId) ?? 'completo'
+    ),
   });
 
   const loginUsername = registration.loginUsername || loginFromEmail(registration.email);
@@ -162,6 +163,7 @@ export async function completeTrialRegistration(registrationId: string): Promise
   });
 
   await seedBusinessConfig(businessId, registration.rubro, registration.pais);
+  await seedWhatsappAccessIfNeeded(businessId, registration);
   await bindContactClaimToBusiness('email', registration.email, businessId);
   await bindContactClaimToBusiness('phone', registration.phone, businessId);
 
@@ -205,6 +207,33 @@ export async function completeTrialRegistration(registrationId: string): Promise
   return { business, businessId, user: publicUser, token };
 }
 
+async function seedWhatsappAccessIfNeeded(
+  businessId: string,
+  registration: { phone: string; ownerName: string; trialProduct?: string | null; whatsappOptIn: boolean }
+): Promise<void> {
+  const product = registration.trialProduct;
+  if (product !== 'whatsapp' && product !== 'completo' && !registration.whatsappOptIn) return;
+
+  const now = new Date().toISOString();
+  await db.collection(`negocios/${businessId}/whatsapp_users`).doc('owner').set({
+    phone: registration.phone,
+    name: registration.ownerName,
+    role: 'supervisor',
+    enabled: true,
+    erpUserId: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.collection(`negocios/${businessId}/whatsapp_config`).doc('default').set({
+    enabled: product === 'whatsapp' || product === 'completo',
+    mode: 'central',
+    status: 'trial',
+    requireConfirmation: true,
+    updatedAt: now,
+  });
+}
+
 export function validateRegistrationPayload(body: Record<string, unknown>): {
   businessName: string;
   rubro: string;
@@ -219,6 +248,7 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
   marketingEmailOptIn: boolean;
   acceptTerms: boolean;
   website?: string;
+  trialProduct: TrialProductId;
 } {
   if (typeof body.website === 'string' && body.website.trim()) {
     throw new Error('SPAM_DETECTED');
@@ -230,19 +260,24 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
   const ciudad = String(body.ciudad ?? '').trim();
   const ownerName = String(body.ownerName ?? body.nombreResponsable ?? '').trim();
   const email = String(body.email ?? '').trim().toLowerCase();
-  const phone = normalizePhone(String(body.phone ?? body.telefono ?? ''));
+  const phoneCountryCode = String(body.phoneCountryCode ?? body.phoneDial ?? DEFAULT_PHONE_DIAL).trim();
+  const phone = parsePhoneInput(
+    phoneCountryCode,
+    String(body.phone ?? body.telefono ?? '')
+  );
   const password = String(body.password ?? '').trim();
   const loginUsername = String(body.loginUsername ?? loginFromEmail(email)).trim().toLowerCase();
   const whatsappOptIn = body.whatsappOptIn === true;
   const marketingEmailOptIn = body.marketingEmailOptIn !== false;
   const acceptTerms = body.acceptTerms === true;
+  const trialProduct = parseTrialProductFromBody(body);
 
   if (businessName.length < 2) throw new Error('BUSINESS_NAME_REQUIRED');
   if (!rubro) throw new Error('RUBRO_REQUIRED');
   if (!pais || !ciudad) throw new Error('LOCATION_REQUIRED');
   if (ownerName.length < 2) throw new Error('OWNER_NAME_REQUIRED');
   if (!isValidEmail(email)) throw new Error('EMAIL_INVALID');
-  if (!phone || phone.length < 10) throw new Error('PHONE_INVALID');
+  if (!phone || !isValidE164Phone(phone)) throw new Error('PHONE_INVALID');
   if (!acceptTerms) throw new Error('TERMS_REQUIRED');
   if (password && password.length < 8) throw new Error('PASSWORD_TOO_SHORT');
 
@@ -259,6 +294,7 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
     whatsappOptIn,
     marketingEmailOptIn,
     acceptTerms,
+    trialProduct,
   };
 }
 
@@ -290,6 +326,7 @@ export async function registerTrialLead(
     utmSource: typeof body.utmSource === 'string' ? body.utmSource : null,
     utmCampaign: typeof body.utmCampaign === 'string' ? body.utmCampaign : null,
     campaignSource: typeof body.campaignSource === 'string' ? body.campaignSource : null,
+    trialProduct: parsed.trialProduct,
   });
 
   await claimContactUnique('email', parsed.email, registration.id);
@@ -298,4 +335,4 @@ export async function registerTrialLead(
   return { registrationId: registration.id };
 }
 
-export { normalizePhone, isValidEmail };
+export { isValidEmail };

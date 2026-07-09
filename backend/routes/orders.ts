@@ -1750,6 +1750,7 @@ router.patch('/:businessId/:orderId', async (req, res) => {
             orderId,
             {
               items: existingOrder.items ?? [],
+              estado: existingOrder.estado,
               stockDescontado: existingOrder.stockDescontado,
               stockPreparado: existingOrder.stockPreparado,
               numeroPedido: existingOrder.numeroPedido,

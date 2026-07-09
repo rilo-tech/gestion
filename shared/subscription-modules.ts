@@ -94,6 +94,11 @@ export const SELLABLE_SUBSCRIPTION_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.
   (module) => module.sellable !== false
 );
 
+/** Módulos que superadmin puede forzar on/off por empresa (incluye los no facturables como fotos). */
+export const PLATFORM_OVERRIDE_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.filter(
+  (module) => module.id !== 'core'
+);
+
 export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
   plan_basico: {
     core: true,
@@ -104,7 +109,7 @@ export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
     price_catalog: false,
     reports: false,
     economics: false,
-    order_photos: false,
+    order_photos: true,
   },
   plan_intermedio: {
     core: true,
@@ -115,7 +120,7 @@ export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
     price_catalog: false,
     reports: true,
     economics: false,
-    order_photos: false,
+    order_photos: true,
   },
   plan_profesional: {
     core: true,
@@ -126,7 +131,7 @@ export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
     price_catalog: true,
     reports: true,
     economics: true,
-    order_photos: false,
+    order_photos: true,
   },
 };
 
@@ -181,6 +186,10 @@ export function resolveEffectiveModules(
     const override = overrides?.[id] ?? 'inherit';
     if (override === 'on') effective[id] = true;
     else if (override === 'off') effective[id] = false;
+  }
+  // Fotos en pedidos van incluidas con Pedidos (salvo override explícito off).
+  if (effective.pedidos && overrides?.order_photos !== 'off') {
+    effective.order_photos = true;
   }
   return effective;
 }

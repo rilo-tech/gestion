@@ -120,7 +120,7 @@ import {
 
         <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
           ¿Querés probar el sistema?
-          <a routerLink="/probar-gratis" class="text-teal-400 font-semibold hover:underline">20 días gratis</a>
+          <a routerLink="/registro" class="text-teal-400 font-semibold hover:underline">20 días gratis</a>
         </p>
       </div>
     </div>

@@ -22,6 +22,7 @@ export type TrialRegistrationRecord = {
   utmSource?: string | null;
   utmCampaign?: string | null;
   campaignSource?: string | null;
+  trialProduct?: string | null;
   phoneVerified: boolean;
   phoneVerifiedAt?: string | null;
   emailVerified: boolean;
@@ -86,11 +87,14 @@ export async function claimContactUnique(
   const snap = await ref.get();
   if (snap.exists) {
     const data = snap.data() as { registrationId?: string; businessId?: string };
-    if (data.registrationId && data.registrationId !== registrationId) {
-      throw new Error(type === 'email' ? 'EMAIL_ALREADY_USED' : 'PHONE_ALREADY_USED');
-    }
     if (data.businessId) {
       throw new Error(type === 'email' ? 'EMAIL_ALREADY_USED' : 'PHONE_ALREADY_USED');
+    }
+    if (data.registrationId && data.registrationId !== registrationId) {
+      const existing = await getTrialRegistration(data.registrationId);
+      if (existing?.status === 'completed' && existing.completedBusinessId) {
+        throw new Error(type === 'email' ? 'EMAIL_ALREADY_USED' : 'PHONE_ALREADY_USED');
+      }
     }
   }
   await ref.set({
@@ -99,6 +103,30 @@ export async function claimContactUnique(
     registrationId,
     updatedAt: new Date().toISOString(),
   });
+}
+
+export async function releaseTrialContactClaim(
+  type: 'email' | 'phone',
+  value: string
+): Promise<void> {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return;
+  const ref = db.collection('trial_contact_claims').doc(`${type}_${normalized}`);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const data = snap.data() as { businessId?: string };
+  if (data.businessId) {
+    throw new Error('CLAIM_BOUND_TO_BUSINESS');
+  }
+  await ref.delete();
+}
+
+export async function listIncompleteTrialRegistrations(limit = 100): Promise<TrialRegistrationRecord[]> {
+  const snap = await collection().orderBy('updatedAt', 'desc').limit(Math.min(limit, 200)).get();
+  return snap.docs
+    .map((doc) => ({ id: doc.id, ...(doc.data() as Omit<TrialRegistrationRecord, 'id'>) }))
+    .filter((row) => row.status !== 'completed')
+    .slice(0, limit);
 }
 
 export async function bindContactClaimToBusiness(

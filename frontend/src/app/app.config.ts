@@ -5,9 +5,9 @@ import { provideRouter, Routes } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
-import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
+import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -42,6 +42,10 @@ import { CollaboratorsComponent } from './features/collaborators/collaborators.c
 import { TrialRegisterComponent } from './features/trial/trial-register.component';
 import { TrialVerifyEmailComponent } from './features/trial/trial-verify-email.component';
 import { ActivateSubscriptionComponent } from './features/billing/activate-subscription.component';
+import { LegalDocumentPageComponent } from './features/legal/legal-document-page.component';
+import { RitotechLandingComponent } from './features/public/ritotech-landing.component';
+import { RitotechPlansComponent } from './features/public/ritotech-plans.component';
+import { RitotechProductPageComponent } from './features/public/ritotech-product-page.component';
 
 const companyRoutes: Routes = [
   {
@@ -220,13 +224,52 @@ const companyRoutes: Routes = [
 
 const routes: Routes = [
   {
-    path: 'probar-gratis',
+    path: 'legal/terminos',
+    component: LegalDocumentPageComponent,
+    data: { doc: 'terms' },
+  },
+  {
+    path: 'legal/privacidad',
+    component: LegalDocumentPageComponent,
+    data: { doc: 'privacy' },
+  },
+  {
+    path: '',
+    component: RitotechLandingComponent,
+    pathMatch: 'full',
+  },
+  {
+    path: 'login',
+    component: LoginComponent,
+    canActivate: [loginGuard],
+  },
+  {
+    path: 'registro',
     component: TrialRegisterComponent,
   },
   {
-    path: 'registro-prueba',
-    redirectTo: 'probar-gratis',
+    path: 'probar-gratis',
+    redirectTo: 'registro',
     pathMatch: 'full',
+  },
+  {
+    path: 'registro-prueba',
+    redirectTo: 'registro',
+    pathMatch: 'full',
+  },
+  {
+    path: 'planes',
+    component: RitotechPlansComponent,
+  },
+  {
+    path: 'rilo-gestion',
+    component: RitotechProductPageComponent,
+    data: { product: 'erp' },
+  },
+  {
+    path: 'whatsapp',
+    component: RitotechProductPageComponent,
+    data: { product: 'whatsapp' },
   },
   {
     path: 'verificar-email',
@@ -236,17 +279,6 @@ const routes: Routes = [
     path: 'acceso-plataforma',
     component: PlatformLoginComponent,
     canActivate: [platformLoginGuard],
-  },
-  {
-    path: '',
-    component: LoginComponent,
-    canActivate: [loginGuard],
-    pathMatch: 'full',
-  },
-  {
-    path: 'login',
-    redirectTo: '',
-    pathMatch: 'full',
   },
   {
     path: 'platform',
@@ -279,7 +311,7 @@ const routes: Routes = [
   {
     path: '',
     component: LayoutComponent,
-    canActivate: [authGuard, companyGuard, trialActiveGuard],
+    canActivate: [authGuard, companyGuard, trialActiveGuard, erpWebGuard],
     children: [
       ...companyRoutes,
       {
@@ -346,6 +378,9 @@ export const appConfig: ApplicationConfig = {
         LoaderCircle,
         RefreshCw,
         ScanBarcode,
+        Eye,
+        EyeOff,
+        Contact,
       })
     ),
     {

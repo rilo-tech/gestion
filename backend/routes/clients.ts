@@ -16,6 +16,45 @@ import {
 import { mapDeletionError } from '../utils/deletion-guards.ts';
 import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
 
+type AccountLineItem = {
+  nombre: string;
+  cantidad: number;
+  precioUnitario: number;
+  subtotal: number;
+};
+
+function coerceAccountOrderItems(raw: unknown): AccountLineItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((line) => {
+      const row = line as Record<string, unknown>;
+      const cantidad = Number(row.cantidad) || 0;
+      const precioUnitario = Number(row.precioVenta) || 0;
+      const subtotal = Math.round(cantidad * precioUnitario * 100) / 100;
+      const nombre = String(row.nombre ?? '').trim() || 'Ítem';
+      if (subtotal <= 0 && cantidad <= 0) return null;
+      return { nombre, cantidad, precioUnitario, subtotal };
+    })
+    .filter((line): line is AccountLineItem => line !== null);
+}
+
+function coerceAccountSaleItems(raw: unknown): AccountLineItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((line) => {
+      const row = line as Record<string, unknown>;
+      const cantidad = Number(row.cantidad) || 0;
+      const precioUnitario = Number(row.precioUnitario) || 0;
+      const subtotal =
+        Number(row.subtotal) || Math.round(cantidad * precioUnitario * 100) / 100;
+      const nombre =
+        String(row.nombre ?? row.descripcion ?? '').trim() || 'Ítem';
+      if (subtotal <= 0 && cantidad <= 0) return null;
+      return { nombre, cantidad, precioUnitario, subtotal };
+    })
+    .filter((line): line is AccountLineItem => line !== null);
+}
+
 const router = createCompanyRouter();
 
 function isCancelledStatus(estado?: string) {
@@ -213,6 +252,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           fechaEntrega: data.fechaEntrega ?? null,
           cancelado: isCancelledStatus(data.estado),
           pagos,
+          ...(saldo > 0 ? { lineas: coerceAccountOrderItems(data.items) } : {}),
         };
       })
       .filter((order) => !order.cancelado)
@@ -223,6 +263,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
 
     const ventas = ventaDocs
       .map(({ id, data }) => {
+        const saldoPendiente = Math.max(0, Number(data.saldoPendiente) || 0);
         return {
           id,
           ventaLabel: resolveSaleLabel(data),
@@ -231,7 +272,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           numeroPedidoLabel: data.numeroPedidoLabel ?? null,
           total: Number(data.total) || 0,
           montoCobrado: Number(data.montoCobrado) || 0,
-          saldoPendiente: Math.max(0, Number(data.saldoPendiente) || 0),
+          saldoPendiente,
           medioPago: String(data.medioPago ?? 'efectivo'),
           movimientoCajaId: data.movimientoCajaId ? String(data.movimientoCajaId) : null,
           ambito: ventaAmbitoMap.get(id) ?? null,
@@ -246,6 +287,9 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
             })
           ),
           fecha: data.fecha ?? null,
+          ...(saldoPendiente > 0 && data.origen !== 'pedido'
+            ? { lineas: coerceAccountSaleItems(data.items) }
+            : {}),
         };
       })
       .sort((a, b) => String(b.fecha ?? '').localeCompare(String(a.fecha ?? '')));

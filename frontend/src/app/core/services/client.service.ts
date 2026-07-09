@@ -32,6 +32,13 @@ export interface Client {
   debe?: boolean;
 }
 
+export interface ClientAccountLineItem {
+  nombre: string;
+  cantidad: number;
+  precioUnitario: number;
+  subtotal: number;
+}
+
 export interface ClientAccountOrder {
   id: string;
   numeroPedidoLabel?: string;
@@ -44,6 +51,7 @@ export interface ClientAccountOrder {
   fecha?: string | null;
   fechaEntrega?: string | null;
   pagos?: ClientAccountPayment[];
+  lineas?: ClientAccountLineItem[];
 }
 
 export interface ClientAccountPayment {
@@ -95,6 +103,7 @@ export interface ClientAccountSale {
   fecha?: string | null;
   /** Caja asignada en la venta o en el cobro inicial; null si hay que elegir al cobrar saldo. */
   ambito?: string | null;
+  lineas?: ClientAccountLineItem[];
 }
 
 export interface ClientAccountCuota {

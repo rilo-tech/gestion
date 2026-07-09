@@ -1,5 +1,9 @@
 import { db } from '../firebase.ts';
 import { listBusinesses, toPublicBusinessInfo } from './business.ts';
+import {
+  listIncompleteTrialRegistrations,
+  releaseTrialContactClaim,
+} from './trial-registration-store.ts';
 import { resolveTrialState } from '../../shared/trial-state.ts';
 
 export type PlatformTrialRow = {
@@ -108,6 +112,46 @@ export async function listPlatformTrials(filters?: {
     const bDays = b.trialDaysRemaining ?? 999;
     return aDays - bDays;
   });
+}
+
+export type PlatformPendingTrialRegistration = {
+  id: string;
+  businessName: string;
+  ownerName: string;
+  email: string;
+  phone: string;
+  pais: string;
+  ciudad: string;
+  status: string;
+  emailVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function listPlatformPendingTrialRegistrations(): Promise<
+  PlatformPendingTrialRegistration[]
+> {
+  const rows = await listIncompleteTrialRegistrations(80);
+  return rows.map((row) => ({
+    id: row.id,
+    businessName: row.businessName,
+    ownerName: row.ownerName,
+    email: row.email,
+    phone: row.phone,
+    pais: row.pais,
+    ciudad: row.ciudad,
+    status: row.status,
+    emailVerified: row.emailVerified,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+export async function adminReleaseTrialContactClaim(
+  type: 'email' | 'phone',
+  value: string
+): Promise<void> {
+  await releaseTrialContactClaim(type, value);
 }
 
 export async function touchBusinessLogin(businessId: string): Promise<void> {

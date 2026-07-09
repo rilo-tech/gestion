@@ -242,6 +242,11 @@ export function businessHasModule(
   moduleId: SubscriptionModuleId
 ): boolean {
   if (moduleId === 'core') return true;
+  if (moduleId === 'order_photos') {
+    if (resolved.entitlements.order_photos === true) return true;
+    if (resolved.moduleOverrides?.order_photos === 'off') return false;
+    return resolved.entitlements.pedidos === true;
+  }
   return resolved.entitlements[moduleId] === true;
 }
 

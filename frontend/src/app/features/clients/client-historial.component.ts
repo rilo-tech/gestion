@@ -28,6 +28,12 @@ import { FormPageHeaderComponent } from '../../shared/components/form-shell';
 import { FormFooterComponent } from '../../shared/components/form-shell/form-footer.component';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import {
+  ClientBalancePrintService,
+  ClientBalancePrintMode,
+  ClientBalanceSummaryGroup,
+} from '../../core/services/client-balance-print.service';
+import type { ClientAccountLineItem } from '../../core/services/client.service';
+import {
   CatalogConfigService,
   DEFAULT_APP_CONFIG,
   getCajaAmbitos,
@@ -60,13 +66,21 @@ type CollectMode = 'client' | 'item';
   template: `
     <div [class]="pageShellClass + ' pb-20 sm:pb-24'">
       <app-form-page-header
-        [title]="'Historial · ' + clientName"
+        title="Historial"
         subtitle="Cuenta corriente, compras y cobros registrados en caja."
         backLabel="Volver a clientes"
         backShortLabel="Volver"
         backAriaLabel="Volver a clientes"
         (backClick)="goBack()"
-        [hasHeaderActions]="true">
+        [hasHeaderActions]="true"
+        [hasHeaderExtra]="true">
+        <div headerExtra class="pl-[calc(2.5rem+0.5rem)] sm:pl-[calc(2.75rem+0.75rem)] -mt-1 sm:mt-0">
+          <p
+            class="text-[11px] sm:text-sm font-semibold text-gray-800 dark:text-gray-100 truncate leading-tight max-w-full"
+            [title]="clientName">
+            {{ clientName }}
+          </p>
+        </div>
         <div headerActions [class]="listToolbarRowClass + ' w-full sm:w-auto sm:justify-end'">
           <app-list-search-field
             mode="filter"
@@ -130,38 +144,114 @@ type CollectMode = 'client' | 'item';
         <section
           *ngIf="auth.canViewAccountBalance && pendingItems.length"
           class="mb-4 rounded-xl border border-orange-100 dark:border-orange-900/40 bg-orange-50 dark:bg-orange-950/30 overflow-hidden">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-0.5 px-3 py-2 border-b border-orange-100 dark:border-orange-900/30">
-            <h2 class="text-xs font-bold text-orange-900 dark:text-orange-200">Saldos pendientes de cobro</h2>
-            <p class="text-[10px] text-orange-800 dark:text-orange-300/90 leading-snug">
-              Cobrá uno por uno o usá «Cobrar cuenta».
-            </p>
+          <div class="flex flex-col gap-2 px-3 py-2 border-b border-orange-100 dark:border-orange-900/30">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
+              <h2 class="text-xs font-bold text-orange-900 dark:text-orange-200">Saldos pendientes de cobro</h2>
+              <div class="flex items-center gap-2 flex-wrap">
+                <app-icon-toolbar-button
+                  *ngIf="auth.canViewAccountBalance"
+                  icon="printer"
+                  label="Resumen"
+                  variant="orange-outline"
+                  size="row"
+                  (clicked)="openBalanceSummary()">
+                </app-icon-toolbar-button>
+              </div>
+            </div>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <p class="text-[10px] text-orange-800 dark:text-orange-300/90 leading-snug">
+                Cobrá uno por uno o usá «Cobrar cuenta».
+              </p>
+              <app-segmented-control
+                ariaLabel="Vista de saldos"
+                size="sm"
+                [options]="pendingViewOptions"
+                [value]="pendingViewMode"
+                (valueChange)="onPendingViewModeChange($event)">
+              </app-segmented-control>
+            </div>
           </div>
           <div class="divide-y divide-orange-100/80 dark:divide-orange-900/30">
             <div
               *ngFor="let entry of pendingItems"
-              class="flex items-center gap-2 px-2.5 py-1.5 min-h-[34px] bg-white/70 dark:bg-gray-900/50">
-              <a
-                [routerLink]="getPendingItemRoute(entry.target)"
-                [queryParams]="getPendingItemQueryParams(entry.target)"
-                class="min-w-0 flex-1 group">
-                <p class="text-xs font-medium text-gray-900 dark:text-gray-100 leading-snug truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
-                  {{ entry.label }}<span *ngIf="entry.fecha" class="font-normal text-gray-500 dark:text-gray-400"> · {{ formatDate(entry.fecha) }}</span>
-                </p>
-                <p class="text-[10px] text-gray-500 dark:text-gray-400 truncate leading-snug">{{ entry.detail }}</p>
-              </a>
-              <div [class]="compactListTrailingClass">
-                <span class="text-xs font-bold tabular-nums text-orange-700 dark:text-orange-400">
-                  {{ formatMoney(entry.saldo) }}
-                </span>
-                <app-icon-toolbar-button
-                  *ngIf="auth.canAccessCash"
-                  icon="wallet"
-                  label="Cobrar"
-                  variant="ghost-teal"
-                  size="row"
-                  [disabled]="collectSaving"
-                  (clicked)="openCollectModal(entry.target)">
-                </app-icon-toolbar-button>
+              class="bg-white/70 dark:bg-gray-900/50">
+              <div class="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[38px]">
+                <button
+                  *ngIf="entry.lineas.length; else pendingSpacer"
+                  type="button"
+                  class="shrink-0 flex h-7 w-7 items-center justify-center rounded-md text-orange-700 dark:text-orange-300 hover:bg-orange-100/80 dark:hover:bg-orange-900/30"
+                  [attr.aria-expanded]="isPendingDetailOpen(entry)"
+                  [attr.aria-label]="isPendingDetailOpen(entry) ? 'Ocultar ítems' : 'Ver ítems'"
+                  (click)="togglePendingDetail(entry)">
+                  <span class="text-[10px] leading-none">{{ isPendingDetailOpen(entry) ? '▲' : '▼' }}</span>
+                </button>
+                <ng-template #pendingSpacer><span class="w-7 shrink-0" aria-hidden="true"></span></ng-template>
+
+                <a
+                  [routerLink]="getPendingItemRoute(entry.target)"
+                  [queryParams]="getPendingItemQueryParams(entry.target)"
+                  class="min-w-0 flex-1 group">
+                  <p class="text-xs font-medium text-gray-900 dark:text-gray-100 leading-snug truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                    {{ entry.label }}<span *ngIf="entry.fecha" class="font-normal text-gray-500 dark:text-gray-400"> · {{ formatDate(entry.fecha) }}</span>
+                  </p>
+                  <p class="text-[10px] text-gray-500 dark:text-gray-400 truncate leading-snug">{{ entry.detail }}</p>
+                </a>
+
+                <div [class]="compactListTrailingClass">
+                  <span
+                    *ngIf="!isPendingDetailOpen(entry)"
+                    class="text-xs font-bold tabular-nums text-orange-700 dark:text-orange-400 min-w-[4.5rem] text-right">
+                    {{ formatMoney(entry.saldo) }}
+                  </span>
+                  <app-icon-toolbar-button
+                    *ngIf="auth.canAccessCash"
+                    icon="wallet"
+                    label="Cobrar"
+                    variant="ghost-teal"
+                    size="row"
+                    [disabled]="collectSaving"
+                    (clicked)="openCollectModal(entry.target)">
+                  </app-icon-toolbar-button>
+                </div>
+              </div>
+
+              <div
+                *ngIf="isPendingDetailOpen(entry)"
+                class="mx-2.5 mb-2 rounded-lg border border-orange-100 dark:border-orange-900/40 overflow-hidden bg-white dark:bg-gray-950/60">
+                <div
+                  *ngIf="entry.lineas.length; else pendingSaldoOnly"
+                  class="overflow-x-auto">
+                  <table class="w-full text-[10px] sm:text-xs">
+                    <thead class="bg-orange-50/80 dark:bg-orange-950/40 text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      <tr>
+                        <th class="px-2 py-1.5 text-left font-semibold">Ítem</th>
+                        <th class="px-2 py-1.5 text-right font-semibold w-12">Cant.</th>
+                        <th class="px-2 py-1.5 text-right font-semibold w-20">P. unit.</th>
+                        <th class="px-2 py-1.5 text-right font-semibold w-20">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-orange-50 dark:divide-orange-900/20 text-gray-700 dark:text-gray-300">
+                      <tr *ngFor="let linea of entry.lineas">
+                        <td class="px-2 py-1.5 align-top">{{ linea.nombre }}</td>
+                        <td class="px-2 py-1.5 text-right tabular-nums align-top">{{ linea.cantidad }}</td>
+                        <td class="px-2 py-1.5 text-right tabular-nums align-top whitespace-nowrap">{{ formatMoney(linea.precioUnitario) }}</td>
+                        <td class="px-2 py-1.5 text-right tabular-nums font-medium align-top whitespace-nowrap">{{ formatMoney(linea.subtotal) }}</td>
+                      </tr>
+                    </tbody>
+                    <tfoot class="bg-orange-50/90 dark:bg-orange-950/50 border-t border-orange-200 dark:border-orange-900/40">
+                      <tr>
+                        <td colspan="3" class="px-2 py-1.5 text-right font-semibold text-orange-900 dark:text-orange-200">Saldo pendiente</td>
+                        <td class="px-2 py-1.5 text-right tabular-nums font-bold text-orange-700 dark:text-orange-400 whitespace-nowrap">{{ formatMoney(entry.saldo) }}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <ng-template #pendingSaldoOnly>
+                  <div class="flex items-center justify-between gap-3 px-2.5 py-2 text-xs">
+                    <span class="text-gray-500 dark:text-gray-400">Sin detalle de ítems</span>
+                    <span class="font-bold tabular-nums text-orange-700 dark:text-orange-400">{{ formatMoney(entry.saldo) }}</span>
+                  </div>
+                </ng-template>
               </div>
             </div>
           </div>
@@ -394,6 +484,114 @@ type CollectMode = 'client' | 'item';
         </app-form-footer>
       </div>
     </app-transaction-modal>
+
+    <app-transaction-modal
+      [open]="balanceSummaryOpen"
+      title="Resumen de saldo pendiente"
+      [subtitle]="clientName"
+      maxWidthClass="max-w-2xl"
+      (closed)="closeBalanceSummary()">
+      <div class="space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto pr-1 -mr-1">
+        <div class="rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-900/40 px-3 py-2 flex items-center justify-between gap-3">
+          <span class="text-xs font-semibold uppercase text-orange-900 dark:text-orange-200">Total pendiente</span>
+          <span class="text-lg font-bold tabular-nums text-orange-700 dark:text-orange-400">
+            {{ formatMoney(account?.saldoTotal) }}
+          </span>
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <p class="text-xs text-gray-500 dark:text-gray-400">Elegí cómo imprimir el resumen.</p>
+          <app-segmented-control
+            ariaLabel="Formato de impresión"
+            size="sm"
+            [options]="printViewOptions"
+            [(value)]="printViewMode">
+          </app-segmented-control>
+        </div>
+
+        <ng-container *ngIf="printViewMode === 'totals'; else summaryItemsView">
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                <tr>
+                  <th class="px-3 py-2 text-left font-semibold">Comprobante</th>
+                  <th class="px-3 py-2 text-left font-semibold hidden sm:table-cell">Fecha</th>
+                  <th class="px-3 py-2 text-right font-semibold">Saldo</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                <tr *ngFor="let group of balanceSummaryGroups">
+                  <td class="px-3 py-2">
+                    <p class="font-medium text-gray-900 dark:text-gray-100">{{ group.label }}</p>
+                    <p class="text-[10px] text-gray-500 dark:text-gray-400 sm:hidden">{{ formatDate(group.fecha) }} · {{ group.detail }}</p>
+                  </td>
+                  <td class="px-3 py-2 text-gray-600 dark:text-gray-300 hidden sm:table-cell whitespace-nowrap">{{ formatDate(group.fecha) }}</td>
+                  <td class="px-3 py-2 text-right font-bold tabular-nums text-orange-700 dark:text-orange-400 whitespace-nowrap">{{ formatMoney(group.saldo) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </ng-container>
+
+        <ng-template #summaryItemsView>
+          <section
+            *ngFor="let group of balanceSummaryGroups"
+            class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="flex items-start justify-between gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-800/80 border-b border-gray-100 dark:border-gray-700">
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ group.label }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
+                  {{ group.detail }}<span *ngIf="group.fecha"> · {{ formatDate(group.fecha) }}</span>
+                </p>
+              </div>
+              <span class="text-sm font-bold tabular-nums text-orange-700 dark:text-orange-400 shrink-0">
+                {{ formatMoney(group.saldo) }}
+              </span>
+            </div>
+            <div *ngIf="group.lineas.length; else summaryNoLineas" class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead class="text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <tr>
+                    <th class="px-3 py-1.5 text-left font-semibold">Ítem</th>
+                    <th class="px-3 py-1.5 text-right font-semibold w-12">Cant.</th>
+                    <th class="px-3 py-1.5 text-right font-semibold w-20">P. unit.</th>
+                    <th class="px-3 py-1.5 text-right font-semibold w-20">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50 dark:divide-gray-800 text-gray-700 dark:text-gray-300">
+                  <tr *ngFor="let linea of group.lineas">
+                    <td class="px-3 py-1.5 align-top">{{ linea.nombre }}</td>
+                    <td class="px-3 py-1.5 text-right tabular-nums align-top">{{ linea.cantidad }}</td>
+                    <td class="px-3 py-1.5 text-right tabular-nums align-top whitespace-nowrap">{{ formatMoney(linea.precioUnitario) }}</td>
+                    <td class="px-3 py-1.5 text-right tabular-nums font-medium align-top whitespace-nowrap">{{ formatMoney(linea.subtotal) }}</td>
+                  </tr>
+                </tbody>
+                <tfoot class="bg-orange-50/80 dark:bg-orange-950/40 border-t border-orange-100 dark:border-orange-900/40">
+                  <tr>
+                    <td colspan="3" class="px-3 py-1.5 text-right font-semibold text-orange-900 dark:text-orange-200">Saldo pendiente</td>
+                    <td class="px-3 py-1.5 text-right font-bold tabular-nums text-orange-700 dark:text-orange-400 whitespace-nowrap">{{ formatMoney(group.saldo) }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <ng-template #summaryNoLineas>
+              <div class="flex items-center justify-between gap-3 px-3 py-2 text-xs border-t border-gray-100 dark:border-gray-800">
+                <span class="text-gray-400">Sin detalle de ítems</span>
+                <span class="font-bold tabular-nums text-orange-700 dark:text-orange-400">{{ formatMoney(group.saldo) }}</span>
+              </div>
+            </ng-template>
+          </section>
+        </ng-template>
+      </div>
+      <app-form-footer
+        mode="modal"
+        saveLabel="Imprimir"
+        cancelLabel="Cerrar"
+        footerClass="mt-4"
+        (cancelClick)="closeBalanceSummary()"
+        (saveClick)="printBalanceSummary()">
+      </app-form-footer>
+    </app-transaction-modal>
   `,
 })
 export class ClientHistorialComponent implements OnInit {
@@ -416,6 +614,7 @@ export class ClientHistorialComponent implements OnInit {
   private router = inject(Router);
   private navigationBack = inject(NavigationBackService);
   private catalogConfig = inject(CatalogConfigService);
+  private balancePrint = inject(ClientBalancePrintService);
 
   appConfig = DEFAULT_APP_CONFIG;
   collectAmbito = getDefaultCashAmbitoId(DEFAULT_APP_CONFIG);
@@ -433,14 +632,41 @@ export class ClientHistorialComponent implements OnInit {
   collectMedio = 'efectivo';
   collectNotas = '';
   collectSaving = false;
+  balanceSummaryOpen = false;
+  pendingViewMode: 'totals' | 'items' = 'totals';
+  printViewMode: ClientBalancePrintMode = 'items';
+  private expandedPendingKeys = new Set<string>();
+  private collapsedPendingKeys = new Set<string>();
+
+  readonly pendingViewOptions = [
+    { id: 'totals', label: 'Totales' },
+    { id: 'items', label: 'Por ítem' },
+  ];
+
+  readonly printViewOptions = [
+    { id: 'totals', label: 'Solo totales' },
+    { id: 'items', label: 'Con ítems' },
+  ];
 
   pendingItems: Array<{
+    key: string;
     label: string;
     detail: string;
     saldo: number;
     fecha: string;
+    lineas: ClientAccountLineItem[];
     target: CollectTarget;
   }> = [];
+
+  get balanceSummaryGroups(): ClientBalanceSummaryGroup[] {
+    return this.pendingItems.map((entry) => ({
+      label: entry.label,
+      detail: entry.detail,
+      fecha: entry.fecha,
+      saldo: entry.saldo,
+      lineas: entry.lineas,
+    }));
+  }
 
   get collectSaldoMax(): number {
     if (this.collectMode === 'client') {
@@ -578,6 +804,66 @@ export class ClientHistorialComponent implements OnInit {
     this.router.navigate(['/clients', this.clientId, 'edit']);
   }
 
+  openBalanceSummary(): void {
+    if (!this.pendingItems.length) return;
+    this.printViewMode = this.pendingViewMode === 'items' ? 'items' : 'totals';
+    this.balanceSummaryOpen = true;
+  }
+
+  closeBalanceSummary(): void {
+    this.balanceSummaryOpen = false;
+  }
+
+  printBalanceSummary(): void {
+    if (!this.pendingItems.length) return;
+    this.balancePrint.printSummary(
+      this.clientName,
+      this.balanceSummaryGroups,
+      Number(this.account?.saldoTotal) || 0,
+      this.printViewMode
+    );
+  }
+
+  pendingEntryKey(entry: { key: string }): string {
+    return entry.key;
+  }
+
+  isPendingDetailOpen(entry: { key: string; lineas: ClientAccountLineItem[] }): boolean {
+    if (!entry.lineas.length) return false;
+    if (this.pendingViewMode === 'items') {
+      return !this.collapsedPendingKeys.has(entry.key);
+    }
+    return this.expandedPendingKeys.has(entry.key);
+  }
+
+  togglePendingDetail(entry: { key: string; lineas: ClientAccountLineItem[] }): void {
+    if (!entry.lineas.length) return;
+    if (this.pendingViewMode === 'items') {
+      if (this.collapsedPendingKeys.has(entry.key)) {
+        this.collapsedPendingKeys.delete(entry.key);
+      } else {
+        this.collapsedPendingKeys.add(entry.key);
+      }
+      return;
+    }
+    if (this.expandedPendingKeys.has(entry.key)) {
+      this.expandedPendingKeys.delete(entry.key);
+    } else {
+      this.expandedPendingKeys.add(entry.key);
+    }
+  }
+
+  onPendingViewModeChange(mode: string): void {
+    this.pendingViewMode = mode === 'items' ? 'items' : 'totals';
+    this.expandedPendingKeys.clear();
+    this.collapsedPendingKeys.clear();
+  }
+
+  private buildPendingEntryKey(target: CollectTarget): string {
+    const id = target.kind === 'pedido' ? target.item.id : target.item.id;
+    return `${target.kind}-${id}`;
+  }
+
   loadAccount() {
     this.loading = true;
     this.clientService.getClientAccount(this.clientId).subscribe({
@@ -604,10 +890,12 @@ export class ClientHistorialComponent implements OnInit {
     for (const pedido of account.pedidos) {
       if (pedido.saldo <= 0) continue;
       items.push({
+        key: this.buildPendingEntryKey({ kind: 'pedido', item: pedido }),
         label: `Pedido #${pedido.numeroPedidoLabel}`,
         detail: pedido.descripcion || pedido.estado || 'Pedido',
         saldo: pedido.saldo,
         fecha: pedido.fecha || pedido.fechaEntrega || '',
+        lineas: pedido.lineas ?? [],
         target: { kind: 'pedido', item: pedido },
       });
     }
@@ -615,16 +903,20 @@ export class ClientHistorialComponent implements OnInit {
     for (const venta of account.ventas) {
       if (venta.origen === 'pedido' || venta.saldoPendiente <= 0) continue;
       items.push({
+        key: this.buildPendingEntryKey({ kind: 'venta', item: venta }),
         label: `Venta #${venta.ventaLabel}`,
         detail: 'Venta mostrador',
         saldo: venta.saldoPendiente,
         fecha: venta.fecha || '',
+        lineas: venta.lineas ?? [],
         target: { kind: 'venta', item: venta },
       });
     }
 
     items.sort((a, b) => a.fecha.localeCompare(b.fecha));
     this.pendingItems = items;
+    this.expandedPendingKeys.clear();
+    this.collapsedPendingKeys.clear();
   }
 
   formatDate(value?: string | null): string {

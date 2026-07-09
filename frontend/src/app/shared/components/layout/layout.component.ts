@@ -27,6 +27,12 @@ import { AuthService } from '../../../core/services/auth.service';
       <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
         <app-topbar></app-topbar>
         <div
+          *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb && auth.canAccessWhatsapp"
+          class="shrink-0 border-b border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-950">
+          Tu plan opera por <span class="font-semibold">WhatsApp</span>. Escribí al número que registraste para cargar pedidos y ventas.
+          <a routerLink="/mi-cuenta" class="ml-2 font-semibold text-teal-800 hover:underline">Ver mi cuenta</a>
+        </div>
+        <div
           *ngIf="auth.isTrialExpiringSoon && auth.trialDaysRemaining != null"
           class="shrink-0 border-b border-violet-200 bg-violet-50 px-4 py-2.5 text-sm text-violet-950 flex flex-wrap items-center justify-between gap-2">
           <span>Tu prueba vence en {{ auth.trialDaysRemaining }} día{{ auth.trialDaysRemaining === 1 ? '' : 's' }}.</span>

@@ -18,6 +18,57 @@ import { FormFooterComponent } from '../../shared/components/form-shell/form-foo
         </p>
       </div>
 
+      <article
+        *ngIf="!auth.isPlatformAdmin && businessSummary"
+        class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 mb-6">
+        <h2 class="text-sm font-bold text-gray-900 mb-1">Tu suscripción</h2>
+        <p class="text-sm text-gray-500 mb-4">
+          Estado de tu prueba y canales activos en RiloTech.
+        </p>
+
+        <div class="space-y-3 text-sm">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-gray-500">Empresa</span>
+            <span class="font-medium text-gray-900">{{ businessSummary.nombre }}</span>
+            <span class="text-xs font-mono text-gray-400">({{ businessSummary.id }})</span>
+          </div>
+
+          <div *ngIf="businessSummary.enPrueba" class="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
+            <p class="font-medium text-violet-900">Prueba gratuita activa</p>
+            <p *ngIf="businessSummary.trialDaysRemaining != null" class="text-violet-800 text-xs mt-1">
+              Quedan {{ businessSummary.trialDaysRemaining }} día{{ businessSummary.trialDaysRemaining === 1 ? '' : 's' }}
+              <span *ngIf="businessSummary.trialEndDate"> · vence {{ businessSummary.trialEndDate }}</span>
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div class="rounded-lg border border-gray-100 px-3 py-2">
+              <p class="text-xs text-gray-500">ERP Web</p>
+              <p class="font-medium" [class.text-teal-700]="auth.canAccessErpWeb" [class.text-gray-400]="!auth.canAccessErpWeb">
+                {{ auth.canAccessErpWeb ? 'Activo' : 'No incluido' }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-100 px-3 py-2">
+              <p class="text-xs text-gray-500">WhatsApp (RiloBot)</p>
+              <p class="font-medium" [class.text-teal-700]="auth.canAccessWhatsapp" [class.text-gray-400]="!auth.canAccessWhatsapp">
+                {{ auth.canAccessWhatsapp ? 'Activo' : 'No incluido' }}
+              </p>
+            </div>
+          </div>
+
+          <p *ngIf="!auth.canAccessErpWeb" class="text-xs text-gray-500 leading-relaxed">
+            Tu plan actual es por WhatsApp. Escribinos por el número que registraste para cargar pedidos y ventas.
+            Si querés el panel web completo, contactanos para activar ERP Web.
+          </p>
+          <a
+            *ngIf="!auth.canAccessErpWeb"
+            routerLink="/activar-suscripcion"
+            class="inline-flex text-sm font-semibold text-teal-700 hover:underline">
+            Ver opciones de activación
+          </a>
+        </div>
+      </article>
+
       <article class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 mb-6">
         <h2 class="text-sm font-bold text-gray-900 mb-1">Tu perfil</h2>
         <p class="text-sm text-gray-500 mb-4">
@@ -174,6 +225,10 @@ export class AccountComponent implements OnInit {
 
   get requiresCurrentPassword(): boolean {
     return this.auth.currentUser?.hasPassword !== false;
+  }
+
+  get businessSummary() {
+    return this.auth.currentBusiness;
   }
 
   loadProfileFromSession() {

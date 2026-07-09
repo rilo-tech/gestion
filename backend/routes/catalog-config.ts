@@ -276,9 +276,35 @@ function normalizeAppConfig(data: Record<string, unknown> = {}) {
 }
 
 async function loadAppConfig(businessId: string) {
-  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
+  const ref = db.doc(`negocios/${businessId}/config/app`);
+  const appDoc = await ref.get();
   if (appDoc.exists) {
-    return normalizeAppConfig(appDoc.data() as Record<string, unknown>);
+    const raw = appDoc.data() as Record<string, unknown>;
+    const pedidosRaw = (raw.pedidos as Record<string, unknown> | undefined) ?? {};
+    const config = normalizeAppConfig(raw);
+
+    // Registros trial antiguos sembraban solo fotosReferenciaHabilitadas: false.
+    const pedidosKeys = Object.keys(pedidosRaw).filter((key) => pedidosRaw[key] !== undefined);
+    if (
+      pedidosRaw.fotosReferenciaHabilitadas === false &&
+      pedidosKeys.length === 1 &&
+      config.pedidos.fotosReferenciaHabilitadas === false
+    ) {
+      config.pedidos.fotosReferenciaHabilitadas = true;
+      await ref.set(
+        {
+          ...raw,
+          pedidos: {
+            ...pedidosRaw,
+            fotosReferenciaHabilitadas: true,
+          },
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+
+    return config;
   }
 
   const legacyDoc = await db.doc(`negocios/${businessId}/config/catalogo`).get();

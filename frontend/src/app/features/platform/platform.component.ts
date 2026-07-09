@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import {
   PlatformService,
   SubscriptionStatus,
+  type PlatformPendingTrialRegistration,
   type PlatformTrialRow,
 } from '../../core/services/platform.service';
 import {
@@ -211,19 +212,19 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               mode="filter"
               [(query)]="businessSearchQuery"
               name="businessSearchQuery"
-              placeholder="Buscar por nombre o código...">
+              placeholder="Buscar por nombre, código, email o teléfono...">
             </app-list-search-field>
           </div>
           <div [class]="tableScrollClass">
             <table class="app-data-table w-full max-w-full text-left border-collapse sm:table-fixed">
               <colgroup class="hidden sm:table-column-group">
-                <col class="w-[10rem]" />
+                <col class="w-[14rem]" />
                 <col class="w-[6rem]" />
                 <col class="w-[8rem]" />
                 <col class="w-[7rem]" />
                 <col class="w-[6rem]" />
                 <col class="w-[7rem]" />
-                <col class="w-[5rem]" />
+                <col class="w-[5.5rem]" />
               </colgroup>
               <thead>
                 <tr class="bg-gray-50 border-b border-gray-100">
@@ -260,7 +261,27 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                         Prueba
                       </span>
                     </div>
-                    <div class="sm:hidden text-xs text-gray-500 mt-0.5">{{ business.id }}</div>
+                    <div
+                      *ngIf="hasBusinessContact(business)"
+                      class="mt-2 max-w-md rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2 space-y-1 text-xs text-gray-600"
+                      (click)="$event.stopPropagation()">
+                      <div *ngIf="businessOwnerName(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
+                        <i-lucide name="user" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
+                        <span class="truncate font-medium text-gray-800">{{ businessOwnerName(business) }}</span>
+                      </div>
+                      <div *ngIf="businessContactEmail(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
+                        <i-lucide name="mail" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
+                        <span class="truncate">{{ businessContactEmail(business) }}</span>
+                      </div>
+                      <div *ngIf="businessContactPhone(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
+                        <i-lucide name="phone" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
+                        <span class="truncate">{{ businessContactPhone(business) }}</span>
+                      </div>
+                    </div>
+                    <p *ngIf="!hasBusinessContact(business)" class="mt-1 text-xs text-gray-400 italic">
+                      Sin datos de contacto
+                    </p>
+                    <div class="sm:hidden text-xs text-gray-500 mt-1 font-mono">{{ business.id }}</div>
                   </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm font-mono text-gray-600">{{ business.id }}</td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">{{ business.plan.nombre }}</td>
@@ -291,13 +312,22 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     </div>
                   </td>
                   <td class="hidden sm:table-cell px-4 py-4 text-right" (click)="$event.stopPropagation()">
-                    <button
-                      type="button"
-                      (click)="openBusiness(business)"
-                      title="Ver detalle y pagos"
-                      class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
-                      <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
-                    </button>
+                    <div class="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        (click)="showBusinessContact(business, $event)"
+                        title="Ver contacto"
+                        class="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+                        <i-lucide name="contact" class="w-4 h-4"></i-lucide>
+                      </button>
+                      <button
+                        type="button"
+                        (click)="openBusiness(business)"
+                        title="Ver detalle y pagos"
+                        class="p-2 rounded-lg text-teal-600 hover:bg-teal-50 hover:text-teal-800">
+                        <i-lucide name="pencil" class="w-4 h-4"></i-lucide>
+                      </button>
+                    </div>
                   </td>
                 </tr>
                 <tr *ngIf="loadingBusinesses">
@@ -320,6 +350,61 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
       </section>
 
       <section *ngIf="activeTab === 'pruebas'" class="space-y-4">
+        <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-3">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-amber-950">Registros sin completar</h3>
+              <p class="text-xs text-amber-900/80 mt-1 max-w-2xl">
+                Si alguien empezó el alta en /probar-gratis pero no terminó, el email queda reservado acá
+                (no aparece como empresa). Podés liberarlo para que vuelva a registrarse.
+              </p>
+            </div>
+            <button type="button" (click)="loadPendingTrials()"
+              class="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+              Actualizar
+            </button>
+          </div>
+          <div class="bg-white rounded-lg border border-amber-100 overflow-x-auto">
+            <table class="app-data-table w-full text-left text-sm">
+              <thead>
+                <tr class="bg-amber-50/80 border-b border-amber-100 text-xs uppercase text-amber-900/70">
+                  <th class="px-3 py-2">Negocio</th>
+                  <th class="px-3 py-2">Responsable</th>
+                  <th class="px-3 py-2">Email / Teléfono</th>
+                  <th class="px-3 py-2">Estado</th>
+                  <th class="px-3 py-2 text-right">Acción</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-amber-50">
+                <tr *ngFor="let row of filteredPendingTrials">
+                  <td class="px-3 py-2.5">
+                    <div class="font-medium text-gray-900">{{ row.businessName }}</div>
+                    <div class="text-xs text-gray-500">{{ row.ciudad }}, {{ row.pais }}</div>
+                  </td>
+                  <td class="px-3 py-2.5 text-gray-700">{{ row.ownerName }}</td>
+                  <td class="px-3 py-2.5 text-xs text-gray-700">
+                    <div>{{ row.email }} <span *ngIf="row.emailVerified" class="text-green-600">✓</span></div>
+                    <div class="text-gray-500">{{ row.phone }}</div>
+                  </td>
+                  <td class="px-3 py-2.5 text-xs text-gray-600">{{ row.status }}</td>
+                  <td class="px-3 py-2.5 text-right">
+                    <button type="button" (click)="releasePendingRegistration(row)"
+                      class="text-xs font-semibold text-amber-800 hover:underline">
+                      Liberar email
+                    </button>
+                  </td>
+                </tr>
+                <tr *ngIf="loadingPendingTrials">
+                  <td colspan="5" class="px-3 py-8 text-center text-gray-400">Cargando...</td>
+                </tr>
+                <tr *ngIf="!loadingPendingTrials && filteredPendingTrials.length === 0">
+                  <td colspan="5" class="px-3 py-8 text-center text-gray-500">No hay registros pendientes.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="flex flex-wrap gap-2">
           <button type="button" (click)="trialFilter = 'active'; loadTrials()"
             class="px-3 py-1.5 rounded-lg text-xs font-semibold border"
@@ -948,7 +1033,9 @@ export class PlatformComponent implements OnInit {
   activeTab: PlatformTab = 'empresas';
   trialFilter: 'active' | 'expiring' | 'expired' | 'all' = 'active';
   trialRows: PlatformTrialRow[] = [];
+  pendingTrialRows: PlatformPendingTrialRegistration[] = [];
   loadingTrials = false;
+  loadingPendingTrials = false;
   businesses: (PublicBusinessInfo & { planId?: string })[] = [];
   plans: PublicPlanInfo[] = [];
 
@@ -1003,12 +1090,67 @@ export class PlatformComponent implements OnInit {
   get filteredBusinesses(): (PublicBusinessInfo & { planId?: string })[] {
     const query = this.businessSearchQuery.trim().toLowerCase();
     if (!query) return this.businesses;
-    return this.businesses.filter(
-      (business) =>
+    return this.businesses.filter((business) => {
+      const owner = this.businessOwnerName(business).toLowerCase();
+      const email = this.businessContactEmail(business).toLowerCase();
+      const phone = this.businessContactPhone(business).toLowerCase();
+      return (
         business.nombre.toLowerCase().includes(query) ||
         business.id.toLowerCase().includes(query) ||
-        business.plan.nombre.toLowerCase().includes(query)
+        business.plan.nombre.toLowerCase().includes(query) ||
+        (owner !== '—' && owner.includes(query)) ||
+        (email !== '—' && email.includes(query)) ||
+        (phone !== '—' && phone.includes(query))
+      );
+    });
+  }
+
+  get filteredPendingTrials(): PlatformPendingTrialRegistration[] {
+    const query = this.businessSearchQuery.trim().toLowerCase();
+    if (!query) return this.pendingTrialRows;
+    return this.pendingTrialRows.filter((row) => {
+      const haystack = [row.businessName, row.ownerName, row.email, row.phone, row.pais, row.ciudad]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  businessContactEmail(business: PublicBusinessInfo): string {
+    return business.contactVerification?.email?.trim() || '—';
+  }
+
+  businessContactPhone(business: PublicBusinessInfo): string {
+    return business.contactVerification?.phone?.trim() || '—';
+  }
+
+  businessOwnerName(business: PublicBusinessInfo): string {
+    return business.lifecycle?.ownerName?.trim() || '—';
+  }
+
+  hasBusinessContact(business: PublicBusinessInfo): boolean {
+    return (
+      this.businessOwnerName(business) !== '—' ||
+      this.businessContactEmail(business) !== '—' ||
+      this.businessContactPhone(business) !== '—'
     );
+  }
+
+  showBusinessContact(business: PublicBusinessInfo, event: MouseEvent) {
+    event.stopPropagation();
+    const city = business.lifecycle?.ciudad?.trim();
+    const country = business.lifecycle?.pais?.trim();
+    const location = [city, country].filter(Boolean).join(', ');
+    const lines = [
+      `Responsable: ${this.businessOwnerName(business)}`,
+      `Email: ${this.businessContactEmail(business)}`,
+      `Teléfono: ${this.businessContactPhone(business)}`,
+    ];
+    if (location) lines.push(`Ubicación: ${location}`);
+    this.dialogService.alert({
+      title: `Contacto — ${business.nombre}`,
+      message: lines.join('\n'),
+    });
   }
 
   get currentPeriodoLabel(): string {
@@ -1135,6 +1277,43 @@ export class PlatformComponent implements OnInit {
         this.loadingTrials = false;
       },
     });
+    this.loadPendingTrials();
+  }
+
+  loadPendingTrials() {
+    this.loadingPendingTrials = true;
+    this.platformService.getPendingTrialRegistrations().subscribe({
+      next: (rows) => {
+        this.pendingTrialRows = rows;
+        this.loadingPendingTrials = false;
+      },
+      error: () => {
+        this.pendingTrialRows = [];
+        this.loadingPendingTrials = false;
+      },
+    });
+  }
+
+  releasePendingRegistration(row: PlatformPendingTrialRegistration) {
+    this.dialogService
+      .confirm({
+        title: 'Liberar email',
+        message: `¿Liberar ${row.email} para que pueda registrarse de nuevo?`,
+        confirmLabel: 'Liberar',
+        variant: 'danger',
+      })
+      .subscribe((ok) => {
+        if (!ok) return;
+        this.platformService.releaseTrialContactClaim('email', row.email).subscribe({
+          next: () => this.loadPendingTrials(),
+          error: (err) => {
+            this.dialogService.alert({
+              title: 'No se pudo liberar',
+              message: err?.error?.error || 'Intentá de nuevo.',
+            });
+          },
+        });
+      });
   }
 
   openBusinessById(businessId: string) {

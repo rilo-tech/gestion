@@ -29,6 +29,11 @@ import {
   TRIAL_STATUS_LABELS,
   type TrialStatus,
 } from '../../../../../shared/trial-state.ts';
+import {
+  normalizePlatformAccess,
+  TRIAL_PRODUCT_LABELS,
+  type ClientPlatformAccess,
+} from '../../../../../shared/platform-access.ts';
 
 @Component({
   selector: 'app-platform-business-detail',
@@ -104,134 +109,280 @@ import {
           </div>
         </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
-          <div class="xl:col-span-2 space-y-6">
-            <section class="rounded-xl border border-violet-100 bg-violet-50/80 p-5 shadow-sm space-y-4">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <h2 class="text-base font-semibold text-violet-950">Período de prueba</h2>
-                  <p class="text-sm text-violet-800 mt-1">
-                    Mientras esté activa, no suma en control de cobros ni se exige pago mensual.
-                  </p>
-                </div>
-                <label class="inline-flex items-center gap-2 cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    [checked]="business.enPrueba"
-                    [disabled]="togglingTrial"
-                    (change)="toggleTrial($any($event.target).checked)"
-                    class="h-4 w-4 rounded border-violet-300 text-violet-600">
-                  <span class="text-sm font-medium text-violet-900">En prueba</span>
-                </label>
+        <div class="flex flex-wrap gap-2 border-b border-gray-200 pb-1">
+          <button
+            type="button"
+            *ngFor="let tab of detailTabs"
+            (click)="detailTab = tab.id"
+            class="rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
+            [class.bg-teal-600]="detailTab === tab.id"
+            [class.text-white]="detailTab === tab.id"
+            [class.text-gray-600]="detailTab !== tab.id"
+            [class.hover:bg-gray-100]="detailTab !== tab.id">
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <div *ngIf="detailTab === 'resumen'" class="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+          <section class="xl:col-span-2 rounded-xl border border-sky-200 bg-sky-50 p-5 shadow-sm space-y-4">
+            <h2 class="text-base font-semibold text-sky-950">Contacto del responsable</h2>
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div class="rounded-lg bg-white/80 border border-sky-100 px-3 py-2.5">
+                <dt class="text-xs font-medium text-sky-800 uppercase tracking-wide">Responsable</dt>
+                <dd class="mt-1 font-medium text-gray-900">{{ ownerName || '—' }}</dd>
               </div>
-
-              <div *ngIf="business.enPrueba" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-xs font-medium text-violet-800 mb-1">Inicio</label>
-                  <input [(ngModel)]="business.trialStartDate" name="trialStart" type="date"
-                    class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm">
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-violet-800 mb-1">Fin</label>
-                  <input [(ngModel)]="business.trialEndDate" name="trialEnd" type="date"
-                    class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm">
-                </div>
+              <div class="rounded-lg bg-white/80 border border-sky-100 px-3 py-2.5">
+                <dt class="text-xs font-medium text-sky-800 uppercase tracking-wide">Email</dt>
+                <dd class="mt-1 font-medium text-gray-900 break-all">
+                  {{ contactEmail }}
+                  <span *ngIf="emailVerified" class="ml-1 text-green-600 text-xs">verificado</span>
+                </dd>
               </div>
-
-              <div *ngIf="business.enPrueba" class="flex flex-wrap items-center gap-2">
-                <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" [ngClass]="trialStatusClass">
-                  {{ trialStatusLabel }}
-                </span>
-                <span *ngIf="business.trialDaysRemaining != null && business.trialStatus === 'active'" class="text-sm text-violet-800">
-                  Vence en {{ business.trialDaysRemaining }} día{{ business.trialDaysRemaining === 1 ? '' : 's' }}
-                </span>
-                <button type="button" (click)="extendTrial()"
-                  class="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100">
-                  Extender {{ defaultTrialDays }} días
-                </button>
-                <button type="button" (click)="convertTrial()"
-                  class="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50">
-                  Convertir a pago
-                </button>
+              <div class="rounded-lg bg-white/80 border border-sky-100 px-3 py-2.5">
+                <dt class="text-xs font-medium text-sky-800 uppercase tracking-wide">Teléfono / WhatsApp</dt>
+                <dd class="mt-1 font-medium text-gray-900">{{ contactPhone }}</dd>
               </div>
-            </section>
+              <div class="rounded-lg bg-white/80 border border-sky-100 px-3 py-2.5">
+                <dt class="text-xs font-medium text-sky-800 uppercase tracking-wide">Ubicación</dt>
+                <dd class="mt-1 font-medium text-gray-900">{{ locationLabel }}</dd>
+              </div>
+            </dl>
+            <p *ngIf="whatsappOptIn" class="text-xs text-sky-800 bg-white/70 border border-sky-100 rounded-lg px-3 py-2">
+              Aceptó ayuda por WhatsApp.
+            </p>
+          </section>
 
-            <section class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
-              <h2 class="text-base font-semibold text-gray-900">Plan y acceso</h2>
+          <section class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-3">
+            <h2 class="text-base font-semibold text-gray-900">Actividad</h2>
+            <p class="text-sm text-gray-600">Último ingreso: <span class="font-medium text-gray-900">{{ formatDateTime(lastLoginAt) }}</span></p>
+            <p class="text-sm text-gray-600">Origen: <span class="font-medium text-gray-900">{{ sourceLabel }}</span></p>
+            <div class="grid grid-cols-2 gap-2 text-center text-xs">
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.ordersCount }}</span>Pedidos</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.salesCount }}</span>Ventas</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.productsCount }}</span>Productos</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.cashMovementsCount }}</span>Caja</div>
+            </div>
+          </section>
+        </div>
 
-              <label class="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+        <div *ngIf="detailTab === 'plan'" class="space-y-6 max-w-4xl">
+          <section class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
+            <h2 class="text-base font-semibold text-gray-900">Plan y acceso</h2>
+
+            <label class="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+              <input
+                type="checkbox"
+                [checked]="business.estadoSuscripcion === 'activa'"
+                [disabled]="togglingSubscription"
+                (change)="toggleSubscription($any($event.target).checked)"
+                class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600">
+              <span>
+                <span class="block text-sm font-semibold text-gray-900">Suscripción activa</span>
+                <span class="block text-xs text-gray-500 mt-0.5">Si la desactivás, ningún usuario podrá ingresar.</span>
+              </span>
+            </label>
+
+            <div>
+              <label class="block text-xs font-medium text-gray-500 mb-1">Plan comercial</label>
+              <select
+                [(ngModel)]="business.planId"
+                (ngModelChange)="onPlanChange()"
+                name="planId"
+                class="w-full max-w-md px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                <option *ngFor="let plan of plans" [value]="plan.id">{{ plan.nombre }}</option>
+              </select>
+            </div>
+          </section>
+
+          <section *ngIf="activePlan as plan" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+            <h2 class="text-base font-semibold text-gray-900">Configuración comercial de esta empresa</h2>
+            <p class="text-sm text-gray-500 mt-1 mb-4">
+              Cupos, precios y módulos que aplican solo a {{ business.nombre }}. No afectan a otras empresas.
+            </p>
+            <app-platform-subscription-editor
+              [plan]="plan"
+              [draft]="subscriptionDraft"
+              namePrefix="bizDetail"
+              (draftChange)="subscriptionDraft = $event">
+            </app-platform-subscription-editor>
+          </section>
+        </div>
+
+        <div *ngIf="detailTab === 'prueba'" class="max-w-3xl">
+          <section class="rounded-xl border border-violet-100 bg-violet-50/80 p-5 shadow-sm space-y-4">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-violet-950">Período de prueba</h2>
+                <p class="text-sm text-violet-800 mt-1">
+                  Mientras esté activa, no suma en control de cobros ni se exige pago mensual.
+                </p>
+              </div>
+              <label class="inline-flex items-center gap-2 cursor-pointer shrink-0">
                 <input
                   type="checkbox"
-                  [checked]="business.estadoSuscripcion === 'activa'"
-                  [disabled]="togglingSubscription"
-                  (change)="toggleSubscription($any($event.target).checked)"
-                  class="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600">
-                <span>
-                  <span class="block text-sm font-semibold text-gray-900">Suscripción activa</span>
-                  <span class="block text-xs text-gray-500 mt-0.5">Si la desactivás, ningún usuario podrá ingresar.</span>
-                </span>
+                  [checked]="business.enPrueba"
+                  [disabled]="togglingTrial"
+                  (change)="toggleTrial($any($event.target).checked)"
+                  class="h-4 w-4 rounded border-violet-300 text-violet-600">
+                <span class="text-sm font-medium text-violet-900">En prueba</span>
               </label>
+            </div>
 
+            <div *ngIf="business.enPrueba" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">Plan comercial</label>
-                <select
-                  [(ngModel)]="business.planId"
-                  (ngModelChange)="onPlanChange()"
-                  name="planId"
-                  class="w-full max-w-md px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-                  <option *ngFor="let plan of plans" [value]="plan.id">{{ plan.nombre }}</option>
-                </select>
+                <label class="block text-xs font-medium text-violet-800 mb-1">Inicio</label>
+                <input [(ngModel)]="business.trialStartDate" name="trialStart" type="date"
+                  class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm">
               </div>
-            </section>
+              <div>
+                <label class="block text-xs font-medium text-violet-800 mb-1">Fin</label>
+                <input [(ngModel)]="business.trialEndDate" name="trialEnd" type="date"
+                  class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm">
+              </div>
+            </div>
 
-            <section *ngIf="activePlan as plan" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-              <h2 class="text-base font-semibold text-gray-900">Configuración comercial de esta empresa</h2>
-              <p class="text-sm text-gray-500 mt-1 mb-4">
-                Cupos, precios y módulos que aplican solo a {{ business.nombre }}. No afectan a otras empresas.
+            <div *ngIf="business.enPrueba" class="flex flex-wrap items-center gap-2">
+              <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" [ngClass]="trialStatusClass">
+                {{ trialStatusLabel }}
+              </span>
+              <span *ngIf="business.trialDaysRemaining != null && business.trialStatus === 'active'" class="text-sm text-violet-800">
+                Vence en {{ business.trialDaysRemaining }} día{{ business.trialDaysRemaining === 1 ? '' : 's' }}
+              </span>
+              <button type="button" (click)="extendTrial()"
+                class="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100">
+                Extender {{ defaultTrialDays }} días
+              </button>
+              <button type="button" (click)="convertTrial()"
+                class="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50">
+                Convertir a pago
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <div *ngIf="detailTab === 'modulos'" class="max-w-2xl">
+          <section class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-gray-900">Módulos de plataforma</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Controla si el cliente ve el panel web, WhatsApp IA y el motor interno del ERP.
               </p>
-              <app-platform-subscription-editor
-                [plan]="plan"
-                [draft]="subscriptionDraft"
-                namePrefix="bizDetail"
-                (draftChange)="subscriptionDraft = $event">
-              </app-platform-subscription-editor>
-            </section>
-          </div>
+              <p *ngIf="platformAccessDraft.trialProduct" class="mt-2 text-xs text-violet-700">
+                Producto de registro: {{ trialProductLabel }}
+              </p>
+            </div>
+
+            <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-100 px-4 py-3">
+              <div>
+                <p class="text-sm font-medium text-gray-900">ERP Web</p>
+                <p class="text-xs text-gray-500">Panel /dashboard, clientes, stock, caja, etc.</p>
+              </div>
+              <input type="checkbox" [(ngModel)]="platformAccessDraft.erpWebEnabled" name="erpWebEnabled"
+                class="h-4 w-4 rounded border-gray-300 text-teal-600">
+            </label>
+
+            <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-100 px-4 py-3">
+              <div>
+                <p class="text-sm font-medium text-gray-900">WhatsApp (RiloBot)</p>
+                <p class="text-xs text-gray-500">Carga por mensajes con confirmación.</p>
+              </div>
+              <input type="checkbox" [(ngModel)]="platformAccessDraft.whatsappEnabled" name="whatsappEnabled"
+                class="h-4 w-4 rounded border-gray-300 text-teal-600">
+            </label>
+
+            <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-100 px-4 py-3">
+              <div>
+                <p class="text-sm font-medium text-gray-900">IA (parser de comandos)</p>
+                <p class="text-xs text-gray-500">Interpretación de mensajes en WhatsApp.</p>
+              </div>
+              <input type="checkbox" [(ngModel)]="platformAccessDraft.aiEnabled" name="aiEnabled"
+                class="h-4 w-4 rounded border-gray-300 text-teal-600">
+            </label>
+
+            <p class="text-xs text-gray-400">ERP Core permanece activo si hay al menos un canal operativo.</p>
+
+            <button type="button" (click)="savePlatformAccess()" [disabled]="savingPlatformAccess"
+              class="rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60">
+              {{ savingPlatformAccess ? 'Guardando...' : 'Guardar módulos' }}
+            </button>
+          </section>
+
+          <section
+            *ngIf="platformAccessDraft.whatsappEnabled"
+            class="rounded-xl border border-violet-100 bg-violet-50/50 p-5 shadow-sm space-y-3">
+            <div>
+              <h2 class="text-base font-semibold text-violet-950">Simulador RiloBot</h2>
+              <p class="text-sm text-violet-800 mt-1">
+                Probá mensajes como si llegaran por WhatsApp (usa el teléfono autorizado de la empresa).
+              </p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-violet-900 mb-1">Teléfono (opcional)</label>
+              <input
+                [(ngModel)]="botSimPhone"
+                name="botSimPhone"
+                placeholder="+59899123456"
+                class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-violet-900 mb-1">Mensaje</label>
+              <textarea
+                [(ngModel)]="botSimMessage"
+                name="botSimMessage"
+                rows="3"
+                placeholder="Ej: nuevo pedido para Juan"
+                class="w-full px-3 py-2 rounded-lg border border-violet-200 bg-white text-sm"></textarea>
+            </div>
+            <button
+              type="button"
+              (click)="runBotSimulation()"
+              [disabled]="botSimulating || !botSimMessage.trim()"
+              class="rounded-xl bg-violet-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-60">
+              {{ botSimulating ? 'Simulando...' : 'Simular mensaje' }}
+            </button>
+            <div *ngIf="botSimResult" class="rounded-lg border border-violet-200 bg-white p-3 text-sm space-y-1">
+              <p><span class="font-semibold text-gray-700">Intent:</span> {{ botSimResult.intent }}</p>
+              <p><span class="font-semibold text-gray-700">Ejecutado:</span> {{ botSimResult.executed ? 'Sí' : 'No' }}</p>
+              <p class="text-gray-800 whitespace-pre-wrap">{{ botSimResult.reply }}</p>
+            </div>
+          </section>
+        </div>
+
+        <div *ngIf="detailTab === 'pagos'" class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+          <section id="pagos" class="rounded-xl border border-emerald-100 bg-white p-5 shadow-sm space-y-4">
+            <h2 class="text-base font-semibold text-gray-900">Registrar pago</h2>
+            <p *ngIf="business.enPrueba" class="text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+              Cuenta en prueba: el pago es opcional mientras dure el período.
+            </p>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Período (AAAA-MM)</label>
+                <input [(ngModel)]="paymentDraft.periodo" name="payPeriodo" placeholder="2026-06"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Monto ($)</label>
+                <input [(ngModel)]="paymentDraft.monto" name="payMonto" type="number" min="0" step="1"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Fecha de pago</label>
+                <input [(ngModel)]="paymentDraft.fechaPago" name="payFecha" type="date"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Notas</label>
+                <input [(ngModel)]="paymentDraft.notas" name="payNotas" placeholder="Transferencia..."
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+              </div>
+            </div>
+            <button type="button" (click)="registerPayment()" [disabled]="registeringPayment"
+              class="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
+              {{ registeringPayment ? 'Registrando...' : 'Registrar pago' }}
+            </button>
+          </section>
 
           <div class="space-y-6">
-            <section id="pagos" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
-              <h2 class="text-base font-semibold text-gray-900">Registrar pago</h2>
-              <p *ngIf="business.enPrueba" class="text-xs text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
-                Cuenta en prueba: el pago es opcional mientras dure el período.
-              </p>
-              <div class="space-y-3">
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Período (AAAA-MM)</label>
-                  <input [(ngModel)]="paymentDraft.periodo" name="payPeriodo" placeholder="2026-06"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Monto ($)</label>
-                  <input [(ngModel)]="paymentDraft.monto" name="payMonto" type="number" min="0" step="1"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Fecha de pago</label>
-                  <input [(ngModel)]="paymentDraft.fechaPago" name="payFecha" type="date"
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">Notas</label>
-                  <input [(ngModel)]="paymentDraft.notas" name="payNotas" placeholder="Transferencia..."
-                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                </div>
-              </div>
-              <button type="button" (click)="registerPayment()" [disabled]="registeringPayment"
-                class="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">
-                {{ registeringPayment ? 'Registrando...' : 'Registrar pago' }}
-              </button>
-            </section>
-
             <section class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
               <h2 class="text-base font-semibold text-gray-900 mb-3">Historial comercial</h2>
               <div *ngIf="loadingHistory" class="text-sm text-gray-400 py-6 text-center">Cargando...</div>
@@ -290,6 +441,22 @@ export class PlatformBusinessDetailComponent implements OnInit {
   readonly paymentStatusLabels = SUBSCRIPTION_PAYMENT_STATUS_LABELS;
   readonly defaultTrialDays = DEFAULT_TRIAL_DAYS;
   readonly trialStatusLabels = TRIAL_STATUS_LABELS;
+  readonly detailTabs = [
+    { id: 'resumen' as const, label: 'Resumen' },
+    { id: 'plan' as const, label: 'Plan' },
+    { id: 'prueba' as const, label: 'Prueba' },
+    { id: 'modulos' as const, label: 'Módulos' },
+    { id: 'pagos' as const, label: 'Pagos' },
+  ];
+
+  detailTab: 'resumen' | 'plan' | 'prueba' | 'modulos' | 'pagos' = 'resumen';
+
+  platformAccessDraft: ClientPlatformAccess = normalizePlatformAccess(null);
+  savingPlatformAccess = false;
+  botSimPhone = '';
+  botSimMessage = '';
+  botSimulating = false;
+  botSimResult: { reply: string; intent: string; executed: boolean } | null = null;
 
   business: (PublicBusinessInfo & { planId?: string }) | null = null;
   plans: PublicPlanInfo[] = [];
@@ -358,6 +525,61 @@ export class PlatformBusinessDetailComponent implements OnInit {
     }
   }
 
+  get contactEmail(): string {
+    return this.business?.contactVerification?.email?.trim() || '—';
+  }
+
+  get contactPhone(): string {
+    return this.business?.contactVerification?.phone?.trim() || '—';
+  }
+
+  get ownerName(): string {
+    return (
+      this.business?.lifecycle?.ownerName?.trim() ||
+      this.business?.contactVerification?.email?.trim() ||
+      '—'
+    );
+  }
+
+  get locationLabel(): string {
+    const city = this.business?.lifecycle?.ciudad?.trim();
+    const country = this.business?.lifecycle?.pais?.trim();
+    if (city && country) return `${city}, ${country}`;
+    return city || country || '—';
+  }
+
+  get emailVerified(): boolean {
+    return this.business?.contactVerification?.emailVerified === true;
+  }
+
+  get whatsappOptIn(): boolean {
+    return this.business?.contactVerification?.whatsappOptIn === true;
+  }
+
+  get lastLoginAt(): string | null | undefined {
+    return this.business?.lifecycle?.lastLoginAt;
+  }
+
+  get sourceLabel(): string {
+    return this.business?.source || this.business?.lifecycle?.source || '—';
+  }
+
+  get trialProductLabel(): string {
+    const product = this.platformAccessDraft.trialProduct;
+    return product ? TRIAL_PRODUCT_LABELS[product] : '—';
+  }
+
+  get usage() {
+    return (
+      this.business?.lifecycle?.usageSummary ?? {
+        ordersCount: 0,
+        salesCount: 0,
+        productsCount: 0,
+        cashMovementsCount: 0,
+      }
+    );
+  }
+
   ngOnInit() {
     this.platformService.getPlans().subscribe({
       next: (plans) => {
@@ -376,6 +598,7 @@ export class PlatformBusinessDetailComponent implements OnInit {
 
     this.route.fragment.subscribe((fragment) => {
       if (fragment === 'pagos') {
+        this.detailTab = 'pagos';
         setTimeout(() => document.getElementById('pagos')?.scrollIntoView({ behavior: 'smooth' }), 200);
       }
     });
@@ -387,6 +610,9 @@ export class PlatformBusinessDetailComponent implements OnInit {
       next: (business) => {
         this.business = { ...business, planId: business.planId };
         this.subscriptionDraft = businessSubscriptionDraftFromPublic(this.business);
+        this.platformAccessDraft = normalizePlatformAccess(business.platformAccess);
+        this.botSimPhone = business.contactVerification?.phone?.trim() ?? '';
+        this.botSimResult = null;
         this.resetPaymentDraft(business);
         this.loading = false;
         this.loadPayments(businessId);
@@ -438,6 +664,58 @@ export class PlatformBusinessDetailComponent implements OnInit {
           this.dialogService.alert({
             title: 'Error',
             message: err?.error?.error || 'No se pudo guardar.',
+          });
+        },
+      });
+  }
+
+  savePlatformAccess() {
+    if (!this.business) return;
+    this.savingPlatformAccess = true;
+    this.platformService
+      .updatePlatformAccess(this.business.id, {
+        erpWebEnabled: this.platformAccessDraft.erpWebEnabled,
+        whatsappEnabled: this.platformAccessDraft.whatsappEnabled,
+        aiEnabled: this.platformAccessDraft.aiEnabled,
+      })
+      .subscribe({
+        next: (access) => {
+          this.savingPlatformAccess = false;
+          this.platformAccessDraft = normalizePlatformAccess(access);
+          if (this.business) {
+            this.business = { ...this.business, platformAccess: this.platformAccessDraft };
+          }
+        },
+        error: (err) => {
+          this.savingPlatformAccess = false;
+          this.dialogService.alert({
+            title: 'Error',
+            message: err?.error?.error || 'No se pudieron guardar los módulos.',
+          });
+        },
+      });
+  }
+
+  runBotSimulation() {
+    if (!this.business || !this.botSimMessage.trim()) return;
+    this.botSimulating = true;
+    this.botSimResult = null;
+    this.platformService
+      .simulateWhatsappMessage({
+        businessId: this.business.id,
+        message: this.botSimMessage.trim(),
+        phone: this.botSimPhone.trim() || undefined,
+      })
+      .subscribe({
+        next: (res) => {
+          this.botSimulating = false;
+          this.botSimResult = res.result;
+        },
+        error: (err) => {
+          this.botSimulating = false;
+          this.dialogService.alert({
+            title: 'Simulación fallida',
+            message: err?.error?.error || 'No se pudo simular el mensaje.',
           });
         },
       });

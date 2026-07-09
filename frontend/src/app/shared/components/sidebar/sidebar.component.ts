@@ -51,7 +51,7 @@ interface NavItem {
           </a>
         </div>
 
-        <div *ngIf="auth.canManageSettings" class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
+        <div *ngIf="auth.canManageSettings && auth.canAccessErpWeb" class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
           <a
             *ngIf="auth.canManageSettings"
             routerLink="/settings"
@@ -132,7 +132,11 @@ export class SidebarComponent implements OnInit, OnDestroy {
   ];
 
   get navItems(): NavItem[] {
-    return this.auth.isPlatformAdmin ? this.platformNavItems : this.companyNavItems;
+    if (this.auth.isPlatformAdmin) return this.platformNavItems;
+    if (!this.auth.canAccessErpWeb) {
+      return [{ path: '/mi-cuenta', icon: 'user-cog', label: 'Mi cuenta' }];
+    }
+    return this.companyNavItems;
   }
 
   get visibleNavItems(): NavItem[] {

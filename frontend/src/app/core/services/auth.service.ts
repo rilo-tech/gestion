@@ -25,6 +25,10 @@ import { getGoogleRedirectResultOnce } from '../utils/google-auth-redirect';
 import { PublicBusinessInfo } from './business.service';
 import type { SubscriptionModuleId } from '../../../../../shared/subscription-modules.ts';
 import {
+  normalizePlatformAccess,
+  type ClientPlatformAccess,
+} from '../../../../../shared/platform-access.ts';
+import {
   AUTH_BUSINESS_STORAGE_KEY,
   AUTH_TOKEN_STORAGE_KEY,
   DEFAULT_BUSINESS_ID,
@@ -123,7 +127,22 @@ export class AuthService {
   }
 
   get homeRoute(): string {
-    return this.isPlatformAdmin ? '/platform' : '/dashboard';
+    if (this.isPlatformAdmin) return '/platform';
+    if (!this.canAccessErpWeb) return '/mi-cuenta';
+    return '/dashboard';
+  }
+
+  get platformAccess(): ClientPlatformAccess {
+    return normalizePlatformAccess(this.currentBusiness?.platformAccess);
+  }
+
+  get canAccessErpWeb(): boolean {
+    if (this.isPlatformAdmin) return true;
+    return this.platformAccess.erpWebEnabled;
+  }
+
+  get canAccessWhatsapp(): boolean {
+    return this.platformAccess.whatsappEnabled;
   }
 
   get userInitial(): string {
@@ -476,6 +495,10 @@ export class AuthService {
     const entitlements = this.currentBusiness?.entitlements;
     if (!entitlements) return true;
     if (moduleId === 'core') return true;
+    if (moduleId === 'order_photos') {
+      if (entitlements.order_photos === true) return true;
+      return entitlements.pedidos === true;
+    }
     return entitlements[moduleId] === true;
   }
 

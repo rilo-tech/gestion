@@ -46,6 +46,8 @@ import type {
   TrialLifecycle,
   BusinessSource,
 } from '../../shared/trial-registration.ts';
+import type { ClientPlatformAccess } from '../../shared/platform-access.ts';
+import { resolvePlatformAccessForBusiness } from './platform-access.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -64,6 +66,7 @@ export interface BusinessRecord {
   source?: BusinessSource;
   contactVerification?: TrialContactVerification;
   lifecycle?: TrialLifecycle;
+  platformAccess?: ClientPlatformAccess;
   suscripcion?: BusinessSubscriptionRecord;
   creadoPor?: string;
   createdAt?: string;
@@ -104,6 +107,7 @@ export interface PublicBusinessInfo {
   source?: BusinessSource;
   contactVerification?: TrialContactVerification;
   lifecycle?: TrialLifecycle;
+  platformAccess?: ClientPlatformAccess;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
@@ -123,6 +127,7 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'trialStartDate',
   'trialEndDate',
   'trialStatus',
+  'platformAccess',
   'creadoPor',
   'updatedAt',
 ]);
@@ -179,6 +184,7 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
       data.lifecycle && typeof data.lifecycle === 'object'
         ? (data.lifecycle as TrialLifecycle)
         : undefined,
+    platformAccess: resolvePlatformAccessForBusiness(data),
     suscripcion: parseBusinessSubscription(data),
     creadoPor: data.creadoPor ? String(data.creadoPor) : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
@@ -301,6 +307,7 @@ export async function createBusiness(
     source?: BusinessSource;
     contactVerification?: TrialContactVerification;
     lifecycle?: TrialLifecycle;
+    platformAccess?: ClientPlatformAccess;
   }
 ): Promise<BusinessRecord> {
   const ref = businessRef(businessId);
@@ -332,6 +339,7 @@ export async function createBusiness(
     source: payload.source ?? 'manual_platform',
     ...(payload.contactVerification ? { contactVerification: payload.contactVerification } : {}),
     ...(payload.lifecycle ? { lifecycle: payload.lifecycle } : {}),
+    ...(payload.platformAccess ? { platformAccess: payload.platformAccess } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -480,6 +488,7 @@ function buildPublicBusinessInfo(
     source: business.source,
     contactVerification: business.contactVerification,
     lifecycle: business.lifecycle,
+    platformAccess: business.platformAccess ?? resolvePlatformAccessForBusiness({}),
     createdAt: business.createdAt,
     administradoresActivos: counts.administradoresActivos,
     operadoresActivos: counts.operadoresActivos,
