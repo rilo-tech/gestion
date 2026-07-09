@@ -81,6 +81,14 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
         [refreshing]="loading"
         (refreshClick)="reloadList()">
         <a
+          *ngIf="listFilter === 'pendientes-entrega'"
+          headerActions
+          href="/orders"
+          (click)="openAllOrders($event)"
+          class="text-xs sm:text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline dark:text-teal-300 dark:hover:text-teal-200">
+          Ver todos los pedidos
+        </a>
+        <a
           headerActions
           routerLink="/orders/new"
           [class]="iconActionLinkClass"
@@ -147,13 +155,6 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
           class="shrink-0 font-semibold text-teal-700 dark:text-teal-300 hover:underline">
           Ver todos
         </button>
-      </div>
-
-      <div
-        *ngIf="listFilter === 'pendientes-entrega'"
-        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-        <span>Pedidos confirmados que aún no fueron entregados.</span>
-        <a routerLink="/orders" class="font-semibold text-blue-700 hover:underline">Ver todos</a>
       </div>
 
       <div
@@ -557,6 +558,11 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.statusCardFilter = null;
     this.ordersPage = 1;
     this.rebuildDisplayOrders();
+  }
+
+  openAllOrders(event: Event) {
+    event.preventDefault();
+    void this.router.navigate(['/orders']);
   }
 
   statusCardClass(status: string, borderClass: string): string {

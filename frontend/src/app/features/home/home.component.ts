@@ -6,7 +6,7 @@ import { SalesService } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isOrderPendingDelivery } from '../../core/constants/order-status';
 import { getCalendarMonthRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
-import { PROGRESSIVE_LIST_FIRST_PAGE_SIZE } from '../../core/utils/progressive-list-load';
+import { PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, PROGRESSIVE_LIST_FIRST_PAGE_SIZE, ProgressiveListSession } from '../../core/utils/progressive-list-load';
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
@@ -289,6 +289,8 @@ export class HomeComponent implements OnInit {
   private stockService = inject(StockService);
   private salesService = inject(SalesService);
   private router = inject(Router);
+  private readonly ordersLoadSession = new ProgressiveListSession();
+  private ordersForPendingCount: Order[] = [];
 
   readonly recentActivityLimit = 4;
 
@@ -308,17 +310,20 @@ export class HomeComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe((page) => {
-      const visible = page.items
-        .filter((order) => this.auth.canViewOrder(order.estado))
-        .sort((a, b) => {
-          const dateA = Date.parse(String(a.createdAt ?? a.fechaEntrega ?? '')) || 0;
-          const dateB = Date.parse(String(b.createdAt ?? b.fechaEntrega ?? '')) || 0;
-          return dateB - dateA;
-        });
-      this.totalRecentOrders = visible.length;
-      this.recentOrders = visible.slice(0, this.recentActivityLimit);
-      this.pendingOrders = visible.filter((order) => isOrderPendingDelivery(order)).length;
+    const token = this.ordersLoadSession.next();
+    this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
+      next: (page) => {
+        if (!this.ordersLoadSession.isActive(token)) return;
+        this.applyRecentOrdersSnapshot(page.items);
+        this.ordersForPendingCount = page.items;
+        this.pendingOrders = this.countPendingOrders(this.ordersForPendingCount);
+        this.loadRemainingOrdersForPendingCount(token, page.hasMore, page.nextCursor);
+      },
+      error: () => {
+        if (!this.ordersLoadSession.isActive(token)) return;
+        this.applyRecentOrdersSnapshot([]);
+        this.pendingOrders = 0;
+      },
     });
 
     this.stockService.getStockMetrics().subscribe((metrics) => {
@@ -337,6 +342,44 @@ export class HomeComponent implements OnInit {
       this.monthlyOfferBonus = summary.bonificacionOfertas ?? 0;
       this.monthlyDonationsCount = summary.donacionesCount ?? 0;
       this.monthlyDonationsCost = summary.donacionesCost ?? 0;
+    });
+  }
+
+  private applyRecentOrdersSnapshot(items: Order[]) {
+    const visible = items
+      .filter((order) => this.auth.canViewOrder(order.estado))
+      .sort((a, b) => {
+        const dateA = Date.parse(String(a.createdAt ?? a.fechaEntrega ?? '')) || 0;
+        const dateB = Date.parse(String(b.createdAt ?? b.fechaEntrega ?? '')) || 0;
+        return dateB - dateA;
+      });
+    this.totalRecentOrders = visible.length;
+    this.recentOrders = visible.slice(0, this.recentActivityLimit);
+  }
+
+  private countPendingOrders(items: Order[]): number {
+    return items
+      .filter((order) => this.auth.canViewOrder(order.estado))
+      .filter((order) => isOrderPendingDelivery(order)).length;
+  }
+
+  private loadRemainingOrdersForPendingCount(
+    token: number,
+    hasMore: boolean,
+    cursor: string | null
+  ) {
+    if (!this.ordersLoadSession.isActive(token) || !hasMore || !cursor) return;
+
+    this.orderService.getOrdersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, cursor).subscribe({
+      next: (page) => {
+        if (!this.ordersLoadSession.isActive(token)) return;
+        this.ordersForPendingCount = [...this.ordersForPendingCount, ...page.items];
+        this.pendingOrders = this.countPendingOrders(this.ordersForPendingCount);
+        this.loadRemainingOrdersForPendingCount(token, page.hasMore, page.nextCursor);
+      },
+      error: () => {
+        // Mantenemos el conteo parcial si falla una página posterior.
+      },
     });
   }
 
