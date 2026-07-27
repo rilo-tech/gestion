@@ -1,4 +1,5 @@
 import { Component, DestroyRef, Injector, inject, OnInit } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink, type ParamMap } from '@angular/router';
@@ -901,9 +902,16 @@ export class SalesComponent implements OnInit {
       this.loading = false;
     }
 
-    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
-      this.clients = page.items;
+    this.clientService.getActiveClientsForPicker().subscribe((clients) => {
+      this.clients = clients;
     });
+    this.clientService.clientsChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => {
+        this.clientService.getActiveClientsForPicker().subscribe((clients) => {
+          this.clients = clients;
+        });
+      });
     // Pedidos elegibles: solo al abrir el modal «venta desde pedido».
 
     this.route.queryParamMap.subscribe((params) => {
@@ -1177,8 +1185,8 @@ export class SalesComponent implements OnInit {
 
     if (draft.saleModalMode === 'pedido') {
       clearSalesFormDraft();
-      this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
-        this.clients = page.items;
+      this.clientService.getActiveClientsForPicker().subscribe((clients) => {
+        this.clients = clients;
       });
 
       if (draft.saleModalOpen) {

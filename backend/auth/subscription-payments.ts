@@ -44,6 +44,25 @@ export function currentPeriodo(date = new Date()): string {
   return `${year}-${month}`;
 }
 
+export function addMonthsToDate(date: Date, months: number): Date {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+export function addMonthsToPeriodo(periodo: string, months: number): string {
+  const normalized = normalizePeriodo(periodo);
+  const [yearRaw, monthRaw] = normalized.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const date = new Date(year, month - 1 + months, 1);
+  return currentPeriodo(date);
+}
+
+export function paidUntilIso(from: Date, coverageMonths: number): string {
+  return addMonthsToDate(from, Math.max(1, coverageMonths)).toISOString();
+}
+
 function mapPayment(id: string, data: Record<string, unknown>): SubscriptionPaymentRecord {
   return {
     id,
@@ -71,6 +90,12 @@ export async function registerSubscriptionPayment(
     monto?: number;
     fechaPago?: string;
     notas?: string;
+    mercadoPagoPaymentId?: string;
+    currency?: string;
+    productId?: string;
+    country?: string;
+    payerEmail?: string;
+    allowUpdateExistingPeriod?: boolean;
   }
 ): Promise<SubscriptionPaymentRecord> {
   const periodo = normalizePeriodo(payload.periodo ?? currentPeriodo());
@@ -84,17 +109,34 @@ export async function registerSubscriptionPayment(
     .limit(1)
     .get();
 
-  if (!existing.empty) {
-    throw new Error('PAYMENT_PERIOD_EXISTS');
-  }
-
   const record = {
     periodo,
     monto,
     fechaPago,
     notas: payload.notas?.trim() || undefined,
+    mercadoPagoPaymentId: payload.mercadoPagoPaymentId ?? null,
+    currency: payload.currency ?? null,
+    productId: payload.productId ?? null,
+    country: payload.country ?? null,
+    payerEmail: payload.payerEmail ?? null,
     createdAt: new Date().toISOString(),
   };
+
+  if (!existing.empty) {
+    if (!payload.allowUpdateExistingPeriod) {
+      throw new Error('PAYMENT_PERIOD_EXISTS');
+    }
+    const doc = existing.docs[0]!;
+    await doc.ref.set(
+      {
+        ...record,
+        createdAt: doc.data().createdAt ?? record.createdAt,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    return mapPayment(doc.id, { ...doc.data(), ...record });
+  }
 
   const docRef = await paymentsCollection(businessId).add(record);
   return mapPayment(docRef.id, record);
@@ -103,11 +145,27 @@ export async function registerSubscriptionPayment(
 export function resolveSubscriptionPaymentStatus(
   payments: SubscriptionPaymentRecord[],
   precioMensual: number,
-  referenceDate = new Date()
+  referenceDate = new Date(),
+  paidUntil?: string | null
 ): SubscriptionPaymentSummary {
   const periodoActual = currentPeriodo(referenceDate);
   const pagoActual = payments.find((payment) => payment.periodo === periodoActual);
   const ultimoPago = payments[0];
+
+  const baseUltimo = {
+    periodoActual,
+    montoEsperado: precioMensual,
+    ultimoPagoPeriodo: pagoActual?.periodo ?? ultimoPago?.periodo,
+    ultimoPagoFecha: pagoActual?.fechaPago ?? ultimoPago?.fechaPago,
+    ultimoPagoMonto: pagoActual?.monto ?? ultimoPago?.monto,
+  };
+
+  if (paidUntil) {
+    const until = new Date(paidUntil);
+    if (!Number.isNaN(until.getTime()) && until.getTime() > referenceDate.getTime()) {
+      return { estadoPago: 'al_dia', ...baseUltimo };
+    }
+  }
 
   if (pagoActual) {
     return {
@@ -126,17 +184,68 @@ export function resolveSubscriptionPaymentStatus(
 
   return {
     estadoPago,
-    periodoActual,
-    montoEsperado: precioMensual,
-    ultimoPagoPeriodo: ultimoPago?.periodo,
-    ultimoPagoFecha: ultimoPago?.fechaPago,
-    ultimoPagoMonto: ultimoPago?.monto,
+    ...baseUltimo,
+  };
+}
+
+/** Registra cobertura mensual o anual (marca períodos cubiertos + paidUntil). */
+export async function registerSubscriptionCoverage(
+  businessId: string,
+  payload: {
+    coverageMonths: number;
+    montoTotal: number;
+    startPeriodo?: string;
+    fechaPago?: string;
+    notas?: string;
+    mercadoPagoPaymentId?: string;
+    currency?: string;
+    productId?: string;
+    country?: string;
+    payerEmail?: string;
+  }
+): Promise<{ payments: SubscriptionPaymentRecord[]; paidUntil: string; coverageMonths: number }> {
+  const coverageMonths = Math.max(1, Math.min(24, Math.floor(Number(payload.coverageMonths) || 1)));
+  const startPeriodo = normalizePeriodo(payload.startPeriodo ?? currentPeriodo());
+  const fechaPago = payload.fechaPago
+    ? new Date(payload.fechaPago).toISOString()
+    : new Date().toISOString();
+  const montoTotal = Math.max(0, Number(payload.montoTotal) || 0);
+  const payments: SubscriptionPaymentRecord[] = [];
+
+  for (let i = 0; i < coverageMonths; i++) {
+    const periodo = addMonthsToPeriodo(startPeriodo, i);
+    const isFirst = i === 0;
+    const payment = await registerSubscriptionPayment(businessId, {
+      periodo,
+      monto: isFirst ? montoTotal : 0,
+      fechaPago,
+      notas: isFirst
+        ? payload.notas?.trim() ||
+          (coverageMonths > 1
+            ? `Pago anual · ${coverageMonths} meses cubiertos`
+            : undefined)
+        : `Cubierto por pago ${coverageMonths > 1 ? 'anual' : 'anticipado'} (${startPeriodo})`,
+      mercadoPagoPaymentId: isFirst ? payload.mercadoPagoPaymentId : undefined,
+      currency: payload.currency,
+      productId: payload.productId,
+      country: payload.country,
+      payerEmail: payload.payerEmail,
+      allowUpdateExistingPeriod: true,
+    });
+    payments.push(payment);
+  }
+
+  return {
+    payments,
+    paidUntil: paidUntilIso(new Date(fechaPago), coverageMonths),
+    coverageMonths,
   };
 }
 
 export async function getSubscriptionPaymentSummary(
   businessId: string,
-  precioMensual: number
+  precioMensual: number,
+  paidUntil?: string | null
 ): Promise<SubscriptionPaymentSummary> {
   const periodoActual = currentPeriodo();
   const [currentSnap, latestSnap] = await Promise.all([
@@ -154,5 +263,5 @@ export async function getSubscriptionPaymentSummary(
   const payments = [pagoActual, ultimoPago].filter(
     (payment): payment is SubscriptionPaymentRecord => !!payment
   );
-  return resolveSubscriptionPaymentStatus(payments, precioMensual);
+  return resolveSubscriptionPaymentStatus(payments, precioMensual, new Date(), paidUntil);
 }

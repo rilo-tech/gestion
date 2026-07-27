@@ -8,8 +8,8 @@ import {
   TRIAL_PRODUCT_LABELS,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
-import { RILOTECH_CHAT_DEMO } from '../../../../../shared/ritotech-marketing.ts';
-import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import { RILOTECH_CHAT_DEMO, RILOTECH_PRICING_TIERS } from '../../../../../shared/ritotech-marketing.ts';
+import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
 
 @Component({
   selector: 'app-ritotech-product-page',
@@ -71,7 +71,7 @@ export class RitotechProductPageComponent {
   private route = inject(ActivatedRoute);
 
   readonly productId = (this.route.snapshot.data['product'] ?? 'erp') as TrialProductId;
-  readonly trialDays = DEFAULT_TRIAL_DAYS;
+  readonly trialDays = trialDaysForProduct(this.productId);
   readonly chatDemo = RILOTECH_CHAT_DEMO;
 
   get eyebrow(): string {
@@ -87,19 +87,7 @@ export class RitotechProductPageComponent {
   }
 
   get bullets(): string[] {
-    if (this.productId === 'whatsapp') {
-      return [
-        'Pedidos y ventas escribiendo mensajes naturales',
-        'Confirmación SÍ/NO antes de guardar cada operación',
-        'Mismos datos que el ERP Web si lo activás después',
-        'Ideal para quienes viven en el celular',
-      ];
-    }
-    return [
-      'Clientes, stock, caja y reportes en un solo lugar',
-      'Multiusuario con permisos por rol',
-      'Historial completo de operaciones',
-      'Se integra con RiloBot si activás WhatsApp',
-    ];
+    const tier = RILOTECH_PRICING_TIERS.find((t) => t.id === this.productId);
+    return tier?.includes ?? [];
   }
 }

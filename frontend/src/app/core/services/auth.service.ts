@@ -292,7 +292,10 @@ export class AuthService {
 
   get canManageUsers(): boolean {
     if (this.isPlatformAdmin) return false;
-    return canManageUsers(this.currentRole as UserRole);
+    return canManageUsers(
+      this.currentRole as UserRole,
+      this.currentUser?.permisos as Permission[] | undefined
+    );
   }
 
   get canManageSettings(): boolean {
@@ -503,7 +506,9 @@ export class AuthService {
   }
 
   get isTrialExpired(): boolean {
-    return this.currentBusiness?.trialStatus === 'expired';
+    return (
+      this.currentBusiness?.enPrueba === true && this.currentBusiness?.trialStatus === 'expired'
+    );
   }
 
   get isTrialExpiringSoon(): boolean {
@@ -515,6 +520,23 @@ export class AuthService {
 
   get trialDaysRemaining(): number | null {
     const days = this.currentBusiness?.trialDaysRemaining;
+    return days === null || days === undefined ? null : days;
+  }
+
+  get isPaymentOverdue(): boolean {
+    return this.currentBusiness?.estadoPago === 'vencido';
+  }
+
+  get isPaymentPending(): boolean {
+    return this.currentBusiness?.estadoPago === 'pendiente';
+  }
+
+  get isPaymentDueSoon(): boolean {
+    return this.currentBusiness?.paymentDueSoon === true;
+  }
+
+  get paymentDaysRemaining(): number | null {
+    const days = this.currentBusiness?.paymentDaysRemaining;
     return days === null || days === undefined ? null : days;
   }
 

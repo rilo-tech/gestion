@@ -7,8 +7,13 @@ import {
   isTrialProductId,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
+import { RILOTECH_PRICING_TIERS, priceLabelForTier } from '../../../../../shared/ritotech-marketing.ts';
 import { TRIAL_RUBROS } from '../../../../../shared/trial-registration.ts';
-import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import {
+  trialDaysForProduct,
+} from '../../../../../shared/trial-state.ts';
+import type { BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
+import { resolveBillingCountry } from '../../../../../shared/billing-catalog.ts';
 import type { GeoCountryOption } from '../../../../../shared/geo.ts';
 import {
   DEFAULT_PHONE_DIAL,
@@ -42,27 +47,64 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
     <div class="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-teal-950 text-white">
       <div class="max-w-lg mx-auto px-4 py-8 sm:py-12">
         <div class="text-center mb-8">
-          <p class="text-teal-400 font-bold tracking-tight text-2xl">RILO Gestión</p>
+          <img
+            src="/brand/rilotech-lockup-on-dark.png"
+            alt="RiloTech"
+            width="120"
+            height="120"
+            class="mx-auto h-20 w-auto object-contain"
+            decoding="async" />
           <h1 class="text-2xl sm:text-3xl font-bold mt-3">Probá gratis {{ trialDays }} días</h1>
           <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
             {{ productIntro }}
           </p>
-          <p *ngIf="selectedProductLabel" class="mt-3 inline-flex rounded-full bg-violet-900/50 border border-violet-700/60 px-3 py-1 text-xs text-violet-200">
-            Producto: {{ selectedProductLabel }}
+          <p class="mt-2 text-xs text-teal-400/90 font-medium">
+            {{ trialDays }} días gratis · Sin tarjeta
           </p>
         </div>
 
         <div *ngIf="step === 'intro'" class="space-y-4">
+          <p class="text-sm text-gray-400 text-center">Elegí cómo querés empezar</p>
+          <div class="space-y-3">
+            <button
+              type="button"
+              *ngFor="let plan of planOptions"
+              (click)="selectProduct(plan.id)"
+              class="w-full text-left rounded-xl border p-4 transition"
+              [class.border-teal-500]="trialProduct === plan.id"
+              [class.bg-teal-950/40]="trialProduct === plan.id"
+              [class.border-gray-800]="trialProduct !== plan.id"
+              [class.bg-gray-900/60]="trialProduct !== plan.id">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="font-semibold text-white">{{ plan.label }}</p>
+                  <p class="text-xs text-teal-300 mt-0.5">{{ priceFor(plan.id) }} · {{ plan.trialDays }} días de prueba</p>
+                  <p class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ plan.headline }}</p>
+                </div>
+                <span *ngIf="plan.featured" class="text-[10px] font-bold uppercase text-teal-300 shrink-0">
+                  {{ plan.badgeLabel || 'Recomendado' }}
+                </span>
+              </div>
+              <div class="mt-2 flex gap-2 text-[11px]">
+                <span [class.text-teal-300]="plan.whatsapp" [class.text-gray-600]="!plan.whatsapp">
+                  WhatsApp {{ plan.whatsapp ? '✓' : '—' }}
+                </span>
+                <span [class.text-teal-300]="plan.panelWeb" [class.text-gray-600]="!plan.panelWeb">
+                  Panel {{ plan.panelWeb ? '✓' : '—' }}
+                </span>
+              </div>
+            </button>
+          </div>
           <ul class="text-sm text-gray-300 space-y-2 bg-gray-900/60 rounded-xl border border-gray-800 p-4">
-            <li>✓ Plan Intermedio durante la prueba</li>
-            <li>✓ Verificación por email (sin costo de SMS)</li>
-            <li>✓ Tus datos quedan guardados si decidís pagar después</li>
+            <li>✓ {{ trialDays }} días sin tarjeta de crédito</li>
+            <li>✓ Verificación por email</li>
+            <li>✓ Podés sumar módulos después sin perder datos</li>
           </ul>
           <button
             type="button"
             (click)="openForm()"
             class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500">
-            Empezar registro
+            Continuar con {{ selectedProductLabel }}
           </button>
           <p class="text-center text-sm text-gray-500">
             ¿Ya tenés cuenta?
@@ -214,10 +256,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               *
             </label>
           </div>
-          <label class="flex items-start gap-2 text-xs text-gray-400 cursor-pointer">
-            <input type="checkbox" [(ngModel)]="form.whatsappOptIn" name="whatsappOptIn" class="mt-0.5 rounded">
-            <span>Quiero recibir ayuda por WhatsApp (opcional, sin llamadas)</span>
-          </label>
+          <!-- Ayuda por WhatsApp (soporte): oculto hasta tener número de soporte distinto del bot -->
           <p *ngIf="error" class="text-sm text-red-400">{{ error }}</p>
           <button type="submit" [disabled]="loading"
             class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500 disabled:opacity-60">
@@ -226,13 +265,14 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
         </form>
 
         <div *ngIf="step === 'email'" class="space-y-4">
-          <p class="text-sm text-gray-300" *ngIf="emailSent">
+          <p class="text-sm text-teal-300" *ngIf="emailSent">
             Enviamos un código a <span class="text-white font-medium">{{ form.email }}</span>.
             Revisá también la carpeta de spam.
           </p>
-          <p class="text-sm text-amber-300" *ngIf="!emailSent && devOtp">
-            No se pudo enviar el email. Usá este código de prueba:
-            <span class="block mt-1 text-lg font-mono tracking-widest text-white">{{ devOtp }}</span>
+          <p class="text-sm text-amber-200" *ngIf="!emailSent && devOtp">
+            El email no se pudo enviar a este destinatario (Resend en modo prueba solo manda al mail de la cuenta).
+            Usá este código:
+            <span class="block mt-1 text-2xl font-mono tracking-widest text-white">{{ devOtp }}</span>
           </p>
           <p class="text-sm text-gray-300" *ngIf="!emailSent && !devOtp">
             Pedimos un código para <span class="text-white font-medium">{{ form.email }}</span>.
@@ -296,7 +336,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
 
   readonly rubros = TRIAL_RUBROS;
-  readonly trialDays = DEFAULT_TRIAL_DAYS;
+  readonly planOptions = RILOTECH_PRICING_TIERS;
   readonly formLabelClass = `${FORM_LABEL_CLASS} !text-gray-300`;
   readonly trialFieldClass =
     'w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm text-white outline-none focus:ring-2 focus:ring-teal-500 placeholder:text-gray-500';
@@ -329,7 +369,19 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   devOtp = '';
   emailSent = false;
   loginHint: { businessCode: string; loginUsername: string } | null = null;
-  trialProduct: TrialProductId = 'completo';
+  trialProduct: TrialProductId = 'whatsapp';
+
+  get trialDays(): number {
+    return trialDaysForProduct(this.trialProduct);
+  }
+
+  get billingCountry(): BillingCountryCode {
+    return resolveBillingCountry(this.form.pais || this.form.phoneCountryCode);
+  }
+
+  priceFor(productId: TrialProductId): string {
+    return priceLabelForTier(productId, this.billingCountry);
+  }
 
   get selectedProductLabel(): string {
     return TRIAL_PRODUCT_LABELS[this.trialProduct] ?? '';
@@ -337,22 +389,26 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
   get productIntro(): string {
     if (this.trialProduct === 'whatsapp') {
-      return 'Probá RiloBot por WhatsApp. Cargá pedidos y ventas escribiendo mensajes.';
+      return 'RiloBot: cargá pedidos, ventas y cobros por WhatsApp. Ideal para microemprendimientos.';
     }
     if (this.trialProduct === 'erp') {
-      return 'Panel web para clientes, stock, caja y reportes. Sin WhatsApp IA en la prueba base.';
+      return 'Panel web: caja, clientes, stock, compras y reportes. Sin bot en la prueba base.';
     }
-    return 'WhatsApp + panel web. Pedidos, caja, stock, clientes y reportes.';
+    return 'WhatsApp + panel web. Cargá rápido y controlá todo el negocio.';
   }
 
   get doneMessage(): string {
     if (this.trialProduct === 'whatsapp') {
-      return 'Escribinos por WhatsApp con el número que registraste para empezar a cargar operaciones.';
+      return 'Escribí al número de RiloBot con el WhatsApp que registraste. El bot te pide confirmación antes de guardar.';
     }
     if (this.trialProduct === 'erp') {
       return 'Ingresá al panel web con tu usuario y contraseña.';
     }
     return 'Podés usar el panel web y también WhatsApp con el mismo número registrado.';
+  }
+
+  selectProduct(id: TrialProductId) {
+    this.trialProduct = id;
   }
 
   form = {
@@ -381,7 +437,6 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
       const producto = params.get('producto');
       if (producto && isTrialProductId(producto)) {
         this.trialProduct = producto;
-        if (producto === 'whatsapp') this.form.whatsappOptIn = true;
       }
       const utmSource = params.get('utm_source');
       const utmCampaign = params.get('utm_campaign');
@@ -414,6 +469,9 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     Object.assign(this.form, draft.form);
     this.registrationId = draft.registrationId ?? '';
     this.otpCode = draft.otpCode ?? '';
+    if (draft.trialProduct && isTrialProductId(draft.trialProduct)) {
+      this.trialProduct = draft.trialProduct;
+    }
     if (draft.step && draft.step !== 'intro') {
       this.step = draft.step;
     }
@@ -423,6 +481,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     if (this.step === 'done' || this.step === 'creating') return;
     saveTrialRegisterDraft({
       step: this.step,
+      trialProduct: this.trialProduct,
       form: { ...this.form },
       registrationId: this.registrationId,
       otpCode: this.otpCode,
@@ -547,12 +606,16 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
         this.loading = false;
         this.emailSent = res.emailSent === true;
         this.devOtp = res.devCode ?? '';
+        this.error = '';
         this.step = 'email';
         this.persistDraft();
       },
       error: (err) => {
         this.loading = false;
         this.error = this.readError(err);
+        // Igual avanzamos a la pantalla de código por si hay que reenviar
+        this.step = 'email';
+        this.persistDraft();
       },
     });
   }

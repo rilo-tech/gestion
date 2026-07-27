@@ -2,7 +2,12 @@ import type { NextFunction, Request, Response } from 'express';
 import { verifyAuthToken } from './jwt.ts';
 import { assertBusinessActive, getBusinessSubscription } from './business.ts';
 import { getStoredUser, toPublicUser, type PublicUser } from './users.ts';
-import { DEFAULT_BUSINESS_ID, userHasPermission, type AssignablePermission } from './constants.ts';
+import {
+  DEFAULT_BUSINESS_ID,
+  userHasPermission,
+  canManageCompanyUsers,
+  type AssignablePermission,
+} from './constants.ts';
 import {
   businessHasModule,
 } from './subscription-entitlements.ts';
@@ -108,6 +113,23 @@ export function requireSupervisor(
   if (req.auth?.scope !== 'company' || req.auth.user.rol !== 'supervisor') {
     return res.status(403).json({
       error: 'Solo el administrador de la empresa puede realizar esta acción.',
+    });
+  }
+  next();
+}
+
+/** Supervisor o administrador delegado: alta/baja y permisos de usuarios de la empresa. */
+export function requireCompanyUserManager(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  if (
+    req.auth?.scope !== 'company' ||
+    !canManageCompanyUsers(req.auth.user.rol, req.auth.user.permisos)
+  ) {
+    return res.status(403).json({
+      error: 'Solo un administrador de la empresa puede gestionar usuarios.',
     });
   }
   next();

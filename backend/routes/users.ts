@@ -18,7 +18,7 @@ import { getCollaborator } from '../utils/collaborators.ts';
 import {
   assertCompanyTenantAccess,
   requireAuth,
-  requireSupervisor,
+  requireCompanyUserManager,
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
 import { createCompanyRouter } from './create-company-router.ts';
@@ -69,7 +69,10 @@ function normalizeUserPayload(userData: Record<string, unknown>) {
       .trim()
       .toLowerCase(),
     rol,
-    permisos: rol === 'staff' ? sanitizeStaffPermissions(userData.permisos) : [],
+    permisos:
+      rol === 'staff' || rol === 'admin'
+        ? sanitizeStaffPermissions(userData.permisos)
+        : [],
     activo: userData.activo !== false,
     colaboradorId: normalizeColaboradorId(userData.colaboradorId, rol),
   };
@@ -130,7 +133,7 @@ function mapUserMutationError(error: unknown): { status: number; message: string
   return null;
 }
 
-router.get('/:businessId', requireSupervisor, async (req: AuthenticatedRequest, res) => {
+router.get('/:businessId', requireCompanyUserManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId } = req.params;
     const paged = String(req.query.paged ?? '') === '1';
@@ -152,7 +155,7 @@ router.get('/:businessId', requireSupervisor, async (req: AuthenticatedRequest, 
   }
 });
 
-router.get('/:businessId/:userId', requireSupervisor, async (req, res) => {
+router.get('/:businessId/:userId', requireCompanyUserManager, async (req, res) => {
   try {
     const { businessId, userId } = req.params;
     const user = await getStoredUser(businessId, userId);
@@ -163,7 +166,7 @@ router.get('/:businessId/:userId', requireSupervisor, async (req, res) => {
   }
 });
 
-router.post('/:businessId', requireSupervisor, async (req: AuthenticatedRequest, res) => {
+router.post('/:businessId', requireCompanyUserManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId } = req.params;
     const { id, createdAt, password, passwordHash, googleId, rol, ...raw } = req.body ?? {};
@@ -207,7 +210,7 @@ router.post('/:businessId', requireSupervisor, async (req: AuthenticatedRequest,
   }
 });
 
-router.patch('/:businessId/:userId', requireSupervisor, async (req: AuthenticatedRequest, res) => {
+router.patch('/:businessId/:userId', requireCompanyUserManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId, userId } = req.params;
     const { id, createdAt, password, passwordHash, googleId, rol, ...raw } = req.body ?? {};
@@ -266,7 +269,7 @@ router.patch('/:businessId/:userId', requireSupervisor, async (req: Authenticate
   }
 });
 
-router.delete('/:businessId/:userId', requireSupervisor, async (req: AuthenticatedRequest, res) => {
+router.delete('/:businessId/:userId', requireCompanyUserManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { businessId, userId } = req.params;
 

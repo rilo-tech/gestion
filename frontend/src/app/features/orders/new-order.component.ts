@@ -674,8 +674,8 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             title="Resumen"
             variant="light"
             class="sm:sticky sm:top-8 [&>div]:lg:p-4 [&>div_h2]:lg:text-base [&>div_h2]:lg:mb-3">
-            <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4 flex items-baseline justify-between gap-3 sm:block">
-              <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase sm:mb-1">Total venta</p>
+            <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4">
+              <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase mb-0.5">Precio venta</p>
               <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
             </div>
             <div *ngIf="auth.canViewOrderBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
@@ -736,11 +736,11 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   <span class="text-gray-600">Pagado</span>
                   <span class="font-semibold tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
-                <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200">
-                  <span class="text-gray-600 font-medium">Saldo pendiente</span>
-                  <span class="font-semibold tabular-nums text-orange-600">{{ formatMoney(pendingOrderSaldo) }}</span>
-                </div>
               </ng-container>
+              <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200">
+                <span class="text-gray-600 font-medium">Saldo pendiente</span>
+                <span class="font-semibold tabular-nums text-orange-600">{{ formatMoney(pendingOrderSaldo) }}</span>
+              </div>
             </div>
             <a
               *ngIf="isEditing && order.ventaId"
@@ -1945,6 +1945,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     this.refreshClients();
+    this.clientService.clientsChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.refreshClients());
 
     this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.syncRouteState();
@@ -2078,8 +2081,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private refreshClients() {
-    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe((page) => {
-      this.clients = page.items;
+    this.clientService.getActiveClientsForPicker().subscribe((clients) => {
+      this.clients = clients;
       this.ensureSelectedClient(this.order.clienteId, this.selectedClientLabel);
     });
   }
@@ -2135,7 +2138,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!trimmed || this.creatingClient || this.isReadOnlyOrder) return;
 
     this.creatingClient = true;
-    this.clientService.createClient({ nombre: trimmed }).subscribe({
+    this.clientService.createClient({ nombre: trimmed, activo: true }).subscribe({
       next: (response) => {
         this.creatingClient = false;
         const client: Client = { id: response.id, nombre: trimmed };
@@ -3561,6 +3564,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       throw new Error('locked');
     }
 
+    this.orderLinesTable?.commitPendingNumericEdits();
     this.calculateTotals();
     const estado = this.order.estado ?? 'pendiente';
     const payload = this.buildOrderPersistPayload(estado);
@@ -3588,6 +3592,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       this.pendingSaveEstado = null;
       return;
     }
+    this.orderLinesTable?.commitPendingNumericEdits();
     this.calculateTotals();
 
     const payload = this.buildOrderPersistPayload(estado, descuentoFisicoAlcance);

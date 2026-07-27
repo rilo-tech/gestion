@@ -18,10 +18,13 @@ export type BusinessSubscriptionRecord = {
   limiteOperadores?: number | null;
   limiteUsuariosTotal?: number | null;
   maxAmbitosCaja?: number | null;
+  /** Cupo de líneas WhatsApp (números autorizados) cobrables. */
+  limiteWhatsapp?: number | null;
   modulosOverride?: ModuleOverridesMap;
   precioBaseOverride?: number | null;
   precioPorAdministradorOverride?: number | null;
   precioPorOperadorOverride?: number | null;
+  precioPorWhatsappOverride?: number | null;
   preciosAddonModuloOverride?: Partial<Record<SubscriptionModuleId, number>>;
   descuentoMensual?: number;
   notasComerciales?: string;
@@ -71,12 +74,14 @@ export function parseBusinessSubscription(
     limiteOperadores: optionalNum(raw.limiteOperadores),
     limiteUsuariosTotal: optionalNum(raw.limiteUsuariosTotal),
     maxAmbitosCaja: optionalNum(raw.maxAmbitosCaja),
+    limiteWhatsapp: optionalNum(raw.limiteWhatsapp),
     modulosOverride: normalizeModuleOverrides(
       raw.modulosOverride as ModuleOverridesMap | undefined
     ),
     precioBaseOverride: optionalNum(raw.precioBaseOverride),
     precioPorAdministradorOverride: optionalNum(raw.precioPorAdministradorOverride),
     precioPorOperadorOverride: optionalNum(raw.precioPorOperadorOverride),
+    precioPorWhatsappOverride: optionalNum(raw.precioPorWhatsappOverride),
     preciosAddonModuloOverride:
       (raw.preciosAddonModuloOverride as Partial<Record<SubscriptionModuleId, number>>) ??
       undefined,
@@ -136,8 +141,12 @@ export function resolveBusinessSubscription(
       suscripcion.maxAmbitosCaja ?? frozen?.maxAmbitosCaja ?? plan.maxAmbitosCaja,
   };
 
+  const precioBaseOverride =
+    suscripcion.precioBaseOverride != null && suscripcion.precioBaseOverride > 0
+      ? suscripcion.precioBaseOverride
+      : null;
   const precioBase =
-    suscripcion.precioBaseOverride ?? frozen?.precioBaseMensual ?? plan.precioBaseMensual;
+    precioBaseOverride ?? frozen?.precioBaseMensual ?? plan.precioBaseMensual;
   const precioPorAdministrador =
     suscripcion.precioPorAdministradorOverride ??
     frozen?.precioPorAdministrador ??
@@ -146,6 +155,12 @@ export function resolveBusinessSubscription(
     suscripcion.precioPorOperadorOverride ??
     frozen?.precioPorOperador ??
     plan.precioPorOperador;
+  const precioPorWhatsapp =
+    suscripcion.precioPorWhatsappOverride ??
+    suscripcion.precioPorOperadorOverride ??
+    frozen?.precioPorOperador ??
+    plan.precioPorOperador;
+  const whatsappLines = Math.max(0, Number(suscripcion.limiteWhatsapp) || 0);
   const addonPrices = resolveAddonPrices(
     {
       ...plan,
@@ -161,6 +176,8 @@ export function resolveBusinessSubscription(
     precioPorOperador,
     limiteAdministradores: limits.limiteAdministradores,
     limiteOperadores: limits.limiteOperadores,
+    whatsappLines,
+    precioPorWhatsapp,
     planModules,
     effectiveModules: entitlements,
     addonPrices,
@@ -209,6 +226,9 @@ export function sanitizeBusinessSubscriptionPayload(
   if (raw.maxAmbitosCaja !== undefined) {
     next.maxAmbitosCaja = optionalNum(raw.maxAmbitosCaja);
   }
+  if (raw.limiteWhatsapp !== undefined) {
+    next.limiteWhatsapp = optionalNum(raw.limiteWhatsapp);
+  }
   if (raw.modulosOverride !== undefined) {
     next.modulosOverride = normalizeModuleOverrides(
       raw.modulosOverride as ModuleOverridesMap
@@ -222,6 +242,9 @@ export function sanitizeBusinessSubscriptionPayload(
   }
   if (raw.precioPorOperadorOverride !== undefined) {
     next.precioPorOperadorOverride = optionalNum(raw.precioPorOperadorOverride);
+  }
+  if (raw.precioPorWhatsappOverride !== undefined) {
+    next.precioPorWhatsappOverride = optionalNum(raw.precioPorWhatsappOverride);
   }
   if (raw.preciosAddonModuloOverride !== undefined) {
     next.preciosAddonModuloOverride =

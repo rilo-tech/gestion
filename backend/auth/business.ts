@@ -53,6 +53,19 @@ export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
 export type TrialStatus = import('../../shared/trial-state.ts').TrialStatus;
 
+export type BusinessBillingInterval = 'month' | 'year';
+
+export interface BusinessBillingInfo {
+  country?: string;
+  currency?: string;
+  productId?: string;
+  paidUntil?: string;
+  billingInterval?: BusinessBillingInterval;
+  source?: string;
+  updatedAt?: string;
+  lastMercadoPagoPaymentId?: string;
+}
+
 export interface BusinessRecord {
   id: string;
   nombre: string;
@@ -68,6 +81,7 @@ export interface BusinessRecord {
   lifecycle?: TrialLifecycle;
   platformAccess?: ClientPlatformAccess;
   suscripcion?: BusinessSubscriptionRecord;
+  billing?: BusinessBillingInfo;
   creadoPor?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -97,6 +111,12 @@ export interface PublicBusinessInfo {
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
+  /** Cobertura pagada hasta (ISO). */
+  paidUntil?: string | null;
+  billingInterval?: BusinessBillingInterval | null;
+  /** Días hasta el vencimiento de cobertura (null si no aplica). */
+  paymentDaysRemaining?: number | null;
+  paymentDueSoon?: boolean;
   enPrueba: boolean;
   trialStartDate?: string | null;
   trialEndDate?: string | null;
@@ -152,6 +172,51 @@ function resolvePlanId(data: Record<string, unknown>): string {
   return resolveLegacyPlanId(data.plan);
 }
 
+function parseBusinessBilling(data: Record<string, unknown>): BusinessBillingInfo | undefined {
+  const raw = data.billing;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const billing = raw as Record<string, unknown>;
+  const interval =
+    billing.billingInterval === 'year' || billing.billingInterval === 'month'
+      ? billing.billingInterval
+      : undefined;
+  return {
+    country: billing.country ? String(billing.country) : undefined,
+    currency: billing.currency ? String(billing.currency) : undefined,
+    productId: billing.productId ? String(billing.productId) : undefined,
+    paidUntil: billing.paidUntil ? String(billing.paidUntil) : undefined,
+    billingInterval: interval,
+    source: billing.source ? String(billing.source) : undefined,
+    updatedAt: billing.updatedAt ? String(billing.updatedAt) : undefined,
+    lastMercadoPagoPaymentId: billing.lastMercadoPagoPaymentId
+      ? String(billing.lastMercadoPagoPaymentId)
+      : undefined,
+  };
+}
+
+const PAYMENT_DUE_SOON_DAYS = 7;
+
+function paymentReminderFields(paidUntil?: string | null): {
+  paidUntil: string | null;
+  paymentDaysRemaining: number | null;
+  paymentDueSoon: boolean;
+} {
+  if (!paidUntil) {
+    return { paidUntil: null, paymentDaysRemaining: null, paymentDueSoon: false };
+  }
+  const until = new Date(paidUntil);
+  if (Number.isNaN(until.getTime())) {
+    return { paidUntil: null, paymentDaysRemaining: null, paymentDueSoon: false };
+  }
+  const ms = until.getTime() - Date.now();
+  const days = Math.ceil(ms / (1000 * 60 * 60 * 24));
+  return {
+    paidUntil,
+    paymentDaysRemaining: days,
+    paymentDueSoon: days >= 0 && days <= PAYMENT_DUE_SOON_DAYS,
+  };
+}
+
 function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord {
   return {
     id,
@@ -186,6 +251,7 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
         : undefined,
     platformAccess: resolvePlatformAccessForBusiness(data),
     suscripcion: parseBusinessSubscription(data),
+    billing: parseBusinessBilling(data),
     creadoPor: data.creadoPor ? String(data.creadoPor) : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
@@ -238,6 +304,10 @@ export function sanitizeBusinessPayload(
     ) {
       Object.assign(next, buildTrialFieldUpdates(payload, undefined));
     }
+  }
+
+  if (payload.platformAccess && typeof payload.platformAccess === 'object') {
+    next.platformAccess = payload.platformAccess as BusinessRecord['platformAccess'];
   }
 
   return next;
@@ -308,6 +378,7 @@ export async function createBusiness(
     contactVerification?: TrialContactVerification;
     lifecycle?: TrialLifecycle;
     platformAccess?: ClientPlatformAccess;
+    suscripcion?: BusinessSubscriptionRecord;
   }
 ): Promise<BusinessRecord> {
   const ref = businessRef(businessId);
@@ -340,6 +411,7 @@ export async function createBusiness(
     ...(payload.contactVerification ? { contactVerification: payload.contactVerification } : {}),
     ...(payload.lifecycle ? { lifecycle: payload.lifecycle } : {}),
     ...(payload.platformAccess ? { platformAccess: payload.platformAccess } : {}),
+    ...(payload.suscripcion ? { suscripcion: payload.suscripcion } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -456,6 +528,7 @@ function buildPublicBusinessInfo(
 ): PublicBusinessInfo {
   const limits = resolved.limits;
   const trial = resolveTrialState(business);
+  const paymentReminder = paymentReminderFields(business.billing?.paidUntil);
   return {
     id: business.id,
     nombre: business.nombre,
@@ -478,6 +551,10 @@ function buildPublicBusinessInfo(
     ultimoPagoPeriodo: paymentSummary.ultimoPagoPeriodo,
     ultimoPagoFecha: paymentSummary.ultimoPagoFecha,
     ultimoPagoMonto: paymentSummary.ultimoPagoMonto,
+    paidUntil: paymentReminder.paidUntil,
+    billingInterval: business.billing?.billingInterval ?? null,
+    paymentDaysRemaining: paymentReminder.paymentDaysRemaining,
+    paymentDueSoon: paymentReminder.paymentDueSoon,
     enPrueba: business.enPrueba === true,
     trialStartDate: trial.trialStartDate,
     trialEndDate: trial.trialEndDate,
@@ -532,7 +609,17 @@ export async function toSessionBusinessInfo(
   const business =
     existing ?? (await getBusiness(businessId)) ?? (await ensureDefaultBusiness(businessId));
   const { plan, resolved } = await resolveForBusiness(business);
-  const periodoActual = currentPeriodo();
+  const paymentSummary = isTrialActiveForBilling(business)
+    ? {
+        estadoPago: 'al_dia' as SubscriptionPaymentStatus,
+        periodoActual: currentPeriodo(),
+        montoEsperado: resolved.montoMensualEsperado,
+      }
+    : await getSubscriptionPaymentSummary(
+        businessId,
+        resolved.montoMensualEsperado,
+        business.billing?.paidUntil
+      );
 
   return buildPublicBusinessInfo(
     business,
@@ -543,11 +630,7 @@ export async function toSessionBusinessInfo(
       operadoresActivos: 0,
       usuariosActivos: 0,
     },
-    {
-      estadoPago: isTrialActiveForBilling(business) ? 'al_dia' : 'pendiente',
-      periodoActual,
-      montoEsperado: resolved.montoMensualEsperado,
-    }
+    paymentSummary
   );
 }
 
@@ -578,7 +661,11 @@ export async function toPublicBusinessInfo(
           usuariosActivos: 0,
         }),
     includePayments
-      ? getSubscriptionPaymentSummary(businessId, resolved.montoMensualEsperado)
+      ? getSubscriptionPaymentSummary(
+          businessId,
+          resolved.montoMensualEsperado,
+          business.billing?.paidUntil
+        )
       : Promise.resolve({
           estadoPago: (isTrialActiveForBilling(business)
             ? 'al_dia'
@@ -607,7 +694,11 @@ export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
       const resolved = resolveBusinessSubscription(plan, synced.suscripcion ?? {});
       const [counts, paymentSummary] = await Promise.all([
         getActiveUserCounts(synced.id),
-        getSubscriptionPaymentSummary(synced.id, resolved.montoMensualEsperado),
+        getSubscriptionPaymentSummary(
+          synced.id,
+          resolved.montoMensualEsperado,
+          synced.billing?.paidUntil
+        ),
       ]);
       return buildPublicBusinessInfo(synced, plan, resolved, counts, paymentSummary);
     })

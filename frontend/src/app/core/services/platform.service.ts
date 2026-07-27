@@ -20,6 +20,7 @@ export interface CreateBusinessPayload {
   id: string;
   nombre: string;
   planId: string;
+  trialProduct?: 'whatsapp' | 'erp' | 'completo';
   enPrueba?: boolean;
   trialStartDate?: string;
   trialEndDate?: string;
@@ -27,6 +28,7 @@ export interface CreateBusinessPayload {
   supervisor: {
     nombre: string;
     email?: string;
+    phone?: string;
     loginUsername: string;
     password?: string;
   };
@@ -76,6 +78,7 @@ export interface PlatformTrialRow {
   emailVerified: boolean;
   whatsappOptIn: boolean;
   planNombre: string;
+  trialProduct: string | null;
   trialStartDate: string | null;
   trialEndDate: string | null;
   trialDaysRemaining: number | null;
@@ -100,6 +103,8 @@ export interface PlatformPendingTrialRegistration {
   ciudad: string;
   status: string;
   emailVerified: boolean;
+  trialProduct: string | null;
+  trialDays: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -141,6 +146,32 @@ export interface RegisterSubscriptionPaymentPayload {
   monto?: number;
   fechaPago?: string;
   notas?: string;
+  coverageMonths?: number;
+}
+
+export interface BillingCatalogProduct {
+  id: string;
+  name: string;
+  description: string;
+  featured: boolean;
+  currency: string;
+  amountMonthly: number;
+  amountYearly?: number;
+  extraUserMonthly: number;
+  priceLabel: string;
+  priceLabelYearly?: string;
+  erpPlanId: string;
+  country: 'UY' | 'AR';
+}
+
+export interface MarkPaidPayload {
+  productId?: string;
+  country?: 'UY' | 'AR';
+  registerPayment?: boolean;
+  amount?: number;
+  billingInterval?: 'month' | 'year';
+  enablePerUserPricing?: boolean;
+  precioPorOperador?: number;
 }
 
 @Injectable({
@@ -151,6 +182,22 @@ export class PlatformService {
 
   getModuleCatalog(): Observable<SubscriptionModuleMeta[]> {
     return this.http.get<SubscriptionModuleMeta[]>('/api/platform/modules');
+  }
+
+  getBillingCatalog(country: 'UY' | 'AR' = 'UY'): Observable<{
+    country: 'UY' | 'AR';
+    products: BillingCatalogProduct[];
+  }> {
+    return this.http.get<{ country: 'UY' | 'AR'; products: BillingCatalogProduct[] }>(
+      `/api/platform/billing-catalog?country=${country}`
+    );
+  }
+
+  syncPlansFromLanding(): Observable<{ plans: PublicPlanInfo[]; message: string }> {
+    return this.http.post<{ plans: PublicPlanInfo[]; message: string }>(
+      '/api/platform/plans/sync-landing',
+      {}
+    );
   }
 
   getPlans(): Observable<PublicPlanInfo[]> {
@@ -190,9 +237,66 @@ export class PlatformService {
     );
   }
 
+  updateBusinessContact(
+    businessId: string,
+    payload: {
+      ownerName?: string;
+      email?: string;
+      phone?: string;
+      pais?: string;
+      ciudad?: string;
+      rubro?: string;
+      whatsappOptIn?: boolean;
+    }
+  ): Observable<PublicBusinessInfo> {
+    return this.http.put<PublicBusinessInfo>(
+      `/api/platform/businesses/${businessId}/contact`,
+      payload
+    );
+  }
+
+  sendBusinessInvoiceEmail(
+    businessId: string,
+    payload?: { to?: string; periodo?: string; notes?: string }
+  ): Observable<{
+    ok: boolean;
+    sent: boolean;
+    devOnly: boolean;
+    to: string;
+    periodo: string;
+    total: number;
+    message: string;
+  }> {
+    return this.http.post<{
+      ok: boolean;
+      sent: boolean;
+      devOnly: boolean;
+      to: string;
+      periodo: string;
+      total: number;
+      message: string;
+    }>(`/api/platform/businesses/${businessId}/send-invoice-email`, payload ?? {});
+  }
+
+  extendBusinessTrial(businessId: string, days: number): Observable<PublicBusinessInfo> {
+    return this.http.post<PublicBusinessInfo>(
+      `/api/platform/businesses/${businessId}/extend-trial`,
+      { days }
+    );
+  }
+
+  markBusinessAsPaid(businessId: string, payload: MarkPaidPayload): Observable<PublicBusinessInfo> {
+    return this.http.post<PublicBusinessInfo>(
+      `/api/platform/businesses/${businessId}/mark-paid`,
+      payload
+    );
+  }
+
   updatePlatformAccess(
     businessId: string,
-    payload: Partial<Pick<ClientPlatformAccess, 'erpWebEnabled' | 'whatsappEnabled' | 'aiEnabled'>>
+    payload: Partial<
+      Pick<ClientPlatformAccess, 'erpWebEnabled' | 'whatsappEnabled' | 'aiEnabled' | 'trialProduct'>
+    >
   ): Observable<ClientPlatformAccess> {
     return this.http.put<ClientPlatformAccess>(
       `/api/platform/businesses/${businessId}/platform-access`,
@@ -229,9 +333,134 @@ export class PlatformService {
       .pipe(map((res) => res.registrations ?? []));
   }
 
-  releaseTrialContactClaim(type: 'email' | 'phone', value: string): Observable<{ ok: boolean }> {
+  releaseTrialContactClaim(
+    type: 'email' | 'phone',
+    value: string,
+    options?: { force?: boolean }
+  ): Observable<{
+    ok: boolean;
+    released: boolean;
+    wasBoundToBusinessId: string | null;
+    type: string;
+    value: string;
+  }> {
     const encoded = encodeURIComponent(value.trim().toLowerCase());
-    return this.http.delete<{ ok: boolean }>(`/api/platform/trial-contact-claims/${type}/${encoded}`);
+    const force = options?.force ? '?force=1' : '';
+    return this.http.delete<{
+      ok: boolean;
+      released: boolean;
+      wasBoundToBusinessId: string | null;
+      type: string;
+      value: string;
+    }>(`/api/platform/trial-contact-claims/${type}/${encoded}${force}`);
+  }
+
+  getBusinessUsers(
+    businessId: string,
+    options?: { includeInactive?: boolean }
+  ): Observable<
+    Array<{
+      id: string;
+      nombre: string;
+      email: string;
+      loginUsername?: string;
+      rol: string;
+      permisos?: string[];
+      activo: boolean;
+      hasPassword?: boolean;
+      hasGoogle?: boolean;
+    }>
+  > {
+    const params = options?.includeInactive ? '?includeInactive=1' : '';
+    return this.http.get(`/api/platform/businesses/${businessId}/users${params}`);
+  }
+
+  createBusinessUser(
+    businessId: string,
+    payload: {
+      nombre: string;
+      email?: string;
+      loginUsername?: string;
+      password?: string;
+      rol: 'supervisor' | 'admin' | 'staff';
+      activo?: boolean;
+      permisos?: string[];
+    }
+  ): Observable<{
+    id: string;
+    nombre: string;
+    email: string;
+    rol: string;
+    activo: boolean;
+  }> {
+    return this.http.post(`/api/platform/businesses/${businessId}/users`, payload);
+  }
+
+  updateBusinessUser(
+    businessId: string,
+    userId: string,
+    payload: Partial<{
+      nombre: string;
+      email: string;
+      loginUsername: string;
+      password: string;
+      rol: 'supervisor' | 'admin' | 'staff';
+      activo: boolean;
+      permisos: string[];
+    }>
+  ): Observable<{
+    id: string;
+    nombre: string;
+    email: string;
+    rol: string;
+    activo: boolean;
+  }> {
+    return this.http.patch(`/api/platform/businesses/${businessId}/users/${userId}`, payload);
+  }
+
+  deleteBusinessUser(businessId: string, userId: string): Observable<{ id: string; ok: boolean }> {
+    return this.http.delete(`/api/platform/businesses/${businessId}/users/${userId}`);
+  }
+
+  getWhatsappUsers(businessId: string): Observable<{
+    users: PlatformWhatsappUser[];
+    enabledCount: number;
+  }> {
+    return this.http.get(`/api/platform/businesses/${businessId}/whatsapp-users`);
+  }
+
+  addWhatsappUser(
+    businessId: string,
+    payload: {
+      phone: string;
+      name: string;
+      role?: string;
+      enabled?: boolean;
+      erpUserId?: string | null;
+    }
+  ): Observable<PlatformWhatsappUser> {
+    return this.http.post(`/api/platform/businesses/${businessId}/whatsapp-users`, payload);
+  }
+
+  updateWhatsappUser(
+    businessId: string,
+    userId: string,
+    payload: Partial<{
+      phone: string;
+      name: string;
+      role: string;
+      enabled: boolean;
+      erpUserId: string | null;
+    }>
+  ): Observable<PlatformWhatsappUser> {
+    return this.http.patch(
+      `/api/platform/businesses/${businessId}/whatsapp-users/${userId}`,
+      payload
+    );
+  }
+
+  deleteWhatsappUser(businessId: string, userId: string): Observable<{ ok: boolean }> {
+    return this.http.delete(`/api/platform/businesses/${businessId}/whatsapp-users/${userId}`);
   }
 
   registerBusinessPayment(
@@ -257,4 +486,13 @@ export class PlatformService {
       platformAccess: ClientPlatformAccess;
     }>('/api/platform/bot/simulate', payload);
   }
+}
+
+export interface PlatformWhatsappUser {
+  id: string;
+  phone: string;
+  name: string;
+  role: 'supervisor' | 'admin' | 'operador';
+  enabled: boolean;
+  erpUserId: string | null;
 }

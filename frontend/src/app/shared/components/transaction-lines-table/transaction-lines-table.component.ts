@@ -638,8 +638,35 @@ export class TransactionLinesTableComponent {
   }
 
   onNumericBlur(field: TransactionTableFieldId, index: number, fallback: number | null | undefined): void {
-    this.pendingBlur = [{ field, index, fallback }];
-    window.setTimeout(() => this.flushPendingBlur(), 0);
+    // Commit sync on blur so Guardar (click after blur) sees the new quantity/price.
+    // Deferred setTimeout(0) raced with save and often kept the previous value on the last edited line.
+    this.commitNumericField(field, index, fallback);
+  }
+
+  /** Flushes any in-progress numeric edits (call before save/persist). */
+  commitPendingNumericEdits(): void {
+    if (this.pendingBlur?.length) {
+      this.flushPendingBlur();
+      return;
+    }
+    // Also commit drafts that exist without a pending blur entry (focus still in cell).
+    for (const [key, raw] of [...this.editingNumericFields.entries()]) {
+      const sep = key.indexOf(':');
+      if (sep < 0) continue;
+      const field = key.slice(0, sep) as TransactionTableFieldId;
+      const index = Number(key.slice(sep + 1));
+      if (!Number.isFinite(index)) continue;
+      const line = this.lines[index];
+      const fallback =
+        field === 'quantity'
+          ? line?.quantity
+          : field === 'unitCost'
+            ? line?.unitCost
+            : field === 'unitSale'
+              ? line?.unitSale
+              : line?.personalization;
+      this.commitNumericField(field, index, fallback ?? null);
+    }
   }
 
   fieldName(field: TransactionTableFieldId, index: number): string {
@@ -660,6 +687,15 @@ export class TransactionLinesTableComponent {
     for (const field of ['quantity', 'unitCost', 'unitSale', 'personalization'] as TransactionTableFieldId[]) {
       this.editingNumericFields.delete(this.numericKey(field, index));
     }
+  }
+
+  private commitNumericField(
+    field: TransactionTableFieldId,
+    index: number,
+    fallback: number | null | undefined
+  ): void {
+    this.pendingBlur = [{ field, index, fallback }];
+    this.flushPendingBlur();
   }
 
   private flushPendingBlur(): void {

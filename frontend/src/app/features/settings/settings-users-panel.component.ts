@@ -8,6 +8,8 @@ import {
   Permission,
   ROLE_PRESETS,
   STAFF_PERMISSION_GROUPS,
+  adminHasFullAccess,
+  allAssignablePermissions,
   sanitizeStaffPermissions,
   USER_ROLE_LABELS,
   UserRole,
@@ -113,7 +115,7 @@ import {
         <div class="border-l-4 border-l-teal-500 p-4 sm:p-5">
           <h3 class="font-bold text-gray-900 mb-1">Nuevo usuario</h3>
           <p class="text-sm text-gray-600 mb-4 desc-lg-only">
-            Los administradores delegados y operadores cuentan dentro del límite del plan.
+            Administradores delegados y operadores cuentan en el cupo del plan. Después de crear un admin podés ajustar sus permisos.
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input [(ngModel)]="draft.nombre" name="newUserNombre" placeholder="Nombre *"
@@ -259,17 +261,18 @@ import {
             </label>
 
             <p *ngIf="user.rol === 'supervisor'" class="text-sm text-gray-600 dark:text-gray-400 mb-4 desc-lg-only">
-              Administrador principal de la empresa. Acceso completo y gestión de operadores.
+              Administrador principal de la empresa. Acceso completo y gestión de usuarios.
             </p>
             <p *ngIf="user.rol === 'admin'" class="text-sm text-gray-600 dark:text-gray-400 mb-4 desc-lg-only">
-              Administrador delegado con acceso completo al negocio, sin gestionar usuarios.
+              Administrador delegado. Podés dar o quitar permisos (incluye gestionar usuarios si tiene «Configuración»).
+              Sin permisos marcados = acceso completo (legado).
             </p>
 
-            <ng-container *ngIf="user.rol === 'staff'">
+            <ng-container *ngIf="user.rol === 'staff' || user.rol === 'admin'">
               <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-3">
-                Permisos del operador
+                {{ user.rol === 'admin' ? 'Permisos del administrador' : 'Permisos del operador' }}
               </p>
-              <div class="flex flex-wrap gap-2 mb-4">
+              <div *ngIf="user.rol === 'staff'" class="flex flex-wrap gap-2 mb-4">
                 <button
                   type="button"
                   (click)="applyRolePreset(user, 'operador')"
@@ -283,7 +286,15 @@ import {
                   Perfil operador (mis horas)
                 </button>
               </div>
-              <label class="block mb-4">
+              <div *ngIf="user.rol === 'admin'" class="flex flex-wrap gap-2 mb-4">
+                <button
+                  type="button"
+                  (click)="grantFullAdminAccess(user)"
+                  class="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
+                  Acceso completo
+                </button>
+              </div>
+              <label *ngIf="user.rol === 'staff'" class="block mb-4">
                 <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-2 block">
                   Colaborador vinculado
                 </span>
@@ -300,7 +311,7 @@ import {
                   Con «Ver colaboradores» activo, el operador verá únicamente las horas de esta persona.
                 </span>
               </label>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mb-4 desc-lg-only">
+              <p *ngIf="user.rol === 'staff'" class="text-xs text-gray-500 dark:text-gray-400 mb-4 desc-lg-only">
                 El perfil operador gestiona estados de pedidos (pendiente, en proceso, listo), ve total y saldo del cliente, precios en stock, puede imprimir pedidos y no ve costos ni ganancias.
               </p>
               <div class="space-y-4">
@@ -408,6 +419,9 @@ export class SettingsUsersPanelComponent implements OnInit {
   }
 
   isStaffPermissionEnabled(user: AppUser, permission: Permission): boolean {
+    if (user.rol === 'admin') {
+      return userHasPermission('admin', user.permisos, permission);
+    }
     return userHasPermission('staff', user.permisos, permission);
   }
 
@@ -435,7 +449,10 @@ export class SettingsUsersPanelComponent implements OnInit {
       return 'Administrador principal · acceso completo';
     }
     if (user.rol === 'admin') {
-      return 'Administrador delegado · acceso completo al negocio';
+      if (adminHasFullAccess(user.permisos)) {
+        return 'Administrador delegado · acceso completo';
+      }
+      return `Administrador delegado · ${this.getPermissionSummary(user)}`;
     }
     return this.getPermissionSummary(user);
   }
@@ -445,6 +462,9 @@ export class SettingsUsersPanelComponent implements OnInit {
   }
 
   getPermissionCount(user: AppUser): number {
+    if (user.rol === 'admin' && adminHasFullAccess(user.permisos)) {
+      return this.assignablePermissions.length;
+    }
     return (user.permisos ?? []).filter((permission) =>
       this.assignablePermissions.some((item) => item.key === permission)
     ).length;
@@ -452,6 +472,9 @@ export class SettingsUsersPanelComponent implements OnInit {
 
   getPermissionSummary(user: AppUser): string {
     const count = this.getPermissionCount(user);
+    if (user.rol === 'admin' && adminHasFullAccess(user.permisos)) {
+      return 'Acceso completo.';
+    }
     if (count === 0) return 'Sin permisos asignados todavía.';
     return `${count} permiso${count === 1 ? '' : 's'} activo${count === 1 ? '' : 's'}.`;
   }
@@ -489,10 +512,18 @@ export class SettingsUsersPanelComponent implements OnInit {
   }
 
   setStaffPermission(user: AppUser, permission: Permission, enabled: boolean) {
-    const current = new Set<Permission>(sanitizeStaffPermissions(user.permisos));
+    const base =
+      user.rol === 'admin' && adminHasFullAccess(user.permisos)
+        ? allAssignablePermissions()
+        : sanitizeStaffPermissions(user.permisos);
+    const current = new Set<Permission>(base);
     if (enabled) current.add(permission);
     else current.delete(permission);
     user.permisos = [...current];
+  }
+
+  grantFullAdminAccess(user: AppUser) {
+    user.permisos = [];
   }
 
   applyRolePreset(user: AppUser, presetKey: keyof typeof ROLE_PRESETS) {
@@ -514,6 +545,7 @@ export class SettingsUsersPanelComponent implements OnInit {
         .trim()
         .toLowerCase(),
       rol: this.draft.rol === 'admin' ? 'admin' : 'staff',
+      // Admin sin lista = acceso completo (legado). Operador arranca vacío hasta asignar.
       permisos: [...DEFAULT_STAFF_PERMISSIONS],
       activo: true,
       colaboradorId: this.draft.rol === 'staff' ? this.draft.colaboradorId : null,
@@ -566,7 +598,10 @@ export class SettingsUsersPanelComponent implements OnInit {
       email: user.email ?? '',
       loginUsername: user.loginUsername ?? '',
       rol: user.rol,
-      permisos: user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
+      permisos:
+        user.rol === 'staff' || user.rol === 'admin'
+          ? sanitizeStaffPermissions(user.permisos)
+          : [],
       activo: user.activo !== false,
       colaboradorId: user.rol === 'staff' ? user.colaboradorId ?? null : null,
     };
@@ -620,7 +655,9 @@ export class SettingsUsersPanelComponent implements OnInit {
         this.users = page.items.map((user) => ({
           ...user,
           permisos:
-            user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
+            user.rol === 'staff' || user.rol === 'admin'
+              ? sanitizeStaffPermissions(user.permisos)
+              : [],
         }));
         this.usersHasMore = page.hasMore;
         this.usersCursor = page.nextCursor;
@@ -652,7 +689,9 @@ export class SettingsUsersPanelComponent implements OnInit {
           ...page.items.map((user) => ({
             ...user,
             permisos:
-              user.rol === 'staff' ? sanitizeStaffPermissions(user.permisos) : [],
+              user.rol === 'staff' || user.rol === 'admin'
+                ? sanitizeStaffPermissions(user.permisos)
+                : [],
           })),
         ];
         this.usersHasMore = page.hasMore;

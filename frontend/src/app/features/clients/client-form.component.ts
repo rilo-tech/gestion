@@ -91,16 +91,18 @@ export class ClientFormComponent implements OnInit {
       const commands = this.returnOrderId
         ? ['/orders', this.returnOrderId, 'edit']
         : ['/orders/new'];
-      const queryParams =
-        clienteId && !this.returnOrderId ? { clienteId } : undefined;
-      this.router.navigate(commands, queryParams ? { queryParams } : undefined);
+      const queryParams: Record<string, string> = { restoreDraft: '1' };
+      if (clienteId && !this.returnOrderId) {
+        queryParams['clienteId'] = clienteId;
+      }
+      this.router.navigate(commands, { queryParams });
       return;
     }
 
     if (this.returnTo === 'sales') {
-      this.router.navigate(['/sales/new'], {
-        queryParams: clienteId ? { clienteId } : undefined,
-      });
+      const queryParams: Record<string, string> = { restoreDraft: '1' };
+      if (clienteId) queryParams['clienteId'] = clienteId;
+      this.router.navigate(['/sales/new'], { queryParams });
       return;
     }
 

@@ -5,6 +5,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { SidebarComponent } from '../sidebar/sidebar.component';
 import { TopbarComponent } from '../topbar/topbar.component';
 import { AppDialogComponent } from '../app-dialog/app-dialog.component';
+import { ProductCoachTipComponent } from '../product-coach-tip/product-coach-tip.component';
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { trialBannerDismissStorageKey } from '../../../core/constants/auth-storage';
@@ -20,6 +21,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
     SidebarComponent,
     TopbarComponent,
     AppDialogComponent,
+    ProductCoachTipComponent,
   ],
   template: `
     <div class="flex h-screen bg-gray-50 overflow-hidden">
@@ -33,13 +35,14 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
 
       <app-sidebar></app-sidebar>
       <app-dialog></app-dialog>
+      <app-product-coach-tip></app-product-coach-tip>
 
       <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
         <app-topbar></app-topbar>
         <div
           *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb && auth.canAccessWhatsapp"
           class="shrink-0 border-b border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-950">
-          Tu plan opera por <span class="font-semibold">WhatsApp</span>. Escribí al número que registraste para cargar pedidos y ventas.
+          Tu plan opera por <span class="font-semibold">WhatsApp</span>. Escribí al número de RiloBot con el WhatsApp que registraste.
           <a routerLink="/mi-cuenta" class="ml-2 font-semibold text-teal-800 hover:underline">Ver mi cuenta</a>
         </div>
         <div
@@ -52,7 +55,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
             <a
               routerLink="/activar-suscripcion"
               class="inline-flex items-center rounded-lg bg-violet-600 px-3 py-1.5 text-xs sm:text-sm font-semibold text-white shadow-sm hover:bg-violet-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600 dark:bg-violet-500 dark:hover:bg-violet-400 dark:text-white">
-              Activar suscripción
+              Activar plan
             </a>
             <button
               type="button"
@@ -65,8 +68,30 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
         </div>
         <div
           *ngIf="auth.isTrialExpired"
-          class="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-950">
-          Tu período de prueba finalizó. Contactá a RILO para continuar usando el sistema.
+          class="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2.5 sm:px-4 text-sm text-amber-950 flex items-center gap-3">
+          <p class="min-w-0 flex-1">Tu período de prueba finalizó. Activá un plan para seguir usando RILO.</p>
+          <a
+            routerLink="/activar-suscripcion"
+            class="inline-flex shrink-0 items-center rounded-lg bg-amber-600 px-3 py-1.5 text-xs sm:text-sm font-semibold text-white hover:bg-amber-700">
+            Activar suscripción
+          </a>
+        </div>
+        <div
+          *ngIf="showPaymentDueBanner"
+          class="shrink-0 border-b px-3 py-2.5 sm:px-4 text-sm flex items-center gap-3"
+          [class.border-rose-200]="auth.isPaymentOverdue"
+          [class.bg-rose-50]="auth.isPaymentOverdue"
+          [class.text-rose-950]="auth.isPaymentOverdue"
+          [class.border-amber-200]="!auth.isPaymentOverdue"
+          [class.bg-amber-50]="!auth.isPaymentOverdue"
+          [class.text-amber-950]="!auth.isPaymentOverdue">
+          <p class="min-w-0 flex-1">{{ paymentBannerText }}</p>
+          <a
+            routerLink="/activar-suscripcion"
+            class="inline-flex shrink-0 items-center rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold text-white"
+            [ngClass]="auth.isPaymentOverdue ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-600 hover:bg-amber-700'">
+            Pagar ahora
+          </a>
         </div>
         <main class="flex-1 overflow-y-auto overflow-x-hidden">
           <router-outlet></router-outlet>
@@ -91,6 +116,28 @@ export class LayoutComponent implements OnInit {
     if (!this.auth.isTrialExpiringSoon || days == null) return false;
     if (this.dismissedAtTrialDays == null) return true;
     return days < this.dismissedAtTrialDays;
+  }
+
+  get showPaymentDueBanner(): boolean {
+    if (this.auth.isPlatformAdmin || this.auth.isTrialExpired) return false;
+    if (this.auth.currentBusiness?.enPrueba) return false;
+    return this.auth.isPaymentOverdue || this.auth.isPaymentDueSoon || this.auth.isPaymentPending;
+  }
+
+  get paymentBannerText(): string {
+    const days = this.auth.paymentDaysRemaining;
+    if (this.auth.isPaymentOverdue) {
+      return 'Tu pago mensual está vencido. Renová la suscripción para no interrumpir el servicio.';
+    }
+    if (this.auth.isPaymentDueSoon && days != null) {
+      return days === 0
+        ? 'Tu cobertura vence hoy. Renová el plan para seguir operando.'
+        : `Tu cobertura vence en ${days} día${days === 1 ? '' : 's'}. Podés pagar el próximo mes o el año.`;
+    }
+    if (this.auth.isPaymentPending) {
+      return `Pago pendiente del período ${this.auth.currentBusiness?.periodoPagoActual ?? ''}. Tenés plazo hasta el día 10.`;
+    }
+    return 'Renová tu suscripción.';
   }
 
   dismissTrialBanner() {

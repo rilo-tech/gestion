@@ -77,7 +77,8 @@ function mapStoredUser(id: string, data: Record<string, unknown>): StoredUser {
     passwordHash: data.passwordHash ? String(data.passwordHash) : undefined,
     googleId: data.googleId ? String(data.googleId) : undefined,
     rol,
-    permisos: rol === 'staff' ? sanitizeStaffPermissions(data.permisos) : [],
+    permisos:
+      rol === 'staff' || rol === 'admin' ? sanitizeStaffPermissions(data.permisos) : [],
     activo: data.activo !== false,
     tema: normalizeTheme(data.tema),
     colaboradorId: normalizeColaboradorId(data.colaboradorId, rol),

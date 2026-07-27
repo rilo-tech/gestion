@@ -1,0 +1,119 @@
+import { db } from '../firebase.ts';
+import { getBusiness, updateBusiness } from '../auth/business.ts';
+import { platformAccessFromTrialProduct } from '../auth/platform-access.ts';
+import { registerSubscriptionCoverage } from '../auth/subscription-payments.ts';
+import {
+  getBillingProduct,
+  type BillingCountryCode,
+  type BillingInterval,
+} from '../../shared/billing-catalog.ts';
+import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
+
+export async function activatePaidSubscription(params: {
+  businessId: string;
+  productId: string;
+  country: BillingCountryCode;
+  amount: number;
+  currency: string;
+  mercadoPagoPaymentId: string;
+  payerEmail?: string;
+  billingInterval?: BillingInterval;
+  coverageMonths?: number;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const product = getBillingProduct(params.productId);
+  if (!product || !isTrialProductId(params.productId)) {
+    return { ok: false, reason: 'Producto inválido' };
+  }
+
+  const business = await getBusiness(params.businessId);
+  if (!business) {
+    return { ok: false, reason: 'Empresa no encontrada' };
+  }
+
+  const existing = await db
+    .collection(`negocios/${params.businessId}/pagos_suscripcion`)
+    .where('mercadoPagoPaymentId', '==', params.mercadoPagoPaymentId)
+    .limit(1)
+    .get();
+  if (!existing.empty) {
+    return { ok: true };
+  }
+
+  const billingInterval: BillingInterval =
+    params.billingInterval === 'year' ? 'year' : 'month';
+  const coverageMonths = Math.max(
+    1,
+    Math.min(
+      24,
+      Math.floor(
+        params.coverageMonths ?? (billingInterval === 'year' ? 12 : 1)
+      )
+    )
+  );
+
+  const now = new Date();
+  const productId = params.productId as TrialProductId;
+  const platformAccess = platformAccessFromTrialProduct(productId);
+
+  const coverage = await registerSubscriptionCoverage(params.businessId, {
+    coverageMonths,
+    montoTotal: params.amount,
+    fechaPago: now.toISOString(),
+    notas: `Mercado Pago ${params.mercadoPagoPaymentId} · ${product.name} · ${params.currency}${
+      billingInterval === 'year' ? ' · anual' : ''
+    }`,
+    mercadoPagoPaymentId: params.mercadoPagoPaymentId,
+    currency: params.currency,
+    productId,
+    country: params.country,
+    payerEmail: params.payerEmail,
+  });
+
+  // Precio base mensual en suscripción (si pagó anual, guardamos cuota equivalente /12 de lo cobrado
+  // o el monto mensual de catálogo vía amount cuando es mensual).
+  const precioBaseMensual =
+    billingInterval === 'year'
+      ? Math.round(params.amount / coverageMonths)
+      : params.amount;
+
+  await updateBusiness(
+    params.businessId,
+    {
+      planId: product.erpPlanId,
+      estadoSuscripcion: 'activa',
+      enPrueba: false,
+      trialStatus: 'converted',
+      platformAccess,
+      suscripcion: {
+        precioBaseOverride: precioBaseMensual,
+        precioPorAdministradorOverride: 0,
+      },
+    },
+    {
+      allowSubscriptionFields: true,
+      changedBy: 'system',
+      historyNote: `Pago Mercado Pago aprobado (${params.mercadoPagoPaymentId}) — ${product.name} (${
+        billingInterval === 'year' ? 'anual' : 'mensual'
+      })`,
+    }
+  );
+
+  await db.collection('negocios').doc(params.businessId).set(
+    {
+      billing: {
+        country: params.country,
+        currency: params.currency,
+        productId,
+        billingInterval,
+        paidUntil: coverage.paidUntil,
+        lastMercadoPagoPaymentId: params.mercadoPagoPaymentId,
+        source: 'mercadopago',
+        updatedAt: now.toISOString(),
+      },
+      updatedAt: now.toISOString(),
+    },
+    { merge: true }
+  );
+
+  return { ok: true };
+}

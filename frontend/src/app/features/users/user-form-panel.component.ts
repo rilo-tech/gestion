@@ -20,6 +20,8 @@ import {
   Permission,
   USER_ROLE_LABELS,
   UserRole,
+  adminHasFullAccess,
+  allAssignablePermissions,
   sanitizeStaffPermissions,
   userHasPermission,
 } from '../../core/constants/permissions';
@@ -97,15 +99,22 @@ export interface UserFormSaveEvent {
           <div>
             <h3 class="text-sm font-bold text-gray-900">Permisos</h3>
             <p *ngIf="userForm.rol === 'admin'" class="text-xs text-gray-500 mt-1">
-              Los administradores tienen acceso completo a la aplicación.
+              Marcá qué puede hacer este administrador. Sin permisos = acceso completo.
+              «Configuración» permite gestionar usuarios de la empresa.
             </p>
-            <p *ngIf="userForm.rol !== 'admin'" class="text-xs text-gray-500 mt-1">
-              Solo los administradores pueden editar, eliminar y ver costos o ganancias.
-              Acá podés habilitar permisos extra para pedidos y ventas.
+            <p *ngIf="userForm.rol === 'staff'" class="text-xs text-gray-500 mt-1">
+              Habilitá permisos para pedidos, ventas y el resto del panel.
             </p>
           </div>
 
-          <ng-container *ngIf="userForm.rol !== 'admin'">
+          <ng-container *ngIf="userForm.rol === 'staff' || userForm.rol === 'admin'">
+            <button
+              *ngIf="userForm.rol === 'admin'"
+              type="button"
+              (click)="grantFullAdminAccess()"
+              class="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100">
+              Acceso completo
+            </button>
             <div *ngFor="let group of staffPermissionGroups" class="space-y-2">
               <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">{{ group.label }}</p>
               <div class="space-y-2">
@@ -174,10 +183,14 @@ export class UserFormPanelComponent implements OnChanges {
     if (role === 'staff' && !this.userForm.permisos?.length) {
       this.userForm.permisos = [...DEFAULT_STAFF_PERMISSIONS];
     }
+    if (role === 'admin') {
+      this.userForm.permisos = [];
+    }
   }
 
   hasPermissionSelected(permission: Permission): boolean {
-    return userHasPermission('staff', this.userForm.permisos, permission);
+    const role = this.userForm.rol === 'admin' ? 'admin' : 'staff';
+    return userHasPermission(role, this.userForm.permisos, permission);
   }
 
   isStaffPermissionEnabled(permission: Permission): boolean {
@@ -185,10 +198,18 @@ export class UserFormPanelComponent implements OnChanges {
   }
 
   setStaffPermission(permission: Permission, enabled: boolean) {
-    const current = new Set<Permission>(sanitizeStaffPermissions(this.userForm.permisos));
+    const base =
+      this.userForm.rol === 'admin' && adminHasFullAccess(this.userForm.permisos)
+        ? allAssignablePermissions()
+        : sanitizeStaffPermissions(this.userForm.permisos);
+    const current = new Set<Permission>(base);
     if (enabled) current.add(permission);
     else current.delete(permission);
     this.userForm.permisos = [...current];
+  }
+
+  grantFullAdminAccess() {
+    this.userForm.permisos = [];
   }
 
   saveUser() {
@@ -206,9 +227,9 @@ export class UserFormPanelComponent implements OnChanges {
       email: this.userForm.email?.trim() || '',
       rol: this.userForm.rol,
       permisos:
-        this.userForm.rol === 'admin'
-          ? []
-          : sanitizeStaffPermissions(this.userForm.permisos),
+        this.userForm.rol === 'staff' || this.userForm.rol === 'admin'
+          ? sanitizeStaffPermissions(this.userForm.permisos)
+          : [],
       activo: this.userForm.activo !== false,
     };
 
@@ -270,9 +291,9 @@ export class UserFormPanelComponent implements OnChanges {
           email: user.email ?? '',
           rol: user.rol ?? 'staff',
           permisos:
-            user.rol === 'admin'
-              ? []
-              : sanitizeStaffPermissions(user.permisos ?? DEFAULT_STAFF_PERMISSIONS),
+            user.rol === 'staff' || user.rol === 'admin'
+              ? sanitizeStaffPermissions(user.permisos ?? DEFAULT_STAFF_PERMISSIONS)
+              : [],
           activo: user.activo !== false,
         };
         this.loadingUser = false;

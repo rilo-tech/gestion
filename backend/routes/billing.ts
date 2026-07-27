@@ -1,20 +1,234 @@
 import express from 'express';
-import { requireAuth } from '../auth/middleware.ts';
+import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
+import { getBusiness } from '../auth/business.ts';
+import {
+  listProductsForCountry,
+  resolveBillingCountry,
+  getProductPriceForCountry,
+  getBillingProduct,
+  resolveCheckoutAmount,
+  type BillingCountryCode,
+  type BillingInterval,
+} from '../../shared/billing-catalog.ts';
+import {
+  createCheckoutPreference,
+  fetchMercadoPagoPaymentAnyCountry,
+  isMercadoPagoConfigured,
+} from '../billing/mercadopago.ts';
+import { activatePaidSubscription } from '../billing/activate-paid-subscription.ts';
 
 const router = express.Router();
 
-router.get('/plans', (_req, res) => {
-  res.json({
-    message: 'Selección de plan disponible próximamente con Mercado Pago.',
-    available: false,
-  });
+function parseBillingInterval(value: unknown): BillingInterval {
+  return value === 'year' ? 'year' : 'month';
+}
+
+function appBaseUrl(): string {
+  return (
+    process.env.APP_URL?.trim() ||
+    process.env.VITE_APP_URL?.trim() ||
+    'https://rilo-7eff4.web.app'
+  ).replace(/\/$/, '');
+}
+
+function apiBaseUrl(): string {
+  // En prod el webhook llega por hosting rewrite /api/**
+  return `${appBaseUrl()}/api`;
+}
+
+function countryFromBusiness(business: Awaited<ReturnType<typeof getBusiness>>): BillingCountryCode {
+  const lifecycle = (business as { lifecycle?: { pais?: string } } | null)?.lifecycle;
+  return resolveBillingCountry(lifecycle?.pais);
+}
+
+router.get('/plans', requireAuth, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    if (!businessId) {
+      return res.status(401).json({ error: 'No autenticado.' });
+    }
+
+    const business = await getBusiness(businessId);
+    if (!business) {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+
+    const country = countryFromBusiness(business);
+    const products = listProductsForCountry(country);
+    const configured = isMercadoPagoConfigured(country);
+
+    res.json({
+      available: configured,
+      country,
+      currency: country === 'AR' ? 'ARS' : 'UYU',
+      trialWithoutCard: true,
+      message: configured
+        ? null
+        : `Mercado Pago aún no configurado para ${country}. Contactá a soporte.`,
+      products,
+    });
+  } catch (error) {
+    console.error('[billing] plans error', error);
+    res.status(500).json({ error: 'No se pudieron cargar los planes.' });
+  }
 });
 
-router.post('/create-subscription', requireAuth, (_req, res) => {
-  res.status(501).json({
-    error: 'La activación con Mercado Pago se habilitará en la Fase 2.',
-    phase: 2,
-  });
+router.post('/checkout', requireAuth, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    const userEmail =
+      authReq.auth?.scope === 'company' ? authReq.auth.user.email : undefined;
+    if (!businessId) {
+      return res.status(401).json({ error: 'No autenticado.' });
+    }
+
+    const productId = String(req.body?.productId ?? '').trim();
+    const product = getBillingProduct(productId);
+    if (!product) {
+      return res.status(400).json({ error: 'Producto inválido.' });
+    }
+
+    const billingInterval = parseBillingInterval(req.body?.billingInterval);
+
+    const business = await getBusiness(businessId);
+    if (!business) {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+
+    const country = countryFromBusiness(business);
+    if (!isMercadoPagoConfigured(country)) {
+      return res.status(503).json({
+        error: `El pago online para ${country} todavía no está habilitado. Escribinos por WhatsApp.`,
+        country,
+      });
+    }
+
+    const price = getProductPriceForCountry(productId, country);
+    if (!price) {
+      return res.status(400).json({ error: 'Sin precio para este país.' });
+    }
+
+    const checkout = resolveCheckoutAmount(price.amountMonthly, billingInterval);
+    const externalReference = `${businessId}|${productId}|${country}|${billingInterval}|${Date.now()}`;
+    const base = appBaseUrl();
+
+    const preference = await createCheckoutPreference({
+      country,
+      currency: price.currency,
+      title: `RILO · ${product.name} (${checkout.titleSuffix})`,
+      unitPrice: checkout.amount,
+      externalReference,
+      metadata: {
+        businessId,
+        productId,
+        country,
+        billingInterval,
+        coverageMonths: String(checkout.coverageMonths),
+      },
+      payerEmail: userEmail || undefined,
+      successUrl: `${base}/activar-suscripcion?status=success`,
+      failureUrl: `${base}/activar-suscripcion?status=failure`,
+      pendingUrl: `${base}/activar-suscripcion?status=pending`,
+      notificationUrl: `${apiBaseUrl()}/billing/webhooks/mercadopago`,
+    });
+
+    const useSandbox =
+      process.env.MERCADOPAGO_USE_SANDBOX === 'true' && preference.sandboxInitPoint;
+
+    res.json({
+      preferenceId: preference.id,
+      checkoutUrl: useSandbox ? preference.sandboxInitPoint : preference.initPoint,
+      country,
+      currency: price.currency,
+      amount: checkout.amount,
+      billingInterval,
+      coverageMonths: checkout.coverageMonths,
+      productId,
+    });
+  } catch (error) {
+    console.error('[billing] checkout error', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'No se pudo iniciar el pago.',
+    });
+  }
+});
+
+/** Webhook Mercado Pago (sin auth JWT). */
+router.post('/webhooks/mercadopago', async (req, res) => {
+  try {
+    const topic = String(req.query.topic ?? req.query.type ?? req.body?.type ?? '').toLowerCase();
+    const paymentId = String(
+      req.query['data.id'] ?? req.body?.data?.id ?? req.body?.id ?? ''
+    ).trim();
+
+    // MP a veces manda topic=merchant_order; nos interesan payments
+    if (topic && topic !== 'payment' && !paymentId) {
+      return res.sendStatus(200);
+    }
+
+    if (!paymentId) {
+      return res.sendStatus(200);
+    }
+
+    const fetched = await fetchMercadoPagoPaymentAnyCountry(paymentId);
+    if (!fetched) {
+      console.warn('[billing] webhook payment not found', paymentId);
+      return res.sendStatus(200);
+    }
+
+    const { country, payment } = fetched;
+    if (payment.status !== 'approved') {
+      return res.sendStatus(200);
+    }
+
+    const meta = payment.metadata ?? {};
+    let businessId = String(meta.businessId ?? meta.business_id ?? '').trim();
+    let productId = String(meta.productId ?? meta.product_id ?? '').trim();
+    let billingInterval = parseBillingInterval(
+      meta.billingInterval ?? meta.billing_interval
+    );
+    let coverageMonths = Number(meta.coverageMonths ?? meta.coverage_months);
+
+    if ((!businessId || !productId) && payment.externalReference) {
+      const parts = payment.externalReference.split('|');
+      businessId = businessId || parts[0] || '';
+      productId = productId || parts[1] || '';
+      if (parts[3] === 'year' || parts[3] === 'month') {
+        billingInterval = parseBillingInterval(parts[3]);
+      }
+    }
+
+    if (!Number.isFinite(coverageMonths) || coverageMonths < 1) {
+      coverageMonths = billingInterval === 'year' ? 12 : 1;
+    }
+
+    if (!businessId || !productId) {
+      console.error('[billing] webhook missing business/product', payment);
+      return res.sendStatus(200);
+    }
+
+    const result = await activatePaidSubscription({
+      businessId,
+      productId,
+      country,
+      amount: payment.transactionAmount,
+      currency: payment.currencyId,
+      mercadoPagoPaymentId: payment.id,
+      billingInterval,
+      coverageMonths,
+    });
+
+    if (!result.ok) {
+      console.error('[billing] activate failed', result.reason);
+    }
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('[billing] webhook error', error);
+    res.sendStatus(200);
+  }
 });
 
 export default router;

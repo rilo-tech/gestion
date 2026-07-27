@@ -460,6 +460,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
       direccion: this.clientForm.direccion?.trim() ?? '',
       redes: { igWeb: this.clientForm.redes?.igWeb?.trim() ?? '' },
       etiquetas,
+      ...(this.clientId ? {} : { activo: true }),
     };
 
     this.savingClient = true;

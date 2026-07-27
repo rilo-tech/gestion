@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import {
   PlatformService,
   SubscriptionStatus,
+  type BillingCatalogProduct,
   type PlatformPendingTrialRegistration,
   type PlatformTrialRow,
 } from '../../core/services/platform.service';
@@ -31,6 +32,7 @@ import {
 } from '../../../../../shared/subscription-modules.ts';
 import {
   DEFAULT_TRIAL_DAYS,
+  TRIAL_STATUS_LABELS,
 } from '../../../../../shared/trial-state.ts';
 
 type PlatformTab = 'empresas' | 'pruebas' | 'pagos' | 'planes';
@@ -126,7 +128,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
           class="rounded-xl border shadow-sm overflow-hidden bg-teal-50/40 border-teal-100">
           <div class="border-l-4 border-l-teal-500 p-4 sm:p-5">
             <h3 class="font-bold text-gray-900 mb-1">Nueva empresa / suscripción</h3>
-            <p class="text-sm text-gray-600 mb-4">Creá la empresa y el administrador inicial.</p>
+            <p class="text-sm text-gray-600 mb-4">
+              Creá la empresa, el admin y el WhatsApp si el producto es RiloBot o Completo.
+            </p>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
                 [(ngModel)]="businessDraft.id"
@@ -136,13 +140,18 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 [(ngModel)]="businessDraft.nombre"
                 placeholder="Nombre comercial *"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-              <select
-                [(ngModel)]="businessDraft.planId"
-                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm md:col-span-2">
-                <option *ngFor="let plan of activePlans" [value]="plan.id">
-                  {{ plan.nombre }} · {{ formatMoney(plan.precioMensual) }}/mes
-                </option>
-              </select>
+              <div class="md:col-span-2">
+                <label class="block text-xs font-medium text-gray-500 mb-1">Producto *</label>
+                <select
+                  [(ngModel)]="businessDraft.trialProduct"
+                  (ngModelChange)="onCreateProductChange()"
+                  name="businessDraftProduct"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                  <option value="whatsapp">RiloBot (WhatsApp)</option>
+                  <option value="erp">Panel web</option>
+                  <option value="completo">RiloBot + Panel</option>
+                </select>
+              </div>
               <input
                 [(ngModel)]="businessDraft.supervisorNombre"
                 placeholder="Nombre admin *"
@@ -152,6 +161,10 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 placeholder="Email admin (para Google)"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               <input
+                [(ngModel)]="businessDraft.supervisorPhone"
+                placeholder="WhatsApp admin * (+598…)"
+                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm md:col-span-2">
+              <input
                 [(ngModel)]="businessDraft.supervisorLogin"
                 placeholder="Usuario admin *"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
@@ -160,6 +173,11 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 type="password"
                 placeholder="Contraseña inicial"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <p
+                *ngIf="businessDraft.trialProduct === 'whatsapp' || businessDraft.trialProduct === 'completo'"
+                class="md:col-span-2 text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+                Con RiloBot / Completo el WhatsApp se habilita automáticamente con ese número.
+              </p>
               <label class="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900 md:col-span-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -284,7 +302,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     <div class="sm:hidden text-xs text-gray-500 mt-1 font-mono">{{ business.id }}</div>
                   </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm font-mono text-gray-600">{{ business.id }}</td>
-                  <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">{{ business.plan.nombre }}</td>
+                  <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">
+                    {{ businessProductLabel(business) }}
+                  </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-900 text-right tabular-nums">
                     {{ formatMoney(business.montoMensualEsperado) }}
                   </td>
@@ -350,13 +370,56 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
       </section>
 
       <section *ngIf="activeTab === 'pruebas'" class="space-y-4">
+        <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900">Liberar email o teléfono (landing)</h3>
+            <p class="text-xs text-gray-500 mt-1">
+              Si alguien no puede registrarse en /probar-gratis porque el mail o el WhatsApp ya está tomado,
+              liberarlo acá. Si la empresa sigue con <strong>suscripción activa</strong>, el sistema no lo permite:
+              primero desactivá la suscripción. “Forzar” solo aplica cuando la suscripción ya no está activa.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-end gap-2">
+            <div>
+              <label class="block text-[11px] font-medium text-gray-500 mb-1">Tipo</label>
+              <select
+                [(ngModel)]="manualClaimType"
+                name="manualClaimType"
+                class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                <option value="email">Email</option>
+                <option value="phone">Teléfono</option>
+              </select>
+            </div>
+            <div class="flex-1 min-w-[12rem]">
+              <label class="block text-[11px] font-medium text-gray-500 mb-1">Valor</label>
+              <input
+                [(ngModel)]="manualClaimValue"
+                name="manualClaimValue"
+                [placeholder]="manualClaimType === 'email' ? 'mail@ejemplo.com' : '+59899123456'"
+                class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </div>
+            <label class="inline-flex items-center gap-2 pb-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" [(ngModel)]="manualClaimForce" name="manualClaimForce"
+                class="h-4 w-4 rounded border-gray-300 text-teal-600">
+              Forzar
+            </label>
+            <button
+              type="button"
+              (click)="releaseManualClaim()"
+              [disabled]="releasingManualClaim || !manualClaimValue.trim()"
+              class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-60">
+              {{ releasingManualClaim ? 'Liberando...' : 'Liberar' }}
+            </button>
+          </div>
+        </div>
+
         <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-3">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 class="text-sm font-semibold text-amber-950">Registros sin completar</h3>
               <p class="text-xs text-amber-900/80 mt-1 max-w-2xl">
-                Si alguien empezó el alta en /probar-gratis pero no terminó, el email queda reservado acá
-                (no aparece como empresa). Podés liberarlo para que vuelva a registrarse.
+                Empezaron el alta en /probar-gratis y no terminaron. Liberá email y teléfono para que puedan
+                volver a registrarse.
               </p>
             </div>
             <button type="button" (click)="loadPendingTrials()"
@@ -380,6 +443,10 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                   <td class="px-3 py-2.5">
                     <div class="font-medium text-gray-900">{{ row.businessName }}</div>
                     <div class="text-xs text-gray-500">{{ row.ciudad }}, {{ row.pais }}</div>
+                    <div class="text-xs text-violet-700 mt-0.5" *ngIf="row.trialProduct">
+                      {{ trialProductLabel(row.trialProduct) }}
+                      <span *ngIf="row.trialDays != null"> · {{ row.trialDays }} días</span>
+                    </div>
                   </td>
                   <td class="px-3 py-2.5 text-gray-700">{{ row.ownerName }}</td>
                   <td class="px-3 py-2.5 text-xs text-gray-700">
@@ -390,7 +457,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                   <td class="px-3 py-2.5 text-right">
                     <button type="button" (click)="releasePendingRegistration(row)"
                       class="text-xs font-semibold text-amber-800 hover:underline">
-                      Liberar email
+                      Liberar email y teléfono
                     </button>
                   </td>
                 </tr>
@@ -431,37 +498,67 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 <th class="px-4 py-3">Vence</th>
                 <th class="px-4 py-3">Uso</th>
                 <th class="px-4 py-3">Estado</th>
+                <th class="px-4 py-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr *ngFor="let row of trialRows" class="hover:bg-gray-50 cursor-pointer" (click)="openBusinessById(row.businessId)">
-                <td class="px-4 py-3">
+              <tr *ngFor="let row of trialRows" class="hover:bg-gray-50">
+                <td class="px-4 py-3 cursor-pointer" (click)="openBusinessById(row.businessId)">
                   <div class="font-medium text-gray-900">{{ row.nombre }}</div>
                   <div class="text-xs text-gray-500 font-mono">{{ row.businessId }}</div>
+                  <div class="text-xs text-violet-700 mt-0.5" *ngIf="row.trialProduct || row.planNombre">
+                    {{ trialProductLabel(row.trialProduct) || row.planNombre }}
+                  </div>
                 </td>
-                <td class="px-4 py-3 text-gray-700">{{ row.ownerName || '—' }}</td>
+                <td class="px-4 py-3 text-gray-700 cursor-pointer" (click)="openBusinessById(row.businessId)">{{ row.ownerName || '—' }}</td>
                 <td class="px-4 py-3 text-xs text-gray-600">
                   <div>{{ row.phone || '—' }} <span *ngIf="row.phoneVerified" class="text-green-600">✓</span></div>
                   <div>{{ row.email || '—' }} <span *ngIf="row.emailVerified" class="text-green-600">✓</span></div>
+                  <div class="mt-1 flex flex-wrap gap-2" *ngIf="row.email || row.phone">
+                    <button
+                      *ngIf="row.email"
+                      type="button"
+                      (click)="releaseTrialRowContact('email', row.email)"
+                      class="text-[11px] font-semibold text-amber-800 hover:underline">
+                      Liberar email
+                    </button>
+                    <button
+                      *ngIf="row.phone"
+                      type="button"
+                      (click)="releaseTrialRowContact('phone', row.phone)"
+                      class="text-[11px] font-semibold text-amber-800 hover:underline">
+                      Liberar tel.
+                    </button>
+                  </div>
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3 cursor-pointer" (click)="openBusinessById(row.businessId)">
                   <div>{{ formatDate(row.trialEndDate ?? undefined) }}</div>
-                  <div class="text-xs text-gray-500" *ngIf="row.trialDaysRemaining != null">{{ row.trialDaysRemaining }} días</div>
+                  <div class="text-xs text-gray-500" *ngIf="row.trialDaysRemaining != null">
+                    {{ row.trialDaysRemaining === 0 ? 'Vence hoy' : (row.trialDaysRemaining + ' días') }}
+                  </div>
                 </td>
-                <td class="px-4 py-3 text-xs text-gray-600">
+                <td class="px-4 py-3 text-xs text-gray-600 cursor-pointer" (click)="openBusinessById(row.businessId)">
                   P {{ row.usage.ordersCount }} · V {{ row.usage.salesCount }} · Prod {{ row.usage.productsCount }}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3 cursor-pointer" (click)="openBusinessById(row.businessId)">
                   <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-violet-100 text-violet-800">
-                    {{ row.trialStatus || '—' }}
+                    {{ trialStatusLabel(row.trialStatus) }}
                   </span>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <button
+                    type="button"
+                    (click)="openBusinessById(row.businessId)"
+                    class="text-xs font-semibold text-teal-700 hover:underline">
+                    Extender / pago
+                  </button>
                 </td>
               </tr>
               <tr *ngIf="loadingTrials">
-                <td colspan="6" class="px-4 py-10 text-center text-gray-400">Cargando pruebas...</td>
+                <td colspan="7" class="px-4 py-10 text-center text-gray-400">Cargando pruebas...</td>
               </tr>
               <tr *ngIf="!loadingTrials && trialRows.length === 0">
-                <td colspan="6" class="px-4 py-10 text-center text-gray-400">No hay pruebas con este filtro.</td>
+                <td colspan="7" class="px-4 py-10 text-center text-gray-400">No hay pruebas con este filtro.</td>
               </tr>
             </tbody>
           </table>
@@ -599,7 +696,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 font-mono">{{ business.id }}</div>
                   </td>
-                  <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">{{ business.plan.nombre }}</td>
+                  <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 truncate">
+                    {{ businessProductLabel(business) }}
+                  </td>
                   <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-900 text-right tabular-nums">
                     {{ formatMoney(business.montoMensualEsperado) }}
                   </td>
@@ -672,16 +771,38 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
       <!-- PLANES -->
       <section *ngIf="activeTab === 'planes'" class="space-y-4">
         <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
-          Los planes son <strong>plantillas para empresas nuevas</strong>. Para cambiar operadores, módulos o precios de un cliente,
-          abrí su ficha en Empresas. Al guardar un plan sin marcar «aplicar a existentes», las empresas actuales conservan su configuración.
+          Los planes son <strong>plantillas para empresas nuevas</strong> y deben coincidir con la landing:
+          RiloBot 1.490 · Panel 2.490 · Completo 3.490 (UYU) + precio por usuario extra.
+          Para cambiar un cliente puntual, abrí su ficha en Empresas.
         </p>
-        <div class="flex justify-end">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            (click)="syncPlansFromLanding()"
+            [disabled]="syncingLandingPrices"
+            class="rounded-xl border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-100 disabled:opacity-60">
+            {{ syncingLandingPrices ? 'Sincronizando...' : 'Igualar precios a la landing' }}
+          </button>
           <button
             type="button"
             (click)="toggleCreatePlanForm()"
             class="text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline">
             {{ showCreatePlanForm ? 'Cancelar' : '+ Crear plan' }}
           </button>
+        </div>
+
+        <div
+          *ngIf="landingCatalogHint.length"
+          class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div
+            *ngFor="let product of landingCatalogHint"
+            class="rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">{{ product.name }}</p>
+            <p class="text-lg font-bold text-gray-900 mt-1">{{ product.priceLabel }}</p>
+            <p class="text-xs text-gray-500 mt-1">
+              + {{ formatMoney(product.extraUserMonthly) }}/usuario extra · plan {{ product.erpPlanId }}
+            </p>
+          </div>
         </div>
 
         <article
@@ -881,20 +1002,20 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">$/admin/mes</label>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">$/usuario (operador) / mes</label>
                   <input
-                    [(ngModel)]="plan.precioPorAdministrador"
-                    [name]="'planPrecioAdmin' + plan.id"
+                    [(ngModel)]="plan.precioPorOperador"
+                    [name]="'planPrecioOp' + plan.id"
                     type="number"
                     min="0"
                     step="1"
                     class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">$/operador/mes</label>
+                  <label class="block text-xs font-medium text-gray-500 mb-1">$/admin extra / mes</label>
                   <input
-                    [(ngModel)]="plan.precioPorOperador"
-                    [name]="'planPrecioOp' + plan.id"
+                    [(ngModel)]="plan.precioPorAdministrador"
+                    [name]="'planPrecioAdmin' + plan.id"
                     type="number"
                     min="0"
                     step="1"
@@ -1025,9 +1146,9 @@ export class PlatformComponent implements OnInit {
   readonly moduleCatalog = SELLABLE_SUBSCRIPTION_MODULE_CATALOG;
   readonly defaultTrialDays = DEFAULT_TRIAL_DAYS;
   readonly planTemplateOptions = [
-    { id: 'plan_basico', label: 'Básico' },
-    { id: 'plan_intermedio', label: 'Intermedio' },
-    { id: 'plan_profesional', label: 'Pro' },
+    { id: 'plan_basico', label: 'RiloBot' },
+    { id: 'plan_intermedio', label: 'Panel' },
+    { id: 'plan_profesional', label: 'Completo' },
   ];
 
   activeTab: PlatformTab = 'empresas';
@@ -1036,8 +1157,14 @@ export class PlatformComponent implements OnInit {
   pendingTrialRows: PlatformPendingTrialRegistration[] = [];
   loadingTrials = false;
   loadingPendingTrials = false;
+  manualClaimType: 'email' | 'phone' = 'email';
+  manualClaimValue = '';
+  manualClaimForce = true;
+  releasingManualClaim = false;
   businesses: (PublicBusinessInfo & { planId?: string })[] = [];
   plans: PublicPlanInfo[] = [];
+  landingCatalogHint: BillingCatalogProduct[] = [];
+  syncingLandingPrices = false;
 
   loadingBusinesses = false;
   creatingBusiness = false;
@@ -1059,11 +1186,13 @@ export class PlatformComponent implements OnInit {
     id: '',
     nombre: '',
     planId: 'plan_basico',
+    trialProduct: 'whatsapp' as 'whatsapp' | 'erp' | 'completo',
     enPrueba: false,
     trialStartDate: '',
     trialEndDate: '',
     supervisorNombre: '',
     supervisorEmail: '',
+    supervisorPhone: '',
     supervisorLogin: '',
     supervisorPassword: '',
   };
@@ -1258,6 +1387,38 @@ export class PlatformComponent implements OnInit {
   ngOnInit() {
     this.loadPlans();
     this.loadBusinesses();
+    this.loadLandingCatalogHint();
+  }
+
+  loadLandingCatalogHint() {
+    this.platformService.getBillingCatalog('UY').subscribe({
+      next: (res) => {
+        this.landingCatalogHint = res.products;
+      },
+    });
+  }
+
+  syncPlansFromLanding() {
+    this.syncingLandingPrices = true;
+    this.platformService.syncPlansFromLanding().subscribe({
+      next: (res) => {
+        this.syncingLandingPrices = false;
+        this.plans = [...res.plans]
+          .map((plan) => this.normalizePlan(plan))
+          .sort((a, b) => a.precioMensual - b.precioMensual);
+        this.dialogService.alert({
+          title: 'Planes actualizados',
+          message: res.message || 'Plantillas alineadas con la landing.',
+        });
+      },
+      error: (err) => {
+        this.syncingLandingPrices = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: err?.error?.error || 'No se pudieron sincronizar los precios.',
+        });
+      },
+    });
   }
 
   switchTab(tab: PlatformTab) {
@@ -1297,27 +1458,124 @@ export class PlatformComponent implements OnInit {
   releasePendingRegistration(row: PlatformPendingTrialRegistration) {
     this.dialogService
       .confirm({
-        title: 'Liberar email',
-        message: `¿Liberar ${row.email} para que pueda registrarse de nuevo?`,
+        title: 'Liberar contacto',
+        message: `¿Liberar ${row.email} y ${row.phone || 'su teléfono'} para que pueda registrarse de nuevo en la landing?`,
         confirmLabel: 'Liberar',
         variant: 'danger',
       })
       .subscribe((ok) => {
         if (!ok) return;
-        this.platformService.releaseTrialContactClaim('email', row.email).subscribe({
-          next: () => this.loadPendingTrials(),
-          error: (err) => {
+        const email$ = this.platformService.releaseTrialContactClaim('email', row.email, {
+          force: true,
+        });
+        const phone = row.phone?.trim();
+        if (!phone) {
+          email$.subscribe({
+            next: () => this.loadPendingTrials(),
+            error: (err) => this.showReleaseError(err),
+          });
+          return;
+        }
+        email$.subscribe({
+          next: () => {
+            this.platformService
+              .releaseTrialContactClaim('phone', phone, { force: true })
+              .subscribe({
+                next: () => this.loadPendingTrials(),
+                error: (err) => {
+                  this.loadPendingTrials();
+                  this.showReleaseError(err);
+                },
+              });
+          },
+          error: (err) => this.showReleaseError(err),
+        });
+      });
+  }
+
+  releaseManualClaim() {
+    const value = this.manualClaimValue.trim();
+    if (!value) return;
+    this.releasingManualClaim = true;
+    this.platformService
+      .releaseTrialContactClaim(this.manualClaimType, value, { force: this.manualClaimForce })
+      .subscribe({
+        next: (res) => {
+          this.releasingManualClaim = false;
+          this.manualClaimValue = '';
+          this.loadPendingTrials();
+          this.dialogService.alert({
+            title: res.released ? 'Contacto liberado' : 'Sin reserva',
+            message: res.released
+              ? res.wasBoundToBusinessId
+                ? `Liberado (antes estaba vinculado a ${res.wasBoundToBusinessId}). Ya puede usarse en la landing.`
+                : 'Liberado. Ya puede usarse en la landing.'
+              : 'No había una reserva activa para ese valor.',
+          });
+        },
+        error: (err) => {
+          this.releasingManualClaim = false;
+          this.showReleaseError(err);
+        },
+      });
+  }
+
+  private showReleaseError(err: {
+    error?: { error?: string; code?: string; businessId?: string; businessName?: string };
+  }) {
+    const code = err?.error?.code;
+    if (code === 'ACTIVE_SUBSCRIPTION_BLOCKS_RELEASE' && err?.error?.businessId) {
+      this.dialogService
+        .confirm({
+          title: 'Suscripción activa',
+          message:
+            (err.error.error ||
+              'Hay una suscripción activa. Desactivála primero para poder liberar el contacto.') +
+            '\n\n¿Abrir la empresa para desactivarla?',
+          confirmLabel: 'Ir a la empresa',
+        })
+        .subscribe((ok) => {
+          if (ok && err.error?.businessId) {
+            void this.router.navigate(['/platform', 'empresas', err.error.businessId]);
+          }
+        });
+      return;
+    }
+    this.dialogService.alert({
+      title: 'No se pudo liberar',
+      message: err?.error?.error || 'Intentá de nuevo o marcá “Forzar” (solo si la suscripción no está activa).',
+    });
+  }
+
+  releaseTrialRowContact(type: 'email' | 'phone', value: string) {
+    const clean = value.trim();
+    if (!clean) return;
+    this.dialogService
+      .confirm({
+        title: type === 'email' ? 'Liberar email' : 'Liberar teléfono',
+        message: `¿Liberar ${clean} para usarlo de nuevo en la landing?`,
+        confirmLabel: 'Liberar',
+        variant: 'danger',
+      })
+      .subscribe((ok) => {
+        if (!ok) return;
+        this.platformService.releaseTrialContactClaim(type, clean, { force: true }).subscribe({
+          next: (res) => {
+            this.loadTrials();
             this.dialogService.alert({
-              title: 'No se pudo liberar',
-              message: err?.error?.error || 'Intentá de nuevo.',
+              title: res.released ? 'Liberado' : 'Sin reserva',
+              message: res.released
+                ? 'Ya puede usarse en /probar-gratis.'
+                : 'No había reserva para ese valor.',
             });
           },
+          error: (err) => this.showReleaseError(err),
         });
       });
   }
 
   openBusinessById(businessId: string) {
-    void this.router.navigate(['/platform', 'empresas', businessId]);
+    void this.router.navigate(['/platform', 'empresas', businessId], { fragment: 'prueba' });
   }
 
   toggleCreateBusinessForm() {
@@ -1568,9 +1826,46 @@ export class PlatformComponent implements OnInit {
 
   formatDate(value: string | undefined): string {
     if (!value) return '—';
-    const date = new Date(value);
+    // Fechas de prueba son YYYY-MM-DD: parsear como día civil local.
+    const raw = value.length <= 10 ? `${value}T12:00:00` : value;
+    const date = new Date(raw);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleDateString('es-AR');
+  }
+
+  trialStatusLabel(status: string | null | undefined): string {
+    if (!status) return '—';
+    return (TRIAL_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  }
+
+  trialProductLabel(product: string | null | undefined): string {
+    if (product === 'whatsapp') return 'RiloBot';
+    if (product === 'erp') return 'Panel';
+    if (product === 'completo') return 'RiloBot + Panel';
+    return product ?? '';
+  }
+
+  /** Producto comercial visible (evita mezclar con el nombre interno del plan ERP). */
+  businessProductLabel(business: PublicBusinessInfo): string {
+    const fromAccess = business.platformAccess?.trialProduct;
+    if (fromAccess) {
+      const label = this.trialProductLabel(fromAccess);
+      if (label) return label;
+    }
+    const access = business.platformAccess;
+    if (access?.whatsappEnabled && access?.erpWebEnabled) return 'RiloBot + Panel';
+    if (access?.whatsappEnabled) return 'RiloBot';
+    if (access?.erpWebEnabled) return 'Panel';
+    return business.plan?.nombre || '—';
+  }
+
+  onCreateProductChange() {
+    const map: Record<'whatsapp' | 'erp' | 'completo', string> = {
+      whatsapp: 'plan_basico',
+      erp: 'plan_intermedio',
+      completo: 'plan_profesional',
+    };
+    this.businessDraft.planId = map[this.businessDraft.trialProduct] ?? 'plan_basico';
   }
 
   createBusiness() {
@@ -1583,6 +1878,10 @@ export class PlatformComponent implements OnInit {
     )
       .trim()
       .toLowerCase();
+    const phone = this.businessDraft.supervisorPhone.trim();
+    const needsWhatsapp =
+      this.businessDraft.trialProduct === 'whatsapp' ||
+      this.businessDraft.trialProduct === 'completo';
 
     if (!id || !nombre || !this.businessDraft.supervisorNombre.trim() || !supervisorLogin) {
       this.dialogService.alert({
@@ -1591,20 +1890,29 @@ export class PlatformComponent implements OnInit {
       });
       return;
     }
+    if (needsWhatsapp && !phone) {
+      this.dialogService.alert({
+        title: 'WhatsApp requerido',
+        message: 'Con RiloBot o Completo tenés que cargar el número del responsable (+598…).',
+      });
+      return;
+    }
 
     this.creatingBusiness = true;
-    const planId = this.businessDraft.enPrueba ? 'plan_intermedio' : this.businessDraft.planId;
+    this.onCreateProductChange();
     this.platformService
       .createBusiness({
         id,
         nombre,
-        planId,
+        planId: this.businessDraft.planId,
+        trialProduct: this.businessDraft.trialProduct,
         enPrueba: this.businessDraft.enPrueba,
         trialStartDate: this.businessDraft.trialStartDate || undefined,
         trialEndDate: this.businessDraft.trialEndDate || undefined,
         supervisor: {
           nombre: this.businessDraft.supervisorNombre.trim(),
           email: this.businessDraft.supervisorEmail.trim().toLowerCase(),
+          phone: phone || undefined,
           loginUsername: supervisorLogin,
           password: this.businessDraft.supervisorPassword.trim() || undefined,
         },
@@ -1619,12 +1927,14 @@ export class PlatformComponent implements OnInit {
           this.businessDraft = {
             id: '',
             nombre: '',
-            planId: this.plans[0]?.id ?? 'plan_basico',
+            planId: 'plan_basico',
+            trialProduct: 'whatsapp',
             enPrueba: false,
             trialStartDate: '',
             trialEndDate: '',
             supervisorNombre: '',
             supervisorEmail: '',
+            supervisorPhone: '',
             supervisorLogin: '',
             supervisorPassword: '',
           };

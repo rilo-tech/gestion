@@ -39,6 +39,11 @@ export function isPrivilegedRole(rol: unknown): rol is 'supervisor' | 'admin' {
   return rol === 'supervisor' || rol === 'admin';
 }
 
+/** Admins sin lista de permisos (= legado) siguen con acceso completo. */
+export function adminHasFullAccess(permisos: unknown): boolean {
+  return !Array.isArray(permisos) || permisos.length === 0;
+}
+
 export function sanitizeStaffPermissions(
   permisos: unknown
 ): AssignablePermission[] {
@@ -53,11 +58,27 @@ export function sanitizeStaffPermissions(
   return [...new Set([...defaults, ...selected])];
 }
 
+export function allAssignablePermissions(): AssignablePermission[] {
+  return [...ASSIGNABLE_PERMISSIONS];
+}
+
 export function userHasPermission(
   rol: UserRole,
   permisos: unknown,
   permission: AssignablePermission
 ): boolean {
-  if (isPrivilegedRole(rol)) return true;
+  if (rol === 'supervisor') return true;
+  if (rol === 'admin') {
+    if (adminHasFullAccess(permisos)) return true;
+    return sanitizeStaffPermissions(permisos).includes(permission);
+  }
   return sanitizeStaffPermissions(permisos).includes(permission);
+}
+
+export function canManageCompanyUsers(rol: unknown, permisos?: unknown): boolean {
+  if (rol === 'supervisor') return true;
+  if (rol === 'admin') {
+    return userHasPermission('admin', permisos, 'settings.manage');
+  }
+  return false;
 }

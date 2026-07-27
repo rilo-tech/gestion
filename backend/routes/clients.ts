@@ -462,6 +462,7 @@ router.post('/:businessId', async (req, res) => {
     const clientData = req.body;
     const docRef = await db.collection(`negocios/${businessId}/clientes`).add({
       ...clientData,
+      activo: clientData.activo !== false,
       createdAt: new Date().toISOString(),
     });
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {

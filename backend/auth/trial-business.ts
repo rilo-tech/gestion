@@ -24,7 +24,8 @@ export function parseTrialStatus(value: unknown): TrialStatus | null {
 
 export function buildTrialFieldUpdates(
   payload: Record<string, unknown>,
-  current?: BusinessRecord
+  current?: BusinessRecord,
+  options?: { trialDays?: number }
 ): Partial<
   Pick<BusinessRecord, 'enPrueba' | 'trialStartDate' | 'trialEndDate' | 'trialStatus'>
 > {
@@ -50,7 +51,7 @@ export function buildTrialFieldUpdates(
 
   if (next.enPrueba === true) {
     if (!current?.trialStartDate && !next.trialStartDate) {
-      const range = defaultTrialRange();
+      const range = defaultTrialRange(new Date(), options?.trialDays);
       next.trialStartDate = range.trialStartDate;
       next.trialEndDate = range.trialEndDate;
     }

@@ -113,7 +113,7 @@ export const ADMIN_ASSIGNABLE_PERMISSIONS: readonly PermissionMeta[] = [
     key: PERMISSIONS.SETTINGS_MANAGE,
     label: 'Gestionar configuración',
     description:
-      'Acceso a listas del negocio (etiquetas, tipos, conceptos de caja, etc.) y quitar opciones configuradas.',
+      'Configuración del negocio, listas (etiquetas, tipos, conceptos) y alta/baja de usuarios con permisos.',
   },
   {
     key: PERMISSIONS.ORDERS_VIEW_SALE_PRICE,
@@ -304,6 +304,15 @@ export function isPrivilegedRole(role: UserRole): boolean {
   return role === 'supervisor' || role === 'admin';
 }
 
+/** Admins sin lista de permisos (= legado) siguen con acceso completo. */
+export function adminHasFullAccess(permisos: readonly Permission[] | undefined): boolean {
+  return !Array.isArray(permisos) || permisos.length === 0;
+}
+
+export function allAssignablePermissions(): Permission[] {
+  return ADMIN_ASSIGNABLE_PERMISSIONS.map((item) => item.key);
+}
+
 export function sanitizeStaffPermissions(permisos: readonly Permission[] | undefined): Permission[] {
   const defaults = new Set<Permission>(DEFAULT_STAFF_PERMISSIONS);
   const selected = (permisos ?? []).filter((permission) => ASSIGNABLE_SET.has(permission));
@@ -315,7 +324,8 @@ export function canStaffViewOrder(
   permisos: readonly Permission[] | undefined,
   estado?: string
 ): boolean {
-  if (isPrivilegedRole(role)) return true;
+  if (role === 'supervisor') return true;
+  if (role === 'admin' && adminHasFullAccess(permisos)) return true;
 
   const perms = sanitizeStaffPermissions(permisos);
   const status = normalizeOrderStatus(estado);
@@ -340,19 +350,30 @@ export function userHasPermission(
   permisos: readonly Permission[] | undefined,
   permission: Permission
 ): boolean {
-  if (isPrivilegedRole(role)) return true;
+  if (role === 'supervisor') return true;
+  if (role === 'admin') {
+    if (adminHasFullAccess(permisos)) return true;
+    return sanitizeStaffPermissions(permisos).includes(permission);
+  }
   return sanitizeStaffPermissions(permisos).includes(permission);
 }
 
-export function canManageUsers(role: UserRole): boolean {
-  return role === 'supervisor';
+export function canManageUsers(
+  role: UserRole,
+  permisos?: readonly Permission[]
+): boolean {
+  if (role === 'supervisor') return true;
+  if (role === 'admin') {
+    return userHasPermission(role, permisos, PERMISSIONS.SETTINGS_MANAGE);
+  }
+  return false;
 }
 
 export function canManageSettings(
   role: UserRole,
   permisos?: readonly Permission[]
 ): boolean {
-  if (role === 'supervisor' || role === 'admin') return true;
+  if (role === 'supervisor') return true;
   return userHasPermission(role, permisos, PERMISSIONS.SETTINGS_MANAGE);
 }
 

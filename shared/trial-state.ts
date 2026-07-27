@@ -1,4 +1,27 @@
-export const DEFAULT_TRIAL_DAYS = 20;
+import type { TrialProductId } from './platform-access.ts';
+
+/** Días de prueba por producto (plan comercial). */
+export const TRIAL_DAYS_BY_PRODUCT: Record<TrialProductId, number> = {
+  whatsapp: 10,
+  erp: 20,
+  completo: 20,
+};
+
+/** RiloBot: valor rápido el primer día. */
+export const RILOBOT_TRIAL_DAYS = TRIAL_DAYS_BY_PRODUCT.whatsapp;
+
+/** Panel / Completo: más tiempo de aprendizaje. */
+export const PANEL_TRIAL_DAYS = TRIAL_DAYS_BY_PRODUCT.erp;
+
+/** Default genérico (Panel). Preferir trialDaysForProduct. */
+export const DEFAULT_TRIAL_DAYS = PANEL_TRIAL_DAYS;
+
+export function trialDaysForProduct(product: TrialProductId | null | undefined): number {
+  if (product && product in TRIAL_DAYS_BY_PRODUCT) {
+    return TRIAL_DAYS_BY_PRODUCT[product];
+  }
+  return DEFAULT_TRIAL_DAYS;
+}
 
 export type TrialStatus = 'active' | 'expired' | 'converted' | 'cancelled';
 
@@ -27,6 +50,9 @@ export interface ResolvedTrialState {
   isExpiringSoon: boolean;
 }
 
+/** Zona horaria comercial (UY/AR) para conteo de días de prueba. */
+export const TRIAL_CALENDAR_TIMEZONE = 'America/Montevideo';
+
 function toDateOnly(value: string | null | undefined): Date | null {
   if (!value) return null;
   const raw = String(value).trim();
@@ -34,14 +60,26 @@ function toDateOnly(value: string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function dateOnlyIso(date: Date): string {
-  return date.toISOString().slice(0, 10);
+/** YYYY-MM-DD en zona comercial (no UTC del servidor). */
+export function dateOnlyIso(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TRIAL_CALENDAR_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
 }
 
+/** Suma días calendario sobre una fecha YYYY-MM-DD (sin depender del TZ del host). */
 export function addTrialDays(start: Date, days: number): string {
-  const next = new Date(start);
-  next.setDate(next.getDate() + days);
-  return dateOnlyIso(next);
+  const startIso = dateOnlyIso(start);
+  const [year, month, day] = startIso.split('-').map(Number);
+  const end = new Date(Date.UTC(year, month - 1, day + days));
+  return [
+    end.getUTCFullYear(),
+    String(end.getUTCMonth() + 1).padStart(2, '0'),
+    String(end.getUTCDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 export function defaultTrialRange(

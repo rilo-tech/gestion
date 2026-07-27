@@ -2,6 +2,7 @@ type TrialRegisterStep = 'intro' | 'form' | 'email' | 'creating' | 'done';
 
 export interface TrialRegisterDraft {
   step: TrialRegisterStep;
+  trialProduct?: 'whatsapp' | 'erp' | 'completo';
   form: {
     businessName: string;
     rubro: string;

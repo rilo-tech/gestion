@@ -9,6 +9,7 @@ import {
   type SubscriptionModuleId,
   type SubscriptionModulesMap,
 } from '../../shared/subscription-modules.ts';
+import { getErpPlanTemplatePrices } from '../../shared/billing-catalog.ts';
 
 export interface PlanRecord {
   id: string;
@@ -45,17 +46,25 @@ export interface PublicPlanInfo {
   activo: boolean;
 }
 
+function landingPrices(planId: string) {
+  return getErpPlanTemplatePrices(planId, 'UY');
+}
+
+const basicoPrices = landingPrices('plan_basico');
+const intermedioPrices = landingPrices('plan_intermedio');
+const profesionalPrices = landingPrices('plan_profesional');
+
 const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   {
     id: 'plan_basico',
-    nombre: 'Plan Básico',
+    nombre: 'RiloBot (WhatsApp)',
     limiteAdministradores: 1,
-    limiteOperadores: 2,
-    limiteUsuariosTotal: 3,
-    precioMensual: 15000,
-    precioBaseMensual: 15000,
+    limiteOperadores: 0,
+    limiteUsuariosTotal: 1,
+    precioMensual: basicoPrices?.precioBaseMensual ?? 1490,
+    precioBaseMensual: basicoPrices?.precioBaseMensual ?? 1490,
     precioPorAdministrador: 0,
-    precioPorOperador: 3000,
+    precioPorOperador: basicoPrices?.precioPorOperador ?? 490,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_basico,
     preciosAddonModulo: {},
     maxAmbitosCaja: 0,
@@ -63,14 +72,14 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   },
   {
     id: 'plan_intermedio',
-    nombre: 'Plan Intermedio',
+    nombre: 'Panel web',
     limiteAdministradores: 1,
-    limiteOperadores: 4,
-    limiteUsuariosTotal: 5,
-    precioMensual: 28000,
-    precioBaseMensual: 22000,
+    limiteOperadores: 0,
+    limiteUsuariosTotal: 1,
+    precioMensual: intermedioPrices?.precioBaseMensual ?? 2490,
+    precioBaseMensual: intermedioPrices?.precioBaseMensual ?? 2490,
     precioPorAdministrador: 0,
-    precioPorOperador: 4000,
+    precioPorOperador: intermedioPrices?.precioPorOperador ?? 490,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_intermedio,
     preciosAddonModulo: {},
     maxAmbitosCaja: 1,
@@ -78,14 +87,14 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   },
   {
     id: 'plan_profesional',
-    nombre: 'Plan Profesional',
-    limiteAdministradores: 2,
-    limiteOperadores: 5,
-    limiteUsuariosTotal: 7,
-    precioMensual: 35000,
-    precioBaseMensual: 28000,
-    precioPorAdministrador: 5000,
-    precioPorOperador: 4500,
+    nombre: 'RiloBot + Panel',
+    limiteAdministradores: 1,
+    limiteOperadores: 0,
+    limiteUsuariosTotal: 2,
+    precioMensual: profesionalPrices?.precioBaseMensual ?? 3490,
+    precioBaseMensual: profesionalPrices?.precioBaseMensual ?? 3490,
+    precioPorAdministrador: 0,
+    precioPorOperador: profesionalPrices?.precioPorOperador ?? 490,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_profesional,
     preciosAddonModulo: {},
     maxAmbitosCaja: 2,
@@ -157,6 +166,49 @@ export function toPublicPlanInfo(plan: PlanRecord): PublicPlanInfo {
   };
 }
 
+/** Alinea plantillas ERP con precios de la landing (UY). No toca empresas existentes. */
+export async function syncPlanTemplatesFromLandingCatalog(): Promise<PlanRecord[]> {
+  const col = plansCollection();
+  const now = new Date().toISOString();
+  const updated: PlanRecord[] = [];
+
+  for (const plan of DEFAULT_PLANS) {
+    const landing = getErpPlanTemplatePrices(plan.id, 'UY');
+    const ref = col.doc(plan.id);
+    const doc = await ref.get();
+    const payload = {
+      nombre: plan.nombre,
+      precioMensual: landing?.precioBaseMensual ?? plan.precioBaseMensual,
+      precioBaseMensual: landing?.precioBaseMensual ?? plan.precioBaseMensual,
+      precioPorAdministrador: landing?.precioPorAdministrador ?? plan.precioPorAdministrador,
+      precioPorOperador: landing?.precioPorOperador ?? plan.precioPorOperador,
+      limiteAdministradores: plan.limiteAdministradores,
+      limiteOperadores: plan.limiteOperadores,
+      limiteUsuariosTotal: plan.limiteUsuariosTotal,
+      maxAmbitosCaja: plan.maxAmbitosCaja,
+      modulosIncluidos: plan.modulosIncluidos,
+      activo: true,
+      updatedAt: now,
+    };
+
+    if (doc.exists) {
+      await ref.set(payload, { merge: true });
+    } else {
+      await ref.set({
+        ...plan,
+        ...payload,
+        preciosAddonModulo: plan.preciosAddonModulo,
+        createdAt: now,
+      });
+    }
+    planCache.delete(plan.id);
+    const fresh = await getPlan(plan.id);
+    if (fresh) updated.push(fresh);
+  }
+
+  return updated;
+}
+
 export async function ensureDefaultPlans(): Promise<void> {
   const col = plansCollection();
   for (const plan of DEFAULT_PLANS) {
@@ -168,11 +220,36 @@ export async function ensureDefaultPlans(): Promise<void> {
         data?.modulosIncluidos as Partial<Record<string, boolean>> | undefined,
         plan.id
       );
+      const patch: Record<string, unknown> = {};
       if (modules.pedidos && modules.order_photos !== true) {
-        await ref.update({
-          modulosIncluidos: { ...modules, order_photos: true },
-          updatedAt: new Date().toISOString(),
-        });
+        patch.modulosIncluidos = { ...modules, order_photos: true };
+      }
+      // Migra plantillas con precios legacy (15k–35k) o módulos viejos a catálogo landing.
+      const currentBase = Number(data?.precioBaseMensual ?? data?.precioMensual) || 0;
+      const landing = getErpPlanTemplatePrices(plan.id, 'UY');
+      if (currentBase >= 10000 && landing) {
+        patch.nombre = plan.nombre;
+        patch.precioMensual = landing.precioBaseMensual;
+        patch.precioBaseMensual = landing.precioBaseMensual;
+        patch.precioPorAdministrador = landing.precioPorAdministrador;
+        patch.precioPorOperador = landing.precioPorOperador;
+        patch.limiteAdministradores = plan.limiteAdministradores;
+        patch.limiteOperadores = plan.limiteOperadores;
+        patch.limiteUsuariosTotal = plan.limiteUsuariosTotal;
+      }
+      // Siempre alinear módulos a prueba = todo menos colaboradores/reportes.
+      const modulesEqual =
+        modules.collaborators === plan.modulosIncluidos.collaborators &&
+        modules.reports === plan.modulosIncluidos.reports &&
+        modules.caja === plan.modulosIncluidos.caja &&
+        modules.payables === plan.modulosIncluidos.payables;
+      if (!modulesEqual) {
+        patch.modulosIncluidos = plan.modulosIncluidos;
+      }
+      if (Object.keys(patch).length) {
+        patch.updatedAt = new Date().toISOString();
+        await ref.update(patch);
+        planCache.delete(plan.id);
       }
       continue;
     }

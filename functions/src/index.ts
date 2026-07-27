@@ -1,8 +1,25 @@
 import { onRequest } from 'firebase-functions/v2/https';
+import { defineString } from 'firebase-functions/params';
 import { createApiApp } from '../../backend/create-app.ts';
 import { purgeOrderPhotos } from './purge-order-photos.ts';
 
 const API_REGION = 'southamerica-east1';
+
+const geminiApiKey = defineString('GEMINI_API_KEY', { default: '' });
+const whatsappWebhookVerifyToken = defineString('WHATSAPP_WEBHOOK_VERIFY_TOKEN', {
+  default: 'rilo-dev-verify',
+});
+const whatsappAccessToken = defineString('WHATSAPP_ACCESS_TOKEN', { default: '' });
+const whatsappPhoneNumberId = defineString('WHATSAPP_PHONE_NUMBER_ID', { default: '' });
+const whatsappAppSecret = defineString('WHATSAPP_APP_SECRET', { default: '' });
+
+void [
+  geminiApiKey,
+  whatsappWebhookVerifyToken,
+  whatsappAccessToken,
+  whatsappPhoneNumberId,
+  whatsappAppSecret,
+];
 
 let apiApp: ReturnType<typeof createApiApp> | null = null;
 

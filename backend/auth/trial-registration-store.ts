@@ -107,18 +107,21 @@ export async function claimContactUnique(
 
 export async function releaseTrialContactClaim(
   type: 'email' | 'phone',
-  value: string
-): Promise<void> {
+  value: string,
+  options?: { force?: boolean }
+): Promise<{ released: boolean; wasBoundToBusinessId: string | null }> {
   const normalized = value.trim().toLowerCase();
-  if (!normalized) return;
+  if (!normalized) return { released: false, wasBoundToBusinessId: null };
   const ref = db.collection('trial_contact_claims').doc(`${type}_${normalized}`);
   const snap = await ref.get();
-  if (!snap.exists) return;
+  if (!snap.exists) return { released: false, wasBoundToBusinessId: null };
   const data = snap.data() as { businessId?: string };
-  if (data.businessId) {
+  const businessId = data.businessId ? String(data.businessId) : null;
+  if (businessId && !options?.force) {
     throw new Error('CLAIM_BOUND_TO_BUSINESS');
   }
   await ref.delete();
+  return { released: true, wasBoundToBusinessId: businessId };
 }
 
 export async function listIncompleteTrialRegistrations(limit = 100): Promise<TrialRegistrationRecord[]> {

@@ -4,7 +4,9 @@ import {
   listIncompleteTrialRegistrations,
   releaseTrialContactClaim,
 } from './trial-registration-store.ts';
-import { resolveTrialState } from '../../shared/trial-state.ts';
+import { resolveTrialState, trialDaysForProduct } from '../../shared/trial-state.ts';
+import { syncExpiredTrialStatus } from './trial-business.ts';
+import { isTrialProductId } from '../../shared/platform-access.ts';
 
 export type PlatformTrialRow = {
   businessId: string;
@@ -16,6 +18,7 @@ export type PlatformTrialRow = {
   emailVerified: boolean;
   whatsappOptIn: boolean;
   planNombre: string;
+  trialProduct: string | null;
   trialStartDate: string | null;
   trialEndDate: string | null;
   trialDaysRemaining: number | null;
@@ -50,14 +53,15 @@ export async function listPlatformTrials(filters?: {
       continue;
     }
 
-    const trial = resolveTrialState(business);
+    const synced = await syncExpiredTrialStatus(business);
+    const trial = resolveTrialState(synced);
     const statusFilter = filters?.status ?? 'all';
     if (statusFilter === 'active' && trial.trialStatus !== 'active') continue;
     if (statusFilter === 'expired' && trial.trialStatus !== 'expired') continue;
     if (statusFilter === 'expiring' && !trial.isExpiringSoon) continue;
 
-    const publicInfo = await toPublicBusinessInfo(business.id, { business });
-    const usage = business.lifecycle?.usageSummary ?? {
+    const publicInfo = await toPublicBusinessInfo(synced.id, { business: synced });
+    const usage = synced.lifecycle?.usageSummary ?? {
       ordersCount: 0,
       salesCount: 0,
       productsCount: 0,
@@ -69,35 +73,40 @@ export async function listPlatformTrials(filters?: {
     let productsCount = usage.productsCount;
     let cashMovementsCount = usage.cashMovementsCount;
 
-    if (!business.lifecycle?.usageSummary) {
+    if (!synced.lifecycle?.usageSummary) {
       try {
         [ordersCount, salesCount, productsCount, cashMovementsCount] = await Promise.all([
-          countCollection(`negocios/${business.id}/pedidos`),
-          countCollection(`negocios/${business.id}/ventas`),
-          countCollection(`negocios/${business.id}/productos`),
-          countCollection(`negocios/${business.id}/caja_movimientos`),
+          countCollection(`negocios/${synced.id}/pedidos`),
+          countCollection(`negocios/${synced.id}/ventas`),
+          countCollection(`negocios/${synced.id}/productos`),
+          countCollection(`negocios/${synced.id}/caja_movimientos`),
         ]);
       } catch {
         // ignore count errors in emulator
       }
     }
 
+    const trialProductRaw = synced.platformAccess?.trialProduct ?? null;
+    const trialProduct =
+      trialProductRaw && isTrialProductId(trialProductRaw) ? trialProductRaw : null;
+
     rows.push({
-      businessId: business.id,
-      nombre: business.nombre,
-      ownerName: business.lifecycle?.ownerName ?? business.contactVerification?.email ?? null,
-      phone: business.contactVerification?.phone ?? null,
-      phoneVerified: business.contactVerification?.phoneVerified === true,
-      email: business.contactVerification?.email ?? null,
-      emailVerified: business.contactVerification?.emailVerified === true,
-      whatsappOptIn: business.contactVerification?.whatsappOptIn === true,
+      businessId: synced.id,
+      nombre: synced.nombre,
+      ownerName: synced.lifecycle?.ownerName ?? synced.contactVerification?.email ?? null,
+      phone: synced.contactVerification?.phone ?? null,
+      phoneVerified: synced.contactVerification?.phoneVerified === true,
+      email: synced.contactVerification?.email ?? null,
+      emailVerified: synced.contactVerification?.emailVerified === true,
+      whatsappOptIn: synced.contactVerification?.whatsappOptIn === true,
       planNombre: publicInfo.plan.nombre,
+      trialProduct,
       trialStartDate: trial.trialStartDate,
       trialEndDate: trial.trialEndDate,
       trialDaysRemaining: trial.daysRemaining,
+      source: synced.source ?? synced.lifecycle?.source ?? null,
       trialStatus: trial.trialStatus,
-      source: business.source ?? business.lifecycle?.source ?? null,
-      lastLoginAt: business.lifecycle?.lastLoginAt ?? null,
+      lastLoginAt: synced.lifecycle?.lastLoginAt ?? null,
       usage: {
         ordersCount,
         salesCount,
@@ -124,6 +133,8 @@ export type PlatformPendingTrialRegistration = {
   ciudad: string;
   status: string;
   emailVerified: boolean;
+  trialProduct: string | null;
+  trialDays: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -132,26 +143,74 @@ export async function listPlatformPendingTrialRegistrations(): Promise<
   PlatformPendingTrialRegistration[]
 > {
   const rows = await listIncompleteTrialRegistrations(80);
-  return rows.map((row) => ({
-    id: row.id,
-    businessName: row.businessName,
-    ownerName: row.ownerName,
-    email: row.email,
-    phone: row.phone,
-    pais: row.pais,
-    ciudad: row.ciudad,
-    status: row.status,
-    emailVerified: row.emailVerified,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
+  return rows.map((row) => {
+    const trialProduct =
+      row.trialProduct && isTrialProductId(row.trialProduct) ? row.trialProduct : null;
+    return {
+      id: row.id,
+      businessName: row.businessName,
+      ownerName: row.ownerName,
+      email: row.email,
+      phone: row.phone,
+      pais: row.pais,
+      ciudad: row.ciudad,
+      status: row.status,
+      emailVerified: row.emailVerified,
+      trialProduct,
+      trialDays: trialProduct ? trialDaysForProduct(trialProduct) : null,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  });
 }
 
 export async function adminReleaseTrialContactClaim(
   type: 'email' | 'phone',
-  value: string
-): Promise<void> {
-  await releaseTrialContactClaim(type, value);
+  value: string,
+  options?: { force?: boolean }
+): Promise<{
+  released: boolean;
+  wasBoundToBusinessId: string | null;
+  businessName?: string | null;
+}> {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return { released: false, wasBoundToBusinessId: null, businessName: null };
+  }
+
+  const claimRef = db.collection('trial_contact_claims').doc(`${type}_${normalized}`);
+  const claimSnap = await claimRef.get();
+  if (!claimSnap.exists) {
+    return { released: false, wasBoundToBusinessId: null, businessName: null };
+  }
+
+  const claim = claimSnap.data() as { businessId?: string };
+  const businessId = claim.businessId ? String(claim.businessId) : null;
+
+  if (businessId) {
+    const { getBusiness } = await import('./business.ts');
+    const business = await getBusiness(businessId);
+    if (business?.estadoSuscripcion === 'activa') {
+      const err = new Error('ACTIVE_SUBSCRIPTION_BLOCKS_RELEASE');
+      (err as Error & { businessId?: string; businessName?: string }).businessId = businessId;
+      (err as Error & { businessId?: string; businessName?: string }).businessName =
+        business.nombre;
+      throw err;
+    }
+    if (!options?.force) {
+      const err = new Error('CLAIM_BOUND_TO_BUSINESS');
+      (err as Error & { businessId?: string; businessName?: string }).businessId = businessId;
+      (err as Error & { businessId?: string; businessName?: string }).businessName =
+        business?.nombre ?? null;
+      throw err;
+    }
+  }
+
+  const result = await releaseTrialContactClaim(type, value, { force: true });
+  return {
+    ...result,
+    businessName: null,
+  };
 }
 
 export async function touchBusinessLogin(businessId: string): Promise<void> {

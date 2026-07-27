@@ -83,7 +83,17 @@ export function getApiBootstrapState(): 'idle' | 'running' | 'ready' | 'failed' 
 export function createApiApp(): express.Express {
   const app = express();
   app.use(cors({ origin: true }));
-  app.use(express.json({ limit: '10mb' }));
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req, _res, buf) => {
+        const url = req.originalUrl ?? '';
+        if (url.startsWith('/api/webhooks/whatsapp')) {
+          (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+        }
+      },
+    })
+  );
 
   app.get('/api/health', (_req, res) => {
     res.json({

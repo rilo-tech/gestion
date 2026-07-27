@@ -12,7 +12,6 @@ import {
 } from './order.service';
 import { AuthService } from './auth.service';
 import { CatalogConfigService, type OrderPedidosConfigShape } from './catalog-config.service';
-import { getOrderStatusLabel } from '../constants/order-status';
 import { StockService, getStockDisponible, itemControlsStock } from './stock.service';
 
 export interface OrderPrintOptions {
@@ -24,6 +23,11 @@ export interface OrderPrintOptions {
   landscapeSheet: boolean;
   /** Casilla vacía imprimible junto a cada producto. */
   lineCheckboxes: boolean;
+  /**
+   * Notas de stock por línea (reservado / falta / alcanza).
+   * En dos vías: solo en la 2ª (armado); la 1ª es para el cliente.
+   */
+  showStockNotes: boolean;
   pedidos?: OrderPedidosConfigShape;
 }
 
@@ -156,7 +160,7 @@ function renderItemsTable(order: Order, options: OrderPrintOptions): string {
 
   const body = lines
     .map((line) => {
-      const stockNote = lineStockPrintNote(line, order);
+      const stockNote = options.showStockNotes ? lineStockPrintNote(line, order) : '';
       const detailCell = options.showPrices
         ? `<td class="num">${formatMoney(line.precioVenta)}</td>
            <td class="num">${formatMoney(lineSubtotal(line, true))}</td>`
@@ -184,18 +188,26 @@ function renderBalanceFooter(order: Order, options: OrderPrintOptions): string {
   if (!options.showPrices && !options.showBalance) return '';
 
   const { saldo, senia } = normalizeOrderForPrint(order);
+  const pagado = Math.max(
+    0,
+    Number(order.totalPagado) ||
+      (Array.isArray(order.pagos)
+        ? order.pagos.reduce((sum, pago) => sum + (Number(pago.monto) || 0), 0)
+        : 0) ||
+      senia
+  );
 
   const totalRow = options.showPrices
     ? `<div class="balance-item balance-item--total">
-        <span>Total</span>
+        <span>Precio venta</span>
         <strong>${formatMoney(order.total)}</strong>
       </div>`
     : '';
 
-  const señaRow = options.showBalance
+  const pagadoRow = options.showBalance
     ? `<div class="balance-item">
-        <span>Seña</span>
-        <strong>${formatMoney(senia)}</strong>
+        <span>${pagado > 0 && senia > 0 && Math.abs(pagado - senia) < 0.01 ? 'Seña' : 'Pagado'}</span>
+        <strong>${formatMoney(pagado)}</strong>
       </div>`
     : '';
 
@@ -206,9 +218,9 @@ function renderBalanceFooter(order: Order, options: OrderPrintOptions): string {
       </div>`
     : '';
 
-  if (!totalRow && !señaRow && !saldoRow) return '';
+  if (!totalRow && !pagadoRow && !saldoRow) return '';
 
-  return `<div class="balance-footer">${señaRow}${saldoRow}${totalRow}</div>`;
+  return `<div class="balance-footer">${totalRow}${pagadoRow}${saldoRow}</div>`;
 }
 
 function orderReferencePhotosPrintEnabled(options?: OrderPrintOptions): boolean {
@@ -262,7 +274,6 @@ function renderOrderSheet(
 ): string {
   const orderNumber = formatOrderNumber(order);
   const orderRef = orderNumber ? `#${orderNumber}` : 'Sin número';
-  const status = getOrderStatusLabel(order.estado, options.pedidos);
 
   return `
     <article class="sheet">
@@ -272,14 +283,12 @@ function renderOrderSheet(
         </div>
         <div class="order-badge">
           <div class="order-number">${escapeHtml(orderRef)}</div>
-          <div class="order-status">${escapeHtml(status)}</div>
         </div>
       </header>
 
       ${renderMetaStrip(order, client, clientName)}
 
       <section class="section products-section">
-        <h2>Productos</h2>
         ${renderItemsTable(order, options)}
       </section>
 
@@ -319,12 +328,14 @@ function renderOrderPage(
   const pageClass = withPhotos ? ' print-page--with-photos' : '';
 
   if (options.dualCopy) {
+    const clientCopyOptions: OrderPrintOptions = { ...options, showStockNotes: false };
+    const workshopCopyOptions: OrderPrintOptions = { ...options, showStockNotes: true };
     return `
     <div class="print-page print-page--dual${pageClass}">
       <div class="print-page__sheets">
-        ${renderOrderSheet(order, client, clientName, options, '1ª vía')}
+        ${renderOrderSheet(order, client, clientName, clientCopyOptions, '1ª vía')}
         <div class="via-divider via-divider--vertical" aria-hidden="true"></div>
-        ${renderOrderSheet(order, client, clientName, options, '2ª vía')}
+        ${renderOrderSheet(order, client, clientName, workshopCopyOptions, '2ª vía')}
       </div>
       ${photosSection}
     </div>`;
@@ -1005,10 +1016,13 @@ export class OrderPrintService {
               {
                 companyName: this.auth.appBrandTitle,
                 showPrices: this.auth.canViewOrderSalePrice,
-                showBalance: this.auth.canViewAccountBalance,
+                // Precio de venta ya incluye ver seña/pagos/saldo del pedido (mismo criterio que la UI).
+                showBalance: this.auth.canViewOrderBalance,
                 dualCopy: this.catalogConfig.usesOrderPrintDualCopy(config),
                 landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(config),
                 lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(config),
+                // En una sola vía se mantiene (armado). En dos vías se apaga en 1ª y se deja en 2ª.
+                showStockNotes: true,
                 pedidos: config.pedidos,
               }
             );
@@ -1020,10 +1034,11 @@ export class OrderPrintService {
               {
                 companyName: this.auth.appBrandTitle,
                 showPrices: this.auth.canViewOrderSalePrice,
-                showBalance: this.auth.canViewAccountBalance,
+                showBalance: this.auth.canViewOrderBalance,
                 dualCopy: this.catalogConfig.usesOrderPrintDualCopy(),
                 landscapeSheet: this.catalogConfig.usesOrderPrintLandscapeSheet(),
                 lineCheckboxes: this.catalogConfig.usesOrderPrintLineCheckboxes(),
+                showStockNotes: true,
                 pedidos: this.catalogConfig.appConfig.pedidos,
               }
             );

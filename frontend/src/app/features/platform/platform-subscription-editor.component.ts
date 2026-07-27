@@ -2,16 +2,19 @@ import { Component, EventEmitter, Input, OnChanges, OnInit, Output } from '@angu
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
-  PLATFORM_OVERRIDE_MODULE_CATALOG,
+  ERP_FEATURE_PACKS,
+  INCLUDED_ADMIN_SEATS,
+  INCLUDED_WHATSAPP_SEATS,
   SUBSCRIPTION_MODULE_CATALOG,
+  applyFeaturePackOverride,
   calculateMonthlyFee,
-  isModuleBillableAddon,
+  isFeaturePackEnabled,
   normalizeModulesMap,
   resolveEffectiveModules,
+  type ErpFeaturePack,
   type ModuleOverrideState,
   type MonthlyFeeBreakdown,
   type SubscriptionModuleId,
-  type SubscriptionModuleMeta,
 } from '../../../../../shared/subscription-modules.ts';
 import type { PublicPlanInfo } from '../../core/services/business.service';
 
@@ -20,9 +23,11 @@ export type BusinessSubscriptionDraft = {
   limiteOperadores: number | null;
   limiteUsuariosTotal: number | null;
   maxAmbitosCaja: number | null;
+  limiteWhatsapp: number | null;
   precioBaseOverride: number | null;
   precioPorAdministradorOverride: number | null;
   precioPorOperadorOverride: number | null;
+  precioPorWhatsappOverride: number | null;
   descuentoMensual: number;
   notasComerciales: string;
   modulosOverride: Partial<Record<SubscriptionModuleId, ModuleOverrideState>>;
@@ -34,198 +39,263 @@ export type BusinessSubscriptionDraft = {
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="space-y-5">
-      <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
-        Estos valores aplican <strong>solo a esta empresa</strong>. Editar un plan en la pestaña Planes
-        no modifica empresas ya creadas salvo que marques explícitamente «aplicar a existentes».
-      </p>
-
-      <div>
-        <h4 class="text-sm font-semibold text-gray-900 mb-1">Cupos de usuarios</h4>
-        <p class="text-xs text-gray-500 mb-3">
-          Definí cuántos operadores y administradores puede tener esta empresa.
-        </p>
+    <div class="space-y-6">
+      <section class="space-y-3">
+        <div>
+          <h4 class="text-sm font-semibold text-gray-900">Usuarios</h4>
+          <p class="text-xs text-gray-500 mt-0.5">
+            Siempre incluye <strong>1 administrador</strong>. Sumá operadores o admins extras a demanda
+            (no depende del plan de la landing).
+          </p>
+        </div>
+        <div class="rounded-lg border border-teal-100 bg-teal-50/50 px-3 py-2.5 text-sm text-teal-900">
+          1 administrador incluido en el precio base
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Admins permitidos</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="limitsDraft.limiteAdministradores"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'limiteAdministradores'"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-          <p class="text-[11px] text-gray-400 mt-1">Plantilla del plan: {{ plan.limiteAdministradores }}</p>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Operadores permitidos</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="limitsDraft.limiteOperadores"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'limiteOperadores'"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-          <p class="text-[11px] text-gray-400 mt-1">Plantilla del plan: {{ plan.limiteOperadores }}</p>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Total usuarios</label>
-          <input
-            type="number"
-            min="1"
-            [(ngModel)]="limitsDraft.limiteUsuariosTotal"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'limiteUsuariosTotal'"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Cajas / ámbitos</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="limitsDraft.maxAmbitosCaja"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'maxAmbitosCaja'"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-          <p class="text-[11px] text-gray-400 mt-1">Plantilla del plan: {{ plan.maxAmbitosCaja ?? 0 }}</p>
-        </div>
-        </div>
-      </div>
-
-      <div>
-        <h4 class="text-sm font-semibold text-gray-900 mb-1">Precio comercial de esta empresa</h4>
-        <p class="text-xs text-gray-500 mb-3">
-          Dejá vacío o en blanco para usar el valor de la plantilla del plan.
-        </p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Precio base ($/mes)</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="pricingDraft.precioBaseOverride"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'precioBase'"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-          <p class="text-[11px] text-gray-400 mt-1">Plantilla: {{ formatMoney(plan.precioBaseMensual) }}</p>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">$/admin/mes</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="pricingDraft.precioPorAdministradorOverride"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'precioAdmin'"
-            placeholder="{{ plan.precioPorAdministrador }}"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">$/operador/mes</label>
-          <input
-            type="number"
-            min="0"
-            [(ngModel)]="pricingDraft.precioPorOperadorOverride"
-            (ngModelChange)="emitChange()"
-            [name]="namePrefix + 'precioOp'"
-            placeholder="{{ plan.precioPorOperador }}"
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-        </div>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-xs font-medium text-gray-500 mb-1">Descuento mensual ($)</label>
-        <input
-          type="number"
-          min="0"
-          [(ngModel)]="pricingDraft.descuentoMensual"
-          (ngModelChange)="emitChange()"
-          [name]="namePrefix + 'descuento'"
-          class="w-full max-w-xs px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-      </div>
-
-      <div>
-        <h4 class="text-sm font-semibold text-gray-900 mb-2">Módulos y funciones</h4>
-        <p class="text-xs text-gray-500 mb-3">
-          Activá o desactivá módulos para este cliente (pedidos, caja, fotos en pedidos, etc.).
-          «Como el plan» usa la plantilla; «Desactivar» en Fotos en pedidos oculta el adjunto de imágenes.
-        </p>
-        <div class="rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
-          <div
-            *ngFor="let module of moduleCatalog"
-            class="px-3 py-3 sm:px-4 bg-white flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-gray-900">{{ module.label }}</p>
-              <p class="text-xs text-gray-500">{{ module.description }}</p>
-              <p class="text-[11px] text-gray-400 mt-0.5">
-                Plantilla: {{ planIncludes(module.id) ? 'incluido' : 'no incluido' }}
-                · Esta empresa:
-                <span [class.text-teal-700]="isEffectiveOn(module.id)" [class.text-gray-400]="!isEffectiveOn(module.id)">
-                  {{ isEffectiveOn(module.id) ? 'activo' : 'inactivo' }}
-                </span>
-              </p>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <select
-                [ngModel]="getModuleOverride(module.id)"
-                (ngModelChange)="setModuleOverride(module.id, $event)"
-                [disabled]="module.alwaysOn"
-                [name]="namePrefix + 'mod' + module.id"
-                class="px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-xs">
-                <option value="inherit">Como el plan</option>
-                <option value="on">Activar</option>
-                <option value="off">Desactivar</option>
-              </select>
-              <input
-                *ngIf="showAddonPrice(module)"
-                type="number"
-                min="0"
-                [ngModel]="getAddonPrice(module.id)"
-                (ngModelChange)="setAddonPrice(module.id, $event)"
-                [name]="namePrefix + 'addon' + module.id"
-                title="Precio mensual del módulo para este cliente"
-                class="w-24 px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-xs text-right tabular-nums"
-                placeholder="Addon $">
-            </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Admins extras</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="extraAdmins"
+              (ngModelChange)="onExtraAdminsChange()"
+              [name]="namePrefix + 'extraAdmins'"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            <p class="text-[11px] text-gray-400 mt-1">Total admins: {{ totalAdmins }}</p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Operadores</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="limitsDraft.limiteOperadores"
+              (ngModelChange)="syncTotalsAndEmit()"
+              [name]="namePrefix + 'limiteOperadores'"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
           </div>
         </div>
-      </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">$/admin extra / mes</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="pricingDraft.precioPorAdministradorOverride"
+              (ngModelChange)="emitChange()"
+              [name]="namePrefix + 'precioAdmin'"
+              [placeholder]="String(plan.precioPorOperador || 490)"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">$/operador / mes</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="pricingDraft.precioPorOperadorOverride"
+              (ngModelChange)="emitChange()"
+              [name]="namePrefix + 'precioOp'"
+              [placeholder]="String(plan.precioPorOperador || 490)"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-medium text-gray-500 mb-1">$/WhatsApp extra / mes</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="pricingDraft.precioPorWhatsappOverride"
+              (ngModelChange)="emitChange()"
+              [name]="namePrefix + 'precioWa'"
+              [placeholder]="String(plan.precioPorOperador || 490)"
+              class="w-full max-w-xs px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            <p class="text-[11px] text-gray-400 mt-1">
+              1 WhatsApp incluido; las líneas extra (números autorizados) se cobran con este monto.
+            </p>
+          </div>
+        </div>
+      </section>
 
-      <div class="rounded-xl border border-teal-100 bg-teal-50/60 p-4">
-        <h4 class="text-sm font-semibold text-teal-900 mb-2">Cuota mensual estimada</h4>
-        <ul class="space-y-1 text-sm text-teal-900/90">
-          <li *ngFor="let line of feePreview.lineas" class="flex justify-between gap-3">
-            <span>{{ line.concepto }}</span>
-            <span class="tabular-nums font-medium">{{ formatMoney(line.monto) }}</span>
-          </li>
-        </ul>
-        <div
-          *ngIf="feePreview.descuento > 0"
-          class="flex justify-between gap-3 text-sm text-teal-800 mt-2 pt-2 border-t border-teal-100">
+      <section class="space-y-3">
+        <div>
+          <h4 class="text-sm font-semibold text-gray-900">Precio del producto</h4>
+          <p class="text-xs text-gray-500 mt-0.5">
+            Debe coincidir con la landing (RiloBot / Panel / Completo).
+          </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Precio base ($/mes)</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="pricingDraft.precioBaseOverride"
+              (ngModelChange)="emitChange()"
+              [name]="namePrefix + 'precioBase'"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            <p class="text-[11px] text-gray-400 mt-1">Plantilla: {{ formatMoney(plan.precioBaseMensual) }}</p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Descuento ($)</label>
+            <input
+              type="number"
+              min="0"
+              [(ngModel)]="pricingDraft.descuentoMensual"
+              (ngModelChange)="emitChange()"
+              [name]="namePrefix + 'descuento'"
+              class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-xl border border-teal-200 bg-teal-50 p-4 space-y-3">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h4 class="text-sm font-semibold text-teal-950">Detalle de cuota (para factura)</h4>
+            <p class="text-xs text-teal-800 mt-0.5">
+              Se cobra por cupos habilitados, no solo por usuarios activos.
+            </p>
+          </div>
+          <p class="text-lg font-bold text-teal-950 tabular-nums">{{ formatMoney(feePreview.total) }}</p>
+        </div>
+        <div class="overflow-x-auto rounded-lg border border-teal-100 bg-white">
+          <table class="w-full text-left text-sm">
+            <thead>
+              <tr class="border-b border-teal-100 text-[11px] uppercase tracking-wide text-teal-800/70">
+                <th class="px-3 py-2 font-semibold">Concepto</th>
+                <th class="px-3 py-2 font-semibold text-right">Cant.</th>
+                <th class="px-3 py-2 font-semibold text-right">P. unit.</th>
+                <th class="px-3 py-2 font-semibold text-right">Importe</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-teal-50">
+              <tr *ngFor="let line of feePreview.lineas">
+                <td class="px-3 py-2 text-gray-800">
+                  {{ line.concepto }}
+                  <span *ngIf="line.codigo" class="block text-[10px] font-mono text-gray-400">{{ line.codigo }}</span>
+                </td>
+                <td class="px-3 py-2 text-right tabular-nums text-gray-700">{{ line.cantidad ?? 1 }}</td>
+                <td class="px-3 py-2 text-right tabular-nums text-gray-700">
+                  {{ formatMoney(line.precioUnitario ?? line.monto) }}
+                </td>
+                <td class="px-3 py-2 text-right tabular-nums font-medium text-gray-900">
+                  {{ formatMoney(line.monto) }}
+                </td>
+              </tr>
+              <tr *ngIf="!feePreview.lineas.length">
+                <td colspan="4" class="px-3 py-4 text-center text-gray-500 text-sm">
+                  Sin cargos todavía. Definí el <strong>precio base</strong> arriba
+                  (o elegí un producto) para ver la cuota.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div *ngIf="feePreview.descuento > 0" class="flex justify-between text-sm text-teal-900 px-1">
           <span>Descuento</span>
           <span class="tabular-nums">-{{ formatMoney(feePreview.descuento) }}</span>
         </div>
-        <div class="flex justify-between gap-3 text-base font-bold text-teal-900 mt-2 pt-2 border-t border-teal-200">
-          <span>Total</span>
+        <div class="flex justify-between text-sm font-semibold text-teal-950 px-1">
+          <span>Subtotal</span>
+          <span class="tabular-nums">{{ formatMoney(feePreview.subtotal) }}</span>
+        </div>
+      </section>
+
+      <section *ngIf="showErpPacks" class="rounded-xl border border-sky-200 bg-sky-50/60 p-4 space-y-4">
+        <div>
+          <h4 class="text-sm font-semibold text-sky-950">Qué ve este cliente en el Panel</h4>
+          <p class="text-xs text-sky-900/80 mt-0.5">
+            Solo afecta a <strong>esta empresa</strong>, no al plan plantilla.
+            Lo incluido en el plan viene de base; acá podés sumar un módulo extra (p. ej. Reportes solo para este cliente)
+            u ocultar uno. Colaboradores y Reportes arrancan apagados y se cobran aparte al habilitarlos.
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-sky-100 bg-white overflow-hidden divide-y divide-sky-50">
+          <label
+            *ngFor="let mod of clientVisibleModules"
+            class="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-sky-50/50"
+            [class.opacity-60]="mod.alwaysOn"
+            [class.cursor-default]="mod.alwaysOn">
+            <input
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600"
+              [checked]="isModuleVisible(mod.id)"
+              [disabled]="!!mod.alwaysOn"
+              (change)="toggleModule(mod.id, $any($event.target).checked)"
+              [name]="namePrefix + 'mod' + mod.id">
+            <span class="min-w-0 flex-1">
+              <span class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-semibold text-gray-900">{{ mod.label }}</span>
+                <span
+                  *ngIf="mod.alwaysOn || isModuleIncludedInPlan(mod.id)"
+                  class="text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">
+                  Incluido
+                </span>
+                <span
+                  *ngIf="!mod.alwaysOn && !isModuleIncludedInPlan(mod.id)"
+                  class="text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
+                  Extra
+                </span>
+                <span
+                  class="text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded"
+                  [class.bg-green-100]="isModuleVisible(mod.id)"
+                  [class.text-green-800]="isModuleVisible(mod.id)"
+                  [class.bg-gray-100]="!isModuleVisible(mod.id)"
+                  [class.text-gray-600]="!isModuleVisible(mod.id)">
+                  {{ isModuleVisible(mod.id) ? 'Visible' : 'Oculto' }}
+                </span>
+              </span>
+              <span class="block text-xs text-gray-500 mt-0.5">{{ mod.description }}</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            (click)="enableExtraModules()"
+            class="rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-900 hover:bg-sky-100">
+            Activar Colaboradores + Reportes
+          </button>
+          <button
+            type="button"
+            (click)="disableExtraModules()"
+            class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+            Solo funciones incluidas
+          </button>
+        </div>
+      </section>
+
+      <section class="rounded-xl border border-teal-100 bg-teal-50/40 px-4 py-3">
+        <div class="flex justify-between gap-3 text-sm font-bold text-teal-950">
+          <span>Total mensual estimado</span>
           <span class="tabular-nums">{{ formatMoney(feePreview.total) }}</span>
         </div>
-      </div>
+        <p class="text-[11px] text-teal-800/80 mt-1">
+          Guardá los cambios para que este total quede fijo en la empresa y disponible al emitir factura.
+        </p>
+      </section>
     </div>
   `,
 })
 export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
-  readonly moduleCatalog = PLATFORM_OVERRIDE_MODULE_CATALOG;
+  readonly featurePacks = ERP_FEATURE_PACKS;
+  readonly includedAdmins = INCLUDED_ADMIN_SEATS;
+  readonly clientVisibleModules = SUBSCRIPTION_MODULE_CATALOG.filter(
+    (mod) => mod.sellable !== false
+  );
 
   @Input({ required: true }) plan!: PublicPlanInfo;
   @Input() namePrefix = 'sub';
+  @Input() showErpPacks = true;
   @Input() draft: BusinessSubscriptionDraft = emptyBusinessSubscriptionDraft();
   @Output() draftChange = new EventEmitter<BusinessSubscriptionDraft>();
 
+  extraAdmins = 0;
+
   limitsDraft = {
-    limiteAdministradores: null as number | null,
-    limiteOperadores: null as number | null,
-    limiteUsuariosTotal: null as number | null,
+    limiteAdministradores: INCLUDED_ADMIN_SEATS as number | null,
+    limiteOperadores: 0 as number | null,
+    limiteUsuariosTotal: INCLUDED_ADMIN_SEATS as number | null,
     maxAmbitosCaja: null as number | null,
   };
 
@@ -233,6 +303,7 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
     precioBaseOverride: null as number | null,
     precioPorAdministradorOverride: null as number | null,
     precioPorOperadorOverride: null as number | null,
+    precioPorWhatsappOverride: null as number | null,
     descuentoMensual: 0,
     notasComerciales: '',
   };
@@ -248,55 +319,115 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
     this.syncFromDraft();
   }
 
+  get totalAdmins(): number {
+    return this.includedAdmins + Math.max(0, this.extraAdmins || 0);
+  }
+
   get feePreview(): MonthlyFeeBreakdown {
     return this.computeFee();
   }
 
-  planIncludes(moduleId: SubscriptionModuleId): boolean {
-    return normalizeModulesMap(this.plan.modulosIncluidos, this.plan.id)[moduleId] === true;
+  private planModules(): ReturnType<typeof normalizeModulesMap> {
+    return normalizeModulesMap(this.plan.modulosIncluidos, this.plan.id);
   }
 
-  isEffectiveOn(moduleId: SubscriptionModuleId): boolean {
-    const planModules = normalizeModulesMap(this.plan.modulosIncluidos, this.plan.id);
-    return resolveEffectiveModules(planModules, this.moduleOverrideState)[moduleId] === true;
+  private effectiveModules() {
+    return resolveEffectiveModules(this.planModules(), this.moduleOverrideState);
   }
 
-  getModuleOverride(moduleId: SubscriptionModuleId): ModuleOverrideState {
-    return this.moduleOverrideState[moduleId] ?? 'inherit';
+  isModuleIncludedInPlan(moduleId: SubscriptionModuleId): boolean {
+    return this.planModules()[moduleId] === true;
   }
 
-  setModuleOverride(moduleId: SubscriptionModuleId, value: ModuleOverrideState) {
-    if (value === 'inherit') {
-      delete this.moduleOverrideState[moduleId];
+  isModuleVisible(moduleId: SubscriptionModuleId): boolean {
+    return this.effectiveModules()[moduleId] === true;
+  }
+
+  enableExtraModules() {
+    this.applyModuleEnabled('collaborators', true);
+    this.applyModuleEnabled('reports', true);
+    this.emitChange();
+  }
+
+  disableExtraModules() {
+    this.applyModuleEnabled('collaborators', false);
+    this.applyModuleEnabled('reports', false);
+    this.emitChange();
+  }
+
+  toggleModule(moduleId: SubscriptionModuleId, enabled: boolean) {
+    this.applyModuleEnabled(moduleId, enabled);
+    this.emitChange();
+  }
+
+  private applyModuleEnabled(moduleId: SubscriptionModuleId, enabled: boolean) {
+    const meta = SUBSCRIPTION_MODULE_CATALOG.find((item) => item.id === moduleId);
+    if (!meta || meta.alwaysOn) return;
+
+    const planModules = this.planModules();
+    const inPlan = planModules[moduleId] === true;
+    const next = { ...this.moduleOverrideState };
+    if (enabled === inPlan) {
+      delete next[moduleId];
     } else {
-      this.moduleOverrideState[moduleId] = value;
+      next[moduleId] = enabled ? 'on' : 'off';
+    }
+    this.moduleOverrideState = next;
+
+    if (enabled && !inPlan && meta.defaultAddonPrice > 0) {
+      if (this.addonOverrides[moduleId] === undefined) {
+        this.addonOverrides = {
+          ...this.addonOverrides,
+          [moduleId]: meta.defaultAddonPrice,
+        };
+      }
+    }
+  }
+
+  isPackOn(pack: ErpFeaturePack): boolean {
+    return isFeaturePackEnabled(pack, this.effectiveModules());
+  }
+
+  togglePack(pack: ErpFeaturePack, enabled: boolean) {
+    if (pack.includedByDefault && pack.id === 'negocio' && !enabled) {
+      return;
+    }
+    const planModules = this.planModules();
+    this.moduleOverrideState = applyFeaturePackOverride(
+      pack,
+      enabled,
+      planModules,
+      this.moduleOverrideState
+    );
+    if (enabled && !pack.includedByDefault && pack.suggestedAddonMonthly > 0) {
+      for (const id of pack.modules) {
+        if (this.addonOverrides[id] === undefined) {
+          this.addonOverrides[id] = pack.suggestedAddonMonthly;
+        }
+      }
     }
     this.emitChange();
   }
 
-  showAddonPrice(module: SubscriptionModuleMeta): boolean {
-    const planModules = normalizeModulesMap(this.plan.modulosIncluidos, this.plan.id);
-    const effective = resolveEffectiveModules(planModules, this.moduleOverrideState);
-    return isModuleBillableAddon(module.id, planModules, effective);
+  onExtraAdminsChange() {
+    this.extraAdmins = Math.max(0, Math.floor(Number(this.extraAdmins) || 0));
+    this.syncTotalsAndEmit();
   }
 
-  getAddonPrice(moduleId: SubscriptionModuleId): number {
-    if (this.addonOverrides[moduleId] !== undefined) return this.addonOverrides[moduleId]!;
-    const meta = SUBSCRIPTION_MODULE_CATALOG.find((item) => item.id === moduleId);
-    return this.plan.preciosAddonModulo?.[moduleId] ?? meta?.defaultAddonPrice ?? 0;
-  }
-
-  setAddonPrice(moduleId: SubscriptionModuleId, value: number) {
-    this.addonOverrides[moduleId] = Math.max(0, Number(value) || 0);
+  syncTotalsAndEmit() {
+    const ops = Math.max(0, Math.floor(Number(this.limitsDraft.limiteOperadores) || 0));
+    this.limitsDraft.limiteOperadores = ops;
+    this.limitsDraft.limiteAdministradores = this.totalAdmins;
+    this.limitsDraft.limiteUsuariosTotal = this.totalAdmins + ops;
     this.emitChange();
   }
 
   formatMoney(value: number): string {
-    return new Intl.NumberFormat('es-AR', {
+    return new Intl.NumberFormat('es-UY', {
       style: 'currency',
-      currency: 'ARS',
+      currency: 'UYU',
       maximumFractionDigits: 0,
-    }).format(value || 0);
+    }).format(Number.isFinite(value) ? value : 0);
   }
 
   emitChange() {
@@ -305,9 +436,11 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
       limiteOperadores: this.limitsDraft.limiteOperadores,
       limiteUsuariosTotal: this.limitsDraft.limiteUsuariosTotal,
       maxAmbitosCaja: this.limitsDraft.maxAmbitosCaja,
+      limiteWhatsapp: this.draft.limiteWhatsapp ?? null,
       precioBaseOverride: this.pricingDraft.precioBaseOverride,
       precioPorAdministradorOverride: this.pricingDraft.precioPorAdministradorOverride,
       precioPorOperadorOverride: this.pricingDraft.precioPorOperadorOverride,
+      precioPorWhatsappOverride: this.pricingDraft.precioPorWhatsappOverride,
       descuentoMensual: this.pricingDraft.descuentoMensual,
       notasComerciales: this.pricingDraft.notasComerciales,
       modulosOverride: { ...this.moduleOverrideState },
@@ -317,21 +450,64 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
 
   private syncFromDraft() {
     const d = this.draft ?? emptyBusinessSubscriptionDraft();
+    const admins = Math.max(
+      this.includedAdmins,
+      Number(d.limiteAdministradores ?? this.plan?.limiteAdministradores ?? this.includedAdmins) ||
+        this.includedAdmins
+    );
+    this.extraAdmins = Math.max(0, admins - this.includedAdmins);
     this.limitsDraft = {
-      limiteAdministradores: d.limiteAdministradores,
-      limiteOperadores: d.limiteOperadores,
-      limiteUsuariosTotal: d.limiteUsuariosTotal,
+      limiteAdministradores: admins,
+      limiteOperadores: Math.max(0, Number(d.limiteOperadores) || 0),
+      limiteUsuariosTotal:
+        d.limiteUsuariosTotal ??
+        admins + Math.max(0, Number(d.limiteOperadores) || 0),
       maxAmbitosCaja: d.maxAmbitosCaja,
     };
+    const planBase = this.planBasePrice();
+    const savedBase = this.positiveAmount(d.precioBaseOverride);
     this.pricingDraft = {
-      precioBaseOverride: d.precioBaseOverride,
-      precioPorAdministradorOverride: d.precioPorAdministradorOverride,
-      precioPorOperadorOverride: d.precioPorOperadorOverride,
-      descuentoMensual: d.descuentoMensual ?? 0,
+      // Si no hay override válido, prellenar con la plantilla para que el detalle no quede en blanco.
+      precioBaseOverride: savedBase ?? (planBase > 0 ? planBase : null),
+      precioPorAdministradorOverride: this.optionalAmount(d.precioPorAdministradorOverride),
+      precioPorOperadorOverride: this.optionalAmount(d.precioPorOperadorOverride),
+      precioPorWhatsappOverride: this.optionalAmount(d.precioPorWhatsappOverride),
+      descuentoMensual: Math.max(0, Number(d.descuentoMensual) || 0),
       notasComerciales: d.notasComerciales ?? '',
     };
     this.moduleOverrideState = { ...(d.modulosOverride ?? {}) };
     this.addonOverrides = { ...(d.preciosAddonModuloOverride ?? {}) };
+  }
+
+  private optionalAmount(value: number | null | undefined): number | null {
+    if (value === null || value === undefined || value === ('' as unknown)) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  private positiveAmount(value: number | null | undefined): number | null {
+    const n = this.optionalAmount(value);
+    return n !== null && n > 0 ? n : null;
+  }
+
+  private planBasePrice(): number {
+    const n = Number(this.plan?.precioBaseMensual ?? this.plan?.precioMensual);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  /** Precio base efectivo para la vista previa (nunca usa 0/vacío si el plan tiene precio). */
+  private effectivePrecioBase(): number {
+    return this.positiveAmount(this.pricingDraft.precioBaseOverride) ?? this.planBasePrice();
+  }
+
+  private suggestedUserPrice(): number {
+    return (
+      this.positiveAmount(this.pricingDraft.precioPorOperadorOverride) ??
+      this.positiveAmount(this.pricingDraft.precioPorAdministradorOverride) ??
+      this.positiveAmount(this.plan?.precioPorOperador) ??
+      this.positiveAmount(this.plan?.precioPorAdministrador) ??
+      490
+    );
   }
 
   private computeFee(): MonthlyFeeBreakdown {
@@ -342,15 +518,21 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
       if (addonPrices[meta.id] === undefined) addonPrices[meta.id] = meta.defaultAddonPrice;
     }
 
+    const suggestedUser = this.suggestedUserPrice();
+
     return calculateMonthlyFee({
-      precioBase: this.pricingDraft.precioBaseOverride ?? this.plan.precioBaseMensual,
+      precioBase: this.effectivePrecioBase(),
       precioPorAdministrador:
-        this.pricingDraft.precioPorAdministradorOverride ?? this.plan.precioPorAdministrador,
+        this.positiveAmount(this.pricingDraft.precioPorAdministradorOverride) ?? suggestedUser,
       precioPorOperador:
-        this.pricingDraft.precioPorOperadorOverride ?? this.plan.precioPorOperador,
-      limiteAdministradores:
-        this.limitsDraft.limiteAdministradores ?? this.plan.limiteAdministradores,
-      limiteOperadores: this.limitsDraft.limiteOperadores ?? this.plan.limiteOperadores,
+        this.positiveAmount(this.pricingDraft.precioPorOperadorOverride) ?? suggestedUser,
+      limiteAdministradores: this.totalAdmins,
+      limiteOperadores: this.limitsDraft.limiteOperadores ?? 0,
+      includedAdministradores: this.includedAdmins,
+      whatsappLines: this.draft.limiteWhatsapp ?? 0,
+      includedWhatsapp: INCLUDED_WHATSAPP_SEATS,
+      precioPorWhatsapp:
+        this.positiveAmount(this.pricingDraft.precioPorWhatsappOverride) ?? suggestedUser,
       planModules,
       effectiveModules: effective,
       addonPrices,
@@ -361,13 +543,15 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
 
 export function emptyBusinessSubscriptionDraft(): BusinessSubscriptionDraft {
   return {
-    limiteAdministradores: null,
-    limiteOperadores: null,
-    limiteUsuariosTotal: null,
+    limiteAdministradores: INCLUDED_ADMIN_SEATS,
+    limiteOperadores: 0,
+    limiteUsuariosTotal: INCLUDED_ADMIN_SEATS,
     maxAmbitosCaja: null,
+    limiteWhatsapp: null,
     precioBaseOverride: null,
     precioPorAdministradorOverride: null,
     precioPorOperadorOverride: null,
+    precioPorWhatsappOverride: null,
     descuentoMensual: 0,
     notasComerciales: '',
     modulosOverride: {},
@@ -389,18 +573,26 @@ export function businessSubscriptionDraftFromPublic(business: {
   const sub = business.suscripcion ?? {};
   const effective = business.limitesEfectivos;
   const plan = business.plan;
+  const admins =
+    sub.limiteAdministradores ??
+    effective?.limiteAdministradores ??
+    plan.limiteAdministradores ??
+    INCLUDED_ADMIN_SEATS;
+  const ops = sub.limiteOperadores ?? effective?.limiteOperadores ?? plan.limiteOperadores ?? 0;
   return {
-    limiteAdministradores:
-      sub.limiteAdministradores ?? effective?.limiteAdministradores ?? plan.limiteAdministradores,
-    limiteOperadores:
-      sub.limiteOperadores ?? effective?.limiteOperadores ?? plan.limiteOperadores,
+    limiteAdministradores: Math.max(INCLUDED_ADMIN_SEATS, admins),
+    limiteOperadores: Math.max(0, ops),
     limiteUsuariosTotal:
-      sub.limiteUsuariosTotal ?? effective?.limiteUsuariosTotal ?? plan.limiteUsuariosTotal,
+      sub.limiteUsuariosTotal ??
+      effective?.limiteUsuariosTotal ??
+      Math.max(INCLUDED_ADMIN_SEATS, admins) + Math.max(0, ops),
     maxAmbitosCaja:
       sub.maxAmbitosCaja ?? effective?.maxAmbitosCaja ?? plan.maxAmbitosCaja ?? 0,
+    limiteWhatsapp: sub.limiteWhatsapp ?? null,
     precioBaseOverride: sub.precioBaseOverride ?? null,
     precioPorAdministradorOverride: sub.precioPorAdministradorOverride ?? null,
     precioPorOperadorOverride: sub.precioPorOperadorOverride ?? null,
+    precioPorWhatsappOverride: sub.precioPorWhatsappOverride ?? null,
     descuentoMensual: sub.descuentoMensual ?? 0,
     notasComerciales: sub.notasComerciales ?? '',
     modulosOverride: business.modulosOverride ?? sub.modulosOverride ?? {},
@@ -415,9 +607,11 @@ export function subscriptionDraftToPayload(draft: BusinessSubscriptionDraft) {
       limiteOperadores: draft.limiteOperadores,
       limiteUsuariosTotal: draft.limiteUsuariosTotal,
       maxAmbitosCaja: draft.maxAmbitosCaja,
+      limiteWhatsapp: draft.limiteWhatsapp,
       precioBaseOverride: draft.precioBaseOverride,
       precioPorAdministradorOverride: draft.precioPorAdministradorOverride,
       precioPorOperadorOverride: draft.precioPorOperadorOverride,
+      precioPorWhatsappOverride: draft.precioPorWhatsappOverride,
       descuentoMensual: draft.descuentoMensual,
       notasComerciales: draft.notasComerciales,
       modulosOverride: draft.modulosOverride,

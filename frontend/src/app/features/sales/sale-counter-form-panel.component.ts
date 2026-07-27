@@ -1,5 +1,6 @@
 import {
   Component,
+  DestroyRef,
   EventEmitter,
   Input,
   OnChanges,
@@ -10,6 +11,7 @@ import {
   ViewChild,
   inject,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
@@ -507,6 +509,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   private dialogService = inject(DialogService);
   private router = inject(Router);
   private catalogConfig = inject(CatalogConfigService);
+  private destroyRef = inject(DestroyRef);
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   private configSub?: Subscription;
@@ -784,6 +787,10 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         queueMicrotask(() => this.formReadyChange.emit(true));
         this.bootstrapSaleForm();
       });
+
+    this.clientService.clientsChanged$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.refreshClientsList());
   }
 
   private bootstrapSaleForm(): void {
@@ -814,9 +821,9 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     if (this.clientsLoading || this.clientsLoaded) return;
 
     this.clientsLoading = true;
-    this.clientService.getClientsPage(120, undefined, { soloActivos: true }).subscribe({
-      next: (page) => {
-        this.setClients(page.items);
+    this.clientService.getActiveClientsForPicker().subscribe({
+      next: (clients) => {
+        this.setClients(clients);
         this.clientsLoaded = true;
         this.clientsLoading = false;
         const callbacks = this.afterClientsLoad.splice(0);
@@ -1022,7 +1029,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     if (!trimmed || this.creatingClient) return;
 
     this.creatingClient = true;
-    this.clientService.createClient({ nombre: trimmed }).subscribe({
+    this.clientService.createClient({ nombre: trimmed, activo: true }).subscribe({
       next: (response) => {
         this.creatingClient = false;
         const client: Client = { id: response.id, nombre: trimmed };
@@ -1381,6 +1388,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   private buildSalePayload(strict: boolean): CreateSalePayload | null {
+    this.saleLinesTable?.commitPendingNumericEdits();
     const monto = Number(this.montoCobrado);
 
     if (strict && (!Number.isFinite(monto) || monto < 0)) {

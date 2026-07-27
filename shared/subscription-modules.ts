@@ -23,7 +23,7 @@ export interface SubscriptionModuleMeta {
   id: SubscriptionModuleId;
   label: string;
   description: string;
-  /** Precio addon sugerido en catálogo global (ARS/mes). */
+  /** Precio addon sugerido en catálogo global. */
   defaultAddonPrice: number;
   /** Si false, no se puede desactivar (core). */
   alwaysOn?: boolean;
@@ -43,52 +43,116 @@ export const SUBSCRIPTION_MODULE_CATALOG: readonly SubscriptionModuleMeta[] = [
     id: 'pedidos',
     label: 'Pedidos',
     description: 'Flujo de pedidos, estados, impresión y preparación.',
-    defaultAddonPrice: 8000,
+    defaultAddonPrice: 0,
   },
   {
     id: 'caja',
     label: 'Caja',
     description: 'Movimientos de caja, cobros y medios de pago.',
-    defaultAddonPrice: 6000,
+    defaultAddonPrice: 0,
   },
   {
     id: 'payables',
     label: 'Cuentas a pagar',
     description: 'Vencimientos, obligaciones y préstamos.',
-    defaultAddonPrice: 5000,
+    defaultAddonPrice: 0,
   },
   {
     id: 'collaborators',
     label: 'Colaboradores',
     description: 'Horas, extras y pagos del personal.',
-    defaultAddonPrice: 4000,
+    defaultAddonPrice: 490,
   },
   {
     id: 'price_catalog',
     label: 'Catálogo de precios',
     description: 'Lista de precios de venta y sugerencias.',
-    defaultAddonPrice: 3000,
+    defaultAddonPrice: 0,
   },
   {
     id: 'reports',
     label: 'Reportes',
     description: 'Informes y resúmenes del negocio.',
-    defaultAddonPrice: 4000,
+    defaultAddonPrice: 490,
   },
   {
     id: 'economics',
     label: 'Costos y márgenes',
     description: 'Costos de stock, ganancia estimada y valor en depósito.',
-    defaultAddonPrice: 5000,
+    defaultAddonPrice: 0,
   },
   {
     id: 'order_photos',
     label: 'Fotos en pedidos',
     description: 'Adjuntar fotos de referencia en pedidos.',
-    defaultAddonPrice: 2000,
+    defaultAddonPrice: 0,
     sellable: false,
   },
 ];
+
+export type ErpFeaturePackId = 'negocio' | 'equipo' | 'analisis';
+
+export interface ErpFeaturePack {
+  id: ErpFeaturePackId;
+  label: string;
+  description: string;
+  modules: readonly SubscriptionModuleId[];
+  /** Incluido en prueba y en todos los productos Panel/Completo por defecto. */
+  includedByDefault: boolean;
+  /** Cobro extra sugerido si se activa por encima del default. */
+  suggestedAddonMonthly: number;
+}
+
+/**
+ * Stock queda DENTRO del producto (core): sacarlo confunde al microcomercio.
+ * Prueba = máximo valor operativo; Colaboradores y Reportes se suman después.
+ */
+export const ERP_FEATURE_PACKS: readonly ErpFeaturePack[] = [
+  {
+    id: 'negocio',
+    label: 'Negocio (incluye stock)',
+    description:
+      'Clientes, stock, compras, ventas, pedidos, caja, cuentas a pagar, catálogo y márgenes.',
+    modules: ['pedidos', 'caja', 'payables', 'price_catalog', 'economics', 'order_photos'],
+    includedByDefault: true,
+    suggestedAddonMonthly: 0,
+  },
+  {
+    id: 'equipo',
+    label: 'Equipo',
+    description: 'Colaboradores: horas, extras y pagos del personal.',
+    modules: ['collaborators'],
+    includedByDefault: false,
+    suggestedAddonMonthly: 490,
+  },
+  {
+    id: 'analisis',
+    label: 'Análisis',
+    description: 'Reportes e informes del negocio.',
+    modules: ['reports'],
+    includedByDefault: false,
+    suggestedAddonMonthly: 490,
+  },
+];
+
+/** Módulos de prueba / default comercial: todo menos colaboradores y reportes. */
+export const TRIAL_DEFAULT_MODULES: SubscriptionModulesMap = {
+  core: true,
+  pedidos: true,
+  caja: true,
+  payables: true,
+  collaborators: false,
+  price_catalog: true,
+  reports: false,
+  economics: true,
+  order_photos: true,
+};
+
+/** 1 admin incluido en el precio base; el resto son extras cobrables. */
+export const INCLUDED_ADMIN_SEATS = 1;
+
+/** 1 WhatsApp incluido en RiloBot / Completo; líneas adicionales se cobran aparte. */
+export const INCLUDED_WHATSAPP_SEATS = 1;
 
 export const SELLABLE_SUBSCRIPTION_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.filter(
   (module) => module.sellable !== false
@@ -100,39 +164,9 @@ export const PLATFORM_OVERRIDE_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.filt
 );
 
 export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
-  plan_basico: {
-    core: true,
-    pedidos: true,
-    caja: false,
-    payables: false,
-    collaborators: false,
-    price_catalog: false,
-    reports: false,
-    economics: false,
-    order_photos: true,
-  },
-  plan_intermedio: {
-    core: true,
-    pedidos: true,
-    caja: true,
-    payables: false,
-    collaborators: false,
-    price_catalog: false,
-    reports: true,
-    economics: false,
-    order_photos: true,
-  },
-  plan_profesional: {
-    core: true,
-    pedidos: true,
-    caja: true,
-    payables: true,
-    collaborators: true,
-    price_catalog: true,
-    reports: true,
-    economics: true,
-    order_photos: true,
-  },
+  plan_basico: { ...TRIAL_DEFAULT_MODULES },
+  plan_intermedio: { ...TRIAL_DEFAULT_MODULES },
+  plan_profesional: { ...TRIAL_DEFAULT_MODULES },
 };
 
 export function emptyModulesMap(enabled = false): SubscriptionModulesMap {
@@ -150,7 +184,7 @@ export function normalizeModulesMap(
   planId?: string
 ): SubscriptionModulesMap {
   const defaults =
-    (planId && DEFAULT_PLAN_MODULES[planId]) || emptyModulesMap(false);
+    (planId && DEFAULT_PLAN_MODULES[planId]) || { ...TRIAL_DEFAULT_MODULES };
   const next = { ...defaults };
   for (const id of SUBSCRIPTION_MODULE_IDS) {
     if (raw && typeof raw[id] === 'boolean') {
@@ -194,6 +228,32 @@ export function resolveEffectiveModules(
   return effective;
 }
 
+export function isFeaturePackEnabled(
+  pack: ErpFeaturePack,
+  effective: SubscriptionModulesMap
+): boolean {
+  return pack.modules.every((id) => effective[id] === true);
+}
+
+/** Aplica un pack on/off como overrides respecto a la plantilla del plan. */
+export function applyFeaturePackOverride(
+  pack: ErpFeaturePack,
+  enabled: boolean,
+  planModules: SubscriptionModulesMap,
+  current: ModuleOverridesMap
+): ModuleOverridesMap {
+  const next = { ...current };
+  for (const id of pack.modules) {
+    const inPlan = planModules[id] === true;
+    if (enabled === inPlan) {
+      delete next[id];
+    } else {
+      next[id] = enabled ? 'on' : 'off';
+    }
+  }
+  return next;
+}
+
 export function isModuleBillableAddon(
   moduleId: SubscriptionModuleId,
   planModules: SubscriptionModulesMap,
@@ -204,7 +264,12 @@ export function isModuleBillableAddon(
 }
 
 export interface MonthlyFeeLine {
+  /** Texto legible para UI / factura. */
   concepto: string;
+  /** Código estable para facturación (ej. BASE, ADMIN_EXTRA, OP, WA_EXTRA, MOD:reports). */
+  codigo?: string;
+  cantidad?: number;
+  precioUnitario?: number;
   monto: number;
 }
 
@@ -221,6 +286,13 @@ export interface MonthlyFeeInput {
   precioPorOperador: number;
   limiteAdministradores: number;
   limiteOperadores: number;
+  /** Admins incluidos en el precio base (default 1). */
+  includedAdministradores?: number;
+  /** Líneas WhatsApp habilitadas (números autorizados). */
+  whatsappLines?: number;
+  /** WhatsApp incluidos en el precio base (default 1). */
+  includedWhatsapp?: number;
+  precioPorWhatsapp?: number;
   planModules: SubscriptionModulesMap;
   effectiveModules: SubscriptionModulesMap;
   addonPrices: Partial<Record<SubscriptionModuleId, number>>;
@@ -231,13 +303,24 @@ export function calculateMonthlyFee(input: MonthlyFeeInput): MonthlyFeeBreakdown
   const lineas: MonthlyFeeLine[] = [];
 
   if (input.precioBase > 0) {
-    lineas.push({ concepto: 'Cuota base del plan', monto: input.precioBase });
+    lineas.push({
+      codigo: 'BASE',
+      concepto: 'Cuota base (1 usuario incluido)',
+      cantidad: 1,
+      precioUnitario: input.precioBase,
+      monto: input.precioBase,
+    });
   }
 
-  const adminsCharge = input.limiteAdministradores * input.precioPorAdministrador;
+  const includedAdmins = Math.max(0, input.includedAdministradores ?? INCLUDED_ADMIN_SEATS);
+  const extraAdmins = Math.max(0, input.limiteAdministradores - includedAdmins);
+  const adminsCharge = extraAdmins * input.precioPorAdministrador;
   if (adminsCharge > 0) {
     lineas.push({
-      concepto: `${input.limiteAdministradores} admin × $${input.precioPorAdministrador}`,
+      codigo: 'ADMIN_EXTRA',
+      concepto: `Administrador extra`,
+      cantidad: extraAdmins,
+      precioUnitario: input.precioPorAdministrador,
       monto: adminsCharge,
     });
   }
@@ -245,8 +328,26 @@ export function calculateMonthlyFee(input: MonthlyFeeInput): MonthlyFeeBreakdown
   const opsCharge = input.limiteOperadores * input.precioPorOperador;
   if (opsCharge > 0) {
     lineas.push({
-      concepto: `${input.limiteOperadores} operadores × $${input.precioPorOperador}`,
+      codigo: 'OPERADOR',
+      concepto: `Operador`,
+      cantidad: input.limiteOperadores,
+      precioUnitario: input.precioPorOperador,
       monto: opsCharge,
+    });
+  }
+
+  const whatsappLines = Math.max(0, Number(input.whatsappLines) || 0);
+  const includedWa = Math.max(0, input.includedWhatsapp ?? INCLUDED_WHATSAPP_SEATS);
+  const precioWa = Math.max(0, Number(input.precioPorWhatsapp) || 0);
+  const extraWa = Math.max(0, whatsappLines - includedWa);
+  const waCharge = extraWa * precioWa;
+  if (waCharge > 0) {
+    lineas.push({
+      codigo: 'WA_EXTRA',
+      concepto: `WhatsApp extra`,
+      cantidad: extraWa,
+      precioUnitario: precioWa,
+      monto: waCharge,
     });
   }
 
@@ -254,7 +355,13 @@ export function calculateMonthlyFee(input: MonthlyFeeInput): MonthlyFeeBreakdown
     if (!isModuleBillableAddon(meta.id, input.planModules, input.effectiveModules)) continue;
     const addon = Math.max(0, Number(input.addonPrices[meta.id]) || meta.defaultAddonPrice);
     if (addon <= 0) continue;
-    lineas.push({ concepto: `Módulo: ${meta.label}`, monto: addon });
+    lineas.push({
+      codigo: `MOD:${meta.id}`,
+      concepto: `Módulo: ${meta.label}`,
+      cantidad: 1,
+      precioUnitario: addon,
+      monto: addon,
+    });
   }
 
   const subtotal = lineas.reduce((sum, line) => sum + line.monto, 0);

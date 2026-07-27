@@ -25,8 +25,12 @@ import {
   platformAccessFromTrialProduct,
 } from './platform-access.ts';
 import type { TrialProductId } from '../../shared/platform-access.ts';
+import { trialDaysForProduct } from '../../shared/trial-state.ts';
+import { getBillingProduct } from '../../shared/billing-catalog.ts';
+import { INCLUDED_ADMIN_SEATS } from '../../shared/subscription-modules.ts';
+import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
 
-const DEFAULT_TRIAL_PLAN_ID = process.env.TRIAL_DEFAULT_PLAN_ID ?? 'plan_intermedio';
+const FALLBACK_TRIAL_PLAN_ID = process.env.TRIAL_DEFAULT_PLAN_ID ?? 'plan_intermedio';
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -75,7 +79,11 @@ export async function completeTrialRegistration(registrationId: string): Promise
     throw new Error('EMAIL_NOT_VERIFIED');
   }
 
-  const plan = await getPlan(DEFAULT_TRIAL_PLAN_ID);
+  const trialProduct =
+    (registration.trialProduct as TrialProductId) ?? 'completo';
+  const catalogProduct = getBillingProduct(trialProduct);
+  const planId = catalogProduct?.erpPlanId ?? FALLBACK_TRIAL_PLAN_ID;
+  const plan = await getPlan(planId);
   if (!plan || !plan.activo) {
     throw new Error('TRIAL_PLAN_UNAVAILABLE');
   }
@@ -122,7 +130,7 @@ export async function completeTrialRegistration(registrationId: string): Promise
 
   const business = await createBusiness(businessId, {
     nombre: registration.businessName,
-    planId: DEFAULT_TRIAL_PLAN_ID,
+    planId,
     estadoSuscripcion: 'activa',
     enPrueba: true,
     ...buildTrialFieldUpdates(
@@ -130,15 +138,19 @@ export async function completeTrialRegistration(registrationId: string): Promise
         enPrueba: true,
         trialStatus: 'active',
       },
-      undefined
+      undefined,
+      { trialDays: trialDaysForProduct(trialProduct) }
     ),
     creadoPor: 'self_signup',
     source: 'self_service_trial',
     contactVerification,
     lifecycle,
-    platformAccess: platformAccessFromTrialProduct(
-      (registration.trialProduct as TrialProductId) ?? 'completo'
-    ),
+    platformAccess: platformAccessFromTrialProduct(trialProduct),
+    suscripcion: {
+      limiteAdministradores: INCLUDED_ADMIN_SEATS,
+      limiteOperadores: 0,
+      limiteUsuariosTotal: INCLUDED_ADMIN_SEATS,
+    },
   });
 
   const loginUsername = registration.loginUsername || loginFromEmail(registration.email);
@@ -163,26 +175,37 @@ export async function completeTrialRegistration(registrationId: string): Promise
   });
 
   await seedBusinessConfig(businessId, registration.rubro, registration.pais);
-  await seedWhatsappAccessIfNeeded(businessId, registration);
+  await seedBusinessWhatsappAccess({
+    businessId,
+    phone: registration.phone,
+    ownerName: registration.ownerName,
+    trialProduct,
+    forceLine: registration.whatsappOptIn === true,
+    erpUserId: userRef.id,
+    status: 'trial',
+  });
   await bindContactClaimToBusiness('email', registration.email, businessId);
   await bindContactClaimToBusiness('phone', registration.phone, businessId);
+
+  try {
+    await appendSubscriptionHistory(businessId, {
+      changedBy: 'system',
+      changeType: 'trial',
+      note: `Alta autoservicio — prueba ${trialDaysForProduct(trialProduct)} días · ${trialProduct}`,
+      previousPlanId: undefined,
+      newPlanId: planId,
+      newEnPrueba: true,
+      newTrialStatus: 'active',
+    });
+  } catch (error) {
+    console.error('[trial] history append failed (registration still completes)', businessId, error);
+  }
 
   await updateTrialRegistration(registrationId, {
     status: 'completed',
     completedBusinessId: businessId,
   });
 
-  await appendSubscriptionHistory(businessId, {
-    changedBy: 'system',
-    changeType: 'trial',
-    note: 'Alta autoservicio — prueba gratuita iniciada',
-    previousPlanId: undefined,
-    newPlanId: DEFAULT_TRIAL_PLAN_ID,
-    newEnPrueba: true,
-    newTrialStatus: 'active',
-  });
-
-  const userSnap = await userRef.get();
   const publicUser = toPublicUser({
     id: userRef.id,
     nombre: registration.ownerName,
@@ -205,33 +228,6 @@ export async function completeTrialRegistration(registrationId: string): Promise
   });
 
   return { business, businessId, user: publicUser, token };
-}
-
-async function seedWhatsappAccessIfNeeded(
-  businessId: string,
-  registration: { phone: string; ownerName: string; trialProduct?: string | null; whatsappOptIn: boolean }
-): Promise<void> {
-  const product = registration.trialProduct;
-  if (product !== 'whatsapp' && product !== 'completo' && !registration.whatsappOptIn) return;
-
-  const now = new Date().toISOString();
-  await db.collection(`negocios/${businessId}/whatsapp_users`).doc('owner').set({
-    phone: registration.phone,
-    name: registration.ownerName,
-    role: 'supervisor',
-    enabled: true,
-    erpUserId: null,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  await db.collection(`negocios/${businessId}/whatsapp_config`).doc('default').set({
-    enabled: product === 'whatsapp' || product === 'completo',
-    mode: 'central',
-    status: 'trial',
-    requireConfirmation: true,
-    updatedAt: now,
-  });
 }
 
 export function validateRegistrationPayload(body: Record<string, unknown>): {

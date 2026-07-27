@@ -77,6 +77,10 @@ export interface PublicBusinessInfo {
   ultimoPagoPeriodo?: string;
   ultimoPagoFecha?: string;
   ultimoPagoMonto?: number;
+  paidUntil?: string | null;
+  billingInterval?: 'month' | 'year' | null;
+  paymentDaysRemaining?: number | null;
+  paymentDueSoon?: boolean;
   enPrueba: boolean;
   trialStartDate?: string | null;
   trialEndDate?: string | null;
