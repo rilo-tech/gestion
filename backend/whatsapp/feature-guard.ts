@@ -41,7 +41,7 @@ export function assertWhatsappFeatures(
     return {
       ok: false,
       reason: 'SUBSCRIPTION_INACTIVE',
-      message: 'La suscripción no está activa.',
+      message: 'La cuenta está desactivada. Para volver a usar RiloBot, contactá a RiloTech o registrate de nuevo.',
     };
   }
 

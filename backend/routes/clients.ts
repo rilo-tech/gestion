@@ -15,6 +15,7 @@ import {
 } from '../utils/client-deletion-guards.ts';
 import { mapDeletionError } from '../utils/deletion-guards.ts';
 import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
+import { assertCanCreateClient, trySendUsageLimit } from '../auth/usage-gates.ts';
 
 type AccountLineItem = {
   nombre: string;
@@ -460,6 +461,7 @@ router.post('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
     const clientData = req.body;
+    await assertCanCreateClient(businessId);
     const docRef = await db.collection(`negocios/${businessId}/clientes`).add({
       ...clientData,
       activo: clientData.activo !== false,
@@ -475,6 +477,7 @@ router.post('/:businessId', async (req, res) => {
     });
     res.status(201).json({ id: docRef.id });
   } catch (error) {
+    if (await trySendUsageLimit(res, error)) return;
     res.status(500).json({ error: 'Error creating client' });
   }
 });

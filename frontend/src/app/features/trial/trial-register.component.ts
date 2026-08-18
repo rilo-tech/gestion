@@ -7,13 +7,12 @@ import {
   isTrialProductId,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
-import { RILOTECH_PRICING_TIERS, priceLabelForTier } from '../../../../../shared/ritotech-marketing.ts';
+import { priceLabelFromCatalog, pricingTiersFromCatalog } from '../../../../../shared/ritotech-marketing.ts';
 import { TRIAL_RUBROS } from '../../../../../shared/trial-registration.ts';
-import {
-  trialDaysForProduct,
-} from '../../../../../shared/trial-state.ts';
+import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
 import type { BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
 import { resolveBillingCountry } from '../../../../../shared/billing-catalog.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, type CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
 import type { GeoCountryOption } from '../../../../../shared/geo.ts';
 import {
   DEFAULT_PHONE_DIAL,
@@ -31,6 +30,7 @@ import {
 } from '../../shared/components/searchable-select/searchable-select.component';
 import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
 import { FORM_LABEL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 import {
   clearTrialRegisterDraft,
   loadTrialRegisterDraft,
@@ -54,12 +54,12 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             height="120"
             class="mx-auto h-20 w-auto object-contain"
             decoding="async" />
-          <h1 class="text-2xl sm:text-3xl font-bold mt-3">Probá gratis {{ trialDays }} días</h1>
+          <h1 class="text-2xl sm:text-3xl font-bold mt-3">{{ trialDays }} días a full, sin tarjeta</h1>
           <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
             {{ productIntro }}
           </p>
           <p class="mt-2 text-xs text-teal-400/90 font-medium">
-            {{ trialDays }} días gratis · Sin tarjeta
+            Después seguís gratis. Un feriante o taller chico puede vivir ahí.
           </p>
         </div>
 
@@ -78,7 +78,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               <div class="flex items-start justify-between gap-2">
                 <div>
                   <p class="font-semibold text-white">{{ plan.label }}</p>
-                  <p class="text-xs text-teal-300 mt-0.5">{{ priceFor(plan.id) }} · {{ plan.trialDays }} días de prueba</p>
+                  <p class="text-xs text-teal-300 mt-0.5">Gratis · {{ plan.trialDays }} días a full, después seguís si no te pasás</p>
                   <p class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ plan.headline }}</p>
                 </div>
                 <span *ngIf="plan.featured" class="text-[10px] font-bold uppercase text-teal-300 shrink-0">
@@ -96,9 +96,11 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             </button>
           </div>
           <ul class="text-sm text-gray-300 space-y-2 bg-gray-900/60 rounded-xl border border-gray-800 p-4">
-            <li>✓ {{ trialDays }} días sin tarjeta de crédito</li>
+            <li>✓ {{ trialDays }} días a full, en $0, sin tarjeta</li>
+            <li>✓ Después seguís gratis. Un feriante o taller chico puede vivir ahí</li>
+            <li>✓ Pagás cuando pasás de {{ catalog.lite.maxOperacionesMes }} cargas al mes, se te acaba la IA, o se te llenan clientes/productos</li>
             <li>✓ Verificación por email</li>
-            <li>✓ Podés sumar módulos después sin perder datos</li>
+            <li>✓ Si ya usás Panel o RiloBot, se suma el módulo a la misma empresa (mismo email, teléfono y contraseña)</li>
           </ul>
           <button
             type="button"
@@ -113,6 +115,9 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
         </div>
 
         <form *ngIf="step === 'form'" (submit)="submitForm(); $event.preventDefault()" class="space-y-4">
+          <p class="text-xs text-teal-300/90 bg-teal-950/40 border border-teal-900 rounded-lg px-3 py-2">
+            ¿Ya tenés Rilo Gestión o RiloBot? Usá el mismo email, teléfono y contraseña: no se crea otra empresa, se habilita este módulo.
+          </p>
           <div>
             <label [class]="formLabelClass" for="businessName">Nombre del negocio *</label>
             <input
@@ -228,6 +233,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               autocomplete="new-password"
               placeholder="Mínimo 8 caracteres">
             </app-password-input>
+            <p class="text-xs text-gray-500 mt-1">Si ya tenés cuenta, escribí la contraseña actual.</p>
           </div>
           <input tabindex="-1" autocomplete="off" [(ngModel)]="form.website" name="website"
             class="hidden" aria-hidden="true">
@@ -265,6 +271,9 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
         </form>
 
         <div *ngIf="step === 'email'" class="space-y-4">
+          <p *ngIf="existingAccount" class="text-sm text-teal-300 bg-teal-950/40 border border-teal-800 rounded-lg px-3 py-2">
+            Encontramos tu empresa. Al verificar, vamos a sumar <strong>{{ selectedProductLabel }}</strong> a esa cuenta (no se crea otra).
+          </p>
           <p class="text-sm text-teal-300" *ngIf="emailSent">
             Enviamos un código a <span class="text-white font-medium">{{ form.email }}</span>.
             Revisá también la carpeta de spam.
@@ -292,7 +301,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
           <p *ngIf="error" class="text-sm text-red-400">{{ error }}</p>
           <button type="button" (click)="verifyOtp()" [disabled]="loading"
             class="w-full rounded-xl bg-teal-600 py-3 font-semibold disabled:opacity-60">
-            {{ loading ? 'Verificando...' : 'Verificar y crear mi cuenta' }}
+            {{ loading ? 'Verificando...' : (existingAccount ? 'Verificar y sumar el módulo' : 'Verificar y crear mi cuenta') }}
           </button>
           <button type="button" (click)="resendOtp()" [disabled]="loading"
             class="w-full text-sm text-teal-400 hover:underline">
@@ -301,21 +310,48 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
         </div>
 
         <div *ngIf="step === 'creating'" class="text-center py-12 text-gray-400">
-          Creando tu empresa y acceso...
+          {{ existingAccount ? 'Sumando el módulo a tu empresa...' : 'Creando tu empresa y acceso...' }}
         </div>
 
         <div *ngIf="step === 'done'" class="space-y-4 text-center">
-          <div class="rounded-xl border border-teal-800 bg-teal-950/50 p-5">
-            <p class="text-lg font-semibold text-teal-300">¡Listo! Tu prueba está activa</p>
-            <p class="text-sm text-gray-300 mt-2">
-              Código de empresa: <span class="font-mono text-white">{{ loginHint?.businessCode }}</span><br>
-              Usuario: <span class="font-mono text-white">{{ loginHint?.loginUsername }}</span>
+          <div class="rounded-xl border border-teal-800 bg-teal-950/50 p-5 text-left">
+            <p class="text-lg font-semibold text-teal-300 text-center">{{ doneTitle }}</p>
+            <p class="text-sm text-gray-300 mt-2 text-center">{{ doneLead }}</p>
+
+            <div *ngIf="showWhatsappInstructions" class="mt-4 rounded-lg border border-teal-900 bg-black/20 px-3 py-3 space-y-2">
+              <p class="text-sm text-white font-medium">Cómo usar RiloBot</p>
+              <p class="text-sm text-gray-300 leading-relaxed">
+                Escribí <strong>siempre desde este WhatsApp</strong>:
+                <span class="font-mono text-white">{{ registeredPhoneDisplay }}</span>
+              </p>
+              <p class="text-sm text-gray-300 leading-relaxed">
+                Al número de RiloBot:
+                <span class="font-mono text-white">{{ rilobotNumberDisplay }}</span>
+              </p>
+              <p class="text-xs text-gray-500">
+                Si escribís desde otro número, el bot no te reconoce. Te pide confirmación (SÍ/NO) antes de guardar.
+              </p>
+              <a
+                [href]="rilobotWaLink"
+                target="_blank"
+                rel="noopener"
+                class="inline-flex mt-1 text-sm font-semibold text-teal-400 hover:underline">
+                Abrir chat con RiloBot
+              </a>
+            </div>
+
+            <p *ngIf="canEnterErp" class="text-sm text-gray-400 mt-4 text-center">
+              Panel web:
+              código <span class="font-mono text-white">{{ loginHint?.businessCode }}</span>
+              · usuario <span class="font-mono text-white">{{ loginHint?.loginUsername }}</span>
             </p>
-            <p class="text-sm text-gray-400 mt-3">{{ doneMessage }}</p>
           </div>
-          <button type="button" (click)="enterApp()"
+          <button
+            *ngIf="canEnterErp"
+            type="button"
+            (click)="enterApp()"
             class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500">
-            Entrar al sistema
+            Entrar al panel
           </button>
         </div>
 
@@ -334,9 +370,10 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private commercial = inject(CommercialCatalogService);
 
   readonly rubros = TRIAL_RUBROS;
-  readonly planOptions = RILOTECH_PRICING_TIERS;
+  catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
   readonly formLabelClass = `${FORM_LABEL_CLASS} !text-gray-300`;
   readonly trialFieldClass =
     'w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm text-white outline-none focus:ring-2 focus:ring-teal-500 placeholder:text-gray-500';
@@ -370,9 +407,28 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   emailSent = false;
   loginHint: { businessCode: string; loginUsername: string } | null = null;
   trialProduct: TrialProductId = 'whatsapp';
+  existingAccount = false;
+  completeOutcome: 'created' | 'module_added' | 'already_active' | null = null;
+  erpWebEnabled = false;
+  whatsappEnabled = false;
+  registeredPhone = '';
+
+  readonly rilobotNumberDisplay =
+    (import.meta as { env?: Record<string, string> }).env?.['VITE_RILOBOT_WHATSAPP_DISPLAY'] ??
+    '+1 555 137 9594';
+  readonly rilobotWaLink = (() => {
+    const raw =
+      (import.meta as { env?: Record<string, string> }).env?.['VITE_RILOBOT_WHATSAPP'] ??
+      '15551379594';
+    return `https://wa.me/${raw.replace(/\D/g, '')}`;
+  })();
+
+  get planOptions() {
+    return pricingTiersFromCatalog(this.catalog);
+  }
 
   get trialDays(): number {
-    return trialDaysForProduct(this.trialProduct);
+    return this.catalog.trialDays || trialDaysForProduct(this.trialProduct);
   }
 
   get billingCountry(): BillingCountryCode {
@@ -380,7 +436,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   }
 
   priceFor(productId: TrialProductId): string {
-    return priceLabelForTier(productId, this.billingCountry);
+    return priceLabelFromCatalog(productId, this.billingCountry, this.catalog);
   }
 
   get selectedProductLabel(): string {
@@ -397,14 +453,39 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     return 'WhatsApp + panel web. Cargá rápido y controlá todo el negocio.';
   }
 
-  get doneMessage(): string {
+  get doneTitle(): string {
+    if (this.completeOutcome === 'already_active') return 'Este módulo ya estaba activo';
+    if (this.completeOutcome === 'module_added') return 'Módulo activado en tu empresa';
+    return '¡Listo! Tu prueba está activa';
+  }
+
+  get doneLead(): string {
+    if (this.completeOutcome === 'module_added') {
+      return `Sumamos ${this.selectedProductLabel} a tu empresa ${this.loginHint?.businessCode ?? ''}. Los datos siguen en el mismo lugar.`;
+    }
+    if (this.completeOutcome === 'already_active') {
+      return `Tu empresa ${this.loginHint?.businessCode ?? ''} ya tenía ${this.selectedProductLabel}.`;
+    }
     if (this.trialProduct === 'whatsapp') {
-      return 'Escribí al número de RiloBot con el WhatsApp que registraste. El bot te pide confirmación antes de guardar.';
+      return 'Tu prueba de RiloBot está activa. No hace falta entrar al panel: se usa por WhatsApp.';
     }
     if (this.trialProduct === 'erp') {
-      return 'Ingresá al panel web con tu usuario y contraseña.';
+      return 'Tu prueba del Panel web está activa. Ingresá con usuario y contraseña.';
     }
     return 'Podés usar el panel web y también WhatsApp con el mismo número registrado.';
+  }
+
+  get showWhatsappInstructions(): boolean {
+    return this.whatsappEnabled || this.trialProduct === 'whatsapp' || this.trialProduct === 'completo';
+  }
+
+  get canEnterErp(): boolean {
+    return this.erpWebEnabled === true;
+  }
+
+  get registeredPhoneDisplay(): string {
+    if (this.registeredPhone) return formatPhoneDisplay(this.registeredPhone);
+    return this.formattedPhonePreview || 'el que registraste';
   }
 
   selectProduct(id: TrialProductId) {
@@ -429,6 +510,11 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.restoreDraft();
+    this.commercial.load(this.billingCountry).subscribe({
+      next: (row) => {
+        this.catalog = row.catalog;
+      },
+    });
     if (this.step === 'form' && !this.countries.length) {
       this.loadGeoData();
     }
@@ -590,6 +676,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           this.registrationId = res.registrationId;
+          this.existingAccount = res.existingAccount === true;
           this.persistDraft();
           this.sendOtpAndGoEmail();
         },
@@ -653,6 +740,11 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     this.trialService.complete(this.registrationId).subscribe({
       next: (res) => {
         this.loginHint = res.loginHint;
+        this.completeOutcome = res.outcome ?? 'created';
+        this.erpWebEnabled = res.erpWebEnabled === true || res.business?.platformAccess?.erpWebEnabled === true;
+        this.whatsappEnabled =
+          res.whatsappEnabled === true || res.business?.platformAccess?.whatsappEnabled === true;
+        this.registeredPhone = res.registeredPhone || '';
         this.auth.establishTrialSession({
           token: res.token,
           user: {
@@ -679,6 +771,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   }
 
   enterApp() {
+    if (!this.canEnterErp) return;
     void this.router.navigate([this.auth.homeRoute]);
   }
 

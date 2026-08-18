@@ -248,10 +248,14 @@ export async function getSubscriptionPaymentSummary(
   paidUntil?: string | null
 ): Promise<SubscriptionPaymentSummary> {
   const periodoActual = currentPeriodo();
-  const [currentSnap, latestSnap] = await Promise.all([
+  const query = Promise.all([
     paymentsCollection(businessId).where('periodo', '==', periodoActual).limit(1).get(),
     paymentsCollection(businessId).orderBy('periodo', 'desc').limit(1).get(),
   ]);
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('PAYMENT_SUMMARY_TIMEOUT')), 8000);
+  });
+  const [currentSnap, latestSnap] = await Promise.race([query, timeout]);
 
   const pagoActual = currentSnap.empty
     ? undefined

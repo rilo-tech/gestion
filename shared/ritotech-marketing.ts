@@ -6,6 +6,8 @@ import {
 import { TRIAL_PRODUCT_LABELS, type TrialProductId } from './platform-access.ts';
 import type { BillingCountryCode } from './billing-catalog.ts';
 import { getProductPriceForCountry } from './billing-catalog.ts';
+import type { CommercialCatalog } from './commercial-catalog.ts';
+import { amountMonthlyFor, formatCatalogPriceLabel, litePitch } from './commercial-catalog.ts';
 
 export interface RitotechUseCase {
   title: string;
@@ -42,13 +44,17 @@ export const RILOTECH_HERO = {
   title: 'Organizá pedidos, ventas y cobros escribiendo por WhatsApp.',
   subtitle:
     'RiloBot entiende tus mensajes, te muestra un resumen y guarda solo cuando confirmás. Tené pedidos, cobros, saldos y clientes al día desde el celular, sin planillas ni sistemas pesados.',
-  ctaPrimary: `Probar RiloBot ${RILOBOT_TRIAL_DAYS} días gratis`,
+  ctaPrimary: 'Registrate gratis',
   ctaSecondary: 'Ver cómo funciona',
-  microcopy: `Sin tarjeta · 1 WhatsApp · Configuración guiada · Cancelás cuando quieras`,
+  microcopy: `${RILOBOT_TRIAL_DAYS} días a full, sin tarjeta. Después seguís gratis. Un feriante o taller chico puede vivir ahí.`,
 };
 
 export const RILOTECH_AUDIENCE_PITCH =
   'Pensado para microempresas, ferias, talleres, delivery y negocios chicos. Sin facturación electrónica: controlá caja, ventas, compras, proveedores y clientes.';
+
+/** Respaldo comercial: los montos de la web se pueden actualizar. */
+export const RILOTECH_PRICE_ADJUSTMENT_NOTE =
+  'Los precios publicados son de referencia y pueden reajustarse. Si ya estás en un plan pago, te avisamos antes de cambiar tu cuota.';
 
 export const RILOTECH_USE_CASES: RitotechUseCase[] = [
   {
@@ -95,14 +101,15 @@ export const RILOTECH_HOW_IT_WORKS = [
   },
   {
     step: '2',
-    title: `Probá ${RILOBOT_TRIAL_DAYS} o ${PANEL_TRIAL_DAYS} días gratis`,
-    description: `RiloBot ${RILOBOT_TRIAL_DAYS} días · Panel/Completo ${PANEL_TRIAL_DAYS} días. Sin tarjeta. Si te sirve, activás el plan.`,
+    title: 'Probá 30 días a full',
+    description:
+      'Sin tarjeta. Después seguís gratis. Un feriante o taller chico puede vivir ahí. Pagás cuando te pasás de los techos.',
   },
   {
     step: '3',
-    title: 'Sumá el panel cuando lo necesites',
+    title: 'Sumá el otro canal cuando lo necesites',
     description:
-      'Caja avanzada, stock, compras y reportes. Todo el historial de WhatsApp ya está ahí.',
+      'Ingresá con la misma cuenta. No te registres de nuevo: el panel o RiloBot se suma al mismo negocio, con el historial que ya cargaste.',
   },
 ];
 
@@ -111,8 +118,8 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     id: 'whatsapp',
     label: TRIAL_PRODUCT_LABELS.whatsapp,
     headline: 'Recomendado para empezar',
-    trialIncludes: `RiloBot + IA · ${RILOBOT_TRIAL_DAYS} días · 100 acciones IA en prueba`,
-    afterTrial: 'Plan RiloBot mensual (1 WhatsApp, 1.000 acciones IA)',
+    trialIncludes: `RiloBot + IA · ${RILOBOT_TRIAL_DAYS} días gratis a full`,
+    afterTrial: 'Después: plan libre con techos, o plan pago con más IA',
     trialDays: trialDaysForProduct('whatsapp'),
     whatsapp: true,
     panelWeb: false,
@@ -123,6 +130,7 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
       'Pedidos, ventas, cobros y saldos',
       'Confirmación SÍ/NO antes de guardar',
       '1.000 acciones IA / mes (en plan pago)',
+      'Plan libre al vencer: techos de clientes, productos e IA',
       'Fotos básicas y consultas rápidas',
       'WhatsApp extras cobrables por usuario',
       'Sin panel web (podés sumarlo después)',
@@ -132,8 +140,8 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     id: 'erp',
     label: TRIAL_PRODUCT_LABELS.erp,
     headline: 'Si preferís la computadora',
-    trialIncludes: `Panel web · ${PANEL_TRIAL_DAYS} días · 1 usuario`,
-    afterTrial: 'Plan Panel Web según módulos activos',
+    trialIncludes: `Panel web · ${PANEL_TRIAL_DAYS} días gratis a full · 1 usuario`,
+    afterTrial: 'Después: plan libre con techos, o plan Panel pago',
     trialDays: trialDaysForProduct('erp'),
     whatsapp: false,
     panelWeb: true,
@@ -149,8 +157,8 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     id: 'completo',
     label: TRIAL_PRODUCT_LABELS.completo,
     headline: 'WhatsApp para cargar + web para controlar',
-    trialIncludes: `RiloBot + panel · ${PANEL_TRIAL_DAYS} días · 200 acciones IA en prueba`,
-    afterTrial: 'Paquete combinado (mejor precio que por separado)',
+    trialIncludes: `RiloBot + panel · ${PANEL_TRIAL_DAYS} días gratis a full`,
+    afterTrial: 'Después: plan libre con techos, o paquete combinado',
     trialDays: trialDaysForProduct('completo'),
     whatsapp: true,
     panelWeb: true,
@@ -159,6 +167,7 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
       '1 WhatsApp + 1 usuario incluidos',
       'WhatsApp / usuarios extras a demanda',
       '2.000 acciones IA / mes (en plan pago)',
+      'Plan libre al vencer: mismos techos, historial intacto',
       'Historial unificado entre canales',
     ],
   },
@@ -188,18 +197,18 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'solo-whatsapp',
     question: '¿Puedo usar solo WhatsApp sin el panel web?',
     answer:
-      'Sí. Es el plan recomendado para empezar: cargás escribiendo mensajes. Después, si querés ver reportes o stock, activás el panel sin perder datos.',
+      'Sí. Es el plan recomendado para empezar: cargás escribiendo mensajes. El panel se suma después desde la misma cuenta (Ingresar), sin registrarte de nuevo ni perder datos. Email o WhatsApp ya usados no crean otra empresa.',
   },
   {
     id: 'solo-erp',
     question: '¿Puedo usar solo el panel web?',
     answer:
-      'Sí. Ideal si preferís la PC. RiloBot se puede sumar después para cargar más rápido desde el celular.',
+      'Sí. Ideal si preferís la PC. RiloBot se suma después desde la misma cuenta, sin un segundo registro.',
   },
   {
     id: 'prueba',
     question: '¿La prueba pide tarjeta?',
-    answer: `No. RiloBot ${RILOBOT_TRIAL_DAYS} días · Panel y Completo ${PANEL_TRIAL_DAYS} días, sin tarjeta. Recién al activar el plan de pago vas a poder pagar con Mercado Pago. Tus datos no se borran cuando termina la prueba.`,
+    answer: `No. ${RILOBOT_TRIAL_DAYS} días a full, sin tarjeta. Después seguís gratis. Un feriante o taller chico puede vivir ahí. Recién pagás si te pasás de los techos. Tus datos no se borran.`,
   },
   {
     id: 'confirmacion',
@@ -210,7 +219,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
   {
     id: 'limites',
     question: '¿Qué límites tiene la prueba?',
-    answer: `RiloBot: ${RILOBOT_TRIAL_DAYS} días, 100 acciones IA, 1 WhatsApp y fotos básicas. Panel: ${PANEL_TRIAL_DAYS} días y 1 usuario. Completo: ${PANEL_TRIAL_DAYS} días, 1 WhatsApp, 1 usuario y 200 acciones IA.`,
+    answer: `${RILOBOT_TRIAL_DAYS} días a full en todos los planes, sin tarjeta. Después seguís gratis: techos de clientes, productos, cargas WhatsApp e IA (los números los ves en la landing; se actualizan desde Plataforma). El plan pago es para cuando te quede chico.`,
   },
   {
     id: 'soporte',
@@ -222,7 +231,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'precio',
     question: '¿Cuánto cuesta después?',
     answer:
-      'Mostramos precios en moneda local (UYU o ARS). El valor final depende del plan y add-ons. En la prueba ves qué usás; al activar confirmás la cuota.',
+      'El precio de lista es para cuando te pasás del plan gratis. Primero 30 días a full; después seguís gratis con techos. Si activás un plan pago, podés tener meses de descuento (eso se publica desde la plataforma). Los precios son reajustables: si cambia tu cuota, te avisamos.',
   },
   {
     id: 'instalacion',
@@ -233,7 +242,101 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
 
 export function pricingFootnoteForCountry(country: BillingCountryCode): string {
   const currency = country === 'AR' ? 'ARS' : 'UYU';
-  return `* Precios en ${currency}. RiloBot ${RILOBOT_TRIAL_DAYS} días · Panel/Completo ${PANEL_TRIAL_DAYS} días · Sin tarjeta · Pagás recién al activar`;
+  return `* Precios pagos en ${currency}. ${RILOBOT_TRIAL_DAYS} días a full, sin tarjeta. Después seguís gratis si no te pasás.`;
+}
+
+export function pricingFootnoteFromCatalog(
+  country: BillingCountryCode,
+  catalog: CommercialCatalog
+): string {
+  const currency = country === 'AR' ? 'ARS' : 'UYU';
+  return (
+    `* Precios pagos en ${currency}. ${catalog.trialDays} días a full, sin tarjeta. ` +
+    `Después seguís gratis hasta ${catalog.lite.maxOperacionesMes} cargas/mes, ` +
+    `${catalog.lite.maxClientes} clientes, ${catalog.lite.maxProductos} productos y ${catalog.lite.maxAccionesIaMes} IA/mes. ` +
+    `Precios reajustables.`
+  );
+}
+
+export function priceLabelFromCatalog(
+  productId: TrialProductId,
+  country: BillingCountryCode,
+  catalog?: CommercialCatalog | null
+): string {
+  if (catalog) {
+    return formatCatalogPriceLabel(country, amountMonthlyFor(catalog, productId, country));
+  }
+  return getProductPriceForCountry(productId, country)?.label ?? '';
+}
+
+export function pricingTiersFromCatalog(catalog: CommercialCatalog): RitotechPricingTier[] {
+  const fmt = (n: number) => n.toLocaleString('es-UY');
+  const liteLine =
+    `Plan libre en $0: ${catalog.lite.maxClientes} clientes · ${catalog.lite.maxProductos} productos · ${catalog.lite.maxOperacionesMes} cargas WhatsApp · ${catalog.lite.maxAccionesIaMes} IA/mes`;
+  return RILOTECH_PRICING_TIERS.map((tier) => {
+    const includedAi = catalog.products[tier.id].includedAi;
+    const includes = tier.includes.map((line) => {
+      if (line.includes('acciones IA / mes (en plan pago)')) {
+        return includedAi > 0
+          ? `${fmt(includedAi)} acciones IA / mes (en plan pago)`
+          : 'Sin cupo de IA (el panel no usa RiloBot)';
+      }
+      if (line.startsWith('Plan libre')) return liteLine;
+      return line;
+    });
+    if (!includes.some((line) => line.startsWith('Plan libre'))) {
+      includes.splice(Math.min(4, includes.length), 0, liteLine);
+    }
+    return {
+      ...tier,
+      trialDays: catalog.trialDays,
+      trialIncludes:
+        tier.id === 'erp'
+          ? `Panel web · ${catalog.trialDays} días gratis a full · 1 usuario`
+          : tier.id === 'completo'
+            ? `RiloBot + panel · ${catalog.trialDays} días gratis a full · ${fmt(catalog.trialAccionesIaMes)} IA en prueba`
+            : `RiloBot + IA · ${catalog.trialDays} días gratis a full · ${fmt(catalog.trialAccionesIaMes)} IA en prueba`,
+      afterTrial: litePitch(catalog),
+      includes,
+    };
+  });
+}
+
+export function faqFromCatalog(catalog: CommercialCatalog): RitotechFaqItem[] {
+  const lite = litePitch(catalog);
+  return RILOTECH_FAQ.map((item) => {
+    if (item.id === 'prueba') {
+      return {
+        ...item,
+        answer: `No. ${catalog.trialDays} días a full, sin tarjeta. ${lite}`,
+      };
+    }
+    if (item.id === 'limites') {
+      return {
+        ...item,
+        answer:
+          `${catalog.trialDays} días a full (${fmtAi(catalog.trialAccionesIaMes)} acciones IA/mes). ` +
+          `Después seguís gratis: ${catalog.lite.maxClientes} clientes, ${catalog.lite.maxProductos} productos, ${catalog.lite.maxOperacionesMes} cargas WhatsApp y ${catalog.lite.maxAccionesIaMes} IA/mes. ` +
+          `RiloBot pago incluye ${fmtAi(catalog.products.whatsapp.includedAi)} IA; Completo ${fmtAi(catalog.products.completo.includedAi)}. Tus datos no se borran.`,
+      };
+    }
+    if (item.id === 'precio') {
+      return {
+        ...item,
+        answer:
+          `El precio de lista es para cuando te pasás del plan gratis. Primero ${catalog.trialDays} días a full; después seguís gratis con techos. ` +
+          (catalog.introDiscountMonths > 0 && catalog.introDiscountPercent > 0
+            ? `El ${catalog.introDiscountPercent}% off de ${catalog.introDiscountMonths} meses no corre desde el registro: corre cuando activás un plan pago. Después, el precio de lista.`
+            : 'Si activás un plan pago, cobramos el precio de lista (o lo marcamos desde la plataforma).') +
+          ` Los precios son de referencia y pueden reajustarse; si ya pagás, te avisamos antes de cambiar tu cuota.`,
+      };
+    }
+    return item;
+  });
+}
+
+function fmtAi(n: number): string {
+  return n.toLocaleString('es-UY');
 }
 
 /** @deprecated Prefer pricingFootnoteForCountry */
@@ -241,7 +344,7 @@ export const RILOTECH_PRICING_FOOTNOTE = pricingFootnoteForCountry('UY');
 
 export const RILOTECH_CTA_FINAL = {
   title: 'Probalo con tu negocio real.',
-  body: 'Enviá tu primer pedido o venta hoy. No pedimos tarjeta y tus datos no se borran cuando termina la prueba.',
+  body: `Empezá ${RILOBOT_TRIAL_DAYS} días a full, sin tarjeta. Después seguís gratis. Un feriante o taller chico puede vivir ahí.`,
 };
 
 /** Tips / upsells in-app (sesión). */

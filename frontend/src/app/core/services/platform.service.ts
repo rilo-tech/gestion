@@ -13,6 +13,7 @@ import type {
   SubscriptionModuleMeta,
 } from '../../../../../shared/subscription-modules.ts';
 import type { ClientPlatformAccess } from '../../../../../shared/platform-access.ts';
+import type { CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -200,6 +201,21 @@ export class PlatformService {
     );
   }
 
+  getCommercialCatalog(): Observable<CommercialCatalog> {
+    return this.http.get<CommercialCatalog>('/api/platform/commercial');
+  }
+
+  saveCommercialCatalog(payload: CommercialCatalog): Observable<{
+    catalog: CommercialCatalog;
+    plans: PublicPlanInfo[];
+    message: string;
+  }> {
+    return this.http.put<{ catalog: CommercialCatalog; plans: PublicPlanInfo[]; message: string }>(
+      '/api/platform/commercial',
+      payload
+    );
+  }
+
   getPlans(): Observable<PublicPlanInfo[]> {
     return this.http.get<PublicPlanInfo[]>('/api/platform/plans');
   }
@@ -282,6 +298,15 @@ export class PlatformService {
     return this.http.post<PublicBusinessInfo>(
       `/api/platform/businesses/${businessId}/extend-trial`,
       { days }
+    );
+  }
+
+  offboardBusiness(businessId: string): Observable<
+    PublicBusinessInfo & { releasedEmail?: boolean; releasedPhone?: boolean }
+  > {
+    return this.http.post<PublicBusinessInfo & { releasedEmail?: boolean; releasedPhone?: boolean }>(
+      `/api/platform/businesses/${businessId}/offboard`,
+      {}
     );
   }
 

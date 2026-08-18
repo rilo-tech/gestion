@@ -35,8 +35,19 @@ export const api = onRequest(
     region: API_REGION,
     timeoutSeconds: 120,
     memory: '512MiB',
+    invoker: 'public',
   },
   async (req, res) => {
+    if (req.path.includes('webhooks/whatsapp') || req.url.includes('webhooks/whatsapp')) {
+      console.log('[whatsapp] HTTP', {
+        method: req.method,
+        url: req.url,
+        originalUrl: req.originalUrl,
+        path: req.path,
+        bodyType: typeof req.body,
+        hasMessages: Boolean((req.body as { entry?: unknown[] })?.entry),
+      });
+    }
     const app = getApiApp();
     return app(req, res);
   }

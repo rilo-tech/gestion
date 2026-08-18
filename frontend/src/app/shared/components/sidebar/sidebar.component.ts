@@ -134,7 +134,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
   get navItems(): NavItem[] {
     if (this.auth.isPlatformAdmin) return this.platformNavItems;
     if (!this.auth.canAccessErpWeb) {
-      return [{ path: '/mi-cuenta', icon: 'user-cog', label: 'Mi cuenta' }];
+      return [{ path: '/mi-cuenta', icon: 'user-cog', label: 'Inicio' }];
     }
     return this.companyNavItems;
   }

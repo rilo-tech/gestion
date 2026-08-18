@@ -23,6 +23,8 @@ export type TrialRegistrationRecord = {
   utmCampaign?: string | null;
   campaignSource?: string | null;
   trialProduct?: string | null;
+  /** Si el email/teléfono ya pertenece a una empresa, se suma el módulo ahí. */
+  existingBusinessId?: string | null;
   phoneVerified: boolean;
   phoneVerifiedAt?: string | null;
   emailVerified: boolean;
@@ -77,18 +79,39 @@ export async function updateTrialRegistration(
   return { id: snap.id, ...(snap.data() as Omit<TrialRegistrationRecord, 'id'>) };
 }
 
+export async function getContactClaim(
+  type: 'email' | 'phone',
+  value: string
+): Promise<{ registrationId?: string; businessId?: string } | null> {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  const snap = await db.collection('trial_contact_claims').doc(`${type}_${normalized}`).get();
+  if (!snap.exists) return null;
+  return snap.data() as { registrationId?: string; businessId?: string };
+}
+
 export async function claimContactUnique(
   type: 'email' | 'phone',
   value: string,
   registrationId: string
-): Promise<void> {
+): Promise<{ existingBusinessId: string | null }> {
   const normalized = value.trim().toLowerCase();
   const ref = db.collection('trial_contact_claims').doc(`${type}_${normalized}`);
   const snap = await ref.get();
   if (snap.exists) {
     const data = snap.data() as { registrationId?: string; businessId?: string };
     if (data.businessId) {
-      throw new Error(type === 'email' ? 'EMAIL_ALREADY_USED' : 'PHONE_ALREADY_USED');
+      await ref.set(
+        {
+          type,
+          value: normalized,
+          registrationId,
+          businessId: data.businessId,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return { existingBusinessId: String(data.businessId) };
     }
     if (data.registrationId && data.registrationId !== registrationId) {
       const existing = await getTrialRegistration(data.registrationId);
@@ -103,6 +126,7 @@ export async function claimContactUnique(
     registrationId,
     updatedAt: new Date().toISOString(),
   });
+  return { existingBusinessId: null };
 }
 
 export async function releaseTrialContactClaim(

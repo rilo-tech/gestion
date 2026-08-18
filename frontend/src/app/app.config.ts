@@ -1,13 +1,14 @@
 import { APP_INITIALIZER, ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, of } from 'rxjs';
+import { catchError, timeout } from 'rxjs/operators';
 import { AuthService } from './core/services/auth.service';
-import { provideRouter, Routes } from '@angular/router';
+import { provideRouter, Routes, withInMemoryScrolling } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
 import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -222,6 +223,19 @@ const companyRoutes: Routes = [
   },
 ];
 
+function withCompanyPanelGuards(routes: Routes): Routes {
+  return routes.map((route) => {
+    const path = route.path ?? '';
+    if (route.redirectTo || path === 'mi-cuenta' || path === 'apariencia' || path === '**') {
+      return route;
+    }
+    return {
+      ...route,
+      canActivate: [...(route.canActivate ?? []), trialActiveGuard, erpWebGuard],
+    };
+  });
+}
+
 const routes: Routes = [
   {
     path: 'legal/terminos',
@@ -311,9 +325,9 @@ const routes: Routes = [
   {
     path: '',
     component: LayoutComponent,
-    canActivate: [authGuard, companyGuard, trialActiveGuard, erpWebGuard],
+    canActivate: [authGuard, companyGuard],
     children: [
-      ...companyRoutes,
+      ...withCompanyPanelGuards(companyRoutes),
       {
         path: '**',
         redirectTo: 'dashboard',
@@ -326,7 +340,13 @@ const routes: Routes = [
 export const appConfig: ApplicationConfig = {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
-    provideRouter(routes),
+    provideRouter(
+      routes,
+      withInMemoryScrolling({
+        anchorScrolling: 'enabled',
+        scrollPositionRestoration: 'enabled',
+      })
+    ),
     provideHttpClient(withInterceptors([authInterceptor, apiBaseInterceptor])),
     importProvidersFrom(
       LucideAngularModule.pick({
@@ -381,12 +401,22 @@ export const appConfig: ApplicationConfig = {
         Eye,
         EyeOff,
         Contact,
+        User,
+        Mail,
+        Phone,
       })
     ),
     {
       provide: APP_INITIALIZER,
       multi: true,
-      useFactory: (auth: AuthService) => () => firstValueFrom(auth.initialize()),
+      useFactory: (auth: AuthService) => () => {
+        void firstValueFrom(
+          auth.initialize().pipe(
+            timeout(12000),
+            catchError(() => of(false))
+          )
+        );
+      },
       deps: [AuthService],
     },
   ],

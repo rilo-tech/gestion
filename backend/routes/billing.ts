@@ -1,10 +1,11 @@
 import express from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
 import { getBusiness } from '../auth/business.ts';
+import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
+import { overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
+import { normalizePlatformAccess } from '../../shared/platform-access.ts';
 import {
-  listProductsForCountry,
   resolveBillingCountry,
-  getProductPriceForCountry,
   getBillingProduct,
   resolveCheckoutAmount,
   type BillingCountryCode,
@@ -55,7 +56,8 @@ router.get('/plans', requireAuth, async (req, res) => {
     }
 
     const country = countryFromBusiness(business);
-    const products = listProductsForCountry(country);
+    const catalog = await getCommercialCatalog();
+    const products = overlayProductsForCountry(catalog, country);
     const configured = isMercadoPagoConfigured(country);
 
     res.json({
@@ -97,6 +99,21 @@ router.post('/checkout', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Empresa no encontrada.' });
     }
 
+    const currentAccess = normalizePlatformAccess(business.platformAccess);
+    if (
+      (productId === 'whatsapp' || productId === 'completo') &&
+      currentAccess.whatsappEnabled !== true
+    ) {
+      const phone = String(business.contactVerification?.phone ?? '').trim();
+      const verified = business.contactVerification?.phoneVerified === true;
+      if (!phone || !verified) {
+        return res.status(400).json({
+          error: 'Antes de pagar RiloBot tenés que confirmar el celular en Mi cuenta.',
+          code: 'WHATSAPP_PHONE_REQUIRED',
+        });
+      }
+    }
+
     const country = countryFromBusiness(business);
     if (!isMercadoPagoConfigured(country)) {
       return res.status(503).json({
@@ -105,18 +122,19 @@ router.post('/checkout', requireAuth, async (req, res) => {
       });
     }
 
-    const price = getProductPriceForCountry(productId, country);
-    if (!price) {
+    const catalog = await getCommercialCatalog();
+    const priced = overlayProductsForCountry(catalog, country).find((row) => row.id === productId);
+    if (!priced) {
       return res.status(400).json({ error: 'Sin precio para este país.' });
     }
 
-    const checkout = resolveCheckoutAmount(price.amountMonthly, billingInterval);
+    const checkout = resolveCheckoutAmount(priced.amountMonthly, billingInterval);
     const externalReference = `${businessId}|${productId}|${country}|${billingInterval}|${Date.now()}`;
     const base = appBaseUrl();
 
     const preference = await createCheckoutPreference({
       country,
-      currency: price.currency,
+      currency: priced.currency,
       title: `RILO · ${product.name} (${checkout.titleSuffix})`,
       unitPrice: checkout.amount,
       externalReference,
@@ -141,7 +159,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
       preferenceId: preference.id,
       checkoutUrl: useSandbox ? preference.sandboxInitPoint : preference.initPoint,
       country,
-      currency: price.currency,
+      currency: priced.currency,
       amount: checkout.amount,
       billingInterval,
       coverageMonths: checkout.coverageMonths,

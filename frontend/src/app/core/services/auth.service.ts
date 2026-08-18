@@ -12,7 +12,7 @@ import {
 import { AppUser } from './user.service';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, from, of, throwError, NEVER } from 'rxjs';
-import { catchError, map, switchMap, tap } from 'rxjs/operators';
+import { catchError, map, shareReplay, switchMap, tap, timeout } from 'rxjs/operators';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -27,6 +27,7 @@ import type { SubscriptionModuleId } from '../../../../../shared/subscription-mo
 import {
   normalizePlatformAccess,
   type ClientPlatformAccess,
+  type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
 import {
   AUTH_BUSINESS_STORAGE_KEY,
@@ -68,6 +69,8 @@ export class AuthService {
   private token: string | null = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
   private businessId: string | null = localStorage.getItem(AUTH_BUSINESS_STORAGE_KEY);
   private scope: AuthScope = 'company';
+  private initInFlight$: Observable<boolean> | null = null;
+  private sessionEpoch = 0;
 
   readonly currentUser$ = this.currentUserSubject.asObservable();
   readonly business$ = this.businessSubject.asObservable();
@@ -311,20 +314,40 @@ export class AuthService {
       this.currentUserSubject.next(null);
       return of(false);
     }
+    if (this.currentUser) {
+      return of(true);
+    }
+    if (this.initInFlight$) {
+      return this.initInFlight$;
+    }
 
-    return this.http.get<{ user: SessionUser; business?: PublicBusinessInfo; businessId?: string; scope?: AuthScope }>(
+    const epoch = this.sessionEpoch;
+    const tokenAtStart = this.token;
+
+    this.initInFlight$ = this.http.get<{ user: SessionUser; business?: PublicBusinessInfo; businessId?: string; scope?: AuthScope }>(
       '/api/auth/me'
     ).pipe(
+      timeout({ first: 10000 }),
       tap(({ user, business, businessId, scope }) => {
+        if (this.sessionEpoch !== epoch) return;
         this.scope = scope ?? 'company';
         this.setSession(this.token!, user, businessId, business);
       }),
       map(() => true),
       catchError(() => {
-        this.clearSession();
+        if (this.sessionEpoch === epoch && this.token === tokenAtStart) {
+          this.clearSession();
+        }
         return of(false);
-      })
+      }),
+      tap({
+        complete: () => {
+          this.initInFlight$ = null;
+        },
+      }),
+      shareReplay({ bufferSize: 1, refCount: false })
     );
+    return this.initInFlight$;
   }
 
   login(
@@ -339,7 +362,10 @@ export class AuthService {
         businessId: options?.businessId,
         scope: options?.scope ?? 'company',
       })
-      .pipe(tap((session) => this.applySession(session)));
+      .pipe(
+      timeout({ first: 15000 }),
+      tap((session) => this.applySession(session))
+      );
   }
 
   /** Establece sesión tras registro autoservicio (token ya emitido por backend). */
@@ -417,6 +443,7 @@ export class AuthService {
     }
 
     return from(getGoogleRedirectResultOnce()).pipe(
+      timeout({ first: 10000 }),
       switchMap((credential) =>
         this.resolveFirebaseUserAfterRedirect(credential?.user ?? null, hasPendingGoogleLogin)
       ),
@@ -440,6 +467,75 @@ export class AuthService {
         return this.exchangeGoogleUser(firebaseUser, 'company', businessId);
       })
     );
+  }
+
+  /** Recarga usuario y empresa (p. ej. después de sumar un módulo). */
+  reloadSession(): Observable<boolean> {
+    if (!this.token) return of(false);
+    return this.http
+      .get<{
+        user: SessionUser;
+        business?: PublicBusinessInfo;
+        businessId?: string;
+        scope?: AuthScope;
+      }>('/api/auth/me')
+      .pipe(
+        tap(({ user, business, businessId, scope }) => {
+          this.scope = scope ?? 'company';
+          this.setSession(this.token!, user, businessId, business);
+        }),
+        map(() => true),
+        catchError(() => of(false))
+      );
+  }
+
+  sendWhatsappPhoneCode(phone: string): Observable<{
+    phone: string;
+    whatsappSent: boolean;
+    hint?: string;
+    devCode?: string;
+  }> {
+    return this.http.post<{
+      phone: string;
+      whatsappSent: boolean;
+      hint?: string;
+      devCode?: string;
+    }>(`/api/business/${this.currentBusinessId}/whatsapp-phone/send-code`, { phone });
+  }
+
+  verifyWhatsappPhone(phone: string, code: string): Observable<{
+    phone: string;
+    business: PublicBusinessInfo;
+  }> {
+    return this.http
+      .post<{ phone: string; business: PublicBusinessInfo }>(
+        `/api/business/${this.currentBusinessId}/whatsapp-phone/verify`,
+        { phone, code }
+      )
+      .pipe(
+        tap(({ business }) => {
+          if (business) this.businessSubject.next(business);
+        }),
+        switchMap((result) => this.reloadSession().pipe(map(() => result)))
+      );
+  }
+
+  enableProduct(product: TrialProductId): Observable<{
+    outcome: 'already_active' | 'module_added';
+    business: PublicBusinessInfo;
+  }> {
+    return this.http
+      .post<{
+        outcome: 'already_active' | 'module_added';
+        business: PublicBusinessInfo;
+      }>(`/api/business/${this.currentBusinessId}/enable-product`, { product })
+      .pipe(
+        timeout({ first: 20000 }),
+        tap(({ business }) => {
+          if (business) this.businessSubject.next(business);
+        }),
+        switchMap((result) => this.reloadSession().pipe(map(() => result)))
+      );
   }
 
   logout() {
@@ -509,6 +605,15 @@ export class AuthService {
     return (
       this.currentBusiness?.enPrueba === true && this.currentBusiness?.trialStatus === 'expired'
     );
+  }
+
+  get isLitePlan(): boolean {
+    if (this.currentBusiness?.billingMode === 'lite') return true;
+    return this.isTrialExpired && this.currentBusiness?.billingMode !== 'blocked';
+  }
+
+  get liteLimits() {
+    return this.currentBusiness?.liteLimits ?? null;
   }
 
   get isTrialExpiringSoon(): boolean {
@@ -601,6 +706,8 @@ export class AuthService {
   }
 
   private applySession(session: AuthSession) {
+    this.sessionEpoch += 1;
+    this.initInFlight$ = null;
     this.scope = session.scope ?? 'company';
     this.setSession(session.token, session.user, session.businessId, session.business);
   }
@@ -627,9 +734,11 @@ export class AuthService {
   }
 
   private clearSession() {
+    this.sessionEpoch += 1;
     this.token = null;
     this.businessId = null;
     this.scope = 'company';
+    this.initInFlight$ = null;
     localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     localStorage.removeItem(AUTH_BUSINESS_STORAGE_KEY);
     this.currentUserSubject.next(null);

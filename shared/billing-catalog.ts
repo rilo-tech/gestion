@@ -4,6 +4,9 @@ export type BillingCountryCode = 'UY' | 'AR';
 export type BillingCurrency = 'UYU' | 'ARS';
 export type BillingInterval = 'month' | 'year';
 
+/** Selector ARS en landing/planes. Oculto hasta tener cobro en Argentina. */
+export const SHOW_ARGENTINA_BILLING = false;
+
 /** Pago anual = 10 cuotas mensuales (2 meses de bonificación). */
 export const YEARLY_MONTHS_CHARGED = 10;
 export const YEARLY_COVERAGE_MONTHS = 12;
@@ -124,6 +127,8 @@ export const ERP_PLAN_BILLING_DEFAULTS: Record<
 };
 
 export function resolveBillingCountry(pais: string | null | undefined): BillingCountryCode {
+  if (!SHOW_ARGENTINA_BILLING) return 'UY';
+
   const raw = String(pais ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')

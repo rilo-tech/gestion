@@ -6,17 +6,6 @@ import { map } from 'rxjs';
 
 const ERP_WEB_EXEMPT_PATHS = ['/mi-cuenta', '/apariencia', '/activar-suscripcion'];
 
-function redirectIfAuthenticated(auth: AuthService, router: Router) {
-  if (auth.currentUser) {
-    return router.createUrlTree([auth.homeRoute]);
-  }
-  return auth.initialize().pipe(
-    map((authenticated) =>
-      authenticated ? router.createUrlTree([auth.homeRoute]) : true
-    )
-  );
-}
-
 export const authGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
@@ -33,11 +22,7 @@ export const authGuard: CanActivateFn = () => {
   );
 };
 
-export const loginGuard: CanActivateFn = () => {
-  const auth = inject(AuthService);
-  const router = inject(Router);
-  return redirectIfAuthenticated(auth, router);
-};
+export const loginGuard: CanActivateFn = () => true;
 
 /** Permite /acceso-plataforma salvo que ya haya sesión de superadmin plataforma. */
 export const platformLoginGuard: CanActivateFn = () => {
@@ -134,10 +119,12 @@ export const erpWebGuard: CanActivateFn = (_route, state) => {
   return router.createUrlTree(['/mi-cuenta']);
 };
 
-/** Redirige al flujo de activación si la prueba venció (login permitido, operación bloqueada). */
+/** Redirige al flujo de activación solo si la cuenta está bloqueada (baja / vencida). El plan libre sigue operando. */
 export const trialActiveGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  if (!auth.isTrialExpired) return true;
-  return router.createUrlTree(['/activar-suscripcion']);
+  if (auth.currentBusiness?.billingMode === 'blocked') {
+    return router.createUrlTree(['/activar-suscripcion']);
+  }
+  return true;
 };

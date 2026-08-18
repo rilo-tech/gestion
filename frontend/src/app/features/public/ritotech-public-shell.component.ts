@@ -1,6 +1,6 @@
-import { Component } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
 @Component({
   selector: 'app-ritotech-public-shell',
@@ -31,18 +31,22 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
             <a routerLink="/rilo-gestion" routerLinkActive="text-white" class="hover:text-white">ERP Web</a>
             <a routerLink="/whatsapp" routerLinkActive="text-white" class="hover:text-white">WhatsApp</a>
             <a routerLink="/planes" routerLinkActive="text-white" class="hover:text-white">Planes</a>
-            <a routerLink="/" fragment="landing-faq" class="hover:text-white hidden md:inline">FAQ</a>
+            <a
+              routerLink="/"
+              fragment="landing-faq"
+              (click)="scrollToLandingSection('landing-faq')"
+              class="hover:text-white hidden md:inline">FAQ</a>
           </nav>
           <div class="flex items-center gap-2 shrink-0">
             <a
               routerLink="/login"
-              class="hidden sm:inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
+              class="inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
               Ingresar
             </a>
             <a
               routerLink="/registro"
               class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
-              Probar gratis
+              Registrate gratis
             </a>
           </div>
         </div>
@@ -61,6 +65,9 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
             decoding="async" />
         </div>
         <p>RiloTech · RILO Gestión · Controlá tu negocio desde WhatsApp y desde el panel web.</p>
+        <p class="mt-2 max-w-lg mx-auto leading-relaxed">
+          Los precios publicados son de referencia y pueden reajustarse. Si ya estás en un plan pago, te avisamos antes de cambiar tu cuota.
+        </p>
         <p class="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1">
           <a routerLink="/legal/terminos" class="hover:text-gray-300">Términos</a>
           <a routerLink="/legal/privacidad" class="hover:text-gray-300">Privacidad</a>
@@ -70,4 +77,24 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
     </div>
   `,
 })
-export class RitotechPublicShellComponent {}
+export class RitotechPublicShellComponent {
+  private router = inject(Router);
+
+  scrollToLandingSection(id: string) {
+    const path = this.router.url.split('?')[0].split('#')[0];
+    const scroll = () => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    if (path === '/' || path === '') {
+      setTimeout(scroll, 0);
+      return;
+    }
+    void this.router.navigate(['/'], { fragment: id }).then(() => {
+      setTimeout(scroll, 80);
+    });
+  }
+
+  scrollToLandingFaq() {
+    this.scrollToLandingSection('landing-faq');
+  }
+}

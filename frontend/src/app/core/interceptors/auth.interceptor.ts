@@ -21,6 +21,10 @@ function isPublicAuthRoute(url: string): boolean {
   );
 }
 
+function isSessionProbeRoute(url: string): boolean {
+  return /\/api\/auth\/me(\?|$)/.test(url) && !url.includes('/api/auth/me/');
+}
+
 let redirectingForExpiredSession = false;
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
@@ -39,7 +43,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     })
   ).pipe(
     catchError((error: HttpErrorResponse) => {
-      if (error.status === 401 && !isPublicAuthRoute(req.url)) {
+      if (error.status === 401 && !isPublicAuthRoute(req.url) && !isSessionProbeRoute(req.url)) {
         if (!redirectingForExpiredSession) {
           redirectingForExpiredSession = true;
           auth.logout();

@@ -12,18 +12,19 @@ import {
 import { isValidEmail } from './trial-registration-service.ts';
 import {
   getBillingProduct,
-  getProductPriceForCountry,
   resolveBillingCountry,
   resolveCheckoutAmount,
   type BillingCountryCode,
   type BillingInterval,
 } from '../../shared/billing-catalog.ts';
+import { overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
+import { getCommercialCatalog } from './commercial-catalog.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 import { addTrialDays } from '../../shared/trial-state.ts';
 import { isValidE164Phone, normalizePhone } from '../../shared/phone.ts';
 import type { TrialContactVerification, TrialLifecycle } from '../../shared/trial-registration.ts';
 import { sendSubscriptionInvoiceEmail } from '../utils/transactional-email.ts';
-import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
+import { seedBusinessWhatsappAccess, releaseBusinessWhatsappPhone } from '../whatsapp/seed-access.ts';
 
 function normalizeContactPhone(raw: string): string {
   const trimmed = raw.trim();
@@ -305,8 +306,9 @@ export async function markBusinessAsPaid(params: {
 
   const billingInterval: BillingInterval =
     params.billingInterval === 'year' ? 'year' : 'month';
-  const price = getProductPriceForCountry(productId, country);
-  const catalogCheckout = resolveCheckoutAmount(price?.amountMonthly ?? 0, billingInterval);
+  const catalog = await getCommercialCatalog();
+  const priced = overlayProductsForCountry(catalog, country).find((row) => row.id === productId);
+  const catalogCheckout = resolveCheckoutAmount(priced?.amountMonthly ?? 0, billingInterval);
   const amount =
     typeof params.amount === 'number' && Number.isFinite(params.amount) && params.amount > 0
       ? Math.round(params.amount)
@@ -471,5 +473,52 @@ export async function sendBusinessSubscriptionInvoiceEmail(params: {
     to,
     periodo,
     total: cuota.total,
+  };
+}
+
+/** Desactiva la empresa y libera email/celular para /probar-gratis. No borra datos. */
+export async function offboardBusiness(params: {
+  businessId: string;
+  changedBy?: string;
+}): Promise<{
+  business: Awaited<ReturnType<typeof toPublicBusinessInfo>>;
+  releasedEmail: boolean;
+  releasedPhone: boolean;
+}> {
+  const business = await getBusiness(params.businessId);
+  if (!business) throw new Error('BUSINESS_NOT_FOUND');
+
+  if (business.estadoSuscripcion === 'activa') {
+    await updateBusiness(
+      params.businessId,
+      { estadoSuscripcion: 'suspendida' },
+      {
+        allowSubscriptionFields: true,
+        changedBy: params.changedBy,
+        historyNote: 'Baja: suscripción desactivada y contacto liberado para la landing',
+      }
+    );
+  }
+
+  const email = String(business.contactVerification?.email ?? '').trim();
+  const phone = String(business.contactVerification?.phone ?? '').trim();
+
+  let releasedEmail = false;
+  let releasedPhone = false;
+  if (email) {
+    const result = await releaseTrialContactClaim('email', email, { force: true });
+    releasedEmail = result.released;
+  }
+  if (phone) {
+    const result = await releaseTrialContactClaim('phone', phone, { force: true });
+    releasedPhone = result.released;
+  }
+
+  await releaseBusinessWhatsappPhone(params.businessId);
+
+  return {
+    business: await toPublicBusinessInfo(params.businessId),
+    releasedEmail,
+    releasedPhone,
   };
 }

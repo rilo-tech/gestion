@@ -220,9 +220,17 @@ import {
                 </label>
               </div>
             </div>
-            <div class="flex flex-wrap gap-3" *ngIf="contactDraft.email || contactDraft.phone">
+            <div class="flex flex-wrap items-center gap-3">
               <button
-                *ngIf="contactDraft.email"
+                *ngIf="canOffboard"
+                type="button"
+                (click)="offboardBusiness()"
+                [disabled]="offboarding"
+                class="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60">
+                {{ offboarding ? 'Dando de baja…' : 'Dar de baja' }}
+              </button>
+              <button
+                *ngIf="canReleaseEmail"
                 type="button"
                 (click)="releaseContact('email', contactDraft.email)"
                 [disabled]="releasingContact === 'email'"
@@ -230,7 +238,7 @@ import {
                 {{ releasingContact === 'email' ? 'Liberando...' : 'Liberar email (landing)' }}
               </button>
               <button
-                *ngIf="contactDraft.phone"
+                *ngIf="canReleasePhone"
                 type="button"
                 (click)="releaseContact('phone', contactDraft.phone)"
                 [disabled]="releasingContact === 'phone'"
@@ -240,8 +248,15 @@ import {
             </div>
             <p class="text-xs text-sky-800/80">
               Si el producto es RiloBot o Completo, al guardar un teléfono se habilita WhatsApp con ese número.
-              Liberar email o teléfono permite reutilizarlo en /probar-gratis
-              (si la suscripción está activa, primero desactivála en Producto).
+              <span *ngIf="canOffboard">
+                <strong>Dar de baja</strong> desactiva la empresa y libera email y celular para /probar-gratis. Los datos no se borran.
+              </span>
+              <span *ngIf="!canOffboard && (canReleaseEmail || canReleasePhone)">
+                La empresa está inactiva. Liberá el email o el teléfono solo si todavía están reservados.
+              </span>
+              <span *ngIf="!canOffboard && !canReleaseEmail && !canReleasePhone">
+                La empresa está inactiva. Email y celular ya están libres para /probar-gratis.
+              </span>
             </p>
           </section>
 
@@ -389,7 +404,7 @@ import {
                   class="h-4 w-4 rounded border-gray-300 text-teal-600">
                 <span>
                   <span class="block text-sm font-semibold text-gray-900">Suscripción activa</span>
-                  <span class="block text-[11px] text-gray-500">Desactivá para bloquear el ingreso</span>
+                  <span class="block text-[11px] text-gray-500">Pausa el ingreso; el mail y el celular siguen reservados</span>
                 </span>
               </label>
             </div>
@@ -999,6 +1014,7 @@ export class PlatformBusinessDetailComponent implements OnInit {
     whatsappOptIn: false,
   };
   savingContact = false;
+  offboarding = false;
   invoiceEmailDraft = { to: '', periodo: '', notes: '' };
   sendingInvoiceEmail = false;
 
@@ -1057,6 +1073,26 @@ export class PlatformBusinessDetailComponent implements OnInit {
     return this.business.estadoSuscripcion === 'activa'
       ? 'bg-green-100 text-green-800'
       : 'bg-red-100 text-red-800';
+  }
+
+  get canOffboard(): boolean {
+    return this.business?.estadoSuscripcion === 'activa';
+  }
+
+  get canReleaseEmail(): boolean {
+    return (
+      this.business?.estadoSuscripcion !== 'activa' &&
+      Boolean(this.contactDraft.email) &&
+      this.business?.contactClaims?.emailBound === true
+    );
+  }
+
+  get canReleasePhone(): boolean {
+    return (
+      this.business?.estadoSuscripcion !== 'activa' &&
+      Boolean(this.contactDraft.phone) &&
+      this.business?.contactClaims?.phoneBound === true
+    );
   }
 
   get trialStatusLabel(): string {
@@ -1634,6 +1670,39 @@ export class PlatformBusinessDetailComponent implements OnInit {
       });
   }
 
+  offboardBusiness() {
+    if (!this.business || this.offboarding) return;
+    this.dialogService
+      .confirm({
+        title: 'Dar de baja',
+        message:
+          'La empresa queda inactiva (no entra al panel ni al bot). Se liberan email y celular para /probar-gratis. Los datos de la empresa no se borran.',
+        confirmLabel: 'Dar de baja',
+        variant: 'danger',
+      })
+      .subscribe((ok) => {
+        if (!ok || !this.business) return;
+        this.offboarding = true;
+        this.platformService.offboardBusiness(this.business.id).subscribe({
+          next: (updated) => {
+            this.offboarding = false;
+            this.applyBusinessUpdate(updated);
+            this.dialogService.alert({
+              title: 'Empresa dada de baja',
+              message: 'Quedó inactiva y el email/celular ya se pueden usar otra vez en la landing.',
+            });
+          },
+          error: (err) => {
+            this.offboarding = false;
+            this.dialogService.alert({
+              title: 'No se pudo dar de baja',
+              message: err?.error?.error || 'No se pudo dar de baja la empresa.',
+            });
+          },
+        });
+      });
+  }
+
   releaseContact(type: 'email' | 'phone', value: string) {
     if (!value || value === '—') return;
     if (this.business?.estadoSuscripcion === 'activa') {
@@ -1657,6 +1726,11 @@ export class PlatformBusinessDetailComponent implements OnInit {
         this.platformService.releaseTrialContactClaim(type, value, { force: true }).subscribe({
           next: (res) => {
             this.releasingContact = null;
+            if (this.business) {
+              this.platformService.getBusiness(this.business.id).subscribe({
+                next: (updated) => this.applyBusinessUpdate(updated),
+              });
+            }
             this.dialogService.alert({
               title: res.released ? 'Liberado' : 'Sin reserva',
               message: res.released

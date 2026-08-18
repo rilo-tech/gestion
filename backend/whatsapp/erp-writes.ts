@@ -15,8 +15,12 @@ import {
 } from '../utils/order-photos.ts';
 import { downloadWhatsappMedia } from './meta-api.ts';
 import { findClientByName, findStockItemByName } from './lookups.ts';
-import type { WhatsappCommandEntities } from './ai-command-parser.ts';
+import { whatsappCopyForRubro } from './copy.ts';
+import type { WhatsappCommandEntities, WhatsappPurchaseLine } from './ai-command-parser.ts';
 import type { WhatsappTenantContext } from './tenant-resolver.ts';
+import { parsePurchaseInput, persistPurchase, persistPurchaseDraft } from '../utils/purchase-finance.ts';
+import { purchasePanelUrl } from './purchase-payment.ts';
+import { assertCanCreateClient, assertCanCreateProduct } from '../auth/usage-gates.ts';
 
 function money(value: number): string {
   return Number(value || 0).toLocaleString('es-AR', {
@@ -190,7 +194,7 @@ export async function createOrderFromWhatsapp(
     throw new Error(
       entities.clientName
         ? `No encontré el cliente "${entities.clientName}". Creálo en el ERP o escribí el nombre exacto.`
-        : 'Indicá el cliente, por ejemplo: "pedido para Juan de 2 remeras $3000".'
+        : `Indicá el cliente, por ejemplo: "${whatsappCopyForRubro(tenant.rubro).exampleOrder}".`
     );
   }
 
@@ -215,7 +219,8 @@ export async function createOrderFromWhatsapp(
   );
 
   const { numero, label } = await allocateOrderNumber(tenant.businessId);
-  const now = normalizeTransactionDateToIso(new Date().toISOString());
+  const now = normalizeTransactionDateToIso(entities.orderDate ?? new Date().toISOString());
+  const fechaEntrega = normalizeTransactionDateToIso(entities.deliveryDate ?? now);
   const descripcion = [
     String(entities.notes ?? '').trim() || raw.trim(),
     entities.imageSummary ? `Foto: ${entities.imageSummary}` : '',
@@ -229,7 +234,7 @@ export async function createOrderFromWhatsapp(
     clienteNombre: client.nombre,
     descripcion,
     estado: 'pendiente',
-    fechaEntrega: now,
+    fechaEntrega,
     items: orderItems,
     total,
     costoReal: orderItems.reduce(
@@ -296,7 +301,7 @@ export async function createSaleFromWhatsapp(
   const paid = entities.paid === true;
   const montoCobrado = paid ? built.total : 0;
   const { numero, label } = await allocateSaleNumber(tenant.businessId);
-  const timestamp = normalizeTransactionDateToIso(new Date().toISOString());
+  const timestamp = normalizeTransactionDateToIso(entities.orderDate ?? new Date().toISOString());
   const items = built.items.map((line) => ({
     tipoLinea: 'concepto' as const,
     stockItemId: line.stockItemId,
@@ -432,6 +437,7 @@ export async function createClientFromWhatsapp(
 ): Promise<{ id: string; nombre: string }> {
   const clean = String(nombre ?? '').trim();
   if (!clean) throw new Error('Indicá el nombre del cliente.');
+  await assertCanCreateClient(businessId);
 
   const docRef = await db.collection(`negocios/${businessId}/clientes`).add({
     nombre: clean,
@@ -446,28 +452,53 @@ export async function createClientFromWhatsapp(
   return { id: docRef.id, nombre: clean };
 }
 
-/** Catálogo liviano para pedidos/ventas. No controla stock. */
+export async function createSupplierFromWhatsapp(
+  businessId: string,
+  nombre: string
+): Promise<{ id: string; nombre: string }> {
+  const clean = String(nombre ?? '').trim();
+  if (!clean) throw new Error('Indicá el nombre del proveedor.');
+
+  const docRef = await db.collection(`negocios/${businessId}/proveedores`).add({
+    nombre: clean,
+    activo: true,
+    telefono: '',
+    email: '',
+    notas: 'Alta vía WhatsApp RiloBot',
+    origenWhatsapp: true,
+    createdAt: new Date().toISOString(),
+  });
+
+  return { id: docRef.id, nombre: clean };
+}
+
+/** Catálogo para pedidos/ventas (sin stock) o para compras (con control de stock). */
 export async function createCatalogProductFromWhatsapp(
   businessId: string,
-  input: { nombre: string; precioVenta?: number }
+  input: { nombre: string; precioVenta?: number; costo?: number; controlaStock?: boolean }
 ): Promise<{ id: string; nombre: string; precioVenta: number }> {
   const nombre = String(input.nombre ?? '').trim();
   if (!nombre) throw new Error('Indicá el nombre del producto.');
+  await assertCanCreateProduct(businessId);
   const precioVenta = Number(input.precioVenta) || 0;
+  const costo = Number(input.costo) || 0;
+  const controlaStock = input.controlaStock === true;
 
   const docRef = await db.collection(`negocios/${businessId}/stock`).add({
     nombre,
     precioVenta,
     precio: precioVenta,
-    costo: 0,
+    costo,
     precioSugerido: precioVenta,
     stockActual: 0,
     stockMinimo: 0,
     stockReservado: 0,
-    controlaStock: false,
+    controlaStock,
     permitirStockNegativo: false,
     activo: true,
-    notas: 'Alta vía WhatsApp RiloBot (sin control de stock)',
+    notas: controlaStock
+      ? 'Alta vía WhatsApp RiloBot (compra)'
+      : 'Alta vía WhatsApp RiloBot (sin control de stock)',
     origenWhatsapp: true,
     negocioId: businessId,
     createdAt: new Date().toISOString(),
@@ -549,5 +580,133 @@ export async function registerCashFromWhatsapp(
 
   return {
     reply: `Listo. ${tipo === 'egreso' ? 'Egreso' : 'Ingreso'} de $${money(amount)}: ${concepto}.`,
+  };
+}
+
+function purchaseLinesFromEntities(entities: WhatsappCommandEntities): WhatsappPurchaseLine[] {
+  const existing = Array.isArray(entities.purchaseLines) ? entities.purchaseLines : [];
+  if (existing.length) {
+    return existing.filter((line) => String(line.productName ?? '').trim() && Number(line.quantity) > 0);
+  }
+  const name = String(entities.productName ?? '').trim();
+  if (!name) return [];
+  const quantity = Math.max(1, Number(entities.quantity) || 1);
+  const amount = Number(entities.amount) || 0;
+  const unitCost = amount > 0 ? amount / quantity : 0;
+  return [
+    {
+      productName: name,
+      productId: entities.productId,
+      quantity,
+      unitCost,
+    },
+  ];
+}
+
+export async function createPurchaseFromWhatsapp(
+  tenant: WhatsappTenantContext,
+  entities: WhatsappCommandEntities,
+  raw: string
+): Promise<{ reply: string; compraId: string; draft?: boolean }> {
+  const supplierName = String(entities.supplierName ?? '').trim();
+  if (!supplierName && !entities.supplierId) {
+    throw new Error('Indicá el proveedor, por ejemplo: "compra a Distribuidora López" o mandá la foto de la factura.');
+  }
+
+  const lines = purchaseLinesFromEntities(entities);
+  if (!lines.length) {
+    throw new Error(
+      'No pude leer los productos de la compra. Mandá la foto del remito/factura o el detalle (producto, cantidad y costo).'
+    );
+  }
+
+  const items = lines.map((line, index) => {
+    const productId = String(line.productId ?? '').trim();
+    if (!productId) {
+      throw new Error(`Falta vincular el producto "${line.productName}" al catálogo.`);
+    }
+    const cantidad = Math.max(1, Number(line.quantity) || 1);
+    const costoUnitario = Math.max(0, Number(line.unitCost) || 0);
+    return {
+      id: `wa_${index + 1}`,
+      tipoLinea: 'stock' as const,
+      ambito: 'negocio',
+      productoId: productId,
+      productoNombre: line.productName,
+      descripcion: line.productName,
+      cantidad,
+      costoUnitario,
+      importe: cantidad * costoUnitario,
+      afectaStock: true,
+      enOferta: false,
+    };
+  });
+
+  const medioPagoId = String(entities.paymentMedioId ?? '').trim() || 'efectivo';
+  const saveAsDraft = entities.saveAsDraft === true || !String(entities.paymentMedioId ?? '').trim();
+  const pago = {
+    medioPagoId,
+    tarjetaId: String(entities.paymentTarjetaId ?? '').trim() || undefined,
+    cuotas: Math.max(1, Number(entities.paymentCuotas) || 1),
+    fechaPrimerVencimiento: String(entities.paymentDueDate ?? '').trim() || undefined,
+  };
+
+  const parsed = await parsePurchaseInput(
+    tenant.businessId,
+    {
+      proveedorId: entities.supplierId ?? '',
+      proveedor: supplierName,
+      notas: [
+        String(entities.notes ?? '').trim() || raw.trim(),
+        entities.imageSummary ? `Foto: ${entities.imageSummary}` : '',
+        'Origen: WhatsApp RiloBot',
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      numeroComprobante: String(entities.invoiceNumber ?? '').trim(),
+      tipoComprobante: 'factura',
+      fecha: entities.orderDate ?? new Date().toISOString().slice(0, 10),
+      items,
+      pago,
+    },
+    saveAsDraft ? { relaxed: true } : undefined
+  );
+
+  if (parsed.error || !parsed.input) {
+    throw new Error(parsed.error || 'No pude armar la compra.');
+  }
+
+  if (saveAsDraft) {
+    const saved = await persistPurchaseDraft(tenant.businessId, parsed.input);
+    const url = purchasePanelUrl(saved.id, true);
+    return {
+      compraId: saved.id,
+      draft: true,
+      reply:
+        `Guardé un borrador de compra a ${supplierName || 'proveedor'} por $${money(parsed.input.total)}.\n` +
+        `No moví stock ni caja.\n` +
+        `Completalo en el panel (pago y confirmar):\n${url}`,
+    };
+  }
+
+  const timestamp = new Date().toISOString();
+  await Promise.all(
+    items.map((line) =>
+      db.doc(`negocios/${tenant.businessId}/stock/${line.productoId}`).update({
+        controlaStock: true,
+        updatedAt: timestamp,
+      })
+    )
+  );
+
+  const saved = await persistPurchase(tenant.businessId, parsed.input);
+  const pagoLabel =
+    String(entities.paymentTarjetaLabel ?? '').trim() ||
+    String(entities.paymentMedioLabel ?? medioPagoId).trim();
+  return {
+    compraId: saved.id,
+    reply:
+      `Listo. Compra ${saved.compraLabel} a ${supplierName || 'proveedor'} por $${money(parsed.input.total)}.\n` +
+      `Pago: ${pagoLabel}. El stock ya se sumó.`,
   };
 }

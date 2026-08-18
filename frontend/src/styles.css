@@ -1164,6 +1164,16 @@ table.module-data-table-layout td {
     line-height: 1.25 !important;
   }
 
+  table.app-data-table lucide-icon,
+  table.app-data-table i-lucide {
+    width: 1rem !important;
+    height: 1rem !important;
+    max-width: 1rem !important;
+    max-height: 1rem !important;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
   table.app-data-table tbody td button[type='button'] {
     padding: 0.25rem !important;
   }

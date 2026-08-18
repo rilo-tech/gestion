@@ -41,14 +41,24 @@ export interface TrialCompleteResponse {
   businessId: string;
   business: PublicBusinessInfo;
   loginHint: { businessCode: string; loginUsername: string };
+  outcome?: 'created' | 'module_added' | 'already_active';
+  registeredPhone?: string;
+  erpWebEnabled?: boolean;
+  whatsappEnabled?: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
 export class TrialRegistrationService {
   private http = inject(HttpClient);
 
-  register(payload: TrialRegisterPayload): Observable<{ registrationId: string }> {
-    return this.http.post<{ registrationId: string }>('/api/public/trial/register', payload);
+  register(payload: TrialRegisterPayload): Observable<{
+    registrationId: string;
+    existingAccount?: boolean;
+  }> {
+    return this.http.post<{ registrationId: string; existingAccount?: boolean }>(
+      '/api/public/trial/register',
+      payload
+    );
   }
 
   sendPhoneCode(registrationId: string): Observable<{ ok: boolean; emailSent?: boolean; devCode?: string }> {

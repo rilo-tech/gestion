@@ -8,15 +8,18 @@ import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/co
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY, GOOGLE_LOGIN_UI_ENABLED } from '../../core/constants/google-auth-storage';
 import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 import { HttpErrorResponse } from '@angular/common/http';
+import { TimeoutError } from 'rxjs';
+import { finalize } from 'rxjs/operators';
 import {
   API_HTML_RESPONSE_MESSAGE,
   isHtmlInsteadOfJsonError,
 } from '../../core/utils/api-response-error';
+import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, PasswordInputComponent],
   styles: [
     `
       .login-field:-webkit-autofill,
@@ -32,8 +35,17 @@ import {
     <div class="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div class="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 shadow-2xl">
         <div class="mb-8 text-center">
-          <h1 class="text-2xl font-bold text-teal-400 tracking-tight">RILO</h1>
-          <p class="text-sm text-gray-400 mt-2">Ingresá para continuar</p>
+          <img
+            src="/brand/rilotech-lockup-on-dark.png"
+            alt="RiloTech"
+            width="240"
+            height="80"
+            class="mx-auto mt-1 h-20 w-auto object-contain sm:h-24"
+            decoding="async" />
+          <p class="text-sm text-gray-400 mt-1.5">Ingresá para continuar</p>
+          <p class="text-xs text-gray-500 mt-2 leading-relaxed">
+            Si usás RiloBot, operás por WhatsApp. Acá ves tu cuenta o el panel, según el plan.
+          </p>
         </div>
 
         <form (submit)="submitPasswordLogin(); $event.preventDefault()" class="space-y-4">
@@ -47,13 +59,14 @@ import {
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">Contraseña</label>
-            <input
-              type="password"
+            <label class="block text-sm font-medium text-gray-300 mb-1" for="login-password">Contraseña</label>
+            <app-password-input
+              inputId="login-password"
               [(ngModel)]="password"
               name="password"
               autocomplete="current-password"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              inputClass="login-field text-white">
+            </app-password-input>
           </div>
 
           <div>
@@ -87,6 +100,9 @@ import {
             class="w-full rounded-xl bg-teal-500 py-3 text-sm font-bold text-gray-900 hover:bg-teal-400 disabled:opacity-60">
             {{ submitting ? 'Ingresando...' : 'Ingresar' }}
           </button>
+          <p *ngIf="submitting" class="text-xs text-center text-gray-500">
+            Esperá unos segundos. Si no responde, vas a ver el error acá.
+          </p>
         </form>
 
         <div *ngIf="googleLoginUiEnabled" class="my-6 flex items-center gap-3">
@@ -120,7 +136,7 @@ import {
 
         <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
           ¿Querés probar el sistema?
-          <a routerLink="/registro" class="text-teal-400 font-semibold hover:underline">20 días gratis</a>
+          <a routerLink="/registro" class="text-teal-400 font-semibold hover:underline">30 días gratis</a>
         </p>
       </div>
     </div>
@@ -145,19 +161,38 @@ export class LoginComponent implements OnInit {
   sessionExpiredMessage = '';
 
   private mapLoginError(err: unknown): string {
+    if (err instanceof TimeoutError || (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'TimeoutError')) {
+      return 'El servidor tardó demasiado en responder. Probá de nuevo.';
+    }
+
     if (isHtmlInsteadOfJsonError(err)) {
       return API_HTML_RESPONSE_MESSAGE;
     }
 
     if (err instanceof HttpErrorResponse) {
+      if (err.status === 0) {
+        return 'No se pudo conectar con el servidor. Revisá tu conexión y probá de nuevo.';
+      }
+
       const backendMessage =
         (typeof err.error === 'object' &&
           err.error !== null &&
           'error' in err.error &&
           typeof (err.error as { error?: unknown }).error === 'string' &&
           (err.error as { error: string }).error) ||
+        (typeof err.error === 'string' ? err.error : '') ||
         '';
-      if (backendMessage) return backendMessage;
+      if (backendMessage && !backendMessage.trim().startsWith('<')) return backendMessage;
+
+      if (err.status === 401) {
+        return 'Usuario, contraseña o código de empresa incorrectos.';
+      }
+      if (err.status === 404) {
+        return 'No encontramos esa empresa. Revisá el código (ej: prueba).';
+      }
+      if (err.status >= 500) {
+        return 'El servidor tuvo un problema al ingresar. Probá de nuevo en un momento.';
+      }
     }
 
     const message =
@@ -238,13 +273,14 @@ export class LoginComponent implements OnInit {
         businessId: this.businessCode.trim().toLowerCase(),
         scope: 'company',
       })
+      .pipe(finalize(() => {
+        this.submitting = false;
+      }))
       .subscribe({
         next: () => {
-          this.submitting = false;
-          this.router.navigate([this.auth.homeRoute]);
+          void this.router.navigateByUrl(this.auth.homeRoute);
         },
         error: (err) => {
-          this.submitting = false;
           this.errorMessage = this.mapLoginError(err);
         },
       });

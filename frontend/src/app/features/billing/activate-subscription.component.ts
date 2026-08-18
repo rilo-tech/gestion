@@ -31,8 +31,9 @@ type BillingInterval = 'month' | 'year';
           <div class="inline-flex h-14 w-14 items-center justify-center rounded-full bg-teal-100 text-teal-700 text-2xl">💳</div>
           <h1 class="mt-3 text-xl font-bold text-gray-900">Activar o renovar plan</h1>
           <p class="mt-2 text-sm text-gray-600 leading-relaxed">
-            La prueba es sin tarjeta. Elegí mensual o anual y pagá con Mercado Pago
-            (Uruguay o Argentina según el país de tu cuenta).
+            La prueba es <span class="font-medium text-gray-800">gratis y sin tarjeta</span>.
+            Si ya venció, seguís más barato en plan libre con techos.
+            Recién cobramos el precio de lista cuando activás (Mercado Pago o marcado desde la plataforma).
           </p>
         </div>
 
@@ -103,7 +104,15 @@ type BillingInterval = 'month' | 'year';
         </div>
 
         <p *ngIf="!loadingPlans && !plans.length && error" class="text-sm text-red-600 text-center">{{ error }}</p>
-        <p *ngIf="error && plans.length" class="text-sm text-red-600 text-center">{{ error }}</p>
+        <p *ngIf="error && plans.length" class="text-sm text-red-600 text-center">
+          {{ error }}
+          <a
+            *ngIf="error.includes('celular')"
+            routerLink="/mi-cuenta"
+            class="block mt-1 font-semibold text-teal-700 hover:underline">
+            Ir a Mi cuenta
+          </a>
+        </p>
 
         <button
           type="button"
@@ -195,7 +204,14 @@ export class ActivateSubscriptionComponent implements OnInit {
       this.checkoutAvailable = data.available === true;
       this.currency = data.currency;
       this.countryLabel = data.country === 'AR' ? 'Argentina' : 'Uruguay';
-      if (this.plans.some((p) => p.id === 'whatsapp')) {
+      const fromQuery = this.route.snapshot.queryParamMap.get('producto');
+      if (fromQuery && this.plans.some((p) => p.id === fromQuery)) {
+        this.selectedProductId = fromQuery;
+      } else if (this.auth.canAccessWhatsapp && !this.auth.canAccessErpWeb && this.plans.some((p) => p.id === 'completo')) {
+        this.selectedProductId = 'completo';
+      } else if (!this.auth.canAccessWhatsapp && this.auth.canAccessErpWeb && this.plans.some((p) => p.id === 'completo')) {
+        this.selectedProductId = 'completo';
+      } else if (this.plans.some((p) => p.id === 'whatsapp')) {
         this.selectedProductId = 'whatsapp';
       } else if (this.plans[0]) {
         this.selectedProductId = this.plans[0].id;
@@ -229,11 +245,16 @@ export class ActivateSubscriptionComponent implements OnInit {
       }
       this.error = 'No se recibió URL de pago.';
     } catch (err: unknown) {
-      const msg =
+      const body =
         err && typeof err === 'object' && 'error' in err
-          ? String((err as { error?: { error?: string } }).error?.error ?? '')
-          : '';
-      this.error = msg || 'No se pudo iniciar el pago.';
+          ? (err as { error?: { error?: string; code?: string } }).error
+          : undefined;
+      if (body?.code === 'WHATSAPP_PHONE_REQUIRED') {
+        this.error = 'Confirmá el celular en Mi cuenta antes de pagar RiloBot.';
+        this.paying = false;
+        return;
+      }
+      this.error = body?.error || 'No se pudo iniciar el pago.';
     } finally {
       this.paying = false;
     }

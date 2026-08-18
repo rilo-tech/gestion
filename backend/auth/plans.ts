@@ -10,6 +10,8 @@ import {
   type SubscriptionModulesMap,
 } from '../../shared/subscription-modules.ts';
 import { getErpPlanTemplatePrices } from '../../shared/billing-catalog.ts';
+import { erpPlanPricesFromCatalog } from '../../shared/commercial-catalog.ts';
+import { getCommercialCatalog } from './commercial-catalog.ts';
 
 export interface PlanRecord {
   id: string;
@@ -48,6 +50,11 @@ export interface PublicPlanInfo {
 
 function landingPrices(planId: string) {
   return getErpPlanTemplatePrices(planId, 'UY');
+}
+
+async function landingPricesLive(planId: string) {
+  const catalog = await getCommercialCatalog();
+  return erpPlanPricesFromCatalog(catalog, planId, 'UY') ?? landingPrices(planId);
 }
 
 const basicoPrices = landingPrices('plan_basico');
@@ -173,7 +180,7 @@ export async function syncPlanTemplatesFromLandingCatalog(): Promise<PlanRecord[
   const updated: PlanRecord[] = [];
 
   for (const plan of DEFAULT_PLANS) {
-    const landing = getErpPlanTemplatePrices(plan.id, 'UY');
+    const landing = await landingPricesLive(plan.id);
     const ref = col.doc(plan.id);
     const doc = await ref.get();
     const payload = {
@@ -226,7 +233,7 @@ export async function ensureDefaultPlans(): Promise<void> {
       }
       // Migra plantillas con precios legacy (15k–35k) o módulos viejos a catálogo landing.
       const currentBase = Number(data?.precioBaseMensual ?? data?.precioMensual) || 0;
-      const landing = getErpPlanTemplatePrices(plan.id, 'UY');
+      const landing = await landingPricesLive(plan.id);
       if (currentBase >= 10000 && landing) {
         patch.nombre = plan.nombre;
         patch.precioMensual = landing.precioBaseMensual;

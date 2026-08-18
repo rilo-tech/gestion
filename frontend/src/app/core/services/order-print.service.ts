@@ -148,14 +148,14 @@ function renderItemsTable(order: Order, options: OrderPrintOptions): string {
     ? `<tr>
         ${checkHead}
         <th>Producto</th>
-        <th class="num">Cant.</th>
+        <th class="qty">Cant.</th>
         <th class="num">P. unit.</th>
         <th class="num">Subtotal</th>
       </tr>`
     : `<tr>
         ${checkHead}
         <th>Producto</th>
-        <th class="num">Cant.</th>
+        <th class="qty">Cant.</th>
       </tr>`;
 
   const body = lines
@@ -175,7 +175,7 @@ function renderItemsTable(order: Order, options: OrderPrintOptions): string {
       return `<tr>
         ${checkCell}
         <td><strong>${escapeHtml(line.nombre)}</strong></td>
-        <td class="num">${escapeHtml(line.cantidad)}</td>
+        <td class="qty">${escapeHtml(line.cantidad)}</td>
         ${detailCell}
       </tr>${stockRow}`;
     })
@@ -391,7 +391,7 @@ function buildPrintStyles(): string {
       page-break-after: auto;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
       padding: 2mm 0 4mm;
     }
     .print-page--dual {
@@ -552,7 +552,7 @@ function buildPrintStyles(): string {
       height: auto;
       overflow: visible;
       padding: 1mm 1.5mm 2mm;
-      gap: 3px;
+      gap: 2.5mm;
     }
     .via-divider--vertical {
       flex-shrink: 0;
@@ -767,6 +767,7 @@ function buildPrintStyles(): string {
       background: #f9fafb;
     }
     td.num, th.num { text-align: right; white-space: nowrap; }
+    td.qty, th.qty { text-align: center; white-space: nowrap; }
     .extra-row td {
       background: #f9fafb;
       font-size: 10px;
@@ -806,7 +807,8 @@ function buildPrintStyles(): string {
       color: #065f46;
     }
     .balance-item--total strong { font-size: 17px; }
-    .balance-item--saldo strong { color: #c2410c; }
+    .balance-item--saldo span,
+    .balance-item--saldo strong { color: #dc2626; }
     .sheet-footer {
       flex-shrink: 0;
       padding-top: 4px;
@@ -872,6 +874,8 @@ function buildPrintStyles(): string {
     .print-page--dual .balance-item--total strong { font-size: 11px; }
     .print-page--dual .products-section {
       padding-bottom: 2px;
+      margin-top: 0.5mm;
+      margin-bottom: 0.5mm;
     }
     .print-page--dual .sheet-footer {
       padding-top: 2px;

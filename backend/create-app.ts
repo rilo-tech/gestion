@@ -18,6 +18,7 @@ import activityRoutes from './routes/activity.ts';
 import reportsRoutes from './routes/reports.ts';
 import collaboratorsRoutes from './routes/collaborators.ts';
 import publicTrialRoutes from './routes/public-trial.ts';
+import publicCommercialRoutes from './routes/public-commercial.ts';
 import publicGeoRoutes from './routes/public-geo.ts';
 import billingRoutes from './routes/billing.ts';
 import whatsappWebhookRoutes from './routes/whatsapp-webhook.ts';
@@ -83,17 +84,63 @@ export function getApiBootstrapState(): 'idle' | 'running' | 'ready' | 'failed' 
 export function createApiApp(): express.Express {
   const app = express();
   app.use(cors({ origin: true }));
-  app.use(
-    express.json({
-      limit: '10mb',
-      verify: (req, _res, buf) => {
-        const url = req.originalUrl ?? '';
-        if (url.startsWith('/api/webhooks/whatsapp')) {
-          (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
-        }
-      },
-    })
-  );
+
+  const isWhatsappWebhook = (req: express.Request) => {
+    const url = `${req.originalUrl ?? ''} ${req.url ?? ''} ${req.path ?? ''}`;
+    return url.includes('webhooks/whatsapp');
+  };
+
+  app.use((req, res, next) => {
+    if (req.method !== 'POST' || !isWhatsappWebhook(req)) return next();
+    const firebaseRaw = (req as express.Request & { rawBody?: Buffer }).rawBody;
+    const parsedBody = req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) ? req.body as Record<string, unknown> : null;
+    const looksLikeMeta = Boolean(parsedBody && (parsedBody.entry || parsedBody.object));
+    if (Buffer.isBuffer(firebaseRaw) && firebaseRaw.length && !looksLikeMeta) {
+      try {
+        req.body = JSON.parse(firebaseRaw.toString('utf8'));
+      } catch {
+        // Sigue al parser raw / al body ya parseado por Functions.
+      }
+    }
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
+      return next();
+    }
+    if (typeof req.body === 'string') {
+      try {
+        req.body = JSON.parse(req.body);
+        return next();
+      } catch {
+        req.body = {};
+        return next();
+      }
+    }
+    return express.raw({ type: '*/*', limit: '5mb' })(req, res, (err) => {
+      if (err) return next(err);
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+      const text = buf.toString('utf8').trim();
+      if (!text) {
+        req.body = {};
+        return next();
+      }
+      try {
+        req.body = JSON.parse(text);
+      } catch (parseErr) {
+        console.warn('[whatsapp] Cuerpo no JSON', {
+          len: buf.length,
+          preview: text.slice(0, 80),
+          error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        });
+        req.body = {};
+      }
+      next();
+    });
+  });
+
+  app.use((req, res, next) => {
+    if (isWhatsappWebhook(req)) return next();
+    return express.json({ limit: '10mb' })(req, res, next);
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -104,6 +151,9 @@ export function createApiApp(): express.Express {
   });
 
   app.use('/api/public/geo', publicGeoRoutes);
+  /** WhatsApp no espera el bootstrap: Meta corta si tardamos en responder 200. */
+  app.use('/api/webhooks/whatsapp', whatsappWebhookRoutes);
+  app.use('/webhooks/whatsapp', whatsappWebhookRoutes);
 
   const withBootstrap: express.RequestHandler = async (_req, res, next) => {
     try {
@@ -136,15 +186,11 @@ export function createApiApp(): express.Express {
   api.use('/reports', reportsRoutes);
   api.use('/collaborators', collaboratorsRoutes);
   api.use('/public/trial', publicTrialRoutes);
+  api.use('/public/commercial', publicCommercialRoutes);
   api.use('/billing', billingRoutes);
-  api.use('/webhooks/whatsapp', whatsappWebhookRoutes);
   api.use('/platform/bot', platformBotRoutes);
 
   app.use('/api', withBootstrap, api);
-
-  void runApiBootstrap().catch(() => {
-    // El error ya se registró; las rutas /api responderán 503 hasta que arranque.
-  });
 
   return app;
 }

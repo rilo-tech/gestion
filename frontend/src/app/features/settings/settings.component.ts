@@ -65,6 +65,7 @@ import { ConfigSettingCardComponent } from '../../shared/components/config-setti
 import { FormBackButtonComponent } from '../../shared/components/form-shell/form-back-button.component';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
+import { PlanStatusCardComponent } from '../../shared/components/plan-status-card/plan-status-card.component';
 
 interface ConfigSection {
   key: ConfigFieldKey;
@@ -110,6 +111,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
     ConfigListRemoveButtonComponent,
     ConfigSettingCardComponent,
     FormBackButtonComponent,
+    PlanStatusCardComponent,
   ],
   template: `
     <div [class]="pageShellClass">
@@ -122,7 +124,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               <ng-container *ngIf="activeModule">Configuración de {{ activeModule.title }}</ng-container>
             </h1>
             <p *ngIf="!activeModuleId" [class]="configDescClass">
-              Elegí una sección para editar listas, reglas y opciones del sistema.
+              Plan y canales del negocio, y las listas, reglas y opciones del sistema.
             </p>
             <p *ngIf="activeModule" [class]="activeModuleDescClass">{{ activeModule.description }}</p>
           </div>
@@ -151,6 +153,12 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
           </div>
         </div>
       </div>
+
+      <app-plan-status-card
+        *ngIf="!activeModuleId && !auth.isPlatformAdmin"
+        variant="settings"
+        class="block mb-6">
+      </app-plan-status-card>
 
       <nav
         *ngIf="!activeModuleId"

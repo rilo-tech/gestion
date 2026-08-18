@@ -88,6 +88,8 @@ export interface PublicBusinessInfo {
   trialDaysRemaining?: number | null;
   trialExpiringSoon?: boolean;
   trialBillingActive?: boolean;
+  billingMode?: 'trial' | 'lite' | 'paid' | 'blocked';
+  liteLimits?: { maxClientes: number; maxProductos: number; maxAccionesIaMes: number; maxOperacionesMes?: number } | null;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
@@ -96,6 +98,7 @@ export interface PublicBusinessInfo {
   operadoresDisponibles: number;
   usuariosDisponibles: number;
   contactVerification?: TrialContactVerification | null;
+  contactClaims?: { emailBound: boolean; phoneBound: boolean };
   lifecycle?: TrialLifecycle | null;
   source?: string | null;
   platformAccess?: ClientPlatformAccess;

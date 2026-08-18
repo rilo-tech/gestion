@@ -1,10 +1,10 @@
 import type { TrialProductId } from './platform-access.ts';
 
-/** Días de prueba por producto (plan comercial). */
+/** Días de prueba por producto (plan comercial). Un mes para que carguen el negocio. */
 export const TRIAL_DAYS_BY_PRODUCT: Record<TrialProductId, number> = {
-  whatsapp: 10,
-  erp: 20,
-  completo: 20,
+  whatsapp: 30,
+  erp: 30,
+  completo: 30,
 };
 
 /** RiloBot: valor rápido el primer día. */
@@ -137,6 +137,6 @@ export function resolveTrialState(
     isTrialBillingActive,
     daysRemaining,
     isExpiringSoon:
-      isTrialBillingActive && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 3,
+      isTrialBillingActive && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 7,
   };
 }

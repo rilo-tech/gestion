@@ -4,24 +4,17 @@ import { RouterLink } from '@angular/router';
 
 type GuideTab = 'whatsapp' | 'erp';
 
-interface GuideStep {
-  title: string;
-  text: string;
-  visual: 'phone' | 'message' | 'check' | 'panel' | 'cash' | 'box';
-}
-
 @Component({
   selector: 'app-ritotech-visual-guide',
   standalone: true,
   imports: [CommonModule, RouterLink],
   template: `
-    <!-- Trigger (opcional: el padre puede ocultarlo y abrir con open()) -->
     <button
       *ngIf="showTrigger"
       type="button"
       (click)="open(defaultTab)"
-      class="inline-flex items-center gap-2 rounded-xl border border-teal-700/70 bg-teal-950/40 px-4 py-2.5 text-sm font-semibold text-teal-200 hover:bg-teal-900/50 hover:text-white transition">
-      <span aria-hidden="true" class="text-base">📖</span>
+      class="inline-flex items-center gap-2 rounded-xl border border-teal-600/80 bg-gradient-to-r from-teal-950/80 to-violet-950/50 px-4 py-2.5 text-sm font-semibold text-teal-100 hover:from-teal-900 hover:to-violet-900 hover:text-white transition shadow-sm">
+      <span aria-hidden="true" class="text-lg leading-none">🎬</span>
       {{ triggerLabel }}
     </button>
 
@@ -33,131 +26,204 @@ interface GuideStep {
       aria-labelledby="visual-guide-title">
       <button
         type="button"
-        class="absolute inset-0 bg-black/70 backdrop-blur-[2px]"
+        class="absolute inset-0 bg-black/75 backdrop-blur-[2px]"
         aria-label="Cerrar guía"
         (click)="close()">
       </button>
 
       <div
-        class="relative z-10 w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-700 bg-gray-950 shadow-2xl">
-        <div class="sticky top-0 z-10 border-b border-gray-800 bg-gray-950/95 backdrop-blur px-4 py-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 id="visual-guide-title" class="text-lg font-bold text-white">Mini guía visual</h2>
-            <p class="text-xs text-gray-500 mt-0.5">Opcional · cerrá cuando quieras</p>
+        class="relative z-10 w-full sm:max-w-3xl max-h-[94vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-teal-900/60 bg-gray-950 shadow-2xl">
+        <div
+          class="sticky top-0 z-10 border-b border-teal-900/40 bg-gradient-to-r from-teal-950 via-gray-950 to-violet-950 px-4 sm:px-6 py-4 flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <p class="text-[11px] font-bold uppercase tracking-wider text-teal-400">Tu día, ordenado</p>
+            <h2 id="visual-guide-title" class="text-xl sm:text-2xl font-black text-white leading-tight mt-0.5">
+              Dejá el cuaderno. Rilo se acuerda por vos.
+            </h2>
+            <p class="text-sm text-gray-400 mt-1.5 leading-snug">
+              Para quien vende, entrega y cobra… y no tiene tiempo de “cargar el sistema”.
+            </p>
           </div>
           <button
             type="button"
-            class="rounded-lg px-2 py-1 text-gray-400 hover:text-white hover:bg-gray-800 text-lg leading-none"
+            class="shrink-0 rounded-lg px-2 py-1 text-gray-400 hover:text-white hover:bg-white/10 text-2xl leading-none"
             aria-label="Cerrar"
             (click)="close()">
             ×
           </button>
         </div>
 
-        <div class="px-4 pt-3 flex gap-2">
+        <!-- Dolor → alivio -->
+        <div class="px-4 sm:px-6 pt-4">
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="rounded-2xl border border-red-900/40 bg-red-950/20 px-2 py-3">
+              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">😵‍💫</p>
+              <p class="mt-2 text-[11px] sm:text-xs text-red-200/90 leading-snug font-medium">
+                “¿Quién me debía?”
+              </p>
+            </div>
+            <div class="rounded-2xl border border-amber-900/40 bg-amber-950/20 px-2 py-3">
+              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">📓</p>
+              <p class="mt-2 text-[11px] sm:text-xs text-amber-100/90 leading-snug font-medium">
+                Anotás y se pierde
+              </p>
+            </div>
+            <div class="rounded-2xl border border-teal-800/50 bg-teal-950/40 px-2 py-3">
+              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">🥳</p>
+              <p class="mt-2 text-[11px] sm:text-xs text-teal-200 leading-snug font-medium">
+                WhatsApp y listo
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-4 sm:px-6 pt-4 flex gap-2">
           <button
             type="button"
             (click)="tab = 'whatsapp'"
-            class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold border transition"
-            [class.bg-teal-700]="tab === 'whatsapp'"
-            [class.border-teal-600]="tab === 'whatsapp'"
+            class="flex-1 rounded-xl px-3 py-2.5 text-sm font-bold border transition"
+            [class.bg-teal-600]="tab === 'whatsapp'"
+            [class.border-teal-500]="tab === 'whatsapp'"
             [class.text-white]="tab === 'whatsapp'"
             [class.bg-gray-900]="tab !== 'whatsapp'"
             [class.border-gray-800]="tab !== 'whatsapp'"
             [class.text-gray-400]="tab !== 'whatsapp'">
-            RiloBot (WhatsApp)
+            💬 Cargá por WhatsApp
           </button>
           <button
             type="button"
             (click)="tab = 'erp'"
-            class="flex-1 rounded-lg px-3 py-2 text-sm font-semibold border transition"
-            [class.bg-teal-700]="tab === 'erp'"
-            [class.border-teal-600]="tab === 'erp'"
+            class="flex-1 rounded-xl px-3 py-2.5 text-sm font-bold border transition"
+            [class.bg-teal-600]="tab === 'erp'"
+            [class.border-teal-500]="tab === 'erp'"
             [class.text-white]="tab === 'erp'"
             [class.bg-gray-900]="tab !== 'erp'"
             [class.border-gray-800]="tab !== 'erp'"
             [class.text-gray-400]="tab !== 'erp'">
-            Panel web
+            🖥️ Controlá en el panel
           </button>
         </div>
 
-        <div class="p-4 sm:p-5 space-y-0">
-          <ng-container *ngFor="let step of currentSteps; let i = index; let last = last">
-            <div class="flex gap-3 sm:gap-4 items-start">
-              <div class="flex flex-col items-center shrink-0 w-14">
-                <div
-                  class="w-14 h-14 rounded-2xl border border-teal-800/80 bg-teal-950/50 flex items-center justify-center text-2xl"
-                  aria-hidden="true">
-                  {{ visualEmoji[step.visual] }}
-                </div>
-                <div *ngIf="!last" class="flex flex-col items-center py-1 text-teal-600" aria-hidden="true">
-                  <span class="w-0.5 h-4 bg-teal-700/80 rounded-full"></span>
-                  <svg width="16" height="12" viewBox="0 0 16 12" fill="none" class="text-teal-500">
-                    <path d="M8 0v8M8 8l-4-4M8 8l4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </div>
-              </div>
-              <div class="min-w-0 flex-1 pb-5" [class.pb-1]="last">
-                <p class="text-[11px] font-bold uppercase tracking-wide text-teal-500/90">Paso {{ i + 1 }}</p>
-                <h3 class="text-base font-bold text-white mt-0.5">{{ step.title }}</h3>
-                <p class="mt-1.5 text-sm text-gray-400 leading-relaxed">{{ step.text }}</p>
-              </div>
-            </div>
-          </ng-container>
+        <!-- WhatsApp comic -->
+        <div *ngIf="tab === 'whatsapp'" class="p-4 sm:p-6 space-y-4">
+          <p class="text-center text-sm text-gray-300 font-semibold">
+            Así te simplifica el día, en 4 viñetas
+          </p>
 
-          <!-- Mini comic strip for WhatsApp -->
-          <div
-            *ngIf="tab === 'whatsapp'"
-            class="mt-2 rounded-xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4">
-            <p class="text-xs font-semibold text-gray-300 mb-3">Así se ve en 3 viñetas</p>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
-              <div class="rounded-lg bg-gray-950 border border-gray-800 p-3 text-center relative">
-                <p class="text-2xl mb-1" aria-hidden="true">💬</p>
-                <p class="text-[11px] text-gray-400 leading-snug">Escribís el pedido por WhatsApp</p>
-                <span class="hidden sm:block absolute -right-2 top-1/2 -translate-y-1/2 text-teal-500 text-lg" aria-hidden="true">→</span>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
+              <p class="text-[10px] font-black uppercase tracking-wide text-violet-400">1 · En la feria o el taller</p>
+              <div class="mt-2 flex items-end gap-2">
+                <span class="text-5xl leading-none shrink-0" aria-hidden="true">👩‍🎨</span>
+                <div class="rounded-2xl rounded-bl-md bg-gray-800 px-3 py-2 text-sm text-gray-100 leading-snug">
+                  Vendí 2 remeras a María… ¿anoto después?
+                </div>
               </div>
-              <div class="rounded-lg bg-gray-950 border border-gray-800 p-3 text-center relative">
-                <p class="text-2xl mb-1" aria-hidden="true">📋</p>
-                <p class="text-[11px] text-gray-400 leading-snug">El bot te muestra un resumen</p>
-                <span class="hidden sm:block absolute -right-2 top-1/2 -translate-y-1/2 text-teal-500 text-lg" aria-hidden="true">→</span>
+              <p class="mt-auto pt-3 text-xs text-gray-500">Sin planilla. Sin esperar a “cuando llegue a casa”.</p>
+            </article>
+
+            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
+              <p class="text-[10px] font-black uppercase tracking-wide text-teal-400">2 · Lo escribís como hablás</p>
+              <div class="mt-2 ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-teal-800/80 px-3 py-2 text-sm text-white leading-snug">
+                Venta a María, 2 remeras, cobró 800
               </div>
-              <div class="rounded-lg bg-gray-950 border border-gray-800 p-3 text-center">
-                <p class="text-2xl mb-1" aria-hidden="true">✅</p>
-                <p class="text-[11px] text-gray-400 leading-snug">Respondés SÍ y queda en el ERP</p>
+              <p class="mt-auto pt-3 text-xs text-gray-500">RiloBot entiende cliente, producto y plata.</p>
+            </article>
+
+            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
+              <p class="text-[10px] font-black uppercase tracking-wide text-amber-400">3 · Te pide el OK</p>
+              <div class="mt-2 flex items-start gap-2">
+                <span class="text-4xl leading-none shrink-0" aria-hidden="true">🤖</span>
+                <div class="rounded-2xl rounded-tl-md bg-gray-800 px-3 py-2 text-xs text-gray-200 leading-relaxed font-mono">
+                  Resumen VENTA<br />• María · 2 remeras · $800<br />¿Confirmás? <strong class="text-teal-300">SÍ</strong> o NO
+                </div>
               </div>
-            </div>
+              <p class="mt-auto pt-3 text-xs text-gray-500">Nada se guarda si no decís que sí. Cero sustos.</p>
+            </article>
+
+            <article class="rounded-2xl border border-teal-800/70 bg-teal-950/40 p-4 min-h-[9.5rem] flex flex-col">
+              <p class="text-[10px] font-black uppercase tracking-wide text-teal-300">4 · Ya está en tu negocio</p>
+              <div class="mt-2 flex items-center justify-between gap-2">
+                <span class="text-5xl leading-none" aria-hidden="true">✅</span>
+                <div class="text-right">
+                  <p class="text-sm font-bold text-white">Pedido, cobro y saldo</p>
+                  <p class="text-xs text-teal-200/80">quedan anotados. Preguntá “¿cuánto debe María?” cuando quieras.</p>
+                </div>
+              </div>
+              <p class="mt-auto pt-3 text-xs text-teal-300/90 font-medium">Vos seguís vendiendo. Rilo lleva la cuenta.</p>
+            </article>
           </div>
 
-          <div
-            *ngIf="tab === 'erp'"
-            class="mt-2 rounded-xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4">
-            <p class="text-xs font-semibold text-gray-300 mb-3">Mapa rápido del panel</p>
-            <div class="flex flex-wrap items-center justify-center gap-2 text-[11px]">
-              <span class="rounded-lg border border-gray-700 bg-gray-950 px-2.5 py-1.5 text-gray-300">Clientes</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-lg border border-gray-700 bg-gray-950 px-2.5 py-1.5 text-gray-300">Pedidos / Ventas</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-lg border border-gray-700 bg-gray-950 px-2.5 py-1.5 text-gray-300">Caja</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-lg border border-teal-800 bg-teal-950/40 px-2.5 py-1.5 text-teal-200">Reportes</span>
-            </div>
-            <p class="mt-3 text-[11px] text-gray-500 text-center leading-relaxed">
-              Compras y proveedores entran cuando comprás mercadería; el stock se actualiza solo.
+          <div class="rounded-2xl border border-violet-900/50 bg-violet-950/20 px-4 py-3 flex items-start gap-3">
+            <span class="text-3xl leading-none" aria-hidden="true">🧠</span>
+            <p class="text-sm text-gray-300 leading-relaxed">
+              <span class="font-bold text-white">La magia:</span>
+              también podés mandar la foto de una factura de compra. Rilo arma el resumen y, si confirmás, entra stock.
             </p>
           </div>
         </div>
 
-        <div class="sticky bottom-0 border-t border-gray-800 bg-gray-950/95 px-4 py-3 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-          <button type="button" class="text-xs text-gray-500 hover:text-gray-300 order-2 sm:order-1" (click)="close()">
-            Ahora no, gracias
-          </button>
-          <a
-            [routerLink]="['/registro']"
-            [queryParams]="{ producto: tab === 'whatsapp' ? 'whatsapp' : 'erp' }"
-            (click)="close()"
-            class="order-1 sm:order-2 inline-flex justify-center rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold hover:bg-teal-500">
-            Probar {{ tab === 'whatsapp' ? 'RiloBot' : 'Panel web' }} gratis
-          </a>
+        <!-- Panel comic -->
+        <div *ngIf="tab === 'erp'" class="p-4 sm:p-6 space-y-4">
+          <p class="text-center text-sm text-gray-300 font-semibold">
+            Cuando querés ver el negocio entero, no un chat
+          </p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 text-center">
+              <p class="text-5xl leading-none" aria-hidden="true">🧑‍💻</p>
+              <h3 class="mt-2 text-sm font-bold text-white">Entras al panel</h3>
+              <p class="mt-1 text-xs text-gray-400 leading-relaxed">
+                Celular o compu. Mismos datos que cargaste por WhatsApp.
+              </p>
+            </article>
+            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 text-center">
+              <p class="text-5xl leading-none" aria-hidden="true">📒</p>
+              <h3 class="mt-2 text-sm font-bold text-white">Caja, stock, deudas</h3>
+              <p class="mt-1 text-xs text-gray-400 leading-relaxed">
+                Quién te debe, qué compraste, qué hay en el depósito. Sin Excel eterno.
+              </p>
+            </article>
+            <article class="rounded-2xl border border-teal-800/70 bg-teal-950/40 p-4 text-center">
+              <p class="text-5xl leading-none" aria-hidden="true">📈</p>
+              <h3 class="mt-2 text-sm font-bold text-white">Cerrás el día en 2 min</h3>
+              <p class="mt-1 text-xs text-teal-200/80 leading-relaxed">
+                Vendiste, cobraste, te falta cobrar. Todo junto, listo para decidir.
+              </p>
+            </article>
+          </div>
+
+          <div class="rounded-2xl border border-gray-800 bg-gray-900/50 px-4 py-3">
+            <p class="text-xs font-bold text-gray-300 mb-2 text-center">El recorrido de tu plata</p>
+            <div class="flex flex-wrap items-center justify-center gap-1.5 text-[11px] sm:text-xs">
+              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">🙋 Cliente</span>
+              <span class="text-teal-500" aria-hidden="true">→</span>
+              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">📦 Pedido / venta</span>
+              <span class="text-teal-500" aria-hidden="true">→</span>
+              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">💵 Caja</span>
+              <span class="text-teal-500" aria-hidden="true">→</span>
+              <span class="rounded-full bg-teal-950 border border-teal-700 px-2.5 py-1 text-teal-200">📊 Reporte</span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="sticky bottom-0 border-t border-teal-900/40 bg-gray-950/95 px-4 sm:px-6 py-4 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+          <p class="text-xs text-gray-500 order-2 sm:order-1 text-center sm:text-left leading-snug">
+            Prueba 30 días gratis. Sin tarjeta.
+          </p>
+          <div class="order-1 sm:order-2 flex flex-col sm:flex-row gap-2">
+            <button type="button" class="text-xs text-gray-500 hover:text-gray-300 py-2 sm:px-2" (click)="close()">
+              Ahora no
+            </button>
+            <a
+              [routerLink]="['/registro']"
+              [queryParams]="{ producto: tab === 'whatsapp' ? 'whatsapp' : 'erp' }"
+              (click)="close()"
+              class="inline-flex justify-center rounded-xl bg-teal-500 px-5 py-3 text-sm font-black text-gray-950 hover:bg-teal-400">
+              Quiero ordenar mi negocio →
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -165,70 +231,11 @@ interface GuideStep {
 })
 export class RitotechVisualGuideComponent {
   @Input() showTrigger = true;
-  @Input() triggerLabel = 'Ver guía visual (opcional)';
+  @Input() triggerLabel = 'Mirá cómo te ordena el día';
   @Input() defaultTab: GuideTab = 'whatsapp';
 
   isOpen = false;
   tab: GuideTab = 'whatsapp';
-
-  readonly visualEmoji: Record<GuideStep['visual'], string> = {
-    phone: '📱',
-    message: '💬',
-    check: '✅',
-    panel: '🖥️',
-    cash: '💵',
-    box: '📦',
-  };
-
-  readonly whatsappSteps: GuideStep[] = [
-    {
-      title: 'Escribí como hablás',
-      text: 'Ejemplo: “Venta a María, 2 remeras, cobró 800”. Sin menús ni códigos.',
-      visual: 'message',
-    },
-    {
-      title: 'Rilo entiende',
-      text: 'Extrae cliente, productos, monto y tipo de operación con IA (Gemini).',
-      visual: 'phone',
-    },
-    {
-      title: 'Confirmá',
-      text: 'Te muestra un resumen claro. Respondés SÍ, NO o pedís corregir.',
-      visual: 'check',
-    },
-    {
-      title: 'Queda guardado',
-      text: 'Venta, cobro, saldo e historial quedan en el mismo negocio que el panel.',
-      visual: 'cash',
-    },
-    {
-      title: 'Preguntá y obtené respuesta',
-      text: '“¿Cuánto me debe María?” o “¿Cuánto vendí hoy?” — consultas al instante.',
-      visual: 'box',
-    },
-  ];
-
-  readonly erpSteps: GuideStep[] = [
-    {
-      title: 'Entras al panel web',
-      text: 'Desde la computadora o el celular ves clientes, pedidos, ventas y más.',
-      visual: 'panel',
-    },
-    {
-      title: 'Caja y movimientos',
-      text: 'Registrás entradas y salidas. Sabés qué entró hoy y qué falta cobrar.',
-      visual: 'cash',
-    },
-    {
-      title: 'Compras, stock y proveedores',
-      text: 'Cuando comprás mercadería, el stock se ordena y ves a quién le debés.',
-      visual: 'box',
-    },
-  ];
-
-  get currentSteps(): GuideStep[] {
-    return this.tab === 'whatsapp' ? this.whatsappSteps : this.erpSteps;
-  }
 
   open(tab: GuideTab = this.defaultTab) {
     this.tab = tab;

@@ -24,57 +24,106 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
+  const signature = req.get('x-hub-signature-256') ?? undefined;
+  const rawBody =
+    (req as RequestWithRawBody).rawBody ??
+    (req as RequestWithRawBody & { rawBody?: Buffer }).rawBody;
+  const verified = verifyMetaWebhookSignature(rawBody, signature);
+  if (!verified.ok) {
+    console.warn('[whatsapp] Webhook rechazado:', verified.reason);
+    return res.sendStatus(403);
+  }
+
+  console.log('[whatsapp] POST recibido', {
+    object: (req.body as { object?: string } | undefined)?.object ?? null,
+    hasEntry: Boolean((req.body as { entry?: unknown[] } | undefined)?.entry?.length),
+  });
+
+  // Cloud Run congela el CPU al terminar el handler. Hay que await para que
+  // la respuesta a WhatsApp se envíe de verdad (Meta ya recibió el 200).
+  res.sendStatus(200);
   try {
-    const signature = req.get('x-hub-signature-256') ?? undefined;
-    const verified = verifyMetaWebhookSignature((req as RequestWithRawBody).rawBody, signature);
-    if (!verified.ok) {
-      console.warn('[whatsapp] Webhook rechazado:', verified.reason);
-      return res.sendStatus(403);
-    }
-
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const message = change?.value?.messages?.[0];
-    const from = message?.from ? `+${String(message.from)}` : null;
-    const text = message?.text?.body ?? message?.button?.text ?? message?.caption ?? '';
-    const imageId = message?.image?.id ? String(message.image.id) : null;
-    const caption = message?.image?.caption ? String(message.image.caption) : '';
-    const combinedText = String(text || caption || '').trim();
-
-    if (!from || (!combinedText && !imageId)) {
-      return res.sendStatus(200);
-    }
-
-    const result = await handleWhatsappMessage({
-      from,
-      text: combinedText,
-      mediaId: imageId,
-      mediaType: imageId ? 'image' : null,
-    });
-
-    if (result.reply) {
-      console.log('[whatsapp] Respuesta', {
-        businessId: result.businessId,
-        intent: result.intent,
-        executed: result.executed,
-        reply: result.reply,
-        outboundConfigured: isWhatsappOutboundConfigured(),
-      });
-
-      if (isWhatsappOutboundConfigured()) {
-        const sent = await sendWhatsappText(from, result.reply);
-        if (!sent.ok) {
-          console.error('[whatsapp] No se pudo enviar respuesta:', sent.error);
-        }
-      }
-    }
-
-    res.sendStatus(200);
+    await processWhatsappNotification(req.body);
   } catch (error) {
-    console.error('[whatsapp] Webhook error:', error);
-    res.sendStatus(200);
+    console.error('[whatsapp] Webhook async error:', error);
   }
 });
+
+async function processWhatsappNotification(body: unknown) {
+  const payload = body as {
+    entry?: Array<{
+      changes?: Array<{
+        value?: {
+          messages?: Array<{
+            from?: string;
+            type?: string;
+            text?: { body?: string };
+            button?: { text?: string };
+            caption?: string;
+            image?: { id?: string; caption?: string };
+          }>;
+        };
+      }>;
+    }>;
+  };
+
+  const entry = payload?.entry?.[0];
+  const change = entry?.changes?.[0];
+  const message = change?.value?.messages?.[0];
+  const fromDigits = message?.from ? String(message.from) : '';
+  const from = fromDigits ? `+${fromDigits.replace(/\D/g, '')}` : null;
+  const text = message?.text?.body ?? message?.button?.text ?? message?.caption ?? '';
+  const imageId = message?.image?.id ? String(message.image.id) : null;
+  const caption = message?.image?.caption ? String(message.image.caption) : '';
+  const combinedText = String(text || caption || '').trim();
+
+  if (!from || (!combinedText && !imageId)) {
+    console.log('[whatsapp] Webhook sin mensaje de usuario', {
+      hasEntry: Boolean(entry),
+      type: message?.type ?? null,
+    });
+    return;
+  }
+
+  console.log('[whatsapp] Inbound', {
+    from,
+    type: message?.type ?? 'text',
+    hasImage: Boolean(imageId),
+    textLen: combinedText.length,
+    outboundConfigured: isWhatsappOutboundConfigured(),
+  });
+
+  const result = await handleWhatsappMessage({
+    from,
+    text: combinedText,
+    mediaId: imageId,
+    mediaType: imageId ? 'image' : null,
+  });
+
+  if (!result.reply) {
+    console.log('[whatsapp] Sin texto de respuesta', { intent: result.intent, from });
+    return;
+  }
+
+  console.log('[whatsapp] Respuesta', {
+    from,
+    businessId: result.businessId ?? null,
+    intent: result.intent,
+    executed: result.executed,
+  });
+
+  if (!isWhatsappOutboundConfigured()) {
+    console.error('[whatsapp] Token/phone id no configurados; no se envía respuesta');
+    return;
+  }
+
+  const sent = await sendWhatsappText(from, result.reply);
+  if (!sent.ok) {
+    console.error('[whatsapp] No se pudo enviar respuesta:', sent.error);
+  } else {
+    console.log('[whatsapp] Enviado', { from, messageId: sent.messageId ?? null });
+  }
+}
 
 /** Prueba local sin Meta: POST /api/webhooks/whatsapp/dev { phone, message, mediaId? } */
 router.post('/dev', async (req, res) => {

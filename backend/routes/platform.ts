@@ -54,14 +54,15 @@ import {
   markBusinessAsPaid,
   updateBusinessContact,
   sendBusinessSubscriptionInvoiceEmail,
+  offboardBusiness,
 } from '../auth/platform-commercial.ts';
 import {
   BILLING_PRODUCTS,
-  DEFAULT_EXTRA_USER_MONTHLY,
   getBillingProduct,
-  listProductsForCountry,
   resolveBillingCountry,
 } from '../../shared/billing-catalog.ts';
+import { getCommercialCatalog, saveCommercialCatalog } from '../auth/commercial-catalog.ts';
+import { extraUserMonthlyFor, overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
 import {
@@ -153,15 +154,48 @@ router.get('/modules', (_req, res) => {
   res.json(SELLABLE_SUBSCRIPTION_MODULE_CATALOG);
 });
 
-router.get('/billing-catalog', (req, res) => {
-  const country = resolveBillingCountry(
-    typeof req.query.country === 'string' ? req.query.country : 'UY'
-  );
-  res.json({
-    country,
-    products: listProductsForCountry(country),
-    allProducts: BILLING_PRODUCTS,
-  });
+router.get('/billing-catalog', async (req, res) => {
+  try {
+    const country = resolveBillingCountry(
+      typeof req.query.country === 'string' ? req.query.country : 'UY'
+    );
+    const catalog = await getCommercialCatalog();
+    res.json({
+      country,
+      products: overlayProductsForCountry(catalog, country),
+      allProducts: BILLING_PRODUCTS,
+      trialDays: catalog.trialDays,
+      lite: catalog.lite,
+    });
+  } catch (error) {
+    console.error('Error loading billing catalog:', error);
+    res.status(500).json({ error: 'No se pudo cargar el catálogo de precios.' });
+  }
+});
+
+router.get('/commercial', async (_req, res) => {
+  try {
+    const catalog = await getCommercialCatalog();
+    res.json(catalog);
+  } catch (error) {
+    console.error('Error loading commercial catalog:', error);
+    res.status(500).json({ error: 'No se pudo cargar el embudo comercial.' });
+  }
+});
+
+router.put('/commercial', async (req: AuthenticatedRequest, res) => {
+  try {
+    const catalog = await saveCommercialCatalog(req.body ?? {});
+    const plans = await syncPlanTemplatesFromLandingCatalog();
+    res.json({
+      catalog,
+      plans: plans.map(toPublicPlanInfo),
+      message: 'Landing, checkout y plantillas de plan actualizados.',
+    });
+  } catch (error) {
+    console.error('Error saving commercial catalog:', error);
+    res.status(500).json({ error: 'No se pudo guardar el embudo comercial.' });
+  }
 });
 
 router.post('/plans/sync-landing', async (_req, res) => {
@@ -411,6 +445,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       });
     }
 
+    const commercial = await getCommercialCatalog();
     const business = await createBusiness(businessId, {
       nombre,
       planId,
@@ -424,8 +459,8 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
           trialStatus: enPrueba ? 'active' : undefined,
         },
         undefined,
-        enPrueba && productForAccess
-          ? { trialDays: trialDaysForProduct(productForAccess) }
+        enPrueba
+          ? { trialDays: commercial.trialDays || (productForAccess ? trialDaysForProduct(productForAccess) : 30) }
           : undefined
       ),
       creadoPor: req.auth?.userId,
@@ -624,6 +659,26 @@ router.put('/businesses/:businessId/contact', async (req: AuthenticatedRequest, 
   }
 });
 
+router.post('/businesses/:businessId/offboard', async (req: AuthenticatedRequest, res) => {
+  try {
+    const result = await offboardBusiness({
+      businessId: req.params.businessId,
+      changedBy: req.auth?.userId,
+    });
+    res.json({
+      ...result.business,
+      releasedEmail: result.releasedEmail,
+      releasedPhone: result.releasedPhone,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'BUSINESS_NOT_FOUND') {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+    console.error('Error offboarding business:', error);
+    res.status(500).json({ error: 'No se pudo dar de baja la empresa.' });
+  }
+});
+
 router.post('/businesses/:businessId/send-invoice-email', async (req: AuthenticatedRequest, res) => {
   try {
     const result = await sendBusinessSubscriptionInvoiceEmail({
@@ -734,11 +789,12 @@ async function syncWhatsappSeatLimit(businessId: string): Promise<void> {
   const enabled = await countEnabledWhatsappUsers(businessId);
   const business = await getBusiness(businessId);
   if (!business) return;
+  const catalog = await getCommercialCatalog();
   const country = resolveBillingCountry(business.lifecycle?.pais ?? null);
   const suggested =
     business.suscripcion?.precioPorWhatsappOverride ??
     business.suscripcion?.precioPorOperadorOverride ??
-    DEFAULT_EXTRA_USER_MONTHLY[country];
+    extraUserMonthlyFor(catalog, country);
   await updateBusiness(
     businessId,
     {

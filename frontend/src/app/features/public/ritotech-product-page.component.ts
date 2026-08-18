@@ -1,15 +1,16 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { RitotechPublicShellComponent } from './ritotech-public-shell.component';
 import { RitotechChatDemoComponent } from './ritotech-chat-demo.component';
 import {
   TRIAL_PRODUCT_DESCRIPTIONS,
-  TRIAL_PRODUCT_LABELS,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
-import { RILOTECH_CHAT_DEMO, RILOTECH_PRICING_TIERS } from '../../../../../shared/ritotech-marketing.ts';
+import { RILOTECH_CHAT_DEMO, pricingTiersFromCatalog } from '../../../../../shared/ritotech-marketing.ts';
 import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, type CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
+import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 
 @Component({
   selector: 'app-ritotech-product-page',
@@ -55,24 +56,37 @@ import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
             [routerLink]="['/registro']"
             [queryParams]="{ producto: productId }"
             class="inline-flex justify-center rounded-xl bg-teal-600 px-6 py-3 font-semibold hover:bg-teal-500">
-            Probar {{ trialDays }} días gratis
+            Empezar gratis
           </a>
           <a
             routerLink="/planes"
             class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
-            Comparar planes
+            Ver planes
           </a>
         </div>
       </section>
     </app-ritotech-public-shell>
   `,
 })
-export class RitotechProductPageComponent {
+export class RitotechProductPageComponent implements OnInit {
   private route = inject(ActivatedRoute);
+  private commercial = inject(CommercialCatalogService);
 
   readonly productId = (this.route.snapshot.data['product'] ?? 'erp') as TrialProductId;
-  readonly trialDays = trialDaysForProduct(this.productId);
+  catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
   readonly chatDemo = RILOTECH_CHAT_DEMO;
+
+  get trialDays(): number {
+    return this.catalog.trialDays || trialDaysForProduct(this.productId);
+  }
+
+  ngOnInit() {
+    this.commercial.load('UY').subscribe({
+      next: (row) => {
+        this.catalog = row.catalog;
+      },
+    });
+  }
 
   get eyebrow(): string {
     return this.productId === 'whatsapp' ? 'RiloBot' : 'RILO Gestión';
@@ -87,7 +101,7 @@ export class RitotechProductPageComponent {
   }
 
   get bullets(): string[] {
-    const tier = RILOTECH_PRICING_TIERS.find((t) => t.id === this.productId);
+    const tier = pricingTiersFromCatalog(this.catalog).find((t) => t.id === this.productId);
     return tier?.includes ?? [];
   }
 }

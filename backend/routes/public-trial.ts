@@ -46,8 +46,30 @@ function mapTrialError(error: unknown): { status: number; message: string; code?
     PHONE_INVALID: { status: 400, message: 'El teléfono no es válido.' },
     TERMS_REQUIRED: { status: 400, message: 'Debés aceptar términos y privacidad.' },
     PASSWORD_TOO_SHORT: { status: 400, message: 'La contraseña debe tener al menos 8 caracteres.' },
-    EMAIL_ALREADY_USED: { status: 409, message: 'Ese email ya tiene una prueba activa o cuenta.' },
-    PHONE_ALREADY_USED: { status: 409, message: 'Ese teléfono ya tiene una prueba activa o cuenta.' },
+    EMAIL_ALREADY_USED: {
+      status: 409,
+      message: 'Ese email ya tiene una cuenta. Ingresá con esos datos; no se crea otra empresa.',
+    },
+    PHONE_ALREADY_USED: {
+      status: 409,
+      message: 'Ese teléfono ya tiene una cuenta. Ingresá con esos datos; no se crea otra empresa.',
+    },
+    CONTACT_MISMATCH: {
+      status: 409,
+      message: 'Ese email y teléfono pertenecen a empresas distintas. Usá los datos de la misma cuenta.',
+    },
+    EXISTING_ACCOUNT_PASSWORD_REQUIRED: {
+      status: 400,
+      message: 'Esa cuenta ya existe. Ingresá la contraseña actual para sumar el módulo.',
+    },
+    EXISTING_ACCOUNT_WRONG_PASSWORD: {
+      status: 401,
+      message: 'Esa cuenta ya existe. La contraseña no coincide. Usá la misma con la que ingresás al sistema.',
+    },
+    EXISTING_ACCOUNT_EMAIL_MISMATCH: {
+      status: 409,
+      message: 'Ese teléfono ya está en una cuenta. Registrá con el mismo email de esa empresa para sumar el módulo.',
+    },
     REGISTRATION_NOT_FOUND: { status: 404, message: 'Registro no encontrado.' },
     PHONE_NOT_VERIFIED: { status: 400, message: 'Verificá tu teléfono antes de continuar.' },
     EMAIL_NOT_VERIFIED: { status: 400, message: 'Verificá tu email antes de continuar.' },
@@ -57,7 +79,14 @@ function mapTrialError(error: unknown): { status: number; message: string; code?
       message:
         'El envío de email no está configurado en el servidor. Agregá RESEND_API_KEY al .env y reiniciá npm run dev.',
     },
-    REGISTRATION_ALREADY_COMPLETED: { status: 409, message: 'Este registro ya fue completado.' },
+    MODULE_CHECKOUT_REQUIRED: {
+      status: 402,
+      message: 'Tu prueba ya no está activa. Ingresá y activá el plan para sumar este módulo.',
+    },
+    WHATSAPP_PHONE_REQUIRED: {
+      status: 400,
+      message: 'Para activar RiloBot hace falta el WhatsApp cargado en la cuenta.',
+    },
     TRIAL_PLAN_UNAVAILABLE: { status: 503, message: 'El plan de prueba no está disponible.' },
     OTP_RATE_LIMIT: { status: 429, message: 'Esperá un momento antes de pedir otro código.' },
     OTP_INVALID: { status: 400, message: 'Código incorrecto.' },
@@ -80,8 +109,8 @@ router.post('/register', async (req, res) => {
       return res.status(429).json({ error: 'Demasiados intentos. Probá más tarde.' });
     }
 
-    const { registrationId } = await registerTrialLead(req.body, ip);
-    res.status(201).json({ registrationId, nextStep: 'verify_email' });
+    const { registrationId, existingAccount } = await registerTrialLead(req.body, ip);
+    res.status(201).json({ registrationId, nextStep: 'verify_email', existingAccount });
   } catch (error) {
     const mapped = mapTrialError(error);
     res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
@@ -251,11 +280,16 @@ router.post('/complete', async (req, res) => {
     });
     const sessionBusiness = await toSessionBusinessInfo(result.businessId);
 
+    const access = result.business.platformAccess;
     res.status(201).json({
       token: result.token,
       user: result.user,
       businessId: result.businessId,
       business: sessionBusiness ?? businessInfo,
+      outcome: result.outcome,
+      registeredPhone: result.registeredPhone,
+      erpWebEnabled: access?.erpWebEnabled === true,
+      whatsappEnabled: access?.whatsappEnabled === true,
       loginHint: {
         businessCode: result.businessId,
         loginUsername: result.user.loginUsername,

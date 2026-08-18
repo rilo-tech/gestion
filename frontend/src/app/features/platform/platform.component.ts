@@ -18,11 +18,20 @@ import {
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
 import {
+  DEFAULT_COMMERCIAL_CATALOG,
+  type CommercialCatalog,
+} from '../../../../../shared/commercial-catalog.ts';
+import {
   TABLE_SCROLL_CLASS,
   DESKTOP_LIST_SEARCH_WRAP_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
 import { LucideAngularModule } from 'lucide-angular';
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
+import {
+  DEFAULT_LIST_PAGE_SIZE,
+  ListPaginationComponent,
+  paginateSlice,
+} from '../../shared/components/list-pagination/list-pagination.component';
 import {
   DEFAULT_PLAN_MODULES,
   SELLABLE_SUBSCRIPTION_MODULE_CATALOG,
@@ -46,6 +55,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
     FormsModule,
     LucideAngularModule,
     ListSearchFieldComponent,
+    ListPaginationComponent,
   ],
   template: `
     <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
@@ -66,6 +76,11 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
           [class.border-transparent]="activeTab !== 'empresas'"
           [class.text-gray-500]="activeTab !== 'empresas'">
           Empresas
+          <span
+            *ngIf="businesses.length"
+            class="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
+            {{ businesses.length }}
+          </span>
         </button>
         <button
           type="button"
@@ -113,7 +128,8 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             name="businessSearchQueryMobile"
             placeholder="Buscar..."
             [constrainWidth]="false"
-            extraClass="sm:hidden flex-1 min-w-0">
+            extraClass="sm:hidden flex-1 min-w-0"
+            (queryChange)="businessesPage = 1">
           </app-list-search-field>
           <button
             type="button"
@@ -230,21 +246,22 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               mode="filter"
               [(query)]="businessSearchQuery"
               name="businessSearchQuery"
-              placeholder="Buscar por nombre, código, email o teléfono...">
+              placeholder="Buscar por nombre, código, email o teléfono..."
+              (queryChange)="businessesPage = 1">
             </app-list-search-field>
           </div>
-          <div [class]="tableScrollClass">
-            <table class="app-data-table w-full max-w-full text-left border-collapse sm:table-fixed">
+          <div [class]="tableScrollClass + ' max-h-[min(70vh,40rem)] overflow-auto'">
+            <table class="app-data-table w-full max-w-full text-left border-collapse table-auto">
               <colgroup class="hidden sm:table-column-group">
-                <col class="w-[14rem]" />
-                <col class="w-[6rem]" />
+                <col />
+                <col class="w-[7rem]" />
                 <col class="w-[8rem]" />
                 <col class="w-[7rem]" />
+                <col class="w-[8rem]" />
+                <col class="w-[8rem]" />
                 <col class="w-[6rem]" />
-                <col class="w-[7rem]" />
-                <col class="w-[5.5rem]" />
               </colgroup>
-              <thead>
+              <thead class="sticky top-0 z-10">
                 <tr class="bg-gray-50 border-b border-gray-100">
                   <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Empresa</th>
                   <th class="hidden sm:table-cell px-6 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Código</th>
@@ -257,11 +274,14 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               </thead>
               <tbody class="divide-y divide-gray-50">
                 <tr
-                  *ngFor="let business of filteredBusinesses"
+                  *ngFor="let business of pagedBusinesses"
                   (click)="openBusiness(business)"
-                  class="hover:bg-gray-50 transition-colors cursor-pointer">
-                  <td class="px-4 sm:px-6 py-3 sm:py-4">
-                    <div class="font-medium text-gray-900 truncate flex items-center gap-2">
+                  class="transition-colors cursor-pointer"
+                  [class.bg-rose-50/80]="!isSubscriptionActive(business)"
+                  [class.hover:bg-rose-100/80]="!isSubscriptionActive(business)"
+                  [class.hover:bg-gray-50]="isSubscriptionActive(business)">
+                  <td class="px-4 sm:px-6 py-3 sm:py-4 min-w-0 overflow-hidden align-top">
+                    <div class="font-medium text-gray-900 flex items-center gap-2 min-w-0">
                       <span class="truncate">{{ business.nombre }}</span>
                       <span
                         *ngIf="isTrialExpiredBusiness(business)"
@@ -279,25 +299,8 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                         Prueba
                       </span>
                     </div>
-                    <div
-                      *ngIf="hasBusinessContact(business)"
-                      class="mt-2 max-w-md rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2 space-y-1 text-xs text-gray-600"
-                      (click)="$event.stopPropagation()">
-                      <div *ngIf="businessOwnerName(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
-                        <i-lucide name="user" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
-                        <span class="truncate font-medium text-gray-800">{{ businessOwnerName(business) }}</span>
-                      </div>
-                      <div *ngIf="businessContactEmail(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
-                        <i-lucide name="mail" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
-                        <span class="truncate">{{ businessContactEmail(business) }}</span>
-                      </div>
-                      <div *ngIf="businessContactPhone(business) !== '—'" class="flex items-center gap-1.5 min-w-0">
-                        <i-lucide name="phone" class="w-3.5 h-3.5 shrink-0 text-slate-400"></i-lucide>
-                        <span class="truncate">{{ businessContactPhone(business) }}</span>
-                      </div>
-                    </div>
-                    <p *ngIf="!hasBusinessContact(business)" class="mt-1 text-xs text-gray-400 italic">
-                      Sin datos de contacto
+                    <p class="mt-0.5 text-xs text-gray-500 truncate">
+                      {{ businessContactSummary(business) }}
                     </p>
                     <div class="sm:hidden text-xs text-gray-500 mt-1 font-mono">{{ business.id }}</div>
                   </td>
@@ -325,8 +328,11 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                           [disabled]="togglingSubscriptionId === business.id"
                           (change)="toggleBusinessSubscription(business, $any($event.target).checked)"
                           class="rounded border-gray-300 text-teal-600">
-                        <span class="text-sm text-gray-700">
-                          {{ isSubscriptionActive(business) ? 'Activa' : statusLabels[business.estadoSuscripcion] }}
+                        <span
+                          class="text-sm"
+                          [class.text-teal-800]="isSubscriptionActive(business)"
+                          [class.text-gray-400]="!isSubscriptionActive(business)">
+                          Activa
                         </span>
                       </label>
                     </div>
@@ -366,6 +372,12 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               </tbody>
             </table>
           </div>
+          <app-list-pagination
+            [page]="businessesPage"
+            [pageSize]="listPageSize"
+            [totalItems]="filteredBusinesses.length"
+            (pageChange)="businessesPage = $event">
+          </app-list-pagination>
         </div>
       </section>
 
@@ -770,6 +782,91 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
 
       <!-- PLANES -->
       <section *ngIf="activeTab === 'planes'" class="space-y-4">
+        <article class="rounded-xl border border-teal-100 bg-teal-50/60 p-4 sm:p-5 space-y-4">
+          <div>
+            <h3 class="font-bold text-gray-900">Embudo comercial (landing + checkout)</h3>
+            <p class="text-sm text-gray-600 mt-1 leading-relaxed">
+              Estos números se ven en la landing, en /planes y en el registro.
+              Días de prueba, techos del plan gratis, precios y el % off al activar pago.
+              Al guardar, se publican en el sitio.
+            </p>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <label class="text-xs font-medium text-gray-600">Días de prueba
+              <input type="number" min="1" [(ngModel)]="commercialDraft.trialDays" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">IA prueba / mes
+              <input type="number" min="0" [(ngModel)]="commercialDraft.trialAccionesIaMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">Usuario extra UYU
+              <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyUY" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">Usuario extra ARS
+              <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyAR" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">Meses de promo (al activar pago)
+              <input type="number" min="0" max="24" [(ngModel)]="commercialDraft.introDiscountMonths" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">% off al activar pago
+              <input type="number" min="0" max="90" [(ngModel)]="commercialDraft.introDiscountPercent" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+          </div>
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Plan gratis (después de los 30 días, sin pagar)</p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <label class="text-xs font-medium text-gray-600">Máx. clientes
+                <input type="number" min="1" [(ngModel)]="commercialDraft.lite.maxClientes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              </label>
+              <label class="text-xs font-medium text-gray-600">Máx. productos
+                <input type="number" min="1" [(ngModel)]="commercialDraft.lite.maxProductos" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              </label>
+              <label class="text-xs font-medium text-gray-600">IA / mes
+                <input type="number" min="0" [(ngModel)]="commercialDraft.lite.maxAccionesIaMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              </label>
+              <label class="text-xs font-medium text-gray-600">Cargas WhatsApp / mes
+                <input type="number" min="0" [(ngModel)]="commercialDraft.lite.maxOperacionesMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              </label>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm min-w-[640px]">
+              <thead class="text-xs uppercase text-gray-500">
+                <tr>
+                  <th class="text-left py-2">Producto</th>
+                  <th class="text-left py-2">UYU / mes</th>
+                  <th class="text-left py-2">ARS / mes</th>
+                  <th class="text-left py-2">IA incluida</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of commercialProductRows">
+                  <td class="py-2 font-medium text-gray-800">{{ row.label }}</td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].amountMonthlyUY" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].amountMonthlyAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedAi" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              (click)="saveCommercialCatalog()"
+              [disabled]="savingCommercial"
+              class="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+              {{ savingCommercial ? 'Guardando...' : 'Guardar y publicar en la landing' }}
+            </button>
+            <p *ngIf="commercialDraft.updatedAt" class="text-xs text-gray-500">
+              Última publicación: {{ commercialDraft.updatedAt | date:'short' }}
+            </p>
+          </div>
+        </article>
         <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
           Los planes son <strong>plantillas para empresas nuevas</strong> y deben coincidir con la landing:
           RiloBot 1.490 · Panel 2.490 · Completo 3.490 (UYU) + precio por usuario extra.
@@ -1141,6 +1238,7 @@ export class PlatformComponent implements OnInit {
 
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
   readonly desktopListSearchWrapClass = DESKTOP_LIST_SEARCH_WRAP_CLASS;
+  readonly listPageSize = DEFAULT_LIST_PAGE_SIZE;
   readonly statusLabels = SUBSCRIPTION_STATUS_LABELS;
   readonly paymentStatusLabels = SUBSCRIPTION_PAYMENT_STATUS_LABELS;
   readonly moduleCatalog = SELLABLE_SUBSCRIPTION_MODULE_CATALOG;
@@ -1165,6 +1263,13 @@ export class PlatformComponent implements OnInit {
   plans: PublicPlanInfo[] = [];
   landingCatalogHint: BillingCatalogProduct[] = [];
   syncingLandingPrices = false;
+  commercialDraft: CommercialCatalog = structuredClone(DEFAULT_COMMERCIAL_CATALOG);
+  savingCommercial = false;
+  readonly commercialProductRows: { id: 'whatsapp' | 'erp' | 'completo'; label: string }[] = [
+    { id: 'whatsapp', label: 'RiloBot' },
+    { id: 'erp', label: 'Panel web' },
+    { id: 'completo', label: 'Completo' },
+  ];
 
   loadingBusinesses = false;
   creatingBusiness = false;
@@ -1178,6 +1283,7 @@ export class PlatformComponent implements OnInit {
   expandedPlanId: string | null = null;
 
   businessSearchQuery = '';
+  businessesPage = 1;
   paymentSearchQuery = '';
   paymentFilter: PaymentFilter = 'all';
   includeSuspendedInPayments = false;
@@ -1218,20 +1324,26 @@ export class PlatformComponent implements OnInit {
 
   get filteredBusinesses(): (PublicBusinessInfo & { planId?: string })[] {
     const query = this.businessSearchQuery.trim().toLowerCase();
-    if (!query) return this.businesses;
-    return this.businesses.filter((business) => {
-      const owner = this.businessOwnerName(business).toLowerCase();
-      const email = this.businessContactEmail(business).toLowerCase();
-      const phone = this.businessContactPhone(business).toLowerCase();
-      return (
-        business.nombre.toLowerCase().includes(query) ||
-        business.id.toLowerCase().includes(query) ||
-        business.plan.nombre.toLowerCase().includes(query) ||
-        (owner !== '—' && owner.includes(query)) ||
-        (email !== '—' && email.includes(query)) ||
-        (phone !== '—' && phone.includes(query))
-      );
-    });
+    const list = query
+      ? this.businesses.filter((business) => {
+          const owner = this.businessOwnerName(business).toLowerCase();
+          const email = this.businessContactEmail(business).toLowerCase();
+          const phone = this.businessContactPhone(business).toLowerCase();
+          return (
+            business.nombre.toLowerCase().includes(query) ||
+            business.id.toLowerCase().includes(query) ||
+            business.plan.nombre.toLowerCase().includes(query) ||
+            (owner !== '—' && owner.includes(query)) ||
+            (email !== '—' && email.includes(query)) ||
+            (phone !== '—' && phone.includes(query))
+          );
+        })
+      : this.businesses;
+    return this.sortBusinesses(list);
+  }
+
+  get pagedBusinesses(): (PublicBusinessInfo & { planId?: string })[] {
+    return paginateSlice(this.filteredBusinesses, this.businessesPage, this.listPageSize);
   }
 
   get filteredPendingTrials(): PlatformPendingTrialRegistration[] {
@@ -1263,6 +1375,25 @@ export class PlatformComponent implements OnInit {
       this.businessContactEmail(business) !== '—' ||
       this.businessContactPhone(business) !== '—'
     );
+  }
+
+  businessContactSummary(business: PublicBusinessInfo): string {
+    const parts = [
+      this.businessOwnerName(business),
+      this.businessContactEmail(business),
+      this.businessContactPhone(business),
+    ].filter((value) => value && value !== '—');
+    return parts.length ? parts.join(' · ') : 'Sin datos de contacto';
+  }
+
+  private sortBusinesses(
+    list: (PublicBusinessInfo & { planId?: string })[]
+  ): (PublicBusinessInfo & { planId?: string })[] {
+    return [...list].sort((a, b) => {
+      const created = String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+      if (created !== 0) return created;
+      return a.nombre.localeCompare(b.nombre, 'es');
+    });
   }
 
   showBusinessContact(business: PublicBusinessInfo, event: MouseEvent) {
@@ -1388,6 +1519,40 @@ export class PlatformComponent implements OnInit {
     this.loadPlans();
     this.loadBusinesses();
     this.loadLandingCatalogHint();
+    this.loadCommercialCatalog();
+  }
+
+  loadCommercialCatalog() {
+    this.platformService.getCommercialCatalog().subscribe({
+      next: (catalog) => {
+        this.commercialDraft = structuredClone(catalog);
+      },
+    });
+  }
+
+  saveCommercialCatalog() {
+    this.savingCommercial = true;
+    this.platformService.saveCommercialCatalog(this.commercialDraft).subscribe({
+      next: (res) => {
+        this.savingCommercial = false;
+        this.commercialDraft = structuredClone(res.catalog);
+        this.plans = [...res.plans]
+          .map((plan) => this.normalizePlan(plan))
+          .sort((a, b) => a.precioMensual - b.precioMensual);
+        this.loadLandingCatalogHint();
+        this.dialogService.alert({
+          title: 'Embudo publicado',
+          message: res.message || 'La landing y el checkout ya usan estos números.',
+        });
+      },
+      error: (err) => {
+        this.savingCommercial = false;
+        this.dialogService.alert({
+          title: 'Error',
+          message: err?.error?.error || 'No se pudo guardar el embudo comercial.',
+        });
+      },
+    });
   }
 
   loadLandingCatalogHint() {
@@ -1921,9 +2086,8 @@ export class PlatformComponent implements OnInit {
         next: (result) => {
           this.creatingBusiness = false;
           this.showCreateBusinessForm = false;
-          this.businesses = [...this.businesses, result.business].sort((a, b) =>
-            a.nombre.localeCompare(b.nombre, 'es')
-          );
+          this.businesses = this.sortBusinesses([...this.businesses, result.business]);
+          this.businessesPage = 1;
           this.businessDraft = {
             id: '',
             nombre: '',
@@ -2070,10 +2234,12 @@ export class PlatformComponent implements OnInit {
     this.loadingBusinesses = true;
     this.platformService.getBusinesses().subscribe({
       next: (businesses) => {
-        this.businesses = businesses.map((business) => ({
-          ...business,
-          planId: business.planId,
-        }));
+        this.businesses = this.sortBusinesses(
+          businesses.map((business) => ({
+            ...business,
+            planId: business.planId,
+          }))
+        );
         this.loadingBusinesses = false;
       },
       error: () => {

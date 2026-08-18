@@ -1,13 +1,18 @@
 import { db } from '../firebase.ts';
 import { getBusiness, updateBusiness } from '../auth/business.ts';
-import { platformAccessFromTrialProduct } from '../auth/platform-access.ts';
 import { registerSubscriptionCoverage } from '../auth/subscription-payments.ts';
+import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
 import {
   getBillingProduct,
   type BillingCountryCode,
   type BillingInterval,
 } from '../../shared/billing-catalog.ts';
-import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
+import {
+  isTrialProductId,
+  mergePlatformAccessWithProduct,
+  normalizePlatformAccess,
+  type TrialProductId,
+} from '../../shared/platform-access.ts';
 
 export async function activatePaidSubscription(params: {
   businessId: string;
@@ -53,7 +58,10 @@ export async function activatePaidSubscription(params: {
 
   const now = new Date();
   const productId = params.productId as TrialProductId;
-  const platformAccess = platformAccessFromTrialProduct(productId);
+  const platformAccess = mergePlatformAccessWithProduct(
+    normalizePlatformAccess(business.platformAccess),
+    productId
+  );
 
   const coverage = await registerSubscriptionCoverage(params.businessId, {
     coverageMonths,
@@ -97,6 +105,18 @@ export async function activatePaidSubscription(params: {
       })`,
     }
   );
+
+  if (platformAccess.whatsappEnabled) {
+    await seedBusinessWhatsappAccess({
+      businessId: params.businessId,
+      phone: String(business.contactVerification?.phone ?? ''),
+      ownerName: String(business.lifecycle?.ownerName ?? ''),
+      trialProduct: platformAccess.trialProduct,
+      forceLine: true,
+      erpUserId: business.lifecycle?.ownerUserId ?? null,
+      status: 'active',
+    });
+  }
 
   await db.collection('negocios').doc(params.businessId).set(
     {

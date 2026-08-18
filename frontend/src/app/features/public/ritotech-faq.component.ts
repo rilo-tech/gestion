@@ -8,7 +8,7 @@ import type { RitotechFaqItem } from '../../../../../shared/ritotech-marketing.t
   imports: [CommonModule],
   template: `
     <section class="max-w-3xl mx-auto px-4 py-12 sm:py-16" [attr.aria-labelledby]="headingId">
-      <h2 [id]="headingId" class="text-xl sm:text-2xl font-bold text-center">{{ title }}</h2>
+      <h2 [id]="headingId" class="scroll-mt-24 text-xl sm:text-2xl font-bold text-center">{{ title }}</h2>
       <p *ngIf="subtitle" class="text-center text-gray-400 text-sm mt-2 max-w-xl mx-auto">{{ subtitle }}</p>
 
       <div class="mt-8 space-y-2">

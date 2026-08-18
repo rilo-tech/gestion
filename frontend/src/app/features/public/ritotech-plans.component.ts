@@ -1,18 +1,22 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { RitotechPublicShellComponent } from './ritotech-public-shell.component';
 import { RitotechFaqComponent } from './ritotech-faq.component';
 import { RitotechVisualGuideComponent } from './ritotech-visual-guide.component';
-import { PANEL_TRIAL_DAYS, RILOBOT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
-import type { BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
+import { RILOBOT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import { SHOW_ARGENTINA_BILLING, type BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
+import type { CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, commercialFunnelSteps, hasIntroDiscount, introDiscountLabel, introPriceLabel, stayFreePitch as buildStayFreePitch } from '../../../../../shared/commercial-catalog.ts';
 import {
   RILOTECH_AUDIENCE_PITCH,
-  RILOTECH_FAQ,
-  RILOTECH_PRICING_TIERS,
-  priceLabelForTier,
-  pricingFootnoteForCountry,
+  faqFromCatalog,
+  priceLabelFromCatalog,
+  pricingFootnoteFromCatalog,
+  pricingTiersFromCatalog,
 } from '../../../../../shared/ritotech-marketing.ts';
+import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
+import type { TrialProductId } from '../../../../../shared/platform-access.ts';
 
 const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
 
@@ -33,10 +37,20 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
         <p class="text-center text-gray-400 mt-2 text-sm sm:text-base max-w-xl mx-auto">
           {{ audiencePitch }}
         </p>
-        <p class="text-center text-xs text-teal-400/90 mt-3 font-medium">
-          RiloBot {{ rilobotDays }} días · Panel/Completo {{ panelDays }} días · Sin tarjeta
+        <p class="text-center text-xs text-teal-400/90 mt-3 font-medium leading-relaxed max-w-2xl mx-auto">
+          {{ stayFreePitch }}
         </p>
-        <div class="mt-4 flex justify-center gap-2">
+        <div class="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div
+            *ngFor="let step of funnelSteps"
+            class="rounded-xl border border-gray-800 bg-gray-900/50 p-3 text-left">
+            <p class="text-[10px] font-bold uppercase tracking-wide text-teal-400">
+              {{ step.step }} · {{ step.title }}
+            </p>
+            <p class="mt-1 text-[11px] text-gray-400 leading-relaxed">{{ step.body }}</p>
+          </div>
+        </div>
+        <div *ngIf="showArgentinaBilling" class="mt-4 flex justify-center gap-2">
           <button
             type="button"
             (click)="setCountry('UY')"
@@ -65,14 +79,14 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
         <div class="mt-5 flex flex-wrap justify-center gap-3">
           <app-ritotech-visual-guide
             #guide
-            triggerLabel="Ver guía RiloBot (opcional)"
+            triggerLabel="Mirá cómo te ordena el día"
             defaultTab="whatsapp">
           </app-ritotech-visual-guide>
           <button
             type="button"
             (click)="guide.open('erp')"
             class="inline-flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-900/50 px-4 py-2.5 text-sm font-semibold text-gray-300 hover:bg-gray-800 hover:text-white transition">
-            Guía del panel web
+            Guía del panel
           </button>
         </div>
 
@@ -107,8 +121,8 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             [class.bg-teal-950/20]="plan.featured"
             [class.border-gray-800]="!plan.featured"
             [class.bg-gray-900/70]="!plan.featured">
-            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-              <div class="flex-1">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
                   <h2 class="text-lg font-bold">{{ plan.label }}</h2>
                   <span
@@ -117,7 +131,9 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                     {{ plan.badgeLabel }}
                   </span>
                 </div>
-                <p class="mt-1 text-sm text-teal-300 font-semibold">{{ priceFor(plan.id) }}</p>
+                <p class="mt-1 text-lg font-semibold text-teal-300">Gratis</p>
+                <p class="mt-0.5 text-xs text-gray-400">{{ plan.trialDays }} días a full, sin tarjeta</p>
+                <p class="mt-0.5 text-xs text-gray-400">Después seguís gratis si no te pasás</p>
                 <p class="mt-1 text-sm text-gray-400 leading-relaxed">{{ plan.headline }}</p>
                 <div class="mt-2 flex flex-wrap gap-2 text-[11px]">
                   <span class="rounded-full border px-2 py-0.5"
@@ -135,38 +151,87 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                     Panel web {{ plan.panelWeb ? '✓' : '—' }}
                   </span>
                 </div>
-                <ul class="mt-3 text-xs text-gray-300 space-y-1">
-                  <li *ngFor="let item of plan.includes">✓ {{ item }}</li>
-                </ul>
-                <button
-                  type="button"
-                  class="mt-3 text-xs text-teal-400 hover:underline"
-                  (click)="guide.open(plan.id === 'erp' ? 'erp' : 'whatsapp')">
-                  Ver guía visual de este plan
-                </button>
               </div>
               <a
                 [routerLink]="['/registro']"
                 [queryParams]="{ producto: plan.id }"
-                class="shrink-0 inline-flex justify-center rounded-lg px-4 py-2.5 text-sm font-semibold"
+                class="shrink-0 inline-flex justify-center self-start rounded-lg px-4 py-2.5 text-sm font-semibold"
                 [class.bg-teal-600]="plan.featured"
                 [class.hover:bg-teal-500]="plan.featured"
                 [class.bg-gray-800]="!plan.featured"
                 [class.hover:bg-gray-700]="!plan.featured">
-                Probar {{ plan.trialDays }} días gratis
+                Empezar gratis
               </a>
             </div>
+            <ul class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-gray-300">
+              <li *ngFor="let item of plan.includes" class="flex gap-2 leading-snug">
+                <span class="text-teal-400 shrink-0">✓</span>
+                <span>{{ item }}</span>
+              </li>
+            </ul>
+            <button
+              type="button"
+              class="mt-3 text-xs text-teal-400 hover:underline"
+              (click)="guide.open(plan.id === 'erp' ? 'erp' : 'whatsapp')">
+              Ver cómo te simplifica el día
+            </button>
           </article>
         </div>
 
-        <div class="mt-10 rounded-xl border border-gray-800 bg-gray-900/40 p-5 text-sm text-gray-400 leading-relaxed">
-          <h2 class="text-base font-bold text-white mb-2">Pago con tarjeta</h2>
-          <p>
-            La prueba <span class="text-white">no pide tarjeta</span>. Cuando quieras seguir,
-            vas a poder pagar con Mercado Pago desde Activar o administrar plan.
+        <section id="precios" class="mt-10 scroll-mt-20">
+          <h2 class="text-xl font-bold text-white">Precios pagos</h2>
+          <p class="mt-2 text-sm text-gray-400 leading-relaxed">
+            Solo si te pasás del plan gratis. Un feriante o taller chico no hace falta que pague.
+            <span class="text-white"> {{ trialDays }} días a full, sin tarjeta. Después seguís gratis.</span>
           </p>
-          <p class="mt-3 text-xs text-gray-500">{{ pricingFootnote }}</p>
-        </div>
+          <p *ngIf="showIntroDiscount" class="mt-2 text-sm text-teal-300 font-medium">
+            El descuento no corre desde el registro. Cuando activás un plan pago: {{ introOffer }}, después el precio de lista.
+          </p>
+          <p *ngIf="!showIntroDiscount" class="mt-2 text-sm text-gray-500">
+            Cuando lo necesités, activás el plan (vos o desde la plataforma).
+          </p>
+          <div class="mt-5 space-y-3">
+            <article
+              *ngFor="let plan of plans"
+              class="rounded-xl border p-4 sm:p-5"
+              [class.border-teal-700]="plan.featured"
+              [class.bg-teal-950/20]="plan.featured"
+              [class.border-gray-800]="!plan.featured"
+              [class.bg-gray-900/50]="!plan.featured">
+              <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="font-bold text-white">{{ plan.label }}</h3>
+                    <span *ngIf="plan.featured" class="text-[10px] font-bold uppercase text-teal-300">
+                      {{ plan.badgeLabel || 'Recomendado' }}
+                    </span>
+                  </div>
+                  <p *ngIf="showIntroDiscount" class="mt-1 text-sm text-teal-300 font-semibold">
+                    {{ introPriceFor(plan.id) }}
+                  </p>
+                  <p *ngIf="showIntroDiscount" class="mt-0.5 text-xs text-gray-400">
+                    {{ introOffer }} · después {{ priceFor(plan.id) }}
+                  </p>
+                  <p *ngIf="!showIntroDiscount" class="mt-1 text-sm text-teal-300 font-semibold">
+                    {{ priceFor(plan.id) }}
+                  </p>
+                  <p class="mt-1 text-xs text-gray-400">{{ plan.headline }}</p>
+                  <p class="mt-2 text-xs text-gray-500">{{ plan.trialIncludes }}</p>
+                </div>
+                <a
+                  [routerLink]="['/registro']"
+                  [queryParams]="{ producto: plan.id }"
+                  class="shrink-0 inline-flex justify-center rounded-lg border border-gray-700 px-4 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800 whitespace-nowrap">
+                  Empezar gratis
+                </a>
+              </div>
+            </article>
+          </div>
+          <p class="mt-4 text-xs text-gray-500">{{ pricingFootnote }}</p>
+          <p class="mt-2 text-xs text-gray-500 leading-relaxed">
+            Los precios son de referencia y pueden reajustarse. Si ya pagás un plan, te avisamos antes de cambiar tu cuota.
+          </p>
+        </section>
       </section>
 
       <app-ritotech-faq
@@ -182,36 +247,90 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
   `,
 })
 export class RitotechPlansComponent implements OnInit {
-  readonly rilobotDays = RILOBOT_TRIAL_DAYS;
-  readonly panelDays = PANEL_TRIAL_DAYS;
+  private commercial = inject(CommercialCatalogService);
+  private route = inject(ActivatedRoute);
   readonly audiencePitch = RILOTECH_AUDIENCE_PITCH;
-  readonly faqItems = RILOTECH_FAQ;
-  readonly plans = RILOTECH_PRICING_TIERS;
+  catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
   country: BillingCountryCode = 'UY';
+  readonly showArgentinaBilling = SHOW_ARGENTINA_BILLING;
 
-  readonly matrix = [
-    { label: 'Pedidos y ventas', bot: '✓', panel: '✓', both: '✓' },
-    { label: 'Cobros y saldos', bot: '✓', panel: '✓', both: '✓' },
-    { label: 'Cargar desde el celular', bot: '✓', panel: '—', both: '✓' },
-    { label: 'Consultas rápidas (caja/saldo)', bot: '✓', panel: '✓', both: '✓' },
-    { label: 'Caja completa / entradas-salidas', bot: '—', panel: '✓', both: '✓' },
-    { label: 'Compras y proveedores', bot: '—', panel: '✓', both: '✓' },
-    { label: 'Stock', bot: '—', panel: '✓', both: '✓' },
-    { label: 'Reportes', bot: '—', panel: '✓', both: '✓' },
-    { label: 'Acciones IA incluidas (plan pago)', bot: '1.000', panel: '—', both: '2.000' },
-  ];
+  get trialDays(): number {
+    return this.catalog.trialDays || RILOBOT_TRIAL_DAYS;
+  }
+
+  get stayFreePitch(): string {
+    return buildStayFreePitch(this.catalog);
+  }
+
+  get showIntroDiscount(): boolean {
+    return hasIntroDiscount(this.catalog);
+  }
+
+  get introOffer(): string {
+    return introDiscountLabel(this.catalog);
+  }
+
+  get funnelSteps() {
+    return commercialFunnelSteps(this.catalog);
+  }
+
+  get faqItems() {
+    return faqFromCatalog(this.catalog);
+  }
+
+  get plans() {
+    return pricingTiersFromCatalog(this.catalog);
+  }
+
+  get matrix() {
+    const botAi = this.catalog.products.whatsapp.includedAi.toLocaleString('es-UY');
+    const bothAi = this.catalog.products.completo.includedAi.toLocaleString('es-UY');
+    return [
+      { label: 'Pedidos y ventas', bot: '✓', panel: '✓', both: '✓' },
+      { label: 'Cobros y saldos', bot: '✓', panel: '✓', both: '✓' },
+      { label: 'Cargar desde el celular', bot: '✓', panel: '—', both: '✓' },
+      { label: 'Consultas rápidas (caja/saldo)', bot: '✓', panel: '✓', both: '✓' },
+      { label: 'Caja completa / entradas-salidas', bot: '—', panel: '✓', both: '✓' },
+      { label: 'Compras y proveedores', bot: '—', panel: '✓', both: '✓' },
+      { label: 'Stock', bot: '—', panel: '✓', both: '✓' },
+      { label: 'Reportes', bot: '—', panel: '✓', both: '✓' },
+      { label: 'Acciones IA incluidas (plan pago)', bot: botAi, panel: '—', both: bothAi },
+      {
+        label: 'Plan gratis (si no te pasás)',
+        bot: `${this.catalog.lite.maxClientes} clientes · ${this.catalog.lite.maxProductos} productos · ${this.catalog.lite.maxOperacionesMes} cargas · ${this.catalog.lite.maxAccionesIaMes} IA`,
+        panel: `${this.catalog.lite.maxClientes} clientes · ${this.catalog.lite.maxProductos} productos`,
+        both: `${this.catalog.lite.maxClientes} clientes · ${this.catalog.lite.maxProductos} productos · ${this.catalog.lite.maxOperacionesMes} cargas · ${this.catalog.lite.maxAccionesIaMes} IA`,
+      },
+    ];
+  }
 
   ngOnInit() {
     try {
       const saved = localStorage.getItem(COUNTRY_STORAGE_KEY);
-      if (saved === 'AR' || saved === 'UY') this.country = saved;
+      if (SHOW_ARGENTINA_BILLING && (saved === 'AR' || saved === 'UY')) this.country = saved;
+      else this.country = 'UY';
     } catch {
-      /* ignore */
+      this.country = 'UY';
     }
+    this.loadCatalog();
+    this.route.fragment.subscribe((fragment) => {
+      if (fragment !== 'precios') return;
+      setTimeout(() => {
+        document.getElementById('precios')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+    });
+  }
+
+  private loadCatalog() {
+    this.commercial.load(this.country).subscribe({
+      next: (row) => {
+        this.catalog = row.catalog;
+      },
+    });
   }
 
   get pricingFootnote(): string {
-    return pricingFootnoteForCountry(this.country);
+    return pricingFootnoteFromCatalog(this.country, this.catalog);
   }
 
   setCountry(country: BillingCountryCode) {
@@ -221,9 +340,14 @@ export class RitotechPlansComponent implements OnInit {
     } catch {
       /* ignore */
     }
+    this.loadCatalog();
   }
 
-  priceFor(productId: (typeof RILOTECH_PRICING_TIERS)[number]['id']): string {
-    return priceLabelForTier(productId, this.country);
+  introPriceFor(productId: TrialProductId): string {
+    return introPriceLabel(this.catalog, productId, this.country);
+  }
+
+  priceFor(productId: TrialProductId): string {
+    return priceLabelFromCatalog(productId, this.country, this.catalog);
   }
 }

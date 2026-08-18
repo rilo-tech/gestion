@@ -43,7 +43,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
           *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb && auth.canAccessWhatsapp"
           class="shrink-0 border-b border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-950">
           Tu plan opera por <span class="font-semibold">WhatsApp</span>. Escribí al número de RiloBot con el WhatsApp que registraste.
-          <a routerLink="/mi-cuenta" class="ml-2 font-semibold text-teal-800 hover:underline">Ver mi cuenta</a>
+          <a routerLink="/mi-cuenta" class="ml-2 font-semibold text-teal-800 hover:underline">Ver inicio</a>
         </div>
         <div
           *ngIf="showTrialExpiringBanner"
@@ -67,13 +67,20 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
           </div>
         </div>
         <div
-          *ngIf="auth.isTrialExpired"
+          *ngIf="auth.isLitePlan"
           class="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2.5 sm:px-4 text-sm text-amber-950 flex items-center gap-3">
-          <p class="min-w-0 flex-1">Tu período de prueba finalizó. Activá un plan para seguir usando RILO.</p>
+          <p class="min-w-0 flex-1">
+            Estás en plan libre
+            <ng-container *ngIf="auth.liteLimits">
+              (hasta {{ auth.liteLimits.maxClientes }} clientes, {{ auth.liteLimits.maxProductos }} productos,
+              {{ auth.liteLimits.maxOperacionesMes || '' }} cargas/mes, {{ auth.liteLimits.maxAccionesIaMes }} IA/mes)
+            </ng-container>.
+            Activá un plan cuando te quede chico.
+          </p>
           <a
             routerLink="/activar-suscripcion"
             class="inline-flex shrink-0 items-center rounded-lg bg-amber-600 px-3 py-1.5 text-xs sm:text-sm font-semibold text-white hover:bg-amber-700">
-            Activar suscripción
+            Ver planes
           </a>
         </div>
         <div

@@ -1,5 +1,6 @@
 import { db } from '../firebase.ts';
-import { DEFAULT_BUSINESS_ID } from './constants.ts';
+import { getContactClaim } from './trial-registration-store.ts';
+import { getCommercialCatalog } from './commercial-catalog.ts';
 import type { UserRole } from './constants.ts';
 import {
   countActiveAdministrators,
@@ -124,8 +125,13 @@ export interface PublicBusinessInfo {
   trialDaysRemaining?: number | null;
   trialExpiringSoon?: boolean;
   trialBillingActive?: boolean;
+  /** trial = 30 días a full. lite = prueba vencida sin pago (techos). paid = cobertura. */
+  billingMode?: 'trial' | 'lite' | 'paid' | 'blocked';
+  liteLimits?: { maxClientes: number; maxProductos: number; maxAccionesIaMes: number; maxOperacionesMes: number } | null;
   source?: BusinessSource;
   contactVerification?: TrialContactVerification;
+  /** Si el email/teléfono siguen reservados para esta empresa en la landing. */
+  contactClaims?: { emailBound: boolean; phoneBound: boolean };
   lifecycle?: TrialLifecycle;
   platformAccess?: ClientPlatformAccess;
   createdAt?: string;
@@ -148,6 +154,7 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'trialEndDate',
   'trialStatus',
   'platformAccess',
+  'contactVerification',
   'creadoPor',
   'updatedAt',
 ]);
@@ -308,6 +315,10 @@ export function sanitizeBusinessPayload(
 
   if (payload.platformAccess && typeof payload.platformAccess === 'object') {
     next.platformAccess = payload.platformAccess as BusinessRecord['platformAccess'];
+  }
+
+  if (payload.contactVerification && typeof payload.contactVerification === 'object') {
+    next.contactVerification = payload.contactVerification as BusinessRecord['contactVerification'];
   }
 
   return next;
@@ -562,6 +573,22 @@ function buildPublicBusinessInfo(
     trialDaysRemaining: trial.daysRemaining,
     trialExpiringSoon: trial.isExpiringSoon,
     trialBillingActive: trial.isTrialBillingActive,
+    billingMode:
+      business.estadoSuscripcion === 'suspendida' || business.estadoSuscripcion === 'vencida'
+        ? 'blocked'
+        : paymentReminder.paidUntil &&
+            new Date(
+              paymentReminder.paidUntil.includes('T')
+                ? paymentReminder.paidUntil
+                : `${paymentReminder.paidUntil.slice(0, 10)}T23:59:59`
+            ).getTime() >= Date.now()
+          ? 'paid'
+          : trial.isTrialBillingActive
+            ? 'trial'
+            : business.enPrueba === true
+              ? 'lite'
+              : 'paid',
+    liteLimits: null,
     source: business.source,
     contactVerification: business.contactVerification,
     lifecycle: business.lifecycle,
@@ -576,6 +603,28 @@ function buildPublicBusinessInfo(
     ),
     operadoresDisponibles: Math.max(0, limits.limiteOperadores - counts.operadoresActivos),
     usuariosDisponibles: Math.max(0, limits.limiteUsuariosTotal - counts.usuariosActivos),
+  };
+}
+
+async function withLiteLimits(info: PublicBusinessInfo): Promise<PublicBusinessInfo> {
+  if (info.billingMode !== 'lite') return info;
+  const catalog = await getCommercialCatalog();
+  return { ...info, liteLimits: catalog.lite };
+}
+
+async function withContactClaims(info: PublicBusinessInfo): Promise<PublicBusinessInfo> {
+  const email = String(info.contactVerification?.email ?? '').trim();
+  const phone = String(info.contactVerification?.phone ?? '').trim();
+  const [emailClaim, phoneClaim] = await Promise.all([
+    email ? getContactClaim('email', email) : Promise.resolve(null),
+    phone ? getContactClaim('phone', phone) : Promise.resolve(null),
+  ]);
+  return {
+    ...info,
+    contactClaims: {
+      emailBound: Boolean(email && emailClaim?.businessId === info.id),
+      phoneBound: Boolean(phone && phoneClaim?.businessId === info.id),
+    },
   };
 }
 
@@ -619,9 +668,14 @@ export async function toSessionBusinessInfo(
         businessId,
         resolved.montoMensualEsperado,
         business.billing?.paidUntil
-      );
+      ).catch(() => ({
+        estadoPago: 'pendiente' as SubscriptionPaymentStatus,
+        periodoActual: currentPeriodo(),
+        montoEsperado: resolved.montoMensualEsperado,
+      }));
 
-  return buildPublicBusinessInfo(
+  return withLiteLimits(
+    buildPublicBusinessInfo(
     business,
     plan,
     resolved,
@@ -631,6 +685,7 @@ export async function toSessionBusinessInfo(
       usuariosActivos: 0,
     },
     paymentSummary
+    )
   );
 }
 
@@ -675,7 +730,9 @@ export async function toPublicBusinessInfo(
         }),
   ]);
 
-  return buildPublicBusinessInfo(business, plan, resolved, counts, paymentSummary);
+  return withLiteLimits(
+    await withContactClaims(buildPublicBusinessInfo(business, plan, resolved, counts, paymentSummary))
+  );
 }
 
 export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
@@ -700,7 +757,7 @@ export async function listPublicBusinessInfos(): Promise<PublicBusinessInfo[]> {
           synced.billing?.paidUntil
         ),
       ]);
-      return buildPublicBusinessInfo(synced, plan, resolved, counts, paymentSummary);
+      return withLiteLimits(buildPublicBusinessInfo(synced, plan, resolved, counts, paymentSummary));
     })
   );
 }

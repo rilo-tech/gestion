@@ -22,7 +22,6 @@ import {
   toPublicUser,
   updateUserProfile,
 } from '../auth/users.ts';
-import { toPublicBusinessInfo, toSessionBusinessInfo } from '../auth/business.ts';
 import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
 
 const router = express.Router();
@@ -40,6 +39,9 @@ function mapAuthError(error: unknown): { status: number; message: string } | nul
   }
   if (code === 'BUSINESS_NOT_FOUND') {
     return { status: 404, message: 'Empresa no encontrada. Verificá el código.' };
+  }
+  if (code === 'PLAN_NOT_FOUND') {
+    return { status: 503, message: 'El plan de la empresa no está disponible. Probá de nuevo en un momento.' };
   }
   return null;
 }
@@ -124,12 +126,22 @@ router.post('/login', async (req, res) => {
 
     const user = await findUserByLoginOrEmail(businessId, login);
     if (!user || !user.activo) {
-      return res.status(401).json({ error: 'Credenciales inválidas.' });
+      return res.status(401).json({
+        error: 'Usuario, contraseña o código de empresa incorrectos.',
+      });
+    }
+
+    if (!user.passwordHash?.trim()) {
+      return res.status(401).json({
+        error: 'Esta cuenta no tiene contraseña. Entrá con Google o pedí que te configuren una.',
+      });
     }
 
     const valid = await verifyPassword(password, user.passwordHash);
     if (!valid) {
-      return res.status(401).json({ error: 'Credenciales inválidas.' });
+      return res.status(401).json({
+        error: 'Usuario, contraseña o código de empresa incorrectos.',
+      });
     }
 
     const business = await toSessionBusinessInfo(businessId, businessRecord);

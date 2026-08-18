@@ -7,11 +7,12 @@ import { mapGoogleAuthError } from '../../core/utils/google-auth-error';
 import { isAuthEmulatorEnabled } from '../../core/config/firebase';
 import { GOOGLE_LOGIN_SCOPE_KEY, GOOGLE_LOGIN_UI_ENABLED } from '../../core/constants/google-auth-storage';
 import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
+import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
 
 @Component({
   selector: 'app-platform-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, PasswordInputComponent],
   template: `
     <div class="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div class="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 shadow-2xl">
@@ -31,13 +32,14 @@ import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">Contraseña</label>
-            <input
-              type="password"
+            <label class="block text-sm font-medium text-gray-300 mb-1" for="platform-password">Contraseña</label>
+            <app-password-input
+              inputId="platform-password"
               [(ngModel)]="password"
               name="password"
               autocomplete="current-password"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
+              inputClass="text-white">
+            </app-password-input>
           </div>
 
           <p *ngIf="googleRedirectPending" class="text-sm text-amber-400">

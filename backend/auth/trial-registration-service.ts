@@ -1,17 +1,18 @@
 import { db } from '../firebase.ts';
-import { hashPassword } from './password.ts';
-import { createBusiness, type BusinessRecord } from './business.ts';
+import { hashPassword, verifyPassword } from './password.ts';
+import { createBusiness, getBusiness, type BusinessRecord } from './business.ts';
 import { getPlan } from './plans.ts';
 import { buildTrialFieldUpdates } from './trial-business.ts';
 import { allocateUniqueBusinessId } from '../utils/business-slug.ts';
 import {
   bindContactClaimToBusiness,
   claimContactUnique,
+  getContactClaim,
   getTrialRegistration,
   updateTrialRegistration,
 } from './trial-registration-store.ts';
 import { appendSubscriptionHistory } from './subscription-history.ts';
-import { toPublicUser } from './users.ts';
+import { toPublicUser, findUserByEmail } from './users.ts';
 import { signAuthToken } from './jwt.ts';
 import type { TrialContactVerification, TrialLifecycle } from '../../shared/trial-registration.ts';
 import { CURRENT_TERMS_VERSION } from '../../shared/trial-registration.ts';
@@ -24,13 +25,30 @@ import {
   parseTrialProductFromBody,
   platformAccessFromTrialProduct,
 } from './platform-access.ts';
-import type { TrialProductId } from '../../shared/platform-access.ts';
+import {
+  normalizePlatformAccess,
+  productAlreadyEnabled,
+  type TrialProductId,
+} from '../../shared/platform-access.ts';
+import { getCommercialCatalog } from './commercial-catalog.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
 import { getBillingProduct } from '../../shared/billing-catalog.ts';
 import { INCLUDED_ADMIN_SEATS } from '../../shared/subscription-modules.ts';
 import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
+import { enableProductOnBusiness } from './enable-product.ts';
 
 const FALLBACK_TRIAL_PLAN_ID = process.env.TRIAL_DEFAULT_PLAN_ID ?? 'plan_intermedio';
+
+export type TrialCompleteOutcome = 'created' | 'module_added' | 'already_active';
+
+export type TrialCompleteResult = {
+  business: BusinessRecord;
+  businessId: string;
+  user: ReturnType<typeof toPublicUser>;
+  token: string;
+  outcome: TrialCompleteOutcome;
+  registeredPhone: string;
+};
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -64,12 +82,89 @@ async function seedBusinessConfig(
   });
 }
 
-export async function completeTrialRegistration(registrationId: string): Promise<{
-  business: BusinessRecord;
-  businessId: string;
-  user: ReturnType<typeof toPublicUser>;
-  token: string;
-}> {
+async function resolveExistingBusinessId(params: {
+  email: string;
+  phone: string;
+  existingBusinessId?: string | null;
+}): Promise<string | null> {
+  if (params.existingBusinessId) return params.existingBusinessId;
+  const emailClaim = await getContactClaim('email', params.email);
+  const phoneClaim = await getContactClaim('phone', params.phone);
+  const emailBiz = emailClaim?.businessId?.trim() || null;
+  const phoneBiz = phoneClaim?.businessId?.trim() || null;
+  if (emailBiz && phoneBiz && emailBiz !== phoneBiz) {
+    throw new Error('CONTACT_MISMATCH');
+  }
+  return emailBiz || phoneBiz || null;
+}
+
+async function assertPasswordForExistingBusiness(
+  businessId: string,
+  email: string,
+  password: string | undefined
+): Promise<void> {
+  if (!password) throw new Error('EXISTING_ACCOUNT_PASSWORD_REQUIRED');
+  const user = await findUserByEmail(businessId, email);
+  if (!user) throw new Error('EXISTING_ACCOUNT_EMAIL_MISMATCH');
+  const ok = await verifyPassword(password, user.passwordHash);
+  if (!ok) throw new Error('EXISTING_ACCOUNT_WRONG_PASSWORD');
+}
+
+function signCompanySession(userId: string, businessId: string, rol: 'supervisor' | 'admin' | 'staff') {
+  return signAuthToken({
+    userId,
+    businessId,
+    rol,
+    scope: 'company',
+  });
+}
+
+async function attachProductToExistingBusiness(
+  registrationId: string,
+  registration: NonNullable<Awaited<ReturnType<typeof getTrialRegistration>>>,
+  businessId: string,
+  trialProduct: TrialProductId
+): Promise<TrialCompleteResult> {
+  const business = await getBusiness(businessId);
+  if (!business) throw new Error('REGISTRATION_NOT_FOUND');
+
+  const user = await findUserByEmail(businessId, registration.email);
+  if (!user) throw new Error('EXISTING_ACCOUNT_EMAIL_MISMATCH');
+
+  const currentAccess = normalizePlatformAccess(business.platformAccess);
+  const already = productAlreadyEnabled(currentAccess, trialProduct);
+  let updated = business;
+  if (!already) {
+    const enabled = await enableProductOnBusiness({
+      businessId,
+      product: trialProduct,
+    });
+    if (enabled.outcome === 'checkout_required') {
+      throw new Error('MODULE_CHECKOUT_REQUIRED');
+    }
+    updated = enabled.business;
+  }
+
+  await bindContactClaimToBusiness('email', registration.email, businessId);
+  await bindContactClaimToBusiness('phone', registration.phone, businessId);
+  await updateTrialRegistration(registrationId, {
+    status: 'completed',
+    completedBusinessId: businessId,
+    existingBusinessId: businessId,
+  });
+
+  const token = signCompanySession(user.id, businessId, user.rol);
+  return {
+    business: updated,
+    businessId,
+    user: toPublicUser(user),
+    token,
+    outcome: already ? 'already_active' : 'module_added',
+    registeredPhone: registration.phone,
+  };
+}
+
+export async function completeTrialRegistration(registrationId: string): Promise<TrialCompleteResult> {
   const registration = await getTrialRegistration(registrationId);
   if (!registration) throw new Error('REGISTRATION_NOT_FOUND');
   if (registration.status === 'completed' && registration.completedBusinessId) {
@@ -81,6 +176,21 @@ export async function completeTrialRegistration(registrationId: string): Promise
 
   const trialProduct =
     (registration.trialProduct as TrialProductId) ?? 'completo';
+
+  const existingBusinessId = await resolveExistingBusinessId({
+    email: registration.email,
+    phone: registration.phone,
+    existingBusinessId: registration.existingBusinessId,
+  });
+  if (existingBusinessId) {
+    return attachProductToExistingBusiness(
+      registrationId,
+      registration,
+      existingBusinessId,
+      trialProduct
+    );
+  }
+
   const catalogProduct = getBillingProduct(trialProduct);
   const planId = catalogProduct?.erpPlanId ?? FALLBACK_TRIAL_PLAN_ID;
   const plan = await getPlan(planId);
@@ -90,6 +200,8 @@ export async function completeTrialRegistration(registrationId: string): Promise
 
   const businessId = await allocateUniqueBusinessId(registration.businessName);
   const now = new Date().toISOString();
+  const commercial = await getCommercialCatalog();
+  const trialDays = commercial.trialDays || trialDaysForProduct(trialProduct);
 
   const contactVerification: TrialContactVerification = {
     email: registration.email,
@@ -139,7 +251,7 @@ export async function completeTrialRegistration(registrationId: string): Promise
         trialStatus: 'active',
       },
       undefined,
-      { trialDays: trialDaysForProduct(trialProduct) }
+      { trialDays }
     ),
     creadoPor: 'self_signup',
     source: 'self_service_trial',
@@ -191,7 +303,7 @@ export async function completeTrialRegistration(registrationId: string): Promise
     await appendSubscriptionHistory(businessId, {
       changedBy: 'system',
       changeType: 'trial',
-      note: `Alta autoservicio — prueba ${trialDaysForProduct(trialProduct)} días · ${trialProduct}`,
+      note: `Alta autoservicio — prueba ${trialDays} días · ${trialProduct}`,
       previousPlanId: undefined,
       newPlanId: planId,
       newEnPrueba: true,
@@ -227,7 +339,14 @@ export async function completeTrialRegistration(registrationId: string): Promise
     scope: 'company',
   });
 
-  return { business, businessId, user: publicUser, token };
+  return {
+    business,
+    businessId,
+    user: publicUser,
+    token,
+    outcome: 'created',
+    registeredPhone: registration.phone,
+  };
 }
 
 export function validateRegistrationPayload(body: Record<string, unknown>): {
@@ -297,10 +416,18 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
 export async function registerTrialLead(
   body: Record<string, unknown>,
   consentIp?: string
-): Promise<{ registrationId: string }> {
+): Promise<{ registrationId: string; existingAccount: boolean }> {
   const parsed = validateRegistrationPayload(body);
   const passwordHash = parsed.password ? await hashPassword(parsed.password) : undefined;
   const now = new Date().toISOString();
+
+  const existingBusinessId = await resolveExistingBusinessId({
+    email: parsed.email,
+    phone: parsed.phone,
+  });
+  if (existingBusinessId) {
+    await assertPasswordForExistingBusiness(existingBusinessId, parsed.email, parsed.password);
+  }
 
   const { createTrialRegistration } = await import('./trial-registration-store.ts');
   const registration = await createTrialRegistration({
@@ -323,12 +450,13 @@ export async function registerTrialLead(
     utmCampaign: typeof body.utmCampaign === 'string' ? body.utmCampaign : null,
     campaignSource: typeof body.campaignSource === 'string' ? body.campaignSource : null,
     trialProduct: parsed.trialProduct,
+    existingBusinessId,
   });
 
   await claimContactUnique('email', parsed.email, registration.id);
   await claimContactUnique('phone', parsed.phone, registration.id);
 
-  return { registrationId: registration.id };
+  return { registrationId: registration.id, existingAccount: Boolean(existingBusinessId) };
 }
 
 export { isValidEmail };

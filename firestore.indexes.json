@@ -16,6 +16,14 @@
         { "fieldPath": "estado", "order": "ASCENDING" },
         { "fieldPath": "fechaVencimiento", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "whatsapp_users",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "phone", "order": "ASCENDING" },
+        { "fieldPath": "enabled", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

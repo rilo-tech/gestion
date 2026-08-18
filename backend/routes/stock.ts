@@ -29,6 +29,7 @@ import {
   recomputeStockMetrics,
   scheduleStockMetricsRefresh,
 } from '../utils/stock-metrics.ts';
+import { assertCanCreateProduct, trySendUsageLimit } from '../auth/usage-gates.ts';
 import {
   previewNextProductCode,
   resolveCodigoForCreate,
@@ -138,6 +139,8 @@ router.post('/:businessId', async (req, res) => {
       return res.status(400).json({ error: 'El nombre del producto es obligatorio.' });
     }
 
+    await assertCanCreateProduct(businessId);
+
     const duplicate = await findStockItemByName(businessId, nombre);
     if (duplicate) {
       return res.status(409).json({
@@ -206,6 +209,7 @@ router.post('/:businessId', async (req, res) => {
 
     res.status(201).json({ id: docRef.id });
   } catch (error) {
+    if (await trySendUsageLimit(res, error)) return;
     res.status(500).json({ error: 'Error creating stock item' });
   }
 });

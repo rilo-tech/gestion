@@ -5,6 +5,8 @@ export interface ConversationState {
   phone: string;
   pendingIntent?: string | null;
   pendingPayload?: Record<string, unknown> | null;
+  /** Configuración inicial (caja/productos/clientes) ofrecida en el saludo. */
+  setupStatus?: 'offered' | 'done' | null;
   updatedAt: string;
 }
 
@@ -41,5 +43,15 @@ export async function saveConversationState(
 }
 
 export async function clearConversationState(businessId: string, phone: string): Promise<void> {
-  await stateRef(businessId, phone).delete();
+  const now = new Date().toISOString();
+  await stateRef(businessId, phone).set(
+    {
+      businessId,
+      phone,
+      pendingIntent: null,
+      pendingPayload: null,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
 }

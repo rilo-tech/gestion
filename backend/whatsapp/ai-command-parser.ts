@@ -1,18 +1,31 @@
 import {
   extractAmountFromText,
   extractClientHintFromText,
+  extractDeliveryDateFromText,
+  extractOrderDateFromText,
+  coerceDateOnly,
 } from './lookups.ts';
+import { whatsappCopyForRubro } from './copy.ts';
+import { assertCanUseAi, incrementAiUsage } from '../auth/usage-gates.ts';
 
 export type WhatsappIntent =
   | 'help'
   | 'greeting'
   | 'create_order'
   | 'create_sale'
+  | 'create_purchase'
   | 'register_payment'
   | 'query_balance'
   | 'query_cash'
   | 'register_cash'
   | 'unknown';
+
+export type WhatsappPurchaseLine = {
+  productName: string;
+  productId?: string;
+  quantity: number;
+  unitCost: number;
+};
 
 export type WhatsappCommandEntities = {
   clientId?: string;
@@ -30,10 +43,28 @@ export type WhatsappCommandEntities = {
   cashConcept?: string;
   /** No buscar/crear producto: usar productName como concepto libre. */
   productAsConcept?: boolean;
+  /** Fecha de carga YYYY-MM-DD. */
+  orderDate?: string;
+  /** Fecha de entrega del pedido YYYY-MM-DD. */
+  deliveryDate?: string;
+  supplierId?: string;
+  supplierName?: string;
+  invoiceNumber?: string;
+  purchaseLines?: WhatsappPurchaseLine[];
+  /** Medio de pago de la compra (ids del ERP: efectivo, transferencia, …). */
+  paymentMedioId?: string;
+  paymentMedioLabel?: string;
+  paymentTarjetaId?: string;
+  paymentTarjetaLabel?: string;
+  paymentCuotas?: number;
+  paymentDueDate?: string;
+  paymentHint?: string;
+  saveAsDraft?: boolean;
+  paymentIncompleteReason?: string;
 };
 
 export type ParsedWhatsappCommand =
-  | { intent: 'help'; confidence: number }
+  | { intent: 'help'; confidence: number; raw?: string }
   | { intent: 'greeting'; confidence: number }
   | {
       intent: Exclude<WhatsappIntent, 'help' | 'greeting'>;
@@ -46,10 +77,14 @@ export type WhatsappParseInput = {
   text: string;
   image?: { buffer: Buffer; contentType: string } | null;
   mediaId?: string | null;
+  rubro?: string | null;
+  businessId?: string;
 };
 
 const ORDER_PATTERNS = /\b(pedido|orden)\b/i;
 const SALE_PATTERNS = /\b(venta|vend[ií])\b/i;
+const PURCHASE_PATTERNS =
+  /\b(compra|compr[eé]|remito|factura\s+(de\s+)?compra|proveedor|lleg[oó]\s+(la\s+)?mercader[ií]a)\b/i;
 const PAYMENT_PATTERNS = /\b(pago|cobro|abon[oó])\b/i;
 const BALANCE_PATTERNS = /\b(saldo|debe|cuenta)\b/i;
 const CASH_QUERY_PATTERNS =
@@ -62,6 +97,7 @@ const ALLOWED_INTENTS: WhatsappIntent[] = [
   'greeting',
   'create_order',
   'create_sale',
+  'create_purchase',
   'register_payment',
   'query_balance',
   'query_cash',
@@ -82,8 +118,59 @@ function enrichEntitiesFromText(
     const hint = extractClientHintFromText(text);
     if (hint) next.clientName = hint;
   }
+  if (!next.deliveryDate && /\bentrega/i.test(text)) {
+    const delivery = extractDeliveryDateFromText(text);
+    if (delivery) next.deliveryDate = delivery;
+  }
+  if (!next.orderDate) {
+    const orderDate = extractOrderDateFromText(text);
+    if (orderDate) next.orderDate = orderDate;
+  }
   if (!next.notes && text.trim()) next.notes = text.trim();
+  if (!next.supplierName) {
+    const supplierHint = text.match(
+      /\b(?:compra(?:\s+a)?|proveedor)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 .&'-]{1,50})/i
+    );
+    if (supplierHint?.[1]) {
+      next.supplierName = supplierHint[1].trim().replace(/[.,;:!?]+$/, '');
+    }
+  }
+  if (!next.purchaseLines?.length) {
+    const lines = parsePurchaseLinesFromText(text);
+    if (lines?.length) next.purchaseLines = lines;
+  }
+  if (/\b(borrador|completar (en )?el panel|lo completo yo)\b/i.test(text)) {
+    next.saveAsDraft = true;
+  }
+  if (!next.paymentHint) {
+    const hint = text.match(
+      /\b(efectivo|contado|transferencia|transf\.?|d[eé]bito|mercado\s*pago|\bmp\b|tarjeta|cr[eé]dito|visa|proveedor|fiado|cuenta\s+corriente|pendiente)\b/i
+    );
+    if (hint?.[1]) next.paymentHint = hint[1].trim();
+  }
+  if (!next.paymentCuotas) {
+    const cuotas = text.match(/(\d{1,2})\s*cuotas?/i);
+    if (cuotas) next.paymentCuotas = Math.min(120, Math.max(1, Number(cuotas[1]) || 1));
+  }
   return next;
+}
+
+function parsePurchaseLinesFromText(text: string): WhatsappPurchaseLine[] | undefined {
+  const matches = [
+    ...text.matchAll(
+      /(\d+(?:[.,]\d+)?)\s*(?:x|×)?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ./-]{1,60}?)\s+(?:a|@|x|por)\s*\$?\s*([\d.]+(?:,\d+)?)/gi
+    ),
+  ];
+  if (!matches.length) return undefined;
+  const lines: WhatsappPurchaseLine[] = [];
+  for (const match of matches) {
+    const quantity = Math.max(1, Number(String(match[1]).replace(',', '.')) || 1);
+    const productName = String(match[2] ?? '').trim().replace(/[.,;:]+$/, '');
+    const unitCost = Math.max(0, Number(String(match[3]).replace(/\./g, '').replace(',', '.')) || 0);
+    if (!productName) continue;
+    lines.push({ productName, quantity, unitCost });
+  }
+  return lines.length ? lines : undefined;
 }
 
 function parseWithRules(message: string): ParsedWhatsappCommand {
@@ -93,14 +180,21 @@ function parseWithRules(message: string): ParsedWhatsappCommand {
   }
 
   const lower = text.toLowerCase();
-  if (/^(hola|buenas|buen dia|buenos dias|hey)\b/.test(lower)) {
+  if (/^(hola|holaa+|buenas|buen[oa]s?\s+d[ií]as?|buen[oa]s?\s+tardes?|hey|hello)[\s!¡?.]*$/i.test(lower)) {
     return { intent: 'greeting', confidence: 0.9 };
   }
-  if (/\b(ayuda|help|comandos)\b/i.test(text)) {
-    return { intent: 'help', confidence: 0.95 };
+  if (
+    /\b(consultame|consultáme|ayuda|help|comandos|c[oó]mo (funciona|uso|registro|anoto|hablo)|qu[eé] (pod[eé]s|podes|puedes) hacer|qu[eé] hac[eé]s|ejemplos?|productos?|cat[aá]logo)\b/i.test(
+      lower
+    )
+  ) {
+    return { intent: 'help', confidence: 0.92, raw: text };
   }
 
   const entities = enrichEntitiesFromText(text);
+  if (PURCHASE_PATTERNS.test(text)) {
+    return { intent: 'create_purchase', confidence: 0.8, entities, raw: text };
+  }
   if (ORDER_PATTERNS.test(text)) {
     return { intent: 'create_order', confidence: 0.75, entities, raw: text };
   }
@@ -136,6 +230,27 @@ function parseWithRules(message: string): ParsedWhatsappCommand {
   return { intent: 'unknown', confidence: 0.2, entities, raw: text };
 }
 
+function parsePurchaseLines(raw: unknown): WhatsappPurchaseLine[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const lines: WhatsappPurchaseLine[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const productName = String(row.productName ?? row.nombre ?? '').trim();
+    if (!productName) continue;
+    const quantity = Math.max(1, Number(row.quantity ?? row.cantidad) || 1);
+    const unitCost = Math.max(0, Number(row.unitCost ?? row.costoUnitario ?? row.costo) || 0);
+    const productId = String(row.productId ?? '').trim();
+    lines.push({
+      productName,
+      ...(productId ? { productId } : {}),
+      quantity,
+      unitCost,
+    });
+  }
+  return lines.length ? lines : undefined;
+}
+
 function normalizeGeminiResult(
   parsed: {
     intent?: string;
@@ -150,7 +265,10 @@ function normalizeGeminiResult(
     return { intent: 'unknown', confidence: 0.3, raw, entities: { mediaId: mediaId ?? undefined } };
   }
 
-  if (intent === 'help' || intent === 'greeting') {
+  if (intent === 'help') {
+    return { intent, confidence: Number(parsed.confidence) || 0.8, raw };
+  }
+  if (intent === 'greeting') {
     return { intent, confidence: Number(parsed.confidence) || 0.8 };
   }
 
@@ -179,6 +297,35 @@ function normalizeGeminiResult(
         : undefined,
     cashConcept:
       typeof rawEntities.cashConcept === 'string' ? rawEntities.cashConcept.trim() : undefined,
+    orderDate: coerceDateOnly(
+      typeof rawEntities.orderDate === 'string' ? rawEntities.orderDate : undefined
+    ),
+    deliveryDate: coerceDateOnly(
+      typeof rawEntities.deliveryDate === 'string' ? rawEntities.deliveryDate : undefined
+    ),
+    supplierName:
+      typeof rawEntities.supplierName === 'string'
+        ? rawEntities.supplierName.trim()
+        : typeof rawEntities.proveedor === 'string'
+          ? rawEntities.proveedor.trim()
+          : undefined,
+    invoiceNumber:
+      typeof rawEntities.invoiceNumber === 'string'
+        ? rawEntities.invoiceNumber.trim()
+        : typeof rawEntities.numeroComprobante === 'string'
+          ? rawEntities.numeroComprobante.trim()
+          : undefined,
+    purchaseLines: parsePurchaseLines(rawEntities.purchaseLines ?? rawEntities.items),
+    paymentHint:
+      typeof rawEntities.paymentMethod === 'string'
+        ? rawEntities.paymentMethod.trim()
+        : typeof rawEntities.paymentHint === 'string'
+          ? rawEntities.paymentHint.trim()
+          : undefined,
+    paymentCuotas:
+      typeof rawEntities.paymentCuotas === 'number'
+        ? rawEntities.paymentCuotas
+        : Number(rawEntities.paymentCuotas) || undefined,
   });
 
   return {
@@ -197,20 +344,32 @@ async function parseWithGemini(input: WhatsappParseInput): Promise<ParsedWhatsap
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey });
     const message = input.text.trim() || '(sin texto, solo imagen)';
+    const copy = whatsappCopyForRubro(input.rubro);
+    const productRule = copy.hasProductExamples
+      ? `- productName: conservá exactamente lo que el usuario dijo. En este negocio el rubro es conocido; un ejemplo de cómo puede venir: «${copy.exampleProduct}». No inventes ítems. No simplifiques quitando detalle (peso, sabor, tamaño, color, talle) si lo dijo.`
+      : '- productName: conservá exactamente lo que el usuario dijo. No inventes un producto ni asumas un rubro (ni comida, ni ropa, ni servicios). No simplifiques quitando detalle si lo dijo.';
     const prompt = `Sos el parser de RiloBot, un ERP por WhatsApp para negocios pequeños (Uruguay/Latam).
-Clasificá el mensaje y, si hay imagen, usala como referencia del pedido/venta (producto, cantidad, monto manuscrito, etc.).
+Clasificá el mensaje y, si hay imagen, usala como referencia (pedido, venta o compra a proveedor).
 Devolvé SOLO JSON válido con:
-- intent: help|greeting|create_order|create_sale|register_payment|query_balance|query_cash|register_cash|unknown
+- intent: help|greeting|create_order|create_sale|create_purchase|register_payment|query_balance|query_cash|register_cash|unknown
 - confidence: 0-1
-- entities: objeto opcional con clientName, productName, quantity, amount (número), notes, paid (boolean), imageSummary, cashType (ingreso|egreso), cashConcept
+- entities: objeto opcional con clientName, supplierName, productName, quantity, amount (número), notes, paid (boolean), imageSummary, cashType (ingreso|egreso), cashConcept, orderDate (YYYY-MM-DD), deliveryDate (YYYY-MM-DD), invoiceNumber, purchaseLines (array de { productName, quantity, unitCost }), paymentMethod (efectivo|transferencia|debito|mercado_pago|tarjeta|proveedor si se ve o lo dijo), paymentCuotas (número)
 
 Reglas:
-- Si hay foto de pedido/lista/producto y no está claro, preferí create_order.
+- greeting: solo un saludo corto (hola, buenas), sin pedido de ayuda.
+- help: pregunta cómo funciona, qué puede hacer, productos, ejemplos, cómo registrar, o escribe «consultame» / «ayuda».
+${productRule}
+- clientName: nombre completo (nombre y apellido) si el usuario lo dijo. No recortes el apellido.
+- create_order: si solo dice «pedido» sin datos, igual intent create_order con entities vacías.
+- deliveryDate: fecha de entrega del pedido si la mencionó (entrega el viernes, 20/08, 20 de agosto).
+- orderDate: fecha de carga si la mencionó; si no, no inventes (queda hoy).
+- create_purchase: compra a proveedor, remito, factura de compra, foto de ticket/factura del mayorista, o «llegó mercadería». Extraé supplierName y purchaseLines (cantidad y costo unitario de cada ítem). amount = total de la compra si se ve. Si se ve o dice cómo pagó (efectivo, transferencia, tarjeta, fiado), ponelo en paymentMethod. No inventes el medio de pago.
+- Si hay foto de factura/remito/ticket de proveedor (CUIT, IVA, razón social, ítems con costo), preferí create_purchase.
+- Si hay foto de pedido/lista de cliente y no está claro, preferí create_order.
 - amount en número (sin símbolo $).
-- No inventes clientes ni montos si no aparecen.
+- No inventes clientes, proveedores ni montos si no aparecen.
 - query_cash: resumen de caja del día / cuánto se vendió o cobró.
-- register_cash: gasto/egreso o ingreso manual de caja (no es venta a cliente).
-- Stock, compras y proveedores NO son intents de WhatsApp.
+- register_cash: gasto/egreso o ingreso manual de caja (no es venta a cliente ni compra a proveedor).
 
 Mensaje: ${JSON.stringify(message)}`;
 
@@ -231,7 +390,7 @@ Mensaje: ${JSON.stringify(message)}`;
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: [{ role: 'user', parts }],
       config: { responseMimeType: 'application/json' },
     });
@@ -248,6 +407,27 @@ Mensaje: ${JSON.stringify(message)}`;
     console.warn('[whatsapp] Gemini parser fallback:', error);
     return null;
   }
+}
+
+async function parseWithGeminiGuarded(input: WhatsappParseInput): Promise<ParsedWhatsappCommand | null> {
+  const hasImage = Boolean(input.image?.buffer?.length);
+  const cost = hasImage ? 2 : 1;
+  if (input.businessId) {
+    try {
+      await assertCanUseAi(input.businessId, cost);
+    } catch {
+      return null;
+    }
+  }
+  const result = await parseWithGemini(input);
+  if (result && input.businessId) {
+    try {
+      await incrementAiUsage(input.businessId, cost);
+    } catch (error) {
+      console.warn('[whatsapp] No se pudo registrar uso de IA:', error);
+    }
+  }
+  return result;
 }
 
 function mergeParsed(
@@ -305,9 +485,9 @@ export async function parseWhatsappCommand(
   const rules = text
     ? parseWithRules(text)
     : ({
-        intent: 'create_order',
-        confidence: 0.4,
-        entities: { notes: 'Pedido desde foto de WhatsApp' },
+        intent: 'unknown',
+        confidence: 0.2,
+        entities: { notes: 'Mensaje con foto de WhatsApp' },
         raw: '',
       } satisfies ParsedWhatsappCommand);
 
@@ -317,10 +497,10 @@ export async function parseWhatsappCommand(
       rules.confidence < 0.85 ||
       ('entities' in rules &&
         !rules.entities?.clientName &&
-        ['create_order', 'create_sale', 'register_payment', 'query_balance', 'query_cash', 'register_cash'].includes(
+        ['create_order', 'create_sale', 'create_purchase', 'register_payment', 'query_balance', 'query_cash', 'register_cash'].includes(
           rules.intent
         )));
 
-  const gemini = needsGemini ? await parseWithGemini(normalized) : null;
+  const gemini = needsGemini ? await parseWithGeminiGuarded(normalized) : null;
   return mergeParsed(rules, gemini, normalized.mediaId);
 }

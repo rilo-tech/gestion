@@ -71,3 +71,32 @@ export async function seedBusinessWhatsappAccess(params: {
 
   return { seeded: true, phone };
 }
+
+/** Al dar de baja: el celular deja de resolver a esta empresa para que otro alta pueda usarlo. */
+export async function releaseBusinessWhatsappPhone(businessId: string): Promise<number> {
+  const now = new Date().toISOString();
+  const usersSnap = await db.collection(`negocios/${businessId}/whatsapp_users`).get();
+  let released = 0;
+  for (const doc of usersSnap.docs) {
+    const phone = String(doc.data()?.phone ?? '').trim();
+    if (!phone && doc.data()?.enabled === false) continue;
+    await doc.ref.set(
+      {
+        enabled: false,
+        previousPhone: phone || doc.data()?.previousPhone || null,
+        releasedAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    released += 1;
+  }
+  await db.collection(`negocios/${businessId}/whatsapp_config`).doc('default').set(
+    {
+      enabled: false,
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+  return released;
+}

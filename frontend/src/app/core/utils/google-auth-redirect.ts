@@ -4,9 +4,19 @@ import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY } from '../constants/
 
 let redirectResultPromise: Promise<UserCredential | null> | null = null;
 
+const REDIRECT_RESULT_TIMEOUT_MS = 8000;
+
 /** Firebase solo permite consumir el resultado del redirect una vez por carga de página. */
 export function getGoogleRedirectResultOnce(): Promise<UserCredential | null> {
-  redirectResultPromise ??= firebaseAuth.authStateReady().then(() => getRedirectResult(firebaseAuth));
+  redirectResultPromise ??= Promise.race([
+    firebaseAuth
+      .authStateReady()
+      .then(() => getRedirectResult(firebaseAuth))
+      .catch(() => null),
+    new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), REDIRECT_RESULT_TIMEOUT_MS);
+    }),
+  ]);
   return redirectResultPromise;
 }
 

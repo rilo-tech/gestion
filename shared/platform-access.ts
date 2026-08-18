@@ -39,6 +39,49 @@ export function isTrialProductId(value: unknown): value is TrialProductId {
   return typeof value === 'string' && (TRIAL_PRODUCT_IDS as readonly string[]).includes(value);
 }
 
+export function mergePlatformAccessWithProduct(
+  existing: ClientPlatformAccess,
+  product: TrialProductId
+): ClientPlatformAccess {
+  const incoming = platformAccessForTrialProduct(product);
+  const erpWebEnabled = existing.erpWebEnabled === true || incoming.erpWebEnabled === true;
+  const whatsappEnabled = existing.whatsappEnabled === true || incoming.whatsappEnabled === true;
+  const aiEnabled = existing.aiEnabled === true || incoming.aiEnabled === true;
+  let trialProduct: TrialProductId | null = product;
+  if (erpWebEnabled && whatsappEnabled) trialProduct = 'completo';
+  else if (whatsappEnabled) trialProduct = 'whatsapp';
+  else if (erpWebEnabled) trialProduct = 'erp';
+  return {
+    erpCoreEnabled: true,
+    erpWebEnabled,
+    whatsappEnabled,
+    aiEnabled,
+    trialProduct,
+  };
+}
+
+export function productAlreadyEnabled(
+  access: ClientPlatformAccess,
+  product: TrialProductId
+): boolean {
+  if (product === 'whatsapp') return access.whatsappEnabled === true;
+  if (product === 'erp') return access.erpWebEnabled === true;
+  return access.whatsappEnabled === true && access.erpWebEnabled === true;
+}
+
+/** Producto comercial efectivo según canales activos. */
+export function productIdFromAccess(access: ClientPlatformAccess): TrialProductId | null {
+  if (access.erpWebEnabled && access.whatsappEnabled) return 'completo';
+  if (access.whatsappEnabled) return 'whatsapp';
+  if (access.erpWebEnabled) return 'erp';
+  return isTrialProductId(access.trialProduct) ? access.trialProduct : null;
+}
+
+export function productLabelForAccess(access: ClientPlatformAccess): string {
+  const id = productIdFromAccess(access);
+  return id ? TRIAL_PRODUCT_LABELS[id] : 'RILO';
+}
+
 export function platformAccessForTrialProduct(product: TrialProductId): ClientPlatformAccess {
   switch (product) {
     case 'whatsapp':
