@@ -19,7 +19,9 @@ export function platformAccessPayload(access: ClientPlatformAccess): ClientPlatf
   return {
     erpCoreEnabled: true,
     erpWebEnabled: access.erpWebEnabled === true,
+    erpWebPaused: access.erpWebPaused === true,
     whatsappEnabled: access.whatsappEnabled === true,
+    whatsappPaused: access.whatsappPaused === true,
     aiEnabled: access.aiEnabled === true,
     trialProduct: access.trialProduct ?? null,
   };
@@ -40,7 +42,9 @@ export function sanitizePlatformAccessPatch(
 ): Partial<ClientPlatformAccess> {
   const patch: Partial<ClientPlatformAccess> = {};
   if (typeof body.erpWebEnabled === 'boolean') patch.erpWebEnabled = body.erpWebEnabled;
+  if (typeof body.erpWebPaused === 'boolean') patch.erpWebPaused = body.erpWebPaused;
   if (typeof body.whatsappEnabled === 'boolean') patch.whatsappEnabled = body.whatsappEnabled;
+  if (typeof body.whatsappPaused === 'boolean') patch.whatsappPaused = body.whatsappPaused;
   if (typeof body.aiEnabled === 'boolean') patch.aiEnabled = body.aiEnabled;
   if (isTrialProductId(body.trialProduct)) patch.trialProduct = body.trialProduct;
   return patch;

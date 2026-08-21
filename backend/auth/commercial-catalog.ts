@@ -17,9 +17,13 @@ function ref() {
 export async function getCommercialCatalog(): Promise<CommercialCatalog> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.value;
   const snap = await ref().get();
-  const value = clampCommercialCatalog(
+  const raw = clampCommercialCatalog(
     snap.exists ? (snap.data() as Partial<CommercialCatalog>) : DEFAULT_COMMERCIAL_CATALOG
   );
+  const value = applyEfMvpSeedIfUnchanged(raw);
+  if (value !== raw) {
+    await ref().set(value, { merge: false });
+  }
   cache = { at: Date.now(), value };
   return value;
 }
@@ -46,4 +50,21 @@ export async function saveCommercialCatalog(
 
 export function clearCommercialCatalogCache(): void {
   cache = null;
+}
+
+/** Si el doc de Firestore sigue el seed anterior (1490/2490/3490 + 70% off), aplica el MVP de la EF. */
+function applyEfMvpSeedIfUnchanged(catalog: CommercialCatalog): CommercialCatalog {
+  const oldPrices =
+    catalog.products.whatsapp.amountMonthlyUY === 1490 &&
+    catalog.products.erp.amountMonthlyUY === 2490 &&
+    catalog.products.completo.amountMonthlyUY === 3490;
+  const oldIntro = catalog.introDiscountMonths === 6 && catalog.introDiscountPercent === 70;
+  if (!oldPrices && !oldIntro) return catalog;
+  return clampCommercialCatalog({
+    ...catalog,
+    introDiscountMonths: 0,
+    introDiscountPercent: 0,
+    extraUserMonthlyUY: catalog.extraUserMonthlyUY === 490 ? 190 : catalog.extraUserMonthlyUY,
+    products: oldPrices ? DEFAULT_COMMERCIAL_CATALOG.products : catalog.products,
+  });
 }

@@ -1,6 +1,7 @@
 import express from 'express';
 import { getBusiness } from '../auth/business.ts';
 import { resolvePlatformAccessForBusiness } from '../auth/platform-access.ts';
+import { isWhatsappOperational } from '../../shared/platform-access.ts';
 import { requireAuth, requireSuperadmin } from '../auth/middleware.ts';
 import { handleWhatsappMessage } from '../whatsapp/message-handler.ts';
 import { resolveOwnerPhoneForBusiness } from '../whatsapp/tenant-resolver.ts';
@@ -38,8 +39,12 @@ router.post('/simulate', async (req, res) => {
     }
 
     const platformAccess = business.platformAccess ?? resolvePlatformAccessForBusiness({});
-    if (!platformAccess.whatsappEnabled) {
-      return res.status(400).json({ error: 'WhatsApp no habilitado para esta empresa.' });
+    if (!isWhatsappOperational(platformAccess)) {
+      return res.status(400).json({
+        error: platformAccess.whatsappEnabled
+          ? 'RILO Bot está dado de baja en esta empresa.'
+          : 'WhatsApp no habilitado para esta empresa.',
+      });
     }
 
     const result = await handleWhatsappMessage({

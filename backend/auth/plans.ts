@@ -64,7 +64,7 @@ const profesionalPrices = landingPrices('plan_profesional');
 const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   {
     id: 'plan_basico',
-    nombre: 'RiloBot (WhatsApp)',
+    nombre: 'RILO Bot',
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 1,
@@ -79,7 +79,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   },
   {
     id: 'plan_intermedio',
-    nombre: 'Panel web',
+    nombre: 'RILO Gestión',
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 1,
@@ -94,7 +94,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
   },
   {
     id: 'plan_profesional',
-    nombre: 'RiloBot + Panel',
+    nombre: 'RILO Completo',
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 2,

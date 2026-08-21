@@ -145,7 +145,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
           <div class="border-l-4 border-l-teal-500 p-4 sm:p-5">
             <h3 class="font-bold text-gray-900 mb-1">Nueva empresa / suscripción</h3>
             <p class="text-sm text-gray-600 mb-4">
-              Creá la empresa, el admin y el WhatsApp si el producto es RiloBot o Completo.
+              Creá la empresa, el admin y el WhatsApp si el producto es RILO Bot o RILO Completo.
             </p>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <input
@@ -163,9 +163,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                   (ngModelChange)="onCreateProductChange()"
                   name="businessDraftProduct"
                   class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
-                  <option value="whatsapp">RiloBot (WhatsApp)</option>
-                  <option value="erp">Panel web</option>
-                  <option value="completo">RiloBot + Panel</option>
+                  <option value="whatsapp">RILO Bot</option>
+                  <option value="erp">RILO Gestión</option>
+                  <option value="completo">RILO Completo</option>
                 </select>
               </div>
               <input
@@ -192,7 +192,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               <p
                 *ngIf="businessDraft.trialProduct === 'whatsapp' || businessDraft.trialProduct === 'completo'"
                 class="md:col-span-2 text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
-                Con RiloBot / Completo el WhatsApp se habilita automáticamente con ese número.
+                Con RILO Bot / RILO Completo el WhatsApp se habilita automáticamente con ese número.
               </p>
               <label class="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900 md:col-span-2 cursor-pointer">
                 <input
@@ -787,8 +787,8 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <h3 class="font-bold text-gray-900">Embudo comercial (landing + checkout)</h3>
             <p class="text-sm text-gray-600 mt-1 leading-relaxed">
               Estos números se ven en la landing, en /planes y en el registro.
-              Días de prueba, techos del plan gratis, precios y el % off al activar pago.
-              Al guardar, se publican en el sitio.
+              Precios de lanzamiento, días de prueba y operador extra. Al guardar, se publican en landing y checkout.
+              Promo % off y techos de plan gratis: dejar en 0 / no usar en el MVP (no hay plan gratis permanente).
             </p>
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -804,10 +804,10 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <label class="text-xs font-medium text-gray-600">Usuario extra ARS
               <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyAR" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
-            <label class="text-xs font-medium text-gray-600">Meses de promo (al activar pago)
+            <label class="text-xs font-medium text-gray-600">Meses de promo (MVP: 0)
               <input type="number" min="0" max="24" [(ngModel)]="commercialDraft.introDiscountMonths" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
-            <label class="text-xs font-medium text-gray-600">% off al activar pago
+            <label class="text-xs font-medium text-gray-600">% off al activar (MVP: 0)
               <input type="number" min="0" max="90" [(ngModel)]="commercialDraft.introDiscountPercent" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
           </div>
@@ -869,7 +869,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </article>
         <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
           Los planes son <strong>plantillas para empresas nuevas</strong> y deben coincidir con la landing:
-          RiloBot 1.490 · Panel 2.490 · Completo 3.490 (UYU) + precio por usuario extra.
+          RILO Bot · RILO Gestión · RILO Completo (UYU) + precio por usuario extra.
           Para cambiar un cliente puntual, abrí su ficha en Empresas.
         </p>
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1244,9 +1244,9 @@ export class PlatformComponent implements OnInit {
   readonly moduleCatalog = SELLABLE_SUBSCRIPTION_MODULE_CATALOG;
   readonly defaultTrialDays = DEFAULT_TRIAL_DAYS;
   readonly planTemplateOptions = [
-    { id: 'plan_basico', label: 'RiloBot' },
-    { id: 'plan_intermedio', label: 'Panel' },
-    { id: 'plan_profesional', label: 'Completo' },
+    { id: 'plan_basico', label: 'RILO Bot' },
+    { id: 'plan_intermedio', label: 'RILO Gestión' },
+    { id: 'plan_profesional', label: 'RILO Completo' },
   ];
 
   activeTab: PlatformTab = 'empresas';
@@ -1266,9 +1266,9 @@ export class PlatformComponent implements OnInit {
   commercialDraft: CommercialCatalog = structuredClone(DEFAULT_COMMERCIAL_CATALOG);
   savingCommercial = false;
   readonly commercialProductRows: { id: 'whatsapp' | 'erp' | 'completo'; label: string }[] = [
-    { id: 'whatsapp', label: 'RiloBot' },
-    { id: 'erp', label: 'Panel web' },
-    { id: 'completo', label: 'Completo' },
+    { id: 'whatsapp', label: 'RILO Bot' },
+    { id: 'erp', label: 'RILO Gestión' },
+    { id: 'completo', label: 'RILO Completo' },
   ];
 
   loadingBusinesses = false;
@@ -2004,9 +2004,9 @@ export class PlatformComponent implements OnInit {
   }
 
   trialProductLabel(product: string | null | undefined): string {
-    if (product === 'whatsapp') return 'RiloBot';
-    if (product === 'erp') return 'Panel';
-    if (product === 'completo') return 'RiloBot + Panel';
+    if (product === 'whatsapp') return 'RILO Bot';
+    if (product === 'erp') return 'RILO Gestión';
+    if (product === 'completo') return 'RILO Completo';
     return product ?? '';
   }
 
@@ -2018,9 +2018,9 @@ export class PlatformComponent implements OnInit {
       if (label) return label;
     }
     const access = business.platformAccess;
-    if (access?.whatsappEnabled && access?.erpWebEnabled) return 'RiloBot + Panel';
-    if (access?.whatsappEnabled) return 'RiloBot';
-    if (access?.erpWebEnabled) return 'Panel';
+    if (access?.whatsappEnabled && access?.erpWebEnabled) return 'RILO Completo';
+    if (access?.whatsappEnabled) return 'RILO Bot';
+    if (access?.erpWebEnabled) return 'RILO Gestión';
     return business.plan?.nombre || '—';
   }
 
@@ -2058,7 +2058,7 @@ export class PlatformComponent implements OnInit {
     if (needsWhatsapp && !phone) {
       this.dialogService.alert({
         title: 'WhatsApp requerido',
-        message: 'Con RiloBot o Completo tenés que cargar el número del responsable (+598…).',
+        message: 'Con RILO Bot o RILO Completo tenés que cargar el número del responsable (+598…).',
       });
       return;
     }

@@ -1,6 +1,7 @@
 import express from 'express';
 import { toPublicBusinessInfo } from '../auth/business.ts';
-import { enableProductOnBusiness } from '../auth/enable-product.ts';
+import { disableProductOnBusiness, enableProductOnBusiness } from '../auth/enable-product.ts';
+import { assertSupervisorActionSecret } from '../auth/confirm-action.ts';
 import {
   sendWhatsappPhoneCode,
   verifyWhatsappPhoneCode,
@@ -42,7 +43,7 @@ router.post(
       const { businessId } = req.params;
       const raw = req.body?.product ?? req.body?.producto;
       if (!isTrialProductId(raw)) {
-        return res.status(400).json({ error: 'Elegí RiloBot, panel o completo.' });
+        return res.status(400).json({ error: 'Elegí RILO Bot, RILO Gestión o RILO Completo.' });
       }
       const result = await enableProductOnBusiness({ businessId, product: raw });
       const business = await toPublicBusinessInfo(businessId, { business: result.business });
@@ -62,12 +63,63 @@ router.post(
       const code = error instanceof Error ? error.message : 'UNKNOWN';
       if (code === 'WHATSAPP_PHONE_REQUIRED') {
         return res.status(400).json({
-          error: 'Para activar RiloBot tenés que cargar y confirmar el WhatsApp de la cuenta.',
+          error: 'Para activar RILO Bot tenés que cargar y confirmar el WhatsApp de la cuenta.',
           code,
         });
       }
       console.error('Error enabling product:', error);
       res.status(500).json({ error: 'No se pudo habilitar el módulo.' });
+    }
+  }
+);
+
+router.post(
+  '/:businessId/disable-product',
+  requireAuth,
+  assertCompanyTenantAccess,
+  requireSupervisor,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { businessId } = req.params;
+      const raw = req.body?.product ?? req.body?.producto ?? 'whatsapp';
+      if (!isTrialProductId(raw)) {
+        return res.status(400).json({ error: 'Elegí qué módulo dar de baja.' });
+      }
+      try {
+        await assertSupervisorActionSecret({
+          businessId,
+          userId: req.auth?.userId ?? '',
+          password: String(req.body?.password ?? ''),
+          confirmNombre: String(req.body?.confirmNombre ?? ''),
+        });
+      } catch (confirmError) {
+        const confirmCode = confirmError instanceof Error ? confirmError.message : 'UNKNOWN';
+        if (confirmCode === 'PASSWORD_REQUIRED') {
+          return res.status(400).json({ error: 'Ingresá tu contraseña para confirmar la baja.' });
+        }
+        if (confirmCode === 'PASSWORD_INVALID') {
+          return res.status(403).json({ error: 'La contraseña no es correcta.' });
+        }
+        if (confirmCode === 'CONFIRM_NAME_REQUIRED') {
+          return res.status(400).json({
+            error: 'Para confirmar, escribí el nombre de la empresa tal como aparece arriba.',
+          });
+        }
+        throw confirmError;
+      }
+      const result = await disableProductOnBusiness({ businessId, product: raw });
+      const business = await toPublicBusinessInfo(businessId, { business: result.business });
+      return res.json({
+        outcome: result.outcome,
+        business,
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'UNKNOWN';
+      if (code === 'DISABLE_NOT_SUPPORTED') {
+        return res.status(400).json({ error: 'Desde acá se da de baja RILO Bot o RILO Gestión, de a uno.' });
+      }
+      console.error('Error disabling product:', error);
+      res.status(500).json({ error: 'No se pudo dar de baja el módulo.' });
     }
   }
 );
@@ -110,7 +162,7 @@ router.post(
         ...(result.devCode ? { devCode: result.devCode } : {}),
         hint: result.whatsappSent
           ? 'Te mandamos un código por WhatsApp.'
-          : 'Si no te llega el código, escribí Hola a RiloBot con ese número y pedilo de nuevo.',
+          : 'Si no te llega el código, escribí Hola a RILO Bot con ese número y pedilo de nuevo.',
       });
     } catch (error) {
       const code = error instanceof Error ? error.message : 'UNKNOWN';

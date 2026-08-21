@@ -58,7 +58,7 @@ export function buildHowToMessage(userName?: string, rubro?: string | null): str
   const hi = firstName(userName);
   const copy = whatsappCopyForRubro(rubro);
   return (
-    `Hola${hi ? ` ${hi}` : ''} 👋 Soy RiloBot.\n\n` +
+    `Hola${hi ? ` ${hi}` : ''} 👋 Soy RILO Bot.\n\n` +
     `Anoto pedidos, ventas, cobros, saldos y caja. Escribís como hablás, te muestro un resumen y confirmás con SÍ.\n\n` +
     `${copy.productHint}\n` +
     `Ejemplos:\n` +

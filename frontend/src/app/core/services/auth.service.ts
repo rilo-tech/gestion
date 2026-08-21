@@ -25,6 +25,8 @@ import { getGoogleRedirectResultOnce } from '../utils/google-auth-redirect';
 import { PublicBusinessInfo } from './business.service';
 import type { SubscriptionModuleId } from '../../../../../shared/subscription-modules.ts';
 import {
+  isErpWebOperational,
+  isWhatsappOperational,
   normalizePlatformAccess,
   type ClientPlatformAccess,
   type TrialProductId,
@@ -141,11 +143,35 @@ export class AuthService {
 
   get canAccessErpWeb(): boolean {
     if (this.isPlatformAdmin) return true;
-    return this.platformAccess.erpWebEnabled;
+    return isErpWebOperational(this.platformAccess);
+  }
+
+  get hasErpEntitlement(): boolean {
+    return this.platformAccess.erpWebEnabled === true;
+  }
+
+  get isErpPaused(): boolean {
+    return this.platformAccess.erpWebEnabled === true && this.platformAccess.erpWebPaused === true;
   }
 
   get canAccessWhatsapp(): boolean {
-    return this.platformAccess.whatsappEnabled;
+    return isWhatsappOperational(this.platformAccess);
+  }
+
+  get hasWhatsappEntitlement(): boolean {
+    return this.platformAccess.whatsappEnabled === true;
+  }
+
+  get isWhatsappPaused(): boolean {
+    return this.platformAccess.whatsappEnabled === true && this.platformAccess.whatsappPaused === true;
+  }
+
+  get planRoute(): string {
+    return '/plan';
+  }
+
+  get settingsRoute(): string {
+    return this.canAccessErpWeb ? '/settings' : '/mi-cuenta';
   }
 
   get userInitial(): string {
@@ -521,14 +547,39 @@ export class AuthService {
   }
 
   enableProduct(product: TrialProductId): Observable<{
-    outcome: 'already_active' | 'module_added';
+    outcome: 'already_active' | 'module_added' | 'resumed';
     business: PublicBusinessInfo;
   }> {
     return this.http
       .post<{
-        outcome: 'already_active' | 'module_added';
+        outcome: 'already_active' | 'module_added' | 'resumed';
         business: PublicBusinessInfo;
       }>(`/api/business/${this.currentBusinessId}/enable-product`, { product })
+      .pipe(
+        timeout({ first: 20000 }),
+        tap(({ business }) => {
+          if (business) this.businessSubject.next(business);
+        }),
+        switchMap((result) => this.reloadSession().pipe(map(() => result)))
+      );
+  }
+
+  disableProduct(
+    product: TrialProductId,
+    confirmation: { password?: string; confirmNombre?: string }
+  ): Observable<{
+    outcome: 'already_paused' | 'paused' | 'not_enabled';
+    business: PublicBusinessInfo;
+  }> {
+    return this.http
+      .post<{
+        outcome: 'already_paused' | 'paused' | 'not_enabled';
+        business: PublicBusinessInfo;
+      }>(`/api/business/${this.currentBusinessId}/disable-product`, {
+        product,
+        password: confirmation.password ?? '',
+        confirmNombre: confirmation.confirmNombre ?? '',
+      })
       .pipe(
         timeout({ first: 20000 }),
         tap(({ business }) => {

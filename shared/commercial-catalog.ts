@@ -36,7 +36,7 @@ export type CommercialCatalog = {
 
 export function trialCtaLabel(days: number, productLabel?: string): string {
   const n = Math.max(1, Math.round(Number(days) || 30));
-  return productLabel ? `Probar ${productLabel} ${n} días gratis` : `Probar ${n} días gratis`;
+  return productLabel ? `${productLabel} ${n} días gratis` : `${n} días gratis`;
 }
 
 export type CommercialFunnelStep = {
@@ -45,30 +45,28 @@ export type CommercialFunnelStep = {
   body: string;
 };
 
-/** 1) 30 días a full → 2) seguís gratis → 3) pagás solo si te pasás. */
+/** 1) 30 días gratis → 2) usá el producto → 3) contratá mensual. */
 export function commercialFunnelSteps(catalog: CommercialCatalog): CommercialFunnelStep[] {
   return [
     {
       step: '1',
-      title: `${catalog.trialDays} días a full`,
-      body: 'Sin tarjeta. Probá todo el producto con tu negocio real.',
+      title: `${catalog.trialDays} días gratis`,
+      body: 'Sin tarjeta. Elegí RILO Bot, RILO Gestión o RILO Completo y probá con tu negocio real.',
     },
     {
       step: '2',
-      title: 'Seguís gratis',
-      body: 'Un feriante o taller chico puede vivir ahí. No te cobramos por haber probado.',
+      title: 'Usá lo que contrataste',
+      body: 'Cargá por WhatsApp, controlá en la web, o combiná los dos. Es la misma información.',
     },
     {
       step: '3',
-      title: 'Pagás cuando lo necesitás',
-      body:
-        `Si pasás de ${catalog.lite.maxOperacionesMes} cargas al mes, se te acaba la IA, ` +
-        `o se te llenan clientes/productos (${catalog.lite.maxClientes} / ${catalog.lite.maxProductos}).`,
+      title: 'Activá el plan mensual',
+      body: 'Al vencer la prueba tus datos siguen. Para seguir operando, contratás el plan. Cancelás cuando quieras.',
     },
   ];
 }
 
-/** Embudo: $0 para enganchar → techos cuando el volumen es real → pago porque lo necesitan. */
+/** Precios de lanzamiento MVP (UYU). Superadmin puede publicarlos distintos. */
 export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
   trialDays: 30,
   trialAccionesIaMes: 150,
@@ -78,14 +76,14 @@ export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
     maxAccionesIaMes: 20,
     maxOperacionesMes: 100,
   },
-  extraUserMonthlyUY: 490,
-  extraUserMonthlyAR: 9900,
-  introDiscountMonths: 6,
-  introDiscountPercent: 70,
+  extraUserMonthlyUY: 190,
+  extraUserMonthlyAR: 4900,
+  introDiscountMonths: 0,
+  introDiscountPercent: 0,
   products: {
-    whatsapp: { amountMonthlyUY: 1490, amountMonthlyAR: 36900, includedAi: 1000 },
-    erp: { amountMonthlyUY: 2490, amountMonthlyAR: 59900, includedAi: 0 },
-    completo: { amountMonthlyUY: 3490, amountMonthlyAR: 84900, includedAi: 2000 },
+    whatsapp: { amountMonthlyUY: 690, amountMonthlyAR: 16900, includedAi: 1000 },
+    erp: { amountMonthlyUY: 590, amountMonthlyAR: 14900, includedAi: 0 },
+    completo: { amountMonthlyUY: 990, amountMonthlyAR: 24900, includedAi: 2000 },
   },
   updatedAt: null,
 };
@@ -167,6 +165,7 @@ export function overlayProductsForCountry(
     const currency = product.currency as BillingCurrency;
     return {
       ...product,
+      featured: product.id === 'completo',
       amountMonthly,
       amountYearly,
       extraUserMonthly,
@@ -201,16 +200,27 @@ export function litePitch(catalog: CommercialCatalog): string {
 }
 
 export function stayFreePitch(catalog: CommercialCatalog): string {
-  return (
-    `${catalog.trialDays} días a full, sin tarjeta. Después seguís gratis. ` +
-    `Un feriante o taller chico puede vivir ahí. ` +
-    `Pagan cuando pasan de ${catalog.lite.maxOperacionesMes} cargas al mes, se les acaba la IA, ` +
-    `o se les llenan clientes/productos.`
-  );
+  return `${catalog.trialDays} días gratis, sin tarjeta. Cancelás cuando quieras. Al vencer, tus datos siguen: para operar de nuevo, activá un plan.`;
 }
 
 export function trialMicrocopy(catalog: CommercialCatalog): string {
-  return `${catalog.trialDays} días a full, sin tarjeta. Después seguís gratis si no te pasás.`;
+  return `${catalog.trialDays} días gratis, sin tarjeta. Configuración guiada. Cancelás cuando quieras.`;
+}
+
+export function completeVsSeparate(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode
+): { separate: number; completo: number; saving: number } {
+  const separate =
+    amountMonthlyFor(catalog, 'whatsapp', country) + amountMonthlyFor(catalog, 'erp', country);
+  const completo = amountMonthlyFor(catalog, 'completo', country);
+  return { separate, completo, saving: Math.max(0, separate - completo) };
+}
+
+export function trialCtaForProduct(productId: TrialProductId): string {
+  if (productId === 'whatsapp') return 'Probar RILO Bot';
+  if (productId === 'erp') return 'Probar RILO Gestión';
+  return 'Probar RILO Completo';
 }
 
 export function hasIntroDiscount(catalog: CommercialCatalog): boolean {
@@ -225,6 +235,12 @@ export function discountedMonthly(amountMonthly: number, percent: number): numbe
 export function introDiscountLabel(catalog: CommercialCatalog): string {
   if (!hasIntroDiscount(catalog)) return '';
   return `${catalog.introDiscountMonths} meses con ${catalog.introDiscountPercent}% off`;
+}
+
+/** Meses de promo que todavía le quedan a esta cuenta (cada período cobrado cuenta 1). */
+export function introMonthsRemaining(paymentsUsed: number, catalog: CommercialCatalog): number {
+  if (!hasIntroDiscount(catalog)) return 0;
+  return Math.max(0, catalog.introDiscountMonths - Math.max(0, Math.floor(paymentsUsed || 0)));
 }
 
 export function introPriceLabel(

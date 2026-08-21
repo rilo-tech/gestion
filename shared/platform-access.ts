@@ -4,17 +4,24 @@ export const TRIAL_PRODUCT_IDS = ['whatsapp', 'erp', 'completo'] as const;
 export type TrialProductId = (typeof TRIAL_PRODUCT_IDS)[number];
 
 export const TRIAL_PRODUCT_LABELS: Record<TrialProductId, string> = {
-  whatsapp: 'RiloBot (WhatsApp)',
+  whatsapp: 'RILO Bot',
+  erp: 'RILO Gestión',
+  completo: 'RILO Completo',
+};
+
+/** Frase corta bajo el nombre del producto (landing / planes). */
+export const TRIAL_PRODUCT_TAGLINES: Record<TrialProductId, string> = {
+  whatsapp: 'Gestión rápida desde WhatsApp',
   erp: 'Panel web',
-  completo: 'RiloBot + Panel',
+  completo: 'Bot + Gestión',
 };
 
 export const TRIAL_PRODUCT_DESCRIPTIONS: Record<TrialProductId, string> = {
   whatsapp:
-    'Recomendado para empezar. Ideal para microemprendimientos que manejan el negocio desde el celular. Incluye 1 WhatsApp, acciones IA, pedidos, ventas, cobros, saldos, fotos y consultas rápidas.',
-  erp: 'Para quien prefiere ver el negocio en pantalla. Incluye 1 usuario, clientes, pedidos, ventas, cobros, caja, stock, compras, proveedores y reportes base.',
+    'Gestión rápida desde WhatsApp. Escribís lo que pasó, RILO Bot lo entiende y antes de guardar te muestra un resumen para que confirmes.',
+  erp: 'Panel web para controlar tu negocio en la computadora. Revisá clientes, productos, pedidos, ventas, compras y caja desde un solo lugar.',
   completo:
-    'Cargá rápido por WhatsApp y controlá todo en la web. Un mismo historial, 1 WhatsApp, 1 usuario y más acciones IA.',
+    'Bot + Gestión: cargá rápido desde WhatsApp y controlá todo desde la web. Una sola información, dos formas de trabajar.',
 };
 
 export interface ClientPlatformAccess {
@@ -22,7 +29,17 @@ export interface ClientPlatformAccess {
   erpCoreEnabled: boolean;
   /** Panel web del cliente (/dashboard, etc.). */
   erpWebEnabled: boolean;
+  /**
+   * Baja operativa del panel. El producto sigue contratado; el cliente no entra
+   * al ERP hasta reactivarlo desde Planes.
+   */
+  erpWebPaused?: boolean;
   whatsappEnabled: boolean;
+  /**
+   * Baja operativa de RILO Bot. El producto sigue contratado; el bot no responde
+   * hasta reactivarlo desde Planes.
+   */
+  whatsappPaused?: boolean;
   aiEnabled: boolean;
   trialProduct?: TrialProductId | null;
 }
@@ -30,7 +47,9 @@ export interface ClientPlatformAccess {
 export const DEFAULT_PLATFORM_ACCESS: ClientPlatformAccess = {
   erpCoreEnabled: true,
   erpWebEnabled: true,
+  erpWebPaused: false,
   whatsappEnabled: false,
+  whatsappPaused: false,
   aiEnabled: false,
   trialProduct: null,
 };
@@ -54,10 +73,42 @@ export function mergePlatformAccessWithProduct(
   return {
     erpCoreEnabled: true,
     erpWebEnabled,
+    erpWebPaused: incoming.erpWebEnabled ? false : existing.erpWebPaused === true,
     whatsappEnabled,
+    whatsappPaused: incoming.whatsappEnabled ? false : existing.whatsappPaused === true,
     aiEnabled,
     trialProduct,
   };
+}
+
+/** Panel web contratado y no dado de baja. */
+export function isErpWebOperational(access: ClientPlatformAccess): boolean {
+  return access.erpWebEnabled === true && access.erpWebPaused !== true;
+}
+
+/** RILO Bot contratado y no dado de baja. */
+export function isWhatsappOperational(access: ClientPlatformAccess): boolean {
+  return access.whatsappEnabled === true && access.whatsappPaused !== true;
+}
+
+export function withErpWebPaused(
+  access: ClientPlatformAccess,
+  paused: boolean
+): ClientPlatformAccess {
+  if (!access.erpWebEnabled) {
+    return { ...access, erpWebPaused: false };
+  }
+  return { ...access, erpWebPaused: paused };
+}
+
+export function withWhatsappPaused(
+  access: ClientPlatformAccess,
+  paused: boolean
+): ClientPlatformAccess {
+  if (!access.whatsappEnabled) {
+    return { ...access, whatsappPaused: false };
+  }
+  return { ...access, whatsappPaused: paused };
 }
 
 export function productAlreadyEnabled(
@@ -88,7 +139,9 @@ export function platformAccessForTrialProduct(product: TrialProductId): ClientPl
       return {
         erpCoreEnabled: true,
         erpWebEnabled: false,
+        erpWebPaused: false,
         whatsappEnabled: true,
+        whatsappPaused: false,
         aiEnabled: true,
         trialProduct: product,
       };
@@ -96,7 +149,9 @@ export function platformAccessForTrialProduct(product: TrialProductId): ClientPl
       return {
         erpCoreEnabled: true,
         erpWebEnabled: true,
+        erpWebPaused: false,
         whatsappEnabled: false,
+        whatsappPaused: false,
         aiEnabled: false,
         trialProduct: product,
       };
@@ -104,7 +159,9 @@ export function platformAccessForTrialProduct(product: TrialProductId): ClientPl
       return {
         erpCoreEnabled: true,
         erpWebEnabled: true,
+        erpWebPaused: false,
         whatsappEnabled: true,
+        whatsappPaused: false,
         aiEnabled: true,
         trialProduct: product,
       };
@@ -123,7 +180,9 @@ export function normalizePlatformAccess(
   return {
     erpCoreEnabled: true,
     erpWebEnabled: raw.erpWebEnabled !== false,
+    erpWebPaused: raw.erpWebPaused === true,
     whatsappEnabled: raw.whatsappEnabled === true,
+    whatsappPaused: raw.whatsappPaused === true,
     aiEnabled: raw.aiEnabled === true,
     trialProduct: isTrialProductId(raw.trialProduct) ? raw.trialProduct : null,
   };

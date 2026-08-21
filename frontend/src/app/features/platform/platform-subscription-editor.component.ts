@@ -118,7 +118,7 @@ export type BusinessSubscriptionDraft = {
         <div>
           <h4 class="text-sm font-semibold text-gray-900">Precio del producto</h4>
           <p class="text-xs text-gray-500 mt-0.5">
-            Debe coincidir con la landing (RiloBot / Panel / Completo).
+            Debe coincidir con la landing (RILO Bot / Panel / Completo).
           </p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

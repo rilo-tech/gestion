@@ -85,7 +85,7 @@ function mapTrialError(error: unknown): { status: number; message: string; code?
     },
     WHATSAPP_PHONE_REQUIRED: {
       status: 400,
-      message: 'Para activar RiloBot hace falta el WhatsApp cargado en la cuenta.',
+      message: 'Para activar RILO Bot hace falta el WhatsApp cargado en la cuenta.',
     },
     TRIAL_PLAN_UNAVAILABLE: { status: 503, message: 'El plan de prueba no está disponible.' },
     OTP_RATE_LIMIT: { status: 429, message: 'Esperá un momento antes de pedir otro código.' },

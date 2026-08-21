@@ -54,12 +54,12 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             height="120"
             class="mx-auto h-20 w-auto object-contain"
             decoding="async" />
-          <h1 class="text-2xl sm:text-3xl font-bold mt-3">{{ trialDays }} días a full, sin tarjeta</h1>
+          <h1 class="text-2xl sm:text-3xl font-bold mt-3">{{ trialDays }} días gratis, sin tarjeta</h1>
           <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
             {{ productIntro }}
           </p>
           <p class="mt-2 text-xs text-teal-400/90 font-medium">
-            Después seguís gratis. Un feriante o taller chico puede vivir ahí.
+            Al vencer, tus datos siguen. Para seguir operando, activás un plan.
           </p>
         </div>
 
@@ -78,7 +78,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               <div class="flex items-start justify-between gap-2">
                 <div>
                   <p class="font-semibold text-white">{{ plan.label }}</p>
-                  <p class="text-xs text-teal-300 mt-0.5">Gratis · {{ plan.trialDays }} días a full, después seguís si no te pasás</p>
+                  <p class="text-xs text-teal-300 mt-0.5">{{ plan.trialDays }} días gratis · {{ priceFor(plan.id) }}</p>
                   <p class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ plan.headline }}</p>
                 </div>
                 <span *ngIf="plan.featured" class="text-[10px] font-bold uppercase text-teal-300 shrink-0">
@@ -96,11 +96,11 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             </button>
           </div>
           <ul class="text-sm text-gray-300 space-y-2 bg-gray-900/60 rounded-xl border border-gray-800 p-4">
-            <li>✓ {{ trialDays }} días a full, en $0, sin tarjeta</li>
-            <li>✓ Después seguís gratis. Un feriante o taller chico puede vivir ahí</li>
-            <li>✓ Pagás cuando pasás de {{ catalog.lite.maxOperacionesMes }} cargas al mes, se te acaba la IA, o se te llenan clientes/productos</li>
+            <li>✓ {{ trialDays }} días gratis, en $0, sin tarjeta</li>
+            <li>✓ Una sola cuenta = una empresa</li>
+            <li>✓ Al vencer, tus datos siguen; activás un plan para seguir operando</li>
             <li>✓ Verificación por email</li>
-            <li>✓ Si ya usás Panel o RiloBot, se suma el módulo a la misma empresa (mismo email, teléfono y contraseña)</li>
+            <li>✓ Si ya usás RILO Gestión o RILO Bot, se suma el producto a la misma empresa</li>
           </ul>
           <button
             type="button"
@@ -116,7 +116,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
 
         <form *ngIf="step === 'form'" (submit)="submitForm(); $event.preventDefault()" class="space-y-4">
           <p class="text-xs text-teal-300/90 bg-teal-950/40 border border-teal-900 rounded-lg px-3 py-2">
-            ¿Ya tenés Rilo Gestión o RiloBot? Usá el mismo email, teléfono y contraseña: no se crea otra empresa, se habilita este módulo.
+            ¿Ya tenés RILO Gestión o RILO Bot? Usá el mismo email, teléfono y contraseña: no se crea otra empresa, se habilita este módulo.
           </p>
           <div>
             <label [class]="formLabelClass" for="businessName">Nombre del negocio *</label>
@@ -319,13 +319,13 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             <p class="text-sm text-gray-300 mt-2 text-center">{{ doneLead }}</p>
 
             <div *ngIf="showWhatsappInstructions" class="mt-4 rounded-lg border border-teal-900 bg-black/20 px-3 py-3 space-y-2">
-              <p class="text-sm text-white font-medium">Cómo usar RiloBot</p>
+              <p class="text-sm text-white font-medium">Cómo usar RILO Bot</p>
               <p class="text-sm text-gray-300 leading-relaxed">
                 Escribí <strong>siempre desde este WhatsApp</strong>:
                 <span class="font-mono text-white">{{ registeredPhoneDisplay }}</span>
               </p>
               <p class="text-sm text-gray-300 leading-relaxed">
-                Al número de RiloBot:
+                Al número de RILO Bot:
                 <span class="font-mono text-white">{{ rilobotNumberDisplay }}</span>
               </p>
               <p class="text-xs text-gray-500">
@@ -336,12 +336,12 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
                 target="_blank"
                 rel="noopener"
                 class="inline-flex mt-1 text-sm font-semibold text-teal-400 hover:underline">
-                Abrir chat con RiloBot
+                Abrir chat con RILO Bot
               </a>
             </div>
 
             <p *ngIf="canEnterErp" class="text-sm text-gray-400 mt-4 text-center">
-              Panel web:
+              RILO Gestión:
               código <span class="font-mono text-white">{{ loginHint?.businessCode }}</span>
               · usuario <span class="font-mono text-white">{{ loginHint?.loginUsername }}</span>
             </p>
@@ -445,12 +445,12 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
   get productIntro(): string {
     if (this.trialProduct === 'whatsapp') {
-      return 'RiloBot: cargá pedidos, ventas y cobros por WhatsApp. Ideal para microemprendimientos.';
+      return 'RILO Bot: pedidos, ventas, compras, cobros y caja por WhatsApp.';
     }
     if (this.trialProduct === 'erp') {
-      return 'Panel web: caja, clientes, stock, compras y reportes. Sin bot en la prueba base.';
+      return 'RILO Gestión: clientes, productos, pedidos, ventas, compras y caja en la web.';
     }
-    return 'WhatsApp + panel web. Cargá rápido y controlá todo el negocio.';
+    return 'RILO Completo: cargá por WhatsApp y controlá todo en la web.';
   }
 
   get doneTitle(): string {
@@ -467,12 +467,12 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
       return `Tu empresa ${this.loginHint?.businessCode ?? ''} ya tenía ${this.selectedProductLabel}.`;
     }
     if (this.trialProduct === 'whatsapp') {
-      return 'Tu prueba de RiloBot está activa. No hace falta entrar al panel: se usa por WhatsApp.';
+      return 'Tu prueba de RILO Bot está activa. No hace falta entrar al panel: se usa por WhatsApp.';
     }
     if (this.trialProduct === 'erp') {
-      return 'Tu prueba del Panel web está activa. Ingresá con usuario y contraseña.';
+      return 'Tu prueba de RILO Gestión está activa. Ingresá con usuario y contraseña.';
     }
-    return 'Podés usar el panel web y también WhatsApp con el mismo número registrado.';
+    return 'Podés usar RILO Gestión y también WhatsApp con el mismo número registrado.';
   }
 
   get showWhatsappInstructions(): boolean {

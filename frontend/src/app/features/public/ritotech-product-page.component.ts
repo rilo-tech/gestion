@@ -3,19 +3,20 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { RitotechPublicShellComponent } from './ritotech-public-shell.component';
 import { RitotechChatDemoComponent } from './ritotech-chat-demo.component';
+import { RitotechProductCtaComponent } from './ritotech-product-cta.component';
 import {
   TRIAL_PRODUCT_DESCRIPTIONS,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
 import { RILOTECH_CHAT_DEMO, pricingTiersFromCatalog } from '../../../../../shared/ritotech-marketing.ts';
 import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
-import { DEFAULT_COMMERCIAL_CATALOG, type CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, trialCtaForProduct, type CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
 import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 
 @Component({
   selector: 'app-ritotech-product-page',
   standalone: true,
-  imports: [CommonModule, RouterLink, RitotechPublicShellComponent, RitotechChatDemoComponent],
+  imports: [CommonModule, RouterLink, RitotechPublicShellComponent, RitotechChatDemoComponent, RitotechProductCtaComponent],
   template: `
     <app-ritotech-public-shell>
       <section class="max-w-3xl mx-auto px-4 py-10 sm:py-14">
@@ -38,26 +39,24 @@ import { CommercialCatalogService } from '../../core/services/commercial-catalog
         <div *ngIf="productId === 'erp'" class="mt-10 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
           <h2 class="text-lg font-bold mb-2">¿Y si después quiero WhatsApp?</h2>
           <p class="text-sm text-gray-400 leading-relaxed">
-            Podés activar RiloBot más adelante sin migrar datos. Todo lo que cargues en el panel queda en el mismo
-            negocio y el bot podrá consultarlo cuando lo sumes.
+            Sumá RILO Bot después desde Planes, con la misma cuenta. No hace falta registrarte de nuevo.
+            Todo lo que cargues en el panel queda en el mismo negocio. La baja del panel se hace en Plan, sin borrar datos.
           </p>
         </div>
 
         <div *ngIf="productId === 'whatsapp'" class="mt-6 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
-          <h2 class="text-lg font-bold mb-2">¿Y si después quiero el panel web?</h2>
+          <h2 class="text-lg font-bold mb-2">¿Y si después quiero RILO Gestión?</h2>
           <p class="text-sm text-gray-400 leading-relaxed">
-            Activás ERP Web cuando quieras. Los pedidos y ventas que cargaste por WhatsApp aparecen en el historial del
-            panel — no empezás de cero.
+            Sumá RILO Gestión desde Planes cuando quieras, con la misma cuenta. Lo que cargaste por
+            WhatsApp aparece en el historial.
           </p>
         </div>
 
-        <div class="mt-8 flex flex-col sm:flex-row gap-3">
-          <a
-            [routerLink]="['/registro']"
-            [queryParams]="{ producto: productId }"
-            class="inline-flex justify-center rounded-xl bg-teal-600 px-6 py-3 font-semibold hover:bg-teal-500">
-            Empezar gratis
-          </a>
+        <div class="mt-8 flex flex-col sm:flex-row gap-3 items-start">
+          <app-ritotech-product-cta
+            [product]="productId"
+            [guestLabel]="ctaLabel">
+          </app-ritotech-product-cta>
           <a
             routerLink="/planes"
             class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
@@ -89,11 +88,17 @@ export class RitotechProductPageComponent implements OnInit {
   }
 
   get eyebrow(): string {
-    return this.productId === 'whatsapp' ? 'RiloBot' : 'RILO Gestión';
+    return this.productId === 'whatsapp' ? 'RILO Bot' : 'RILO Gestión';
   }
 
   get title(): string {
-    return this.productId === 'whatsapp' ? 'Cargá por WhatsApp con IA' : 'Panel web para tu negocio';
+    if (this.productId === 'whatsapp') return 'Tu negocio por WhatsApp';
+    if (this.productId === 'completo') return 'WhatsApp + web, misma información';
+    return 'Tu negocio ordenado en la computadora';
+  }
+
+  get ctaLabel(): string {
+    return trialCtaForProduct(this.productId);
   }
 
   get description(): string {

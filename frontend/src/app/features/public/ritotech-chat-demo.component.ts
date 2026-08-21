@@ -11,7 +11,7 @@ import type { RitotechChatMessage } from '../../../../../shared/ritotech-marketi
       <div class="flex items-center gap-2 pb-3 mb-3 border-b border-gray-800">
         <span class="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center text-xs font-bold">R</span>
         <div>
-          <p class="text-sm font-semibold text-white">RiloBot</p>
+          <p class="text-sm font-semibold text-white">RILO Bot</p>
           <p class="text-[10px] text-gray-500">WhatsApp · en línea</p>
         </div>
       </div>

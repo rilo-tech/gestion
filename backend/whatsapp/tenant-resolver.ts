@@ -8,7 +8,7 @@ export interface WhatsappTenantContext {
   phone: string;
   userName?: string;
   role?: string;
-  /** Rubro del negocio (registro / config). Sin esto RiloBot no inventa ejemplos de producto. */
+  /** Rubro del negocio (registro / config). Sin esto RILO Bot no inventa ejemplos de producto. */
   rubro?: string | null;
   platformAccess: ReturnType<typeof resolvePlatformAccessForBusiness>;
   /** Línea de WhatsApp deshabilitada (baja). */
@@ -54,76 +54,88 @@ async function tenantFromUserDoc(
   if (!businessRef) return null;
   const businessSnap = await businessRef.get();
   if (!businessSnap.exists) return null;
-  const user = userDoc.data() as { phone?: string; name?: string; role?: string; enabled?: boolean };
+  const user = userDoc.data() as {
+    phone?: string;
+    previousPhone?: string;
+    name?: string;
+    role?: string;
+    enabled?: boolean;
+  };
   const disabled = user.enabled === false;
   if (disabled && !options?.allowDisabled) return null;
   const businessData = (businessSnap.data() ?? {}) as Record<string, unknown>;
+  const activePhone = String(user.phone ?? '').trim() || String(user.previousPhone ?? '').trim();
   return {
     businessId: businessRef.id,
-    phone: String(user.phone ?? ''),
+    phone: activePhone,
     userName: user.name,
     role: user.role,
     rubro: await resolveBusinessRubro(businessRef, businessData),
     platformAccess: resolvePlatformAccessForBusiness(businessData),
+    // Solo baja real: enabled === false. Si está habilitado, nunca marcar offboarded.
     accessRevoked: disabled,
   };
 }
 
-async function lookupInBusiness(
-  businessId: string,
+async function lookupByPhoneField(
   keys: string[],
-  options?: { allowDisabled?: boolean }
+  options?: { allowDisabled?: boolean; businessId?: string }
 ): Promise<WhatsappTenantContext | null> {
   for (const key of keys) {
-    const usersSnap = await db
-      .collection(`negocios/${businessId}/whatsapp_users`)
-      .where('phone', '==', key)
-      .limit(5)
-      .get();
-    for (const doc of usersSnap.docs) {
-      const tenant = await tenantFromUserDoc(doc, options);
-      if (tenant) return tenant;
-    }
-    if (options?.allowDisabled) {
-      const prevSnap = await db
-        .collection(`negocios/${businessId}/whatsapp_users`)
-        .where('previousPhone', '==', key)
-        .limit(5)
-        .get();
-      for (const doc of prevSnap.docs) {
-        const tenant = await tenantFromUserDoc(doc, { allowDisabled: true });
-        if (tenant) return { ...tenant, accessRevoked: true };
+    try {
+      const query = options?.businessId
+        ? db.collection(`negocios/${options.businessId}/whatsapp_users`).where('phone', '==', key).limit(5)
+        : db.collectionGroup('whatsapp_users').where('phone', '==', key).limit(8);
+      const usersSnap = await query.get();
+      let revokedFallback: WhatsappTenantContext | null = null;
+      for (const doc of usersSnap.docs) {
+        const tenant = await tenantFromUserDoc(doc, options);
+        if (!tenant) continue;
+        if (!tenant.accessRevoked) return tenant;
+        if (options?.allowDisabled && !revokedFallback) revokedFallback = tenant;
+      }
+      if (options?.allowDisabled && revokedFallback) return revokedFallback;
+    } catch (error) {
+      if (!options?.businessId) {
+        console.warn('[whatsapp] Collection group phone lookup omitida', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        break;
       }
     }
   }
   return null;
 }
 
-async function lookupCollectionGroup(
+async function lookupByPreviousPhone(
   keys: string[],
-  options?: { allowDisabled?: boolean }
+  options?: { businessId?: string }
 ): Promise<WhatsappTenantContext | null> {
   for (const key of keys) {
     try {
-      const usersSnap = await db
-        .collectionGroup('whatsapp_users')
-        .where('phone', '==', key)
-        .limit(8)
-        .get();
-      for (const doc of usersSnap.docs) {
-        const tenant = await tenantFromUserDoc(doc, options);
-        if (tenant && (options?.allowDisabled || !tenant.accessRevoked)) {
-          return tenant;
-        }
-        if (options?.allowDisabled && tenant?.accessRevoked) {
-          return tenant;
-        }
+      const query = options?.businessId
+        ? db
+            .collection(`negocios/${options.businessId}/whatsapp_users`)
+            .where('previousPhone', '==', key)
+            .limit(5)
+        : db.collectionGroup('whatsapp_users').where('previousPhone', '==', key).limit(8);
+      const prevSnap = await query.get();
+      let revokedFallback: WhatsappTenantContext | null = null;
+      for (const doc of prevSnap.docs) {
+        const tenant = await tenantFromUserDoc(doc, { allowDisabled: true });
+        if (!tenant) continue;
+        // Si reactivaron la línea (enabled) pero quedó previousPhone, es activa.
+        if (!tenant.accessRevoked) return tenant;
+        if (!revokedFallback) revokedFallback = { ...tenant, accessRevoked: true };
       }
+      if (revokedFallback) return revokedFallback;
     } catch (error) {
-      console.warn('[whatsapp] Collection group phone lookup omitida', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      break;
+      if (!options?.businessId) {
+        console.warn('[whatsapp] Collection group previousPhone lookup omitida', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        break;
+      }
     }
   }
   return null;
@@ -136,16 +148,27 @@ export async function resolveTenantByPhone(phone: string): Promise<WhatsappTenan
   const started = Date.now();
 
   const enabled =
-    (await lookupInBusiness('prueba', keys)) ?? (await lookupCollectionGroup(keys));
+    (await lookupByPhoneField(keys, { businessId: 'prueba' })) ??
+    (await lookupByPhoneField(keys));
   if (enabled && !enabled.accessRevoked) {
     console.log('[whatsapp] Tenant hallado', { businessId: enabled.businessId, ms: Date.now() - started });
     return enabled;
   }
 
   const revoked =
-    (await lookupInBusiness('prueba', keys, { allowDisabled: true })) ??
-    (await lookupCollectionGroup(keys, { allowDisabled: true }));
+    (await lookupByPhoneField(keys, { businessId: 'prueba', allowDisabled: true })) ??
+    (await lookupByPhoneField(keys, { allowDisabled: true })) ??
+    (await lookupByPreviousPhone(keys, { businessId: 'prueba' })) ??
+    (await lookupByPreviousPhone(keys));
   if (revoked) {
+    // Defensa: un doc reactivado nunca debe responder como baja.
+    if (!revoked.accessRevoked) {
+      console.log('[whatsapp] Tenant hallado (reactivado)', {
+        businessId: revoked.businessId,
+        ms: Date.now() - started,
+      });
+      return revoked;
+    }
     console.log('[whatsapp] Tenant dado de baja', {
       businessId: revoked.businessId,
       ms: Date.now() - started,

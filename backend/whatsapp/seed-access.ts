@@ -1,3 +1,4 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../firebase.ts';
 import { isValidE164Phone, normalizePhone } from '../../shared/phone.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
@@ -42,6 +43,9 @@ export async function seedBusinessWhatsappAccess(params: {
       role: 'supervisor',
       enabled: true,
       erpUserId: params.erpUserId ?? null,
+      // Limpia rastro de baja: si queda previousPhone, el resolver lo trata como offboarded.
+      previousPhone: FieldValue.delete(),
+      releasedAt: FieldValue.delete(),
       createdAt: now,
       updatedAt: now,
     },
@@ -83,6 +87,8 @@ export async function releaseBusinessWhatsappPhone(businessId: string): Promise<
     await doc.ref.set(
       {
         enabled: false,
+        // Libera el número: sin `phone` otro alta puede usarlo; previousPhone queda para el mensaje de baja.
+        phone: FieldValue.delete(),
         previousPhone: phone || doc.data()?.previousPhone || null,
         releasedAt: now,
         updatedAt: now,

@@ -224,7 +224,7 @@ export async function createOrderFromWhatsapp(
   const descripcion = [
     String(entities.notes ?? '').trim() || raw.trim(),
     entities.imageSummary ? `Foto: ${entities.imageSummary}` : '',
-    'Origen: WhatsApp RiloBot',
+    'Origen: WhatsApp RILO Bot',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -332,7 +332,7 @@ export async function createSaleFromWhatsapp(
     medioPago: 'efectivo',
     notas: [
       String(entities.notes ?? '').trim() || raw.trim(),
-      'Origen: WhatsApp RiloBot',
+      'Origen: WhatsApp RILO Bot',
     ]
       .filter(Boolean)
       .join(' · '),
@@ -394,7 +394,7 @@ export async function registerPaymentFromWhatsapp(
   const result = await collectClientBalance(tenant.businessId, client.id, {
     monto: amount,
     medioPago: 'efectivo',
-    notas: 'Cobro vía WhatsApp RiloBot',
+    notas: 'Cobro vía WhatsApp RILO Bot',
   });
 
   return {
@@ -444,7 +444,7 @@ export async function createClientFromWhatsapp(
     activo: true,
     telefono: '',
     email: '',
-    notas: 'Alta vía WhatsApp RiloBot',
+    notas: 'Alta vía WhatsApp RILO Bot',
     origenWhatsapp: true,
     createdAt: new Date().toISOString(),
   });
@@ -464,7 +464,7 @@ export async function createSupplierFromWhatsapp(
     activo: true,
     telefono: '',
     email: '',
-    notas: 'Alta vía WhatsApp RiloBot',
+    notas: 'Alta vía WhatsApp RILO Bot',
     origenWhatsapp: true,
     createdAt: new Date().toISOString(),
   });
@@ -497,8 +497,8 @@ export async function createCatalogProductFromWhatsapp(
     permitirStockNegativo: false,
     activo: true,
     notas: controlaStock
-      ? 'Alta vía WhatsApp RiloBot (compra)'
-      : 'Alta vía WhatsApp RiloBot (sin control de stock)',
+      ? 'Alta vía WhatsApp RILO Bot (compra)'
+      : 'Alta vía WhatsApp RILO Bot (sin control de stock)',
     origenWhatsapp: true,
     negocioId: businessId,
     createdAt: new Date().toISOString(),
@@ -562,7 +562,7 @@ export async function registerCashFromWhatsapp(
     medio: 'efectivo',
     concepto,
     categoriaId: null,
-    descripcion: 'Origen: WhatsApp RiloBot',
+    descripcion: 'Origen: WhatsApp RILO Bot',
     ambito: 'general',
     fecha,
     createdAt: fecha,
@@ -659,7 +659,7 @@ export async function createPurchaseFromWhatsapp(
       notas: [
         String(entities.notes ?? '').trim() || raw.trim(),
         entities.imageSummary ? `Foto: ${entities.imageSummary}` : '',
-        'Origen: WhatsApp RiloBot',
+        'Origen: WhatsApp RILO Bot',
       ]
         .filter(Boolean)
         .join(' · '),

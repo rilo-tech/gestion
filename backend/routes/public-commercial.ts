@@ -20,7 +20,7 @@ router.get('/', async (req, res) => {
       description: TRIAL_PRODUCT_DESCRIPTIONS[row.id],
       whatsapp: row.id !== 'erp',
       panel: row.id !== 'whatsapp',
-      featured: row.id === 'whatsapp',
+      featured: row.id === 'completo',
       trialDays: catalog.trialDays,
       includedAi: row.includedAi,
       amountMonthly: row.amountMonthly,

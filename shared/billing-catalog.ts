@@ -41,75 +41,75 @@ export interface BillingProduct {
 
 /** Precio sugerido por usuario extra ERP (UY / AR) cuando el plan no define override. */
 export const DEFAULT_EXTRA_USER_MONTHLY: Record<BillingCountryCode, number> = {
-  UY: 490,
-  AR: 9900,
+  UY: 190,
+  AR: 4900,
 };
 
 /** Catálogo comercial público (checkout). Montos enteros en moneda local. */
 export const BILLING_PRODUCTS: BillingProduct[] = [
   {
     id: 'whatsapp',
-    name: 'RiloBot (WhatsApp)',
-    description: 'Pedidos, ventas y cobros por WhatsApp con confirmación.',
+    name: 'RILO Bot',
+    description: 'Gestión rápida desde WhatsApp, con confirmación SÍ/NO.',
     erpPlanId: 'plan_basico',
-    featured: true,
     prices: [
       {
         country: 'UY',
         currency: 'UYU',
-        amountMonthly: 1490,
-        label: 'UYU 1.490 / mes',
+        amountMonthly: 690,
+        label: 'UYU 690 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
       },
       {
         country: 'AR',
         currency: 'ARS',
-        amountMonthly: 36900,
-        label: 'ARS 36.900 / mes',
+        amountMonthly: 16900,
+        label: 'ARS 16.900 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
       },
     ],
   },
   {
     id: 'erp',
-    name: 'Panel web',
-    description: 'Caja, clientes, stock, compras, ventas y reportes.',
+    name: 'RILO Gestión',
+    description: 'Panel web: clientes, productos, proveedores, pedidos, ventas, compras y caja.',
     erpPlanId: 'plan_intermedio',
     prices: [
       {
         country: 'UY',
         currency: 'UYU',
-        amountMonthly: 2490,
-        label: 'UYU 2.490 / mes',
+        amountMonthly: 590,
+        label: 'UYU 590 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
       },
       {
         country: 'AR',
         currency: 'ARS',
-        amountMonthly: 59900,
-        label: 'ARS 59.900 / mes',
+        amountMonthly: 14900,
+        label: 'ARS 14.900 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
       },
     ],
   },
   {
     id: 'completo',
-    name: 'RiloBot + Panel',
-    description: 'WhatsApp para cargar + panel para controlar.',
+    name: 'RILO Completo',
+    description: 'Bot + Gestión: WhatsApp para cargar y panel web para controlar.',
     erpPlanId: 'plan_profesional',
+    featured: true,
     prices: [
       {
         country: 'UY',
         currency: 'UYU',
-        amountMonthly: 3490,
-        label: 'UYU 3.490 / mes',
+        amountMonthly: 990,
+        label: 'UYU 990 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
       },
       {
         country: 'AR',
         currency: 'ARS',
-        amountMonthly: 84900,
-        label: 'ARS 84.900 / mes',
+        amountMonthly: 24900,
+        label: 'ARS 24.900 / mes',
         extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
       },
     ],
@@ -121,9 +121,9 @@ export const ERP_PLAN_BILLING_DEFAULTS: Record<
   string,
   { productId: TrialProductId; nombre: string }
 > = {
-  plan_basico: { productId: 'whatsapp', nombre: 'RiloBot (WhatsApp)' },
-  plan_intermedio: { productId: 'erp', nombre: 'Panel web' },
-  plan_profesional: { productId: 'completo', nombre: 'RiloBot + Panel' },
+  plan_basico: { productId: 'whatsapp', nombre: 'RILO Bot' },
+  plan_intermedio: { productId: 'erp', nombre: 'RILO Gestión' },
+  plan_profesional: { productId: 'completo', nombre: 'RILO Completo' },
 };
 
 export function resolveBillingCountry(pais: string | null | undefined): BillingCountryCode {

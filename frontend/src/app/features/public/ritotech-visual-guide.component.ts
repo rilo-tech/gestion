@@ -8,19 +8,20 @@ type GuideTab = 'whatsapp' | 'erp';
   selector: 'app-ritotech-visual-guide',
   standalone: true,
   imports: [CommonModule, RouterLink],
+  host: { class: 'inline-flex max-w-full' },
   template: `
     <button
       *ngIf="showTrigger"
       type="button"
       (click)="open(defaultTab)"
-      class="inline-flex items-center gap-2 rounded-xl border border-teal-600/80 bg-gradient-to-r from-teal-950/80 to-violet-950/50 px-4 py-2.5 text-sm font-semibold text-teal-100 hover:from-teal-900 hover:to-violet-900 hover:text-white transition shadow-sm">
+      class="inline-flex w-full sm:w-auto max-w-full items-center justify-center gap-2 rounded-xl border border-teal-600/80 bg-gradient-to-r from-teal-950/80 to-violet-950/50 px-4 py-2.5 text-sm font-semibold text-teal-100 hover:from-teal-900 hover:to-violet-900 hover:text-white transition shadow-sm">
       <span aria-hidden="true" class="text-lg leading-none">🎬</span>
       {{ triggerLabel }}
     </button>
 
     <div
       *ngIf="isOpen"
-      class="fixed inset-0 z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      class="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="visual-guide-title">
@@ -32,9 +33,9 @@ type GuideTab = 'whatsapp' | 'erp';
       </button>
 
       <div
-        class="relative z-10 w-full sm:max-w-3xl max-h-[94vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-teal-900/60 bg-gray-950 shadow-2xl">
+        class="relative z-10 flex flex-col w-full max-w-3xl max-h-[min(92dvh,900px)] overflow-hidden rounded-2xl sm:rounded-3xl border border-teal-900/60 bg-gray-950 shadow-2xl">
         <div
-          class="sticky top-0 z-10 border-b border-teal-900/40 bg-gradient-to-r from-teal-950 via-gray-950 to-violet-950 px-4 sm:px-6 py-4 flex items-start justify-between gap-3">
+          class="shrink-0 border-b border-teal-900/40 bg-gradient-to-r from-teal-950 via-gray-950 to-violet-950 px-4 sm:px-6 py-3 sm:py-4 flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="text-[11px] font-bold uppercase tracking-wider text-teal-400">Tu día, ordenado</p>
             <h2 id="visual-guide-title" class="text-xl sm:text-2xl font-black text-white leading-tight mt-0.5">
@@ -53,6 +54,7 @@ type GuideTab = 'whatsapp' | 'erp';
           </button>
         </div>
 
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <!-- Dolor → alivio -->
         <div class="px-4 sm:px-6 pt-4">
           <div class="grid grid-cols-3 gap-2 text-center">
@@ -127,7 +129,7 @@ type GuideTab = 'whatsapp' | 'erp';
               <div class="mt-2 ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-teal-800/80 px-3 py-2 text-sm text-white leading-snug">
                 Venta a María, 2 remeras, cobró 800
               </div>
-              <p class="mt-auto pt-3 text-xs text-gray-500">RiloBot entiende cliente, producto y plata.</p>
+              <p class="mt-auto pt-3 text-xs text-gray-500">RILO Bot entiende cliente, producto y plata.</p>
             </article>
 
             <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
@@ -206,9 +208,10 @@ type GuideTab = 'whatsapp' | 'erp';
             </div>
           </div>
         </div>
+        </div>
 
         <div
-          class="sticky bottom-0 border-t border-teal-900/40 bg-gray-950/95 px-4 sm:px-6 py-4 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+          class="shrink-0 border-t border-teal-900/40 bg-gray-950 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
           <p class="text-xs text-gray-500 order-2 sm:order-1 text-center sm:text-left leading-snug">
             Prueba 30 días gratis. Sin tarjeta.
           </p>
@@ -218,10 +221,10 @@ type GuideTab = 'whatsapp' | 'erp';
             </button>
             <a
               [routerLink]="['/registro']"
-              [queryParams]="{ producto: tab === 'whatsapp' ? 'whatsapp' : 'erp' }"
+              [queryParams]="{ producto: tab === 'erp' ? 'erp' : 'whatsapp' }"
               (click)="close()"
               class="inline-flex justify-center rounded-xl bg-teal-500 px-5 py-3 text-sm font-black text-gray-950 hover:bg-teal-400">
-              Quiero ordenar mi negocio →
+              {{ tab === 'erp' ? 'Probar el panel →' : 'Probar RILO Bot →' }}
             </a>
           </div>
         </div>
@@ -240,10 +243,12 @@ export class RitotechVisualGuideComponent {
   open(tab: GuideTab = this.defaultTab) {
     this.tab = tab;
     this.isOpen = true;
+    document.body.style.overflow = 'hidden';
   }
 
   close() {
     this.isOpen = false;
+    document.body.style.overflow = '';
   }
 
   @HostListener('document:keydown.escape')

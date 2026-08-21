@@ -2,7 +2,13 @@ import express from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
 import { getBusiness } from '../auth/business.ts';
 import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
-import { overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
+import {
+  discountedMonthly,
+  hasIntroDiscount,
+  introMonthsRemaining,
+  overlayProductsForCountry,
+} from '../../shared/commercial-catalog.ts';
+import { countSubscriptionPaymentPeriods } from '../auth/subscription-payments.ts';
 import { normalizePlatformAccess } from '../../shared/platform-access.ts';
 import {
   resolveBillingCountry,
@@ -59,12 +65,18 @@ router.get('/plans', requireAuth, async (req, res) => {
     const catalog = await getCommercialCatalog();
     const products = overlayProductsForCountry(catalog, country);
     const configured = isMercadoPagoConfigured(country);
+    const paymentsUsed = await countSubscriptionPaymentPeriods(businessId);
 
     res.json({
       available: configured,
       country,
       currency: country === 'AR' ? 'ARS' : 'UYU',
       trialWithoutCard: true,
+      trialDays: catalog.trialDays,
+      lite: catalog.lite,
+      introDiscountMonths: catalog.introDiscountMonths,
+      introDiscountPercent: catalog.introDiscountPercent,
+      introMonthsRemaining: introMonthsRemaining(paymentsUsed, catalog),
       message: configured
         ? null
         : `Mercado Pago aún no configurado para ${country}. Contactá a soporte.`,
@@ -108,7 +120,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
       const verified = business.contactVerification?.phoneVerified === true;
       if (!phone || !verified) {
         return res.status(400).json({
-          error: 'Antes de pagar RiloBot tenés que confirmar el celular en Mi cuenta.',
+          error: 'Antes de pagar RILO Bot tenés que confirmar el celular en Mi cuenta.',
           code: 'WHATSAPP_PHONE_REQUIRED',
         });
       }
@@ -129,14 +141,24 @@ router.post('/checkout', requireAuth, async (req, res) => {
     }
 
     const checkout = resolveCheckoutAmount(priced.amountMonthly, billingInterval);
+    const paymentsUsed = await countSubscriptionPaymentPeriods(businessId);
+    const introLeft = introMonthsRemaining(paymentsUsed, catalog);
+    const introApplied =
+      billingInterval === 'month' && introLeft > 0 && hasIntroDiscount(catalog);
+    const unitPrice = introApplied
+      ? discountedMonthly(priced.amountMonthly, catalog.introDiscountPercent)
+      : checkout.amount;
+    const titleSuffix = introApplied
+      ? `1 mes · ${catalog.introDiscountPercent}% off`
+      : checkout.titleSuffix;
     const externalReference = `${businessId}|${productId}|${country}|${billingInterval}|${Date.now()}`;
     const base = appBaseUrl();
 
     const preference = await createCheckoutPreference({
       country,
       currency: priced.currency,
-      title: `RILO · ${product.name} (${checkout.titleSuffix})`,
-      unitPrice: checkout.amount,
+      title: `RILO · ${product.name} (${titleSuffix})`,
+      unitPrice,
       externalReference,
       metadata: {
         businessId,
@@ -144,6 +166,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
         country,
         billingInterval,
         coverageMonths: String(checkout.coverageMonths),
+        introApplied: introApplied ? 'true' : 'false',
       },
       payerEmail: userEmail || undefined,
       successUrl: `${base}/activar-suscripcion?status=success`,
@@ -160,9 +183,10 @@ router.post('/checkout', requireAuth, async (req, res) => {
       checkoutUrl: useSandbox ? preference.sandboxInitPoint : preference.initPoint,
       country,
       currency: priced.currency,
-      amount: checkout.amount,
+      amount: unitPrice,
       billingInterval,
       coverageMonths: checkout.coverageMonths,
+      introApplied,
       productId,
     });
   } catch (error) {

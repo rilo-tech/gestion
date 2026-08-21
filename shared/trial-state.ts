@@ -7,7 +7,7 @@ export const TRIAL_DAYS_BY_PRODUCT: Record<TrialProductId, number> = {
   completo: 30,
 };
 
-/** RiloBot: valor rápido el primer día. */
+/** RILO Bot: valor rápido el primer día. */
 export const RILOBOT_TRIAL_DAYS = TRIAL_DAYS_BY_PRODUCT.whatsapp;
 
 /** Panel / Completo: más tiempo de aprendizaje. */

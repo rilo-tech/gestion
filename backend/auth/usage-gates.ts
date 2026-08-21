@@ -28,7 +28,7 @@ export function resolveBillingMode(business: {
   if (hasPaidCoverage(business.billing?.paidUntil)) return 'paid';
   const trial = resolveTrialState(business);
   if (trial.isTrialBillingActive) return 'trial';
-  if (business.enPrueba === true) return 'lite';
+  if (business.enPrueba === true) return 'blocked';
   return 'paid';
 }
 
@@ -169,13 +169,13 @@ export function usageLimitMessage(code: string, catalog: CommercialCatalog, maxA
   }
   if (code === 'AI_QUOTA_EXCEEDED') {
     const max = maxAi ?? catalog.lite.maxAccionesIaMes;
-    return `Llegaste al tope de ${max} acciones IA este mes. Activá un plan o esperá al próximo mes para seguir usando la IA de RiloBot.`;
+    return `Llegaste al tope de ${max} acciones IA este mes. Activá un plan o esperá al próximo mes para seguir usando la IA de RILO Bot.`;
   }
   if (code === 'OPS_LIMIT_REACHED') {
     return `En el plan libre podés cargar hasta ${catalog.lite.maxOperacionesMes} operaciones por WhatsApp este mes. Activá un plan para seguir al ritmo de tu negocio.`;
   }
   if (code === 'SUBSCRIPTION_INACTIVE') {
-    return 'La cuenta está desactivada. Para volver a usar Rilo, contactá a RiloTech.';
+    return 'Tu prueba gratuita terminó. Tus datos siguen guardados. Activá un plan en la web para seguir usando RILO Bot.';
   }
   return 'Activá un plan para seguir usando esta función.';
 }
@@ -190,7 +190,7 @@ export async function replyForUsageError(code: string, businessId: string): Prom
     if (quota.mode === 'paid') {
       return `Llegaste al tope de ${quota.max} acciones IA este mes. Se renueva el mes que viene.`;
     }
-    return `En el plan libre tenés ${quota.max} acciones IA al mes. Activá un plan para seguir usando la IA de RiloBot.`;
+    return `En el plan libre tenés ${quota.max} acciones IA al mes. Activá un plan para seguir usando la IA de RILO Bot.`;
   }
   return usageLimitMessage(code, catalog);
 }

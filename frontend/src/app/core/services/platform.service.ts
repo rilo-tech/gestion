@@ -320,7 +320,15 @@ export class PlatformService {
   updatePlatformAccess(
     businessId: string,
     payload: Partial<
-      Pick<ClientPlatformAccess, 'erpWebEnabled' | 'whatsappEnabled' | 'aiEnabled' | 'trialProduct'>
+      Pick<
+        ClientPlatformAccess,
+        | 'erpWebEnabled'
+        | 'erpWebPaused'
+        | 'whatsappEnabled'
+        | 'whatsappPaused'
+        | 'aiEnabled'
+        | 'trialProduct'
+      >
     >
   ): Observable<ClientPlatformAccess> {
     return this.http.put<ClientPlatformAccess>(

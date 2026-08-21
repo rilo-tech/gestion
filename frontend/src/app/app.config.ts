@@ -6,9 +6,9 @@ import { provideRouter, Routes, withInMemoryScrolling } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
-import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
+import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, supervisorGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone, Lock } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
@@ -22,6 +22,7 @@ import { NewOrderComponent } from './features/orders/new-order.component';
 import { OrderListComponent } from './features/orders/order-list.component';
 import { ReportsComponent } from './features/reports/reports.component';
 import { SettingsComponent } from './features/settings/settings.component';
+import { PlanPageComponent } from './features/plan/plan-page.component';
 import { CashComponent } from './features/cash/cash.component';
 import { PurchasesComponent } from './features/purchases/purchases.component';
 import { NewPurchaseComponent } from './features/purchases/new-purchase.component';
@@ -214,6 +215,11 @@ const companyRoutes: Routes = [
     component: SettingsComponent,
   },
   {
+    path: 'plan',
+    component: PlanPageComponent,
+    canActivate: [supervisorGuard],
+  },
+  {
     path: 'mi-cuenta',
     component: AccountComponent,
   },
@@ -226,7 +232,7 @@ const companyRoutes: Routes = [
 function withCompanyPanelGuards(routes: Routes): Routes {
   return routes.map((route) => {
     const path = route.path ?? '';
-    if (route.redirectTo || path === 'mi-cuenta' || path === 'apariencia' || path === '**') {
+    if (route.redirectTo || path === 'mi-cuenta' || path === 'apariencia' || path === 'plan' || path === '**') {
       return route;
     }
     return {
@@ -404,6 +410,7 @@ export const appConfig: ApplicationConfig = {
         User,
         Mail,
         Phone,
+        Lock,
       })
     ),
     {

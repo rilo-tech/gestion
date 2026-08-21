@@ -247,7 +247,7 @@ import {
               </button>
             </div>
             <p class="text-xs text-sky-800/80">
-              Si el producto es RiloBot o Completo, al guardar un teléfono se habilita WhatsApp con ese número.
+              Si el producto es RILO Bot o RILO Completo, al guardar un teléfono se habilita WhatsApp con ese número.
               <span *ngIf="canOffboard">
                 <strong>Dar de baja</strong> desactiva la empresa y libera email y celular para /probar-gratis. Los datos no se borran.
               </span>
@@ -557,7 +557,7 @@ import {
             *ngIf="platformAccessDraft.whatsappEnabled"
             class="rounded-xl border border-violet-100 bg-violet-50/50 p-5 shadow-sm space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-violet-950">Simulador RiloBot</h2>
+              <h2 class="text-base font-semibold text-violet-950">Simulador RILO Bot</h2>
               <p class="text-sm text-violet-800 mt-1">
                 Probá mensajes como si llegaran por WhatsApp.
               </p>
@@ -958,9 +958,9 @@ export class PlatformBusinessDetailComponent implements OnInit {
   };
 
   readonly productOptions: { id: TrialProductId; label: string; hint: string }[] = [
-    { id: 'whatsapp', label: 'RiloBot', hint: 'WhatsApp + IA' },
-    { id: 'erp', label: 'Panel', hint: 'Panel web con stock' },
-    { id: 'completo', label: 'RiloBot + Panel', hint: 'Bot + Panel' },
+    { id: 'whatsapp', label: 'RILO Bot', hint: 'Gestión rápida desde WhatsApp' },
+    { id: 'erp', label: 'RILO Gestión', hint: 'Panel web' },
+    { id: 'completo', label: 'RILO Completo', hint: 'Bot + Gestión' },
   ];
 
   selectedProductId: TrialProductId = 'completo';
@@ -1533,7 +1533,7 @@ export class PlatformBusinessDetailComponent implements OnInit {
     this.dialogService
       .confirm({
         title: 'Quitar WhatsApp',
-        message: `¿Quitar ${wa.phone}? Dejará de poder usar RiloBot con ese número.`,
+        message: `¿Quitar ${wa.phone}? Dejará de poder usar RILO Bot con ese número.`,
         confirmLabel: 'Quitar',
         variant: 'danger',
       })
@@ -1605,7 +1605,9 @@ export class PlatformBusinessDetailComponent implements OnInit {
           this.platformService
             .updatePlatformAccess(updated.id, {
               erpWebEnabled: access.erpWebEnabled,
+              erpWebPaused: access.erpWebPaused === true,
               whatsappEnabled: access.whatsappEnabled,
+              whatsappPaused: access.whatsappPaused === true,
               aiEnabled: access.aiEnabled,
               trialProduct: this.selectedProductId,
             })

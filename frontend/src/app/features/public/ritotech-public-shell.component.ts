@@ -1,6 +1,7 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-ritotech-public-shell',
@@ -28,9 +29,14 @@ import { Router, RouterLink, RouterLinkActive } from '@angular/router';
             <span class="sr-only">RiloTech</span>
           </a>
           <nav class="hidden sm:flex items-center gap-5 text-sm text-gray-300">
-            <a routerLink="/rilo-gestion" routerLinkActive="text-white" class="hover:text-white">ERP Web</a>
-            <a routerLink="/whatsapp" routerLinkActive="text-white" class="hover:text-white">WhatsApp</a>
-            <a routerLink="/planes" routerLinkActive="text-white" class="hover:text-white">Planes</a>
+            <a routerLink="/whatsapp" routerLinkActive="text-white" class="hover:text-white">RILO Bot</a>
+            <a routerLink="/rilo-gestion" routerLinkActive="text-white" class="hover:text-white">RILO Gestión</a>
+            <a
+              routerLink="/"
+              fragment="como-funciona"
+              (click)="scrollToLandingSection('como-funciona')"
+              class="hover:text-white hidden lg:inline">Cómo funciona</a>
+            <a routerLink="/planes" routerLinkActive="text-white" class="hover:text-white">Precios</a>
             <a
               routerLink="/"
               fragment="landing-faq"
@@ -38,16 +44,76 @@ import { Router, RouterLink, RouterLinkActive } from '@angular/router';
               class="hover:text-white hidden md:inline">FAQ</a>
           </nav>
           <div class="flex items-center gap-2 shrink-0">
-            <a
-              routerLink="/login"
-              class="inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
-              Ingresar
-            </a>
-            <a
-              routerLink="/registro"
-              class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
-              Registrate gratis
-            </a>
+            <ng-container *ngIf="auth.isPlatformAdmin">
+              <a
+                routerLink="/platform/mi-cuenta"
+                title="Mi cuenta"
+                class="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5 min-w-0">
+                <span
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold"
+                  aria-hidden="true">
+                  {{ auth.userInitial }}
+                </span>
+                <span class="hidden sm:inline text-xs text-gray-300 max-w-[10rem] truncate" [title]="auth.currentUserName">
+                  {{ auth.currentUserName }}
+                </span>
+              </a>
+              <a
+                routerLink="/platform"
+                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                Plataforma
+              </a>
+              <button
+                type="button"
+                (click)="logout()"
+                class="inline-flex px-2.5 py-1.5 text-sm text-gray-400 hover:text-white">
+                Salir
+              </button>
+            </ng-container>
+            <ng-container *ngIf="auth.currentUser && !auth.isPlatformAdmin">
+              <a
+                routerLink="/mi-cuenta"
+                title="Mi cuenta"
+                class="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5 min-w-0 max-w-[14rem]">
+                <span
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold"
+                  aria-hidden="true">
+                  {{ auth.userInitial }}
+                </span>
+                <span class="min-w-0 text-left hidden sm:block">
+                  <span class="block text-sm font-medium text-white truncate leading-tight">
+                    {{ auth.currentUserName }}
+                  </span>
+                  <span class="block text-xs text-gray-400 truncate leading-tight">
+                    {{ auth.currentRoleShortLabel }}
+                  </span>
+                </span>
+              </a>
+              <a
+                [routerLink]="auth.homeRoute"
+                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                {{ homeCtaLabel }}
+              </a>
+              <button
+                type="button"
+                (click)="logout()"
+                class="inline-flex px-2.5 py-1.5 text-sm text-gray-400 hover:text-white">
+                Salir
+              </button>
+            </ng-container>
+            <ng-container *ngIf="!auth.currentUser">
+              <a
+                routerLink="/login"
+                class="inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
+                Ingresar
+              </a>
+              <a
+                routerLink="/registro"
+                [queryParams]="{ producto: 'completo' }"
+                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                Probar 30 días
+              </a>
+            </ng-container>
           </div>
         </div>
       </header>
@@ -64,7 +130,7 @@ import { Router, RouterLink, RouterLinkActive } from '@angular/router';
             class="h-16 w-auto object-contain opacity-90"
             decoding="async" />
         </div>
-        <p>RiloTech · RILO Gestión · Controlá tu negocio desde WhatsApp y desde el panel web.</p>
+        <p>RiloTech · RILO Gestión · Tu negocio desde WhatsApp o la web.</p>
         <p class="mt-2 max-w-lg mx-auto leading-relaxed">
           Los precios publicados son de referencia y pueden reajustarse. Si ya estás en un plan pago, te avisamos antes de cambiar tu cuota.
         </p>
@@ -79,6 +145,18 @@ import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 })
 export class RitotechPublicShellComponent {
   private router = inject(Router);
+  readonly auth = inject(AuthService);
+
+  get homeCtaLabel(): string {
+    if (this.auth.canAccessErpWeb) return 'Ir al panel';
+    if (this.auth.canAccessWhatsapp) return 'Mi cuenta';
+    return 'Mi cuenta';
+  }
+
+  logout() {
+    this.auth.logout();
+    void this.router.navigateByUrl('/');
+  }
 
   scrollToLandingSection(id: string) {
     const path = this.router.url.split('?')[0].split('#')[0];

@@ -51,9 +51,8 @@ interface NavItem {
           </a>
         </div>
 
-        <div *ngIf="auth.canManageSettings && auth.canAccessErpWeb" class="mt-3 pt-3 border-t border-gray-800 shrink-0 space-y-0.5">
+        <div *ngIf="!auth.isPlatformAdmin && auth.canManageSettings && auth.canAccessErpWeb" class="mt-3 pt-3 border-t border-gray-800 shrink-0">
           <a
-            *ngIf="auth.canManageSettings"
             routerLink="/settings"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
             (click)="nav.closeMobileMenu()"

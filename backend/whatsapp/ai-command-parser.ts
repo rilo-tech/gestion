@@ -348,7 +348,7 @@ async function parseWithGemini(input: WhatsappParseInput): Promise<ParsedWhatsap
     const productRule = copy.hasProductExamples
       ? `- productName: conservá exactamente lo que el usuario dijo. En este negocio el rubro es conocido; un ejemplo de cómo puede venir: «${copy.exampleProduct}». No inventes ítems. No simplifiques quitando detalle (peso, sabor, tamaño, color, talle) si lo dijo.`
       : '- productName: conservá exactamente lo que el usuario dijo. No inventes un producto ni asumas un rubro (ni comida, ni ropa, ni servicios). No simplifiques quitando detalle si lo dijo.';
-    const prompt = `Sos el parser de RiloBot, un ERP por WhatsApp para negocios pequeños (Uruguay/Latam).
+    const prompt = `Sos el parser de RILO Bot, un ERP por WhatsApp para negocios pequeños (Uruguay/Latam).
 Clasificá el mensaje y, si hay imagen, usala como referencia (pedido, venta o compra a proveedor).
 Devolvé SOLO JSON válido con:
 - intent: help|greeting|create_order|create_sale|create_purchase|register_payment|query_balance|query_cash|register_cash|unknown

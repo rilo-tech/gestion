@@ -44,7 +44,7 @@ import { PasswordInputComponent } from '../../shared/components/password-input/p
             decoding="async" />
           <p class="text-sm text-gray-400 mt-1.5">Ingresá para continuar</p>
           <p class="text-xs text-gray-500 mt-2 leading-relaxed">
-            Si usás RiloBot, operás por WhatsApp. Acá ves tu cuenta o el panel, según el plan.
+            Si usás RILO Bot, operás por WhatsApp. Acá ves tu cuenta o RILO Gestión, según el plan.
           </p>
         </div>
 

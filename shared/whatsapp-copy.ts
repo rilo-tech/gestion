@@ -74,7 +74,7 @@ export function normalizeWhatsappRubro(rubro?: string | null): TrialRubroId | nu
   return null;
 }
 
-/** Copy for RiloBot. Without a known rubro, never invents a product name. */
+/** Copy for RILO Bot. Without a known rubro, never invents a product name. */
 export function whatsappCopyForRubro(rubro?: string | null): WhatsappCopy {
   const id = normalizeWhatsappRubro(rubro);
   if (!id || id === 'otro') return GENERIC;

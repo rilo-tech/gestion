@@ -2,6 +2,8 @@ import { db } from '../firebase.ts';
 import { getBusiness, updateBusiness } from '../auth/business.ts';
 import { registerSubscriptionCoverage } from '../auth/subscription-payments.ts';
 import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
+import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
+import { amountMonthlyFor } from '../../shared/commercial-catalog.ts';
 import {
   getBillingProduct,
   type BillingCountryCode,
@@ -77,12 +79,10 @@ export async function activatePaidSubscription(params: {
     payerEmail: params.payerEmail,
   });
 
-  // Precio base mensual en suscripción (si pagó anual, guardamos cuota equivalente /12 de lo cobrado
-  // o el monto mensual de catálogo vía amount cuando es mensual).
-  const precioBaseMensual =
-    billingInterval === 'year'
-      ? Math.round(params.amount / coverageMonths)
-      : params.amount;
+  // La cuota esperada es siempre el precio de lista. El % off de los primeros meses
+  // es solo lo cobrado en este pago, no el precio permanente.
+  const catalog = await getCommercialCatalog();
+  const precioBaseMensual = amountMonthlyFor(catalog, productId, params.country);
 
   await updateBusiness(
     params.businessId,

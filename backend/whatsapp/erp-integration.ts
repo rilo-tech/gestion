@@ -50,7 +50,7 @@ function helpReply(text: string, rubro?: string | null, erpWeb = false): string 
       `Ejemplo: «${copy.exampleSale}».\n` +
       `Si no está, te pregunto si la creo (sin control de stock).\n\n` +
       `Compras: mandá la foto de la factura o remito. Si decís cómo pagó (efectivo, transferencia, tarjeta), se registra igual que en el panel y suma stock. Si el pago no está claro, queda un borrador para completar en Compras.\n` +
-      `Catálogo completo y reportes: panel web.\n` +
+      `Catálogo completo y reportes: RILO Gestión.\n` +
       `Otra duda: escribí Consultame.`
     );
   }
@@ -59,7 +59,7 @@ function helpReply(text: string, rubro?: string | null, erpWeb = false): string 
     `• ${copy.exampleSale}\n` +
     `• ${copy.exampleOrder}\n` +
     `• Compra a Distribuidora López, 10 remeras a $800, pagó efectivo\n` +
-    `• Foto de la factura/remito del proveedor (si falta el pago, queda borrador en el panel)\n` +
+    `• Foto de la factura/remito del proveedor (si falta el pago, queda borrador en RILO Gestión)\n` +
     `• Pago de Pedro Gómez 500\n` +
     `• Saldo de Ana / Caja de hoy\n\n` +
     `Con clientes: si hay varias Marías te listo las opciones. Silva no es Silveira: no asumo. Si no existe, te pregunto si lo registrás.\n` +
@@ -67,7 +67,7 @@ function helpReply(text: string, rubro?: string | null, erpWeb = false): string 
     `${copy.productHint}\n` +
     `La caja arranca en $0; productos y clientes se crean cuando los usás. Si querés cargar un saldo inicial o un listado, escribí Configurar.\n` +
     (erpWeb
-      ? `Reportes y el resto del catálogo: en el panel web. Las compras por acá, con el medio de pago, también suman stock.\n`
+      ? `Reportes y el resto del catálogo: en RILO Gestión. Las compras por acá, con el medio de pago, también suman stock.\n`
       : `Las compras (texto o foto) se registran acá: si el pago está claro, suman stock; si no, quedan en borrador.\n`) +
     `Cuando tengas una duda, escribí Consultame.`
   );

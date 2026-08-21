@@ -151,7 +151,7 @@ export const TRIAL_DEFAULT_MODULES: SubscriptionModulesMap = {
 /** 1 admin incluido en el precio base; el resto son extras cobrables. */
 export const INCLUDED_ADMIN_SEATS = 1;
 
-/** 1 WhatsApp incluido en RiloBot / Completo; líneas adicionales se cobran aparte. */
+/** 1 WhatsApp incluido en RILO Bot / Completo; líneas adicionales se cobran aparte. */
 export const INCLUDED_WHATSAPP_SEATS = 1;
 
 export const SELLABLE_SUBSCRIPTION_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.filter(

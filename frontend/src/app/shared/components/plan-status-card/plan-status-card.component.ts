@@ -1,21 +1,14 @@
 import { Component, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { RouterLink } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import {
   SUBSCRIPTION_PAYMENT_STATUS_LABELS,
   SUBSCRIPTION_STATUS_LABELS,
 } from '../../../core/services/business.service';
 import { formatMoneyValue } from '../../pipes/money.pipe';
-import { productLabelForAccess, type TrialProductId } from '../../../../../../shared/platform-access.ts';
-import {
-  DEFAULT_PHONE_DIAL,
-  PHONE_COUNTRY_OPTIONS,
-  dialFromCountryName,
-  formatPhoneDisplay,
-  parsePhoneInput,
-} from '../../../../../../shared/phone.ts';
+import { productLabelForAccess } from '../../../../../../shared/platform-access.ts';
 
 @Component({
   selector: 'app-plan-status-card',
@@ -53,166 +46,138 @@ import {
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div class="rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2">
-            <p class="text-xs text-gray-500 dark:text-gray-400">Panel web</p>
-            <p
-              class="font-medium"
-              [ngClass]="auth.canAccessErpWeb ? 'text-teal-700 dark:text-teal-400' : 'text-gray-400'">
-              {{ auth.canAccessErpWeb ? 'Activo' : 'No incluido' }}
-            </p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">RILO Gestión</p>
+            <p class="font-medium" [ngClass]="erpStatusClass">{{ erpStatusLabel }}</p>
           </div>
           <div class="rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2">
-            <p class="text-xs text-gray-500 dark:text-gray-400">RiloBot (WhatsApp)</p>
-            <p
-              class="font-medium"
-              [ngClass]="auth.canAccessWhatsapp ? 'text-teal-700 dark:text-teal-400' : 'text-gray-400'">
-              {{ auth.canAccessWhatsapp ? 'Activo' : 'No incluido' }}
-            </p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">RILO Bot</p>
+            <p class="font-medium" [ngClass]="rilobotStatusClass">{{ rilobotStatusLabel }}</p>
           </div>
         </div>
 
-        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{{ channelHint }}</p>
-
-        <p *ngIf="enableError" class="text-xs text-red-600 dark:text-red-400">{{ enableError }}</p>
-
-        <div
-          *ngIf="showWhatsappPhoneForm"
-          class="rounded-lg border border-teal-100 dark:border-teal-900 bg-teal-50/60 dark:bg-teal-950/30 px-3 py-3 space-y-3">
-          <p class="text-sm font-medium text-gray-900 dark:text-gray-100">Confirmá el celular de RiloBot</p>
-          <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-            Es obligatorio. Te mandamos un código por WhatsApp a ese número para verificarlo.
+        <div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-3 space-y-1.5">
+          <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Alta y baja</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            <strong class="font-semibold text-gray-700 dark:text-gray-300">Dar de alta o sumar el otro</strong>
+            se hace en Planes, con la misma cuenta. No te registres de nuevo.
           </p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            <strong class="font-semibold text-gray-700 dark:text-gray-300">Dar de baja</strong> se hace acá:
+            el servicio queda inactivo. Los datos de la empresa no se borran.
+          </p>
+        </div>
 
-          <ng-container *ngIf="whatsappPhoneStep === 'phone'">
-            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300" for="rilobot-phone">
-              Celular / WhatsApp
-            </label>
-            <div class="flex gap-2">
-              <select
-                [(ngModel)]="phoneDial"
-                name="rilobotPhoneDial"
-                class="shrink-0 min-w-[6.5rem] px-2 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm">
-                <option *ngFor="let country of phoneCountries" [ngValue]="country.dial">
-                  +{{ country.dial }}
-                </option>
-              </select>
+        <div *ngIf="auth.isSupervisor" class="flex flex-wrap items-center gap-2">
+          <a
+            *ngIf="showAddWhatsappLink"
+            routerLink="/planes"
+            [queryParams]="{ sumar: 'whatsapp' }"
+            class="inline-flex justify-center items-center rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/40 px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/50">
+            {{ auth.isWhatsappPaused ? 'Reactivar RILO Bot en Planes' : 'Sumar RILO Bot en Planes' }}
+          </a>
+          <a
+            *ngIf="showAddErpLink"
+            routerLink="/planes"
+            [queryParams]="{ sumar: 'erp' }"
+            class="inline-flex justify-center items-center rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/40 px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/50">
+            {{ auth.isErpPaused ? 'Reactivar RILO Gestión en Planes' : 'Sumar RILO Gestión en Planes' }}
+          </a>
+          <a
+            routerLink="/activar-suscripcion"
+            class="inline-flex justify-center items-center rounded-lg border border-teal-200 dark:border-teal-800 px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40">
+            Ver planes y pago
+          </a>
+        </div>
+
+        <section
+          *ngIf="auth.isSupervisor && (canPauseWhatsapp || canPauseErp)"
+          class="rounded-xl border border-red-200 dark:border-red-900 bg-red-50/70 dark:bg-red-950/30 px-4 py-4 space-y-3">
+          <div>
+            <p class="text-sm font-bold text-red-800 dark:text-red-300">Dar de baja</p>
+            <p class="text-xs text-red-800/80 dark:text-red-300/80 mt-1 leading-relaxed">
+              El servicio deja de funcionar y la suscripción queda inactiva.
+              Los clientes, productos, ventas y el resto de la empresa no se eliminan.
+            </p>
+          </div>
+
+          <div *ngIf="!pendingBaja" class="flex flex-col sm:flex-row gap-2">
+            <button
+              *ngIf="canPauseWhatsapp"
+              type="button"
+              (click)="startBaja('whatsapp')"
+              [disabled]="enabling"
+              class="inline-flex justify-center items-center rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60">
+              Dar de baja RILO Bot
+            </button>
+            <button
+              *ngIf="canPauseErp"
+              type="button"
+              (click)="startBaja('erp')"
+              [disabled]="enabling"
+              class="inline-flex justify-center items-center rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60">
+              Dar de baja RILO Gestión
+            </button>
+          </div>
+
+          <div *ngIf="pendingBaja" class="space-y-3">
+            <p class="text-sm font-medium text-red-900 dark:text-red-200">
+              {{ pendingBaja === 'whatsapp' ? 'Confirmar baja de RILO Bot' : 'Confirmar baja de RILO Gestión' }}
+            </p>
+            <p class="text-xs text-red-800/90 dark:text-red-300/90 leading-relaxed">{{ bajaHint }}</p>
+            <label *ngIf="requiresPassword" class="block">
+              <span class="block text-xs font-medium text-red-900 dark:text-red-200 mb-1">Tu contraseña</span>
               <input
-                id="rilobot-phone"
-                [(ngModel)]="phoneLocal"
-                name="rilobotPhoneLocal"
-                inputmode="tel"
-                autocomplete="tel-national"
-                placeholder="99 123 456"
-                class="min-w-0 flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm">
-            </div>
-            <p *ngIf="formattedPhonePreview" class="text-xs text-gray-500">Se usará {{ formattedPhonePreview }}</p>
+                type="password"
+                [(ngModel)]="bajaPassword"
+                name="bajaPassword"
+                autocomplete="current-password"
+                class="w-full max-w-xs px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 bg-white dark:bg-gray-950 text-sm text-gray-900 dark:text-gray-100">
+            </label>
+            <label *ngIf="!requiresPassword" class="block">
+              <span class="block text-xs font-medium text-red-900 dark:text-red-200 mb-1">
+                Escribí el nombre de la empresa para confirmar ({{ business?.nombre }})
+              </span>
+              <input
+                type="text"
+                [(ngModel)]="bajaConfirmNombre"
+                name="bajaConfirmNombre"
+                autocomplete="off"
+                class="w-full max-w-xs px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 bg-white dark:bg-gray-950 text-sm text-gray-900 dark:text-gray-100">
+            </label>
+            <p *ngIf="enableError" class="text-xs text-red-700 dark:text-red-400">{{ enableError }}</p>
             <div class="flex flex-wrap gap-3">
               <button
                 type="button"
-                (click)="sendWhatsappCode()"
-                [disabled]="enabling"
-                class="inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-60">
-                {{ enabling ? 'Enviando…' : 'Enviar código' }}
+                (click)="confirmBaja()"
+                [disabled]="enabling || !canSubmitBaja"
+                class="inline-flex rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-60">
+                {{ enabling ? 'Dando de baja…' : 'Confirmar baja' }}
               </button>
               <button
                 type="button"
-                (click)="cancelWhatsappPhoneFlow()"
-                class="inline-flex text-sm text-gray-500 hover:underline">
+                (click)="cancelBaja()"
+                [disabled]="enabling"
+                class="text-sm text-gray-600 dark:text-gray-400 hover:underline">
                 Cancelar
               </button>
             </div>
-          </ng-container>
-
-          <ng-container *ngIf="whatsappPhoneStep === 'code'">
-            <p class="text-xs text-gray-600 dark:text-gray-400">
-              Código enviado a <span class="font-medium text-gray-800 dark:text-gray-200">{{ pendingPhoneDisplay }}</span>.
-            </p>
-            <p *ngIf="otpHint" class="text-xs text-gray-500">{{ otpHint }}</p>
-            <p *ngIf="devOtp" class="text-xs font-mono text-amber-700 dark:text-amber-400">
-              Código de prueba: {{ devOtp }}
-            </p>
-            <input
-              [(ngModel)]="otpCode"
-              name="rilobotOtp"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="6"
-              placeholder="123456"
-              class="w-full max-w-[10rem] px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm tracking-widest">
-            <p class="text-xs text-gray-500">
-              Si no llega,
-              <a [href]="rilobotWaLink" target="_blank" rel="noopener" class="text-teal-700 dark:text-teal-400 hover:underline">escribí Hola a RiloBot</a>
-              y pedí el código de nuevo.
-            </p>
-            <div class="flex flex-wrap gap-3">
-              <button
-                type="button"
-                (click)="confirmWhatsappCode()"
-                [disabled]="enabling || otpCode.trim().length !== 6"
-                class="inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-60">
-                {{ enabling ? 'Confirmando…' : 'Confirmar número' }}
-              </button>
-              <button
-                type="button"
-                (click)="whatsappPhoneStep = 'phone'; enableError = ''"
-                class="inline-flex text-sm text-gray-500 hover:underline">
-                Cambiar número
-              </button>
-            </div>
-          </ng-container>
-        </div>
-
-        <div *ngIf="!showWhatsappPhoneForm" class="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <button
-            *ngIf="canEnableMissingInTrial"
-            type="button"
-            (click)="enableMissingChannel()"
-            [disabled]="enabling"
-            class="inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline disabled:opacity-60">
-            {{ enabling ? 'Activando…' : missingChannelCta }}
-          </button>
-          <button
-            *ngIf="needsWhatsappPhone && !canEnableMissingInTrial"
-            type="button"
-            (click)="startWhatsappPhoneFlow()"
-            class="inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline">
-            {{ payCtaLabel }}
-          </button>
-          <a
-            *ngIf="(!canEnableMissingInTrial || isTrialActive) && !needsWhatsappPhone"
-            routerLink="/activar-suscripcion"
-            [queryParams]="checkoutQueryParams"
-            class="inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline">
-            {{ canEnableMissingInTrial ? 'Ver planes y pago' : payCtaLabel }}
-          </a>
-        </div>
+          </div>
+        </section>
       </div>
     </article>
   `,
 })
 export class PlanStatusCardComponent {
   readonly auth = inject(AuthService);
-  private router = inject(Router);
 
   /** `home`: copy para clientes solo WhatsApp. `settings`: copy dentro del ERP. */
   @Input() variant: 'home' | 'settings' = 'settings';
 
   enabling = false;
   enableError = '';
-  showWhatsappPhoneForm = false;
-  whatsappPhoneStep: 'phone' | 'code' = 'phone';
-  phoneDial = DEFAULT_PHONE_DIAL;
-  phoneLocal = '';
-  otpCode = '';
-  pendingPhone = '';
-  otpHint = '';
-  devOtp = '';
-  readonly phoneCountries = PHONE_COUNTRY_OPTIONS;
-  readonly rilobotWaLink = (() => {
-    const raw =
-      (import.meta as { env?: Record<string, string> }).env?.['VITE_RILOBOT_WHATSAPP'] ??
-      '15551379594';
-    return `https://wa.me/${raw.replace(/\D/g, '')}`;
-  })();
+  pendingBaja: 'whatsapp' | 'erp' | null = null;
+  bajaPassword = '';
+  bajaConfirmNombre = '';
 
   get business() {
     return this.auth.currentBusiness;
@@ -230,7 +195,7 @@ export class PlanStatusCardComponent {
     if (this.variant === 'home') {
       return 'Estado de tu prueba o suscripción. El trabajo del día a día es por WhatsApp.';
     }
-    return 'Qué tenés activo en este negocio y cómo está el pago.';
+    return 'Suscripción de la empresa: qué está activo, qué se da de baja acá y qué se suma desde Planes.';
   }
 
   get isTrialActive(): boolean {
@@ -270,10 +235,7 @@ export class PlanStatusCardComponent {
     if (this.isTrialActive) {
       return 'bg-violet-50 border-violet-100 dark:bg-violet-950/40 dark:border-violet-900';
     }
-    if (this.isLitePlan) {
-      return 'bg-amber-50 border-amber-100 dark:bg-amber-950/40 dark:border-amber-900';
-    }
-    if (this.isTrialExpired) {
+    if (this.isLitePlan || this.isTrialExpired) {
       return 'bg-amber-50 border-amber-100 dark:bg-amber-950/40 dark:border-amber-900';
     }
     if (this.isPaidOk) {
@@ -287,8 +249,7 @@ export class PlanStatusCardComponent {
 
   get billingHeadline(): string {
     if (this.isTrialActive) return 'Prueba gratuita activa';
-    if (this.isLitePlan) return 'Plan libre';
-    if (this.isTrialExpired) return 'Prueba vencida';
+    if (this.isLitePlan || this.isTrialExpired) return 'Prueba vencida';
     const status = this.business?.estadoSuscripcion;
     if (status && status !== 'activa') {
       return SUBSCRIPTION_STATUS_LABELS[status];
@@ -306,22 +267,13 @@ export class PlanStatusCardComponent {
       }
       const end = this.formatDate(this.business?.trialEndDate);
       if (end) parts.push(`vence ${end}`);
-    } else if (this.isLitePlan) {
-      const limits = this.auth.liteLimits;
+    } else if (this.isLitePlan || this.isTrialExpired) {
       const end = this.formatDate(this.business?.trialEndDate);
-      if (end) parts.push(`La prueba venció el ${end}`);
-      if (limits) {
-        parts.push(
-          `Hasta ${limits.maxClientes} clientes, ${limits.maxProductos} productos` +
-            (limits.maxOperacionesMes ? `, ${limits.maxOperacionesMes} cargas WhatsApp` : '') +
-            ` y ${limits.maxAccionesIaMes} acciones IA al mes`
-        );
-      } else {
-        parts.push('Seguís operando con techos. Activá un plan cuando crezcas.');
-      }
-    } else if (this.isTrialExpired) {
-      const end = this.formatDate(this.business?.trialEndDate);
-      parts.push(end ? `Venció el ${end}. Activá un plan para seguir usando RILO.` : 'Activá un plan para seguir usando RILO.');
+      parts.push(
+        end
+          ? `Venció el ${end}. Tus datos siguen. Activá un plan para continuar usando RILO.`
+          : 'Tus datos siguen. Activá un plan para continuar usando RILO.'
+      );
     } else {
       const until = this.formatDate(this.business?.paidUntil);
       if (until) {
@@ -355,186 +307,102 @@ export class PlanStatusCardComponent {
     return parts.join(' · ');
   }
 
-  get channelHint(): string {
-    const wa = this.auth.canAccessWhatsapp;
-    const erp = this.auth.canAccessErpWeb;
-    if (wa && !erp) {
-      return 'Tu plan opera por WhatsApp. El panel web se suma desde esta misma cuenta, sin registrarte de nuevo. El historial ya está en el ERP.';
+  get erpStatusLabel(): string {
+    if (this.auth.canAccessErpWeb) return 'Activo';
+    if (this.auth.isErpPaused) return 'Inactivo';
+    return 'No incluido';
+  }
+
+  get erpStatusClass(): string {
+    if (this.auth.canAccessErpWeb) return 'text-teal-700 dark:text-teal-400';
+    if (this.auth.isErpPaused) return 'text-amber-700 dark:text-amber-400';
+    return 'text-gray-400';
+  }
+
+  get rilobotStatusLabel(): string {
+    if (this.auth.canAccessWhatsapp) return 'Activo';
+    if (this.auth.isWhatsappPaused) return 'Inactivo';
+    return 'No incluido';
+  }
+
+  get rilobotStatusClass(): string {
+    if (this.auth.canAccessWhatsapp) return 'text-teal-700 dark:text-teal-400';
+    if (this.auth.isWhatsappPaused) return 'text-amber-700 dark:text-amber-400';
+    return 'text-gray-400';
+  }
+
+  get canPauseWhatsapp(): boolean {
+    return this.auth.canAccessWhatsapp;
+  }
+
+  get canPauseErp(): boolean {
+    return this.auth.canAccessErpWeb;
+  }
+
+  get showAddWhatsappLink(): boolean {
+    return !this.auth.canAccessWhatsapp;
+  }
+
+  get showAddErpLink(): boolean {
+    return !this.auth.canAccessErpWeb;
+  }
+
+  get requiresPassword(): boolean {
+    return this.auth.currentUser?.hasPassword !== false;
+  }
+
+  get canSubmitBaja(): boolean {
+    if (this.requiresPassword) return this.bajaPassword.trim().length > 0;
+    return this.bajaConfirmNombre.trim().length > 0;
+  }
+
+  get bajaHint(): string {
+    const onlyChannel =
+      (this.pendingBaja === 'whatsapp' && !this.auth.canAccessErpWeb) ||
+      (this.pendingBaja === 'erp' && !this.auth.canAccessWhatsapp);
+    if (onlyChannel) {
+      return 'Vas a quedar sin este servicio. La suscripción queda inactiva. Los datos de la empresa no se borran. Para volver, entrá a Planes con la misma cuenta.';
     }
-    if (erp && wa) {
-      return 'RiloBot está activo: podés cargar por WhatsApp y controlar todo en este panel.';
+    if (this.pendingBaja === 'whatsapp') {
+      return 'RILO Bot deja de responder. RILO Gestión sigue. Los datos no se borran. Para reactivarlo, andá a Planes.';
     }
-    if (erp && !wa) {
-      return 'Este negocio usa el panel web. Para activar RiloBot desde acá tenés que cargar y confirmar el celular.';
-    }
-    return 'No hay canales operativos en este negocio.';
+    return 'Dejás de entrar a RILO Gestión. Si tenés RILO Bot, seguís por WhatsApp. Los datos no se borran. Para reactivar RILO Gestión, andá a Planes.';
   }
 
-  get missingProduct(): TrialProductId | null {
-    const wa = this.auth.canAccessWhatsapp;
-    const erp = this.auth.canAccessErpWeb;
-    if (wa && !erp) return 'erp';
-    if (erp && !wa) return 'whatsapp';
-    return null;
-  }
-
-  get canEnableMissingInTrial(): boolean {
-    return (
-      this.auth.isSupervisor &&
-      this.isTrialActive &&
-      this.missingProduct != null
-    );
-  }
-
-  get missingChannelCta(): string {
-    if (this.missingProduct === 'erp') return 'Sumar el panel web a esta cuenta';
-    if (this.missingProduct === 'whatsapp') return 'Activar RiloBot en esta cuenta';
-    return 'Sumar módulo';
-  }
-
-  get checkoutQueryParams(): { producto: string } {
-    const missing = this.missingProduct;
-    if (missing === 'erp' || missing === 'whatsapp') {
-      return { producto: 'completo' };
-    }
-    return { producto: this.auth.platformAccess.trialProduct ?? 'whatsapp' };
-  }
-
-  get whatsappPhoneVerified(): boolean {
-    const cv = this.business?.contactVerification;
-    return Boolean(cv?.phone?.trim() && cv.phoneVerified === true);
-  }
-
-  get needsWhatsappPhone(): boolean {
-    return this.auth.isSupervisor && this.missingProduct === 'whatsapp' && !this.whatsappPhoneVerified;
-  }
-
-  get formattedPhonePreview(): string {
-    const e164 = parsePhoneInput(this.phoneDial, this.phoneLocal);
-    return e164 ? formatPhoneDisplay(e164) : '';
-  }
-
-  get pendingPhoneDisplay(): string {
-    return this.pendingPhone ? formatPhoneDisplay(this.pendingPhone) : '';
-  }
-
-  get payCtaLabel(): string {
-    if (this.isTrialExpired || this.auth.isPaymentOverdue || this.business?.estadoSuscripcion === 'vencida') {
-      return 'Activar o renovar plan';
-    }
-    if (this.isTrialActive) return 'Ver opciones de activación';
-    if (this.missingProduct === 'whatsapp') return 'Activar RiloBot';
-    if (this.missingProduct === 'erp') return 'Sumar el panel web';
-    return 'Ver planes y pago';
-  }
-
-  enableMissingChannel() {
-    const product = this.missingProduct;
-    if (!product || this.enabling) return;
-    if (product === 'whatsapp' && !this.whatsappPhoneVerified) {
-      this.startWhatsappPhoneFlow();
-      return;
-    }
-    this.completeEnableOrCheckout(product);
-  }
-
-  startWhatsappPhoneFlow() {
-    this.showWhatsappPhoneForm = true;
-    this.whatsappPhoneStep = 'phone';
+  startBaja(product: 'whatsapp' | 'erp') {
+    this.pendingBaja = product;
     this.enableError = '';
-    this.otpCode = '';
-    this.devOtp = '';
-    this.otpHint = '';
-    this.prefillPhone();
+    this.bajaPassword = '';
+    this.bajaConfirmNombre = '';
   }
 
-  cancelWhatsappPhoneFlow() {
-    this.showWhatsappPhoneForm = false;
-    this.whatsappPhoneStep = 'phone';
+  cancelBaja() {
+    this.pendingBaja = null;
     this.enableError = '';
-    this.otpCode = '';
-    this.devOtp = '';
+    this.bajaPassword = '';
+    this.bajaConfirmNombre = '';
   }
 
-  sendWhatsappCode() {
-    const phone = parsePhoneInput(this.phoneDial, this.phoneLocal);
-    if (!phone) {
-      this.enableError = 'Ingresá un celular válido.';
-      return;
-    }
+  confirmBaja() {
+    const product = this.pendingBaja;
+    if (!product || this.enabling || !this.canSubmitBaja) return;
     this.enabling = true;
     this.enableError = '';
-    this.auth.sendWhatsappPhoneCode(phone).subscribe({
-      next: (res) => {
-        this.enabling = false;
-        this.pendingPhone = res.phone;
-        this.otpHint = res.hint ?? '';
-        this.devOtp = res.devCode ?? '';
-        this.whatsappPhoneStep = 'code';
-      },
-      error: (err: { error?: { error?: string } }) => {
-        this.enabling = false;
-        this.enableError = err?.error?.error || 'No se pudo enviar el código.';
-      },
-    });
-  }
-
-  confirmWhatsappCode() {
-    if (!this.pendingPhone || this.otpCode.trim().length !== 6 || this.enabling) return;
-    this.enabling = true;
-    this.enableError = '';
-    this.auth.verifyWhatsappPhone(this.pendingPhone, this.otpCode.trim()).subscribe({
-      next: () => {
-        this.enabling = false;
-        this.showWhatsappPhoneForm = false;
-        const product = this.missingProduct ?? 'whatsapp';
-        this.completeEnableOrCheckout(product);
-      },
-      error: (err: { error?: { error?: string } }) => {
-        this.enabling = false;
-        this.enableError = err?.error?.error || 'No se pudo confirmar el número.';
-      },
-    });
-  }
-
-  private completeEnableOrCheckout(product: TrialProductId) {
-    this.enabling = true;
-    this.enableError = '';
-    this.auth.enableProduct(product).subscribe({
-      next: () => {
-        this.enabling = false;
-        void this.router.navigateByUrl(this.auth.homeRoute);
-      },
-      error: (err: { status?: number; error?: { error?: string; checkoutProduct?: string } }) => {
-        this.enabling = false;
-        if (err?.status === 402) {
-          const producto = err.error?.checkoutProduct ?? 'completo';
-          void this.router.navigate(['/activar-suscripcion'], { queryParams: { producto } });
-          return;
-        }
-        this.enableError = err?.error?.error || 'No se pudo habilitar el módulo.';
-      },
-    });
-  }
-
-  private prefillPhone() {
-    const existing = this.business?.contactVerification?.phone?.trim() ?? '';
-    const fromCountry = dialFromCountryName(String(this.business?.lifecycle?.pais ?? ''));
-    if (fromCountry) this.phoneDial = fromCountry;
-    if (!existing.startsWith('+')) {
-      this.phoneLocal = existing.replace(/\D/g, '');
-      return;
-    }
-    const digits = existing.slice(1);
-    const sorted = [...PHONE_COUNTRY_OPTIONS].sort((a, b) => b.dial.length - a.dial.length);
-    for (const country of sorted) {
-      if (digits.startsWith(country.dial)) {
-        this.phoneDial = country.dial;
-        this.phoneLocal = digits.slice(country.dial.length);
-        return;
-      }
-    }
-    this.phoneLocal = digits;
+    this.auth
+      .disableProduct(product, {
+        password: this.requiresPassword ? this.bajaPassword : undefined,
+        confirmNombre: this.requiresPassword ? undefined : this.bajaConfirmNombre,
+      })
+      .subscribe({
+        next: () => {
+          this.enabling = false;
+          this.cancelBaja();
+        },
+        error: (err: { error?: { error?: string } }) => {
+          this.enabling = false;
+          this.enableError = err?.error?.error || 'No se pudo dar de baja.';
+        },
+      });
   }
 
   private formatDate(value?: string | null): string {

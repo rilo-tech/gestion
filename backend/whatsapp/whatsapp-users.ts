@@ -1,3 +1,4 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../firebase.ts';
 import { isValidE164Phone, normalizePhone } from '../../shared/phone.ts';
 
@@ -61,7 +62,7 @@ export async function countEnabledWhatsappUsers(businessId: string): Promise<num
   return snap.size;
 }
 
-/** Busca si el teléfono ya está autorizado en otra (o la misma) empresa. */
+/** Busca si el teléfono ya está autorizado (activo) en otra (o la misma) empresa. */
 export async function findWhatsappPhoneOwner(
   phone: string,
   exceptBusinessId?: string
@@ -74,10 +75,12 @@ export async function findWhatsappPhoneOwner(
     const usersSnap = await db
       .collection(`negocios/${doc.id}/whatsapp_users`)
       .where('phone', '==', normalized)
-      .limit(1)
+      .limit(5)
       .get();
-    if (!usersSnap.empty) {
-      return { businessId: doc.id, userId: usersSnap.docs[0]!.id };
+    for (const userDoc of usersSnap.docs) {
+      // Líneas dadas de baja no bloquean reutilizar el número.
+      if (userDoc.data()?.enabled === false) continue;
+      return { businessId: doc.id, userId: userDoc.id };
     }
   }
   return null;
@@ -112,7 +115,14 @@ export async function upsertWhatsappUser(
   }
 
   const sameInBusiness = await collection(businessId).where('phone', '==', phone).limit(2).get();
-  const otherDoc = sameInBusiness.docs.find((doc) => doc.id !== payload.id);
+  let otherDoc = sameInBusiness.docs.find((doc) => doc.id !== payload.id);
+
+  // Reutiliza la línea liberada (phone borrado, previousPhone = este número).
+  if (!otherDoc && !payload.id) {
+    const prevSnap = await collection(businessId).where('previousPhone', '==', phone).limit(1).get();
+    otherDoc = prevSnap.docs[0];
+  }
+
   if (payload.id && otherDoc) {
     throw new Error('PHONE_IN_USE');
   }
@@ -123,6 +133,11 @@ export async function upsertWhatsappUser(
     : otherDoc
       ? otherDoc.ref
       : collection(businessId).doc();
+
+  const clearRelease =
+    enabled === true
+      ? { previousPhone: FieldValue.delete(), releasedAt: FieldValue.delete() }
+      : {};
 
   if (payload.id) {
     const existing = await ref.get();
@@ -135,6 +150,7 @@ export async function upsertWhatsappUser(
         role,
         enabled,
         erpUserId,
+        ...clearRelease,
         createdAt: prev.createdAt ?? now,
         updatedAt: now,
       },
@@ -149,6 +165,7 @@ export async function upsertWhatsappUser(
         role,
         enabled,
         erpUserId,
+        ...clearRelease,
         createdAt: existing.exists
           ? ((existing.data() as Record<string, unknown>).createdAt ?? now)
           : now,
@@ -170,7 +187,36 @@ export async function setWhatsappUserEnabled(
   const ref = collection(businessId).doc(userId);
   const snap = await ref.get();
   if (!snap.exists) throw new Error('WHATSAPP_USER_NOT_FOUND');
-  await ref.update({ enabled: enabled === true, updatedAt: new Date().toISOString() });
+  const data = snap.data() as Record<string, unknown>;
+  const now = new Date().toISOString();
+  if (enabled === true) {
+    const currentPhone = String(data.phone ?? '').trim();
+    const previousPhone = String(data.previousPhone ?? '').trim();
+    const restorePhone = currentPhone || previousPhone;
+    await ref.set(
+      {
+        enabled: true,
+        ...(restorePhone ? { phone: restorePhone } : {}),
+        previousPhone: FieldValue.delete(),
+        releasedAt: FieldValue.delete(),
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  } else {
+    const phone = String(data.phone ?? '').trim();
+    await ref.set(
+      {
+        enabled: false,
+        ...(phone
+          ? { phone: FieldValue.delete(), previousPhone: phone }
+          : {}),
+        releasedAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  }
   const updated = await ref.get();
   return mapWhatsappUser(updated.id, updated.data() as Record<string, unknown>);
 }

@@ -4,7 +4,7 @@ import { AuthService } from '../services/auth.service';
 import { Permission } from '../constants/permissions';
 import { map } from 'rxjs';
 
-const ERP_WEB_EXEMPT_PATHS = ['/mi-cuenta', '/apariencia', '/activar-suscripcion'];
+const ERP_WEB_EXEMPT_PATHS = ['/mi-cuenta', '/apariencia', '/activar-suscripcion', '/plan'];
 
 export const authGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
@@ -73,10 +73,11 @@ export const companyGuard: CanActivateFn = () => {
   );
 };
 
+/** Solo el administrador de la empresa (rol supervisor): plan y suscripción. */
 export const supervisorGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  return auth.canManageUsers ? true : router.createUrlTree([auth.homeRoute]);
+  return auth.isSupervisor ? true : router.createUrlTree([auth.homeRoute]);
 };
 
 export function requirePermission(permission: Permission): CanActivateFn {
@@ -119,11 +120,12 @@ export const erpWebGuard: CanActivateFn = (_route, state) => {
   return router.createUrlTree(['/mi-cuenta']);
 };
 
-/** Redirige al flujo de activación solo si la cuenta está bloqueada (baja / vencida). El plan libre sigue operando. */
+/** Si el trial venció o la cuenta está bloqueada, manda a contratar. Cuenta/Plan siguen accesibles. */
 export const trialActiveGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  if (auth.currentBusiness?.billingMode === 'blocked') {
+  const mode = auth.currentBusiness?.billingMode;
+  if (mode === 'blocked' || mode === 'lite') {
     return router.createUrlTree(['/activar-suscripcion']);
   }
   return true;

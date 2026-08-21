@@ -1,5 +1,5 @@
 import { getBusiness } from '../auth/business.ts';
-import { assertCanUseAi, formatThrownUsage, isUsageLimitError } from '../auth/usage-gates.ts';
+import { assertCanUseAi, formatThrownUsage, isUsageLimitError, resolveBillingMode } from '../auth/usage-gates.ts';
 import { resolveTenantByPhone } from './tenant-resolver.ts';
 import { assertWhatsappFeatures } from './feature-guard.ts';
 import {
@@ -90,7 +90,8 @@ type NamedCandidate = { id: string; nombre: string; label?: string; score?: numb
 
 function isSubscriptionBlocked(business: Awaited<ReturnType<typeof getBusiness>>): boolean {
   if (!business) return true;
-  return business.estadoSuscripcion !== 'activa';
+  if (business.estadoSuscripcion !== 'activa') return true;
+  return resolveBillingMode(business) === 'blocked';
 }
 
 function whatsappSignupUrl(): string {
@@ -1285,7 +1286,7 @@ export async function handleWhatsappMessage(
     const registerUrl = whatsappSignupUrl();
     return {
       reply:
-        `Hola 👋 Soy RiloBot.\n` +
+        `Hola 👋 Soy RILO Bot.\n` +
         `Tu número todavía no está registrado.\n\n` +
         `Para usarme, creá tu cuenta acá (prueba gratis):\n${registerUrl}\n\n` +
         `Usá el mismo WhatsApp con el que me escribís. Cuando termines el registro, volvé a escribirme.`,
@@ -1295,11 +1296,11 @@ export async function handleWhatsappMessage(
   }
 
   if (tenant.accessRevoked) {
-    const registerUrl = whatsappSignupUrl();
     return {
       reply:
-        `Esta cuenta fue dada de baja. Ya no puedo operar con este WhatsApp.\n\n` +
-        `Si querés volver a usar RiloBot, registrate de nuevo acá:\n${registerUrl}`,
+        `Este WhatsApp está dado de baja en la cuenta.\n\n` +
+        `Si lo reactivaste desde Superadmin o Planes, escribime de nuevo en un momento. ` +
+        `Si sigue sin andar, pedile al admin que vuelva a dar de alta el número en la empresa.`,
       intent: 'account_offboarded',
       executed: false,
       businessId: tenant.businessId,

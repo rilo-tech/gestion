@@ -83,6 +83,12 @@ export async function listSubscriptionPayments(
   return snapshot.docs.map((doc) => mapPayment(doc.id, doc.data() as Record<string, unknown>));
 }
 
+/** Cantidad de períodos cubiertos (sirve para saber cuántos meses de promo ya usó). */
+export async function countSubscriptionPaymentPeriods(businessId: string): Promise<number> {
+  const snapshot = await paymentsCollection(businessId).get();
+  return snapshot.size;
+}
+
 export async function registerSubscriptionPayment(
   businessId: string,
   payload: {

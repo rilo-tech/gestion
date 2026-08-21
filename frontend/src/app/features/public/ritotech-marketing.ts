@@ -40,19 +40,19 @@ export const RILOTECH_USE_CASES: RitotechUseCase[] = [
   {
     title: 'Ventas y cobros del día',
     description:
-      'Anotá ventas y pagos parciales mientras atendés. RiloBot te pide confirmación antes de guardar cada operación.',
+      'Anotá ventas y pagos parciales mientras atendés. RILO Bot te pide confirmación antes de guardar cada operación.',
     icon: '💬',
   },
   {
     title: 'Control desde el panel',
     description:
-      'Si elegís ERP Web o el plan completo, revisá stock, caja, clientes y reportes con todo lo cargado por WhatsApp unificado.',
+      'Si elegís RILO Gestión o RILO Completo, revisá stock, caja, clientes y reportes con todo lo cargado por WhatsApp unificado.',
     icon: '📊',
   },
   {
     title: 'Empezá chico, escalá después',
     description:
-      'Podés probar solo WhatsApp y activar el panel web más adelante. Tus datos quedan en el mismo negocio.',
+      'Podés probar solo RILO Bot y activar RILO Gestión más adelante. Tus datos quedan en el mismo negocio.',
     icon: '🚀',
   },
 ];
@@ -71,7 +71,7 @@ export const RILOTECH_CHAT_EXAMPLE: RitotechChatMessage[] = [
   { from: 'user', text: 'Sí' },
   {
     from: 'bot',
-    text: 'Listo, pedido guardado. Cuando actives el panel web vas a verlo en tu listado de pedidos.',
+    text: 'Listo, pedido guardado. Cuando actives el RILO Gestión vas a verlo en tu listado de pedidos.',
   },
 ];
 
@@ -79,7 +79,7 @@ export const RILOTECH_HOW_IT_WORKS = [
   {
     step: '1',
     title: 'Elegí tu canal',
-    text: 'Solo WhatsApp, solo ERP Web o los dos. La prueba dura ' + DEFAULT_TRIAL_DAYS + ' días sin tarjeta.',
+    text: 'solo RILO Bot, solo RILO Gestión o los dos. La prueba dura ' + DEFAULT_TRIAL_DAYS + ' días sin tarjeta.',
   },
   {
     step: '2',
@@ -97,39 +97,39 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
   {
     id: 'whatsapp',
     label: TRIAL_PRODUCT_LABELS.whatsapp,
-    trialIncludes: 'RiloBot + IA + datos internos del ERP (sin panel web)',
-    afterTrial: 'Cuota según volumen de mensajes y módulos. Podés sumar ERP Web como add-on.',
+    trialIncludes: 'RILO Bot + IA + datos internos del ERP (sin RILO Gestión)',
+    afterTrial: 'Cuota según volumen de mensajes y módulos. Podés sumar RILO Gestión como add-on.',
   },
   {
     id: 'erp',
     label: TRIAL_PRODUCT_LABELS.erp,
-    trialIncludes: 'Panel web completo (plan intermedio en prueba)',
+    trialIncludes: 'RILO Gestión (plan intermedio en prueba)',
     afterTrial: 'Cuota mensual por plan y usuarios. WhatsApp IA se cotiza aparte si lo necesitás.',
     highlight: true,
   },
   {
     id: 'completo',
     label: TRIAL_PRODUCT_LABELS.completo,
-    trialIncludes: 'WhatsApp + panel web + todos los módulos del plan intermedio',
+    trialIncludes: 'WhatsApp + RILO Gestión + todos los módulos del plan intermedio',
     afterTrial: 'Paquete integrado con mejor precio que contratar cada canal por separado.',
   },
 ];
 
 export const RILOTECH_FAQ: RitotechFaqItem[] = [
   {
-    question: '¿Puedo usar solo WhatsApp sin entrar al ERP?',
+    question: '¿Puedo usar solo RILO Bot sin entrar a RILO Gestión?',
     answer:
-      'Sí. Con el plan Solo WhatsApp cargás pedidos, ventas y pagos escribiendo mensajes. Entrás a Mi cuenta para ver tu prueba y datos de acceso; el panel completo (/dashboard) no está incluido hasta que actives ERP Web.',
+      'Sí. Con el plan solo RILO Bot cargás pedidos, ventas y pagos escribiendo mensajes. Entrás a Mi cuenta para ver tu prueba y datos de acceso; RILO Gestión (/dashboard) no está incluido hasta que lo actives.',
   },
   {
-    question: '¿Puedo empezar por WhatsApp y sumar el panel web después?',
+    question: '¿Puedo empezar por WhatsApp y sumar el RILO Gestión después?',
     answer:
-      'Sí. Tus datos quedan guardados en el mismo negocio. Contactanos o activá la suscripción para habilitar ERP Web cuando lo necesites.',
+      'Sí. Tus datos quedan guardados en el mismo negocio. Contactanos o activá la suscripción para habilitar RILO Gestión cuando lo necesites.',
   },
   {
     question: '¿Necesito instalar algo?',
     answer:
-      'No. El ERP es una web; WhatsApp usa el número que ya tenés. Solo registrás tu negocio y, si elegís RiloBot, escribís al canal autorizado.',
+      'No. El ERP es una web; WhatsApp usa el número que ya tenés. Solo registrás tu negocio y, si elegís RILO Bot, escribís al canal autorizado.',
   },
   {
     question: '¿Cuánto cuesta después de la prueba?',
@@ -139,7 +139,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
       ' días de prueba no pagás. Al activar el plan, la cuota depende del producto (WhatsApp, ERP o completo), usuarios y módulos. Te pasamos el detalle antes de cobrar.',
   },
   {
-    question: '¿RiloBot guarda sin preguntar?',
+    question: '¿RILO Bot guarda sin preguntar?',
     answer:
       'No. Antes de registrar un pedido, venta o pago te pide confirmación con SÍ o NO. Así evitás errores por mensajes ambiguos.',
   },

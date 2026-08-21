@@ -5,15 +5,16 @@ import { RitotechPublicShellComponent } from './ritotech-public-shell.component'
 import { RitotechFaqComponent } from './ritotech-faq.component';
 import { RitotechChatDemoComponent } from './ritotech-chat-demo.component';
 import { RitotechVisualGuideComponent } from './ritotech-visual-guide.component';
+import { RitotechProductCtaComponent } from './ritotech-product-cta.component';
 import { RILOBOT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 import {
   TRIAL_PRODUCT_DESCRIPTIONS,
+  TRIAL_PRODUCT_TAGLINES,
 } from '../../../../../shared/platform-access.ts';
 import { SHOW_ARGENTINA_BILLING, type BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
 import type { CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
-import { DEFAULT_COMMERCIAL_CATALOG, commercialFunnelSteps, stayFreePitch as buildStayFreePitch, trialMicrocopy } from '../../../../../shared/commercial-catalog.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, commercialFunnelSteps, stayFreePitch as buildStayFreePitch, trialCtaForProduct, trialCtaLabel, trialMicrocopy, completeVsSeparate, formatCatalogPriceLabel } from '../../../../../shared/commercial-catalog.ts';
 import {
-  RILOTECH_AUDIENCE_PITCH,
   RILOTECH_CHAT_DEMO,
   RILOTECH_CTA_FINAL,
   RILOTECH_HERO,
@@ -24,6 +25,7 @@ import {
   pricingTiersFromCatalog,
 } from '../../../../../shared/ritotech-marketing.ts';
 import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
+import { AuthService } from '../../core/services/auth.service';
 
 const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
 
@@ -37,6 +39,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
     RitotechFaqComponent,
     RitotechChatDemoComponent,
     RitotechVisualGuideComponent,
+    RitotechProductCtaComponent,
   ],
   template: `
     <app-ritotech-public-shell>
@@ -51,40 +54,58 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             class="h-16 sm:h-20 w-auto object-contain"
             decoding="async" />
         </div>
-        <p class="text-teal-400 text-xs sm:text-sm font-semibold uppercase tracking-wide mb-2">Registrate. Es gratis.</p>
-        <h1 class="text-2xl sm:text-4xl lg:text-5xl font-bold leading-tight max-w-3xl mx-auto">
+        <p class="text-teal-400 text-xs sm:text-sm font-semibold uppercase tracking-wide mb-2">Para microemprendimientos</p>
+        <h1 class="text-3xl sm:text-5xl lg:text-6xl font-bold leading-tight max-w-4xl mx-auto text-white">
           {{ hero.title }}
         </h1>
-        <p class="mt-3 text-gray-400 text-sm sm:text-base max-w-2xl mx-auto leading-relaxed">
+        <p class="mt-4 text-white/90 text-base sm:text-lg max-w-2xl mx-auto leading-relaxed">
           {{ hero.subtitle }}
         </p>
-        <p class="mt-2 text-sm text-gray-500 max-w-xl mx-auto leading-relaxed">{{ audiencePitch }}</p>
-        <div class="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <a
-            routerLink="/registro"
-            [queryParams]="{ producto: 'whatsapp' }"
-            class="w-full sm:w-auto rounded-xl bg-teal-600 px-6 py-3 font-semibold hover:bg-teal-500">
-            {{ hero.ctaPrimary }}
-          </a>
+        <p class="mt-3 text-sm text-white/60 max-w-xl mx-auto">{{ hero.tagline }}</p>
+
+        <div
+          *ngIf="auth.currentUser && !auth.isPlatformAdmin"
+          class="mt-5 mx-auto max-w-xl rounded-xl border border-teal-800/70 bg-teal-950/35 px-4 py-3 text-left">
+          <p class="text-sm text-white font-semibold">
+            Hola, {{ auth.currentUser.loginUsername || auth.currentUserName }}
+            <span *ngIf="auth.currentBusiness?.nombre" class="font-normal text-gray-300">
+              · {{ auth.currentBusiness?.nombre }}
+            </span>
+          </p>
+          <p class="mt-1 text-xs text-gray-400 leading-relaxed">
+            {{ loggedInAccessSummary }}
+          </p>
+          <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            <a [routerLink]="auth.homeRoute" class="text-xs font-semibold text-teal-300 hover:underline">
+              {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
+            </a>
+            <a routerLink="/planes" class="text-xs text-gray-400 hover:text-gray-200 hover:underline">Ver planes</a>
+          </div>
+        </div>
+
+        <div class="mt-5 flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center gap-3 max-w-xl mx-auto px-1">
+          <app-ritotech-product-cta
+            class="w-full sm:w-auto"
+            [product]="heroCtaProduct"
+            [guestLabel]="hero.ctaPrimary">
+          </app-ritotech-product-cta>
           <button
             type="button"
             (click)="scrollToDemo()"
             class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
             {{ hero.ctaSecondary }}
           </button>
-        </div>
-        <p class="mt-3 text-xs text-gray-500 max-w-lg mx-auto leading-relaxed">{{ hero.microcopy }}</p>
-        <p class="mt-1 text-xs text-gray-600">Sin tarjeta. A los 30 días no te cobramos: seguís gratis si no te pasás.</p>
-        <p class="mt-2">
-          <a routerLink="/planes" fragment="precios" class="text-sm text-teal-400 hover:underline">¿Y si crezco? Ver planes</a>
-        </p>
-        <div class="mt-3 flex justify-center">
           <app-ritotech-visual-guide
             #guide
+            class="w-full sm:w-auto"
             triggerLabel="Mirá cómo te ordena el día"
             defaultTab="whatsapp">
           </app-ritotech-visual-guide>
         </div>
+        <p class="mt-3 text-xs text-gray-500 max-w-lg mx-auto leading-relaxed">{{ hero.microcopy }}</p>
+        <p class="mt-2">
+          <a routerLink="/planes" fragment="precios" class="text-sm text-teal-400 hover:underline">¿Y si crezco? Ver planes</a>
+        </p>
       </section>
 
       <!-- Demo WhatsApp (prueba visual central) -->
@@ -99,7 +120,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 height="48"
                 class="h-12 w-12 object-contain"
                 decoding="async" />
-              <h2 class="text-xl sm:text-2xl font-bold">Así se ve RiloBot en WhatsApp</h2>
+              <h2 class="text-xl sm:text-2xl font-bold">Así se ve RILO Bot en WhatsApp</h2>
             </div>
             <p class="mt-3 text-sm text-gray-400 leading-relaxed">
               Escribís en lenguaje natural. El bot entiende, te resume la operación y
@@ -111,12 +132,11 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
               <li>✓ "Pedido para Juan con 3 productos"</li>
               <li>✓ "¿Cuánto debe Pedro?" / "¿Cuánto vendí hoy?"</li>
             </ul>
-            <a
-              routerLink="/registro"
-              [queryParams]="{ producto: 'whatsapp' }"
-              class="mt-6 inline-flex rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold hover:bg-teal-500">
-              Probar RiloBot {{ trialDays }} días gratis
-            </a>
+            <app-ritotech-product-cta
+              class="mt-6"
+              product="whatsapp"
+              [guestLabel]="'Probar RILO Bot ' + trialDays + ' días gratis'">
+            </app-ritotech-product-cta>
           </div>
           <app-ritotech-chat-demo
             [messages]="chatDemo"
@@ -149,7 +169,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
           {{ stayFreePitch }}
         </p>
         <p class="text-center text-sm text-gray-500 mb-4 max-w-lg mx-auto">
-          Empezá por RiloBot. Sumá el panel web cuando necesites caja avanzada, stock o compras.
+          Empezá por RILO Bot. Sumá RILO Gestión cuando necesites caja avanzada, stock o compras.
         </p>
         <div class="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl mx-auto">
           <div
@@ -211,9 +231,12 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 decoding="async" />
               {{ card.label }}
             </h3>
-            <p class="mt-1 text-lg font-semibold text-teal-300">Gratis</p>
-            <p class="mt-0.5 text-[11px] text-gray-400">{{ trialDays }} días a full, sin tarjeta</p>
-            <p class="mt-0.5 text-[11px] text-gray-400">Después seguís gratis si no te pasás</p>
+            <p class="mt-0.5 text-xs text-teal-400/90">{{ card.tagline }}</p>
+            <p class="mt-1 text-lg font-semibold text-teal-300">{{ card.price }}</p>
+            <p class="mt-0.5 text-[11px] text-gray-400">{{ trialDays }} días gratis, sin tarjeta</p>
+            <p *ngIf="card.id === 'completo' && completeSavingLabel" class="mt-0.5 text-[11px] text-teal-400/90">
+              {{ completeSavingLabel }}
+            </p>
             <p class="mt-2 text-sm text-gray-400 flex-1 leading-relaxed">{{ card.description }}</p>
             <div class="mt-3 flex flex-wrap gap-2 text-[11px]">
               <span
@@ -222,7 +245,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 [class.text-teal-300]="card.whatsapp"
                 [class.border-gray-700]="!card.whatsapp"
                 [class.text-gray-500]="!card.whatsapp">
-                WhatsApp {{ card.whatsapp ? '✓' : '—' }}
+                RILO Bot {{ card.whatsapp ? '✓' : '—' }}
               </span>
               <span
                 class="rounded-full px-2 py-0.5 border"
@@ -230,56 +253,51 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 [class.text-teal-300]="card.panel"
                 [class.border-gray-700]="!card.panel"
                 [class.text-gray-500]="!card.panel">
-                Panel web {{ card.panel ? '✓' : '—' }}
+                RILO Gestión {{ card.panel ? '✓' : '—' }}
               </span>
             </div>
             <div class="mt-auto pt-5 flex flex-col">
-              <a
-                [routerLink]="['/registro']"
-                [queryParams]="{ producto: card.id }"
-                class="inline-flex justify-center rounded-lg px-4 py-2.5 text-sm font-semibold whitespace-nowrap"
-                [class.bg-teal-600]="card.featured"
-                [class.hover:bg-teal-500]="card.featured"
-                [class.bg-violet-700/80]="!card.featured"
-                [class.hover:bg-violet-600]="!card.featured">
-                Empezar gratis
-              </a>
+              <app-ritotech-product-cta
+                [product]="card.id"
+                [guestLabel]="ctaLabel(card.id)"
+                [variant]="card.featured ? 'primary' : 'secondary'">
+              </app-ritotech-product-cta>
               <div class="mt-2 h-6 flex items-center justify-center">
                 <button
-                  *ngIf="card.featured"
+                  *ngIf="card.id === 'whatsapp' || card.id === 'completo'"
                   type="button"
                   (click)="guide.open('whatsapp')"
                   class="text-xs text-teal-400/90 hover:text-teal-300 hover:underline text-center">
-                  ¿Cómo te simplifica el día? Ver historieta
+                  Ver cómo funciona
                 </button>
                 <button
                   *ngIf="card.id === 'erp'"
                   type="button"
                   (click)="guide.open('erp')"
                   class="text-xs text-gray-500 hover:text-gray-300 hover:underline text-center">
-                  Ver historieta del panel
+                  Ver cómo funciona
                 </button>
               </div>
             </div>
           </article>
         </div>
-        <p class="mt-4 text-center text-xs text-gray-500">
-          Hasta {{ catalog.lite.maxOperacionesMes }} cargas/mes · {{ catalog.lite.maxClientes }} clientes ·
-          {{ catalog.lite.maxProductos }} productos · {{ catalog.lite.maxAccionesIaMes }} IA/mes en el plan gratis.
+        <p class="mt-4 text-center text-xs text-gray-500 max-w-lg mx-auto leading-relaxed">
+          {{ trialDays }} días gratis en los tres planes. Al vencer, tus datos siguen y contratás para seguir operando.
         </p>
         <p class="mt-2 text-center">
           <a routerLink="/planes" fragment="precios" class="text-sm text-teal-400 hover:underline">Ver planes y precios pagos →</a>
         </p>
         <p class="mt-2 text-center text-xs text-gray-500 max-w-lg mx-auto leading-relaxed">
-          ¿Ya tenés RiloBot o el panel? No te registres otra vez:
+          ¿Ya tenés RILO Bot o RILO Gestión? No te registres otra vez:
           <a routerLink="/login" class="text-teal-400 hover:underline">ingresá</a>
-          y sumá el otro módulo en tu cuenta. El mismo email o WhatsApp no crea una segunda empresa.
+          y sumá el otro en <a routerLink="/planes" class="text-teal-400 hover:underline">Planes</a>.
+          La baja se hace en Plan (solo el administrador) y no borra los datos.
         </p>
       </section>
 
       <!-- Cómo funciona -->
-      <section class="max-w-4xl mx-auto px-4 py-12 border-t border-white/5">
-        <h2 class="text-center text-xl font-bold mb-8">Cómo empezar en 3 pasos</h2>
+      <section id="como-funciona" class="max-w-4xl mx-auto px-4 py-12 border-t border-white/5 scroll-mt-20">
+        <h2 class="text-center text-xl font-bold mb-8">Cómo funciona</h2>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div *ngFor="let step of howItWorks" class="text-center sm:text-left">
             <span
@@ -308,16 +326,21 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             {{ ctaFinal.body }}
           </p>
           <div class="mt-5 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <app-ritotech-product-cta
+              product="completo"
+              [guestLabel]="hero.ctaPrimary">
+            </app-ritotech-product-cta>
             <a
-              routerLink="/registro"
-              [queryParams]="{ producto: 'whatsapp' }"
-              class="w-full sm:w-auto rounded-xl bg-teal-600 px-6 py-3 font-semibold hover:bg-teal-500">
-              {{ hero.ctaPrimary }}
+              *ngIf="!auth.currentUser"
+              routerLink="/login"
+              class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-300 hover:bg-gray-900 text-center">
+              Ya tengo cuenta
             </a>
             <a
-              routerLink="/login"
-              class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-300 hover:bg-gray-900">
-              Ya tengo cuenta
+              *ngIf="auth.currentUser && !auth.isPlatformAdmin"
+              routerLink="/planes"
+              class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-300 hover:bg-gray-900 text-center">
+              Ver planes
             </a>
           </div>
         </div>
@@ -328,8 +351,8 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
 export class RitotechLandingComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private commercial = inject(CommercialCatalogService);
+  readonly auth = inject(AuthService);
 
-  readonly audiencePitch = RILOTECH_AUDIENCE_PITCH;
   readonly useCases = RILOTECH_USE_CASES;
   readonly chatDemo = RILOTECH_CHAT_DEMO;
   readonly ctaFinal = RILOTECH_CTA_FINAL;
@@ -360,9 +383,37 @@ export class RitotechLandingComponent implements OnInit {
   get hero() {
     return {
       ...RILOTECH_HERO,
-      ctaPrimary: RILOTECH_HERO.ctaPrimary,
+      ctaPrimary: `Probar ${trialCtaLabel(this.catalog.trialDays)}`,
       microcopy: trialMicrocopy(this.catalog),
     };
+  }
+
+  /** Si ya está logueado, el CTA principal ofrece lo que le falta (no Completo de nuevo). */
+  get heroCtaProduct(): 'whatsapp' | 'erp' | 'completo' {
+    if (!this.auth.currentUser || this.auth.isPlatformAdmin) return 'completo';
+    const hasWa = this.auth.canAccessWhatsapp || this.auth.hasWhatsappEntitlement;
+    const hasErp = this.auth.canAccessErpWeb || this.auth.hasErpEntitlement;
+    if (hasWa && !hasErp) return 'erp';
+    if (hasErp && !hasWa) return 'whatsapp';
+    return 'completo';
+  }
+
+  get loggedInAccessSummary(): string {
+    const hasWa = this.auth.canAccessWhatsapp;
+    const hasErp = this.auth.canAccessErpWeb;
+    if (hasWa && hasErp) {
+      return 'Tenés RILO Bot y RILO Gestión. Podés cargar por WhatsApp y entrar al panel.';
+    }
+    if (hasWa) {
+      return 'Tenés solo RILO Bot: operás por WhatsApp. RILO Gestión no está incluido todavía; podés sumarlo cuando quieras.';
+    }
+    if (hasErp) {
+      return 'Tenés solo RILO Gestión. RILO Bot no está incluido todavía; podés sumarlo cuando quieras.';
+    }
+    if (this.auth.isWhatsappPaused || this.auth.isErpPaused) {
+      return 'Algún servicio está dado de baja. Podés reactivarlo desde Planes o desde Plan.';
+    }
+    return 'Todavía no tenés un módulo activo en esta cuenta.';
   }
 
   get howItWorks() {
@@ -370,11 +421,21 @@ export class RitotechLandingComponent implements OnInit {
       step.step === '2'
         ? {
             ...step,
-            title: `${this.trialDays} días a full, sin tarjeta`,
+            title: `Probá ${this.trialDays} días gratis`,
             description: this.stayFreePitch,
           }
         : step
     );
+  }
+
+  get completeSavingLabel(): string {
+    const vs = completeVsSeparate(this.catalog, this.country);
+    if (vs.saving <= 0) return '';
+    return `Por separado ${formatCatalogPriceLabel(this.country, vs.separate)} · ahorrás ${formatCatalogPriceLabel(this.country, vs.saving)}`;
+  }
+
+  ctaLabel(productId: 'whatsapp' | 'erp' | 'completo'): string {
+    return trialCtaForProduct(productId);
   }
 
   get pricingTiers() {
@@ -412,17 +473,21 @@ export class RitotechLandingComponent implements OnInit {
   }
 
   get productCards() {
-    return this.pricingTiers.map((tier) => ({
-      id: tier.id,
-      label: tier.label,
-      description: TRIAL_PRODUCT_DESCRIPTIONS[tier.id],
-      price: priceLabelFromCatalog(tier.id, this.country, this.catalog),
-      whatsapp: tier.whatsapp,
-      panel: tier.panelWeb,
-      featured: Boolean(tier.featured),
-      badgeLabel: tier.badgeLabel,
-      trialDays: tier.trialDays,
-    }));
+    const rank: Record<string, number> = { whatsapp: 0, completo: 1, erp: 2 };
+    return [...this.pricingTiers]
+      .sort((a, b) => (rank[a.id] ?? 9) - (rank[b.id] ?? 9))
+      .map((tier) => ({
+        id: tier.id,
+        label: tier.label,
+        tagline: TRIAL_PRODUCT_TAGLINES[tier.id],
+        description: TRIAL_PRODUCT_DESCRIPTIONS[tier.id],
+        price: priceLabelFromCatalog(tier.id, this.country, this.catalog),
+        whatsapp: tier.whatsapp,
+        panel: tier.panelWeb,
+        featured: Boolean(tier.featured),
+        badgeLabel: tier.badgeLabel,
+        trialDays: tier.trialDays,
+      }));
   }
 
   setCountry(country: BillingCountryCode) {

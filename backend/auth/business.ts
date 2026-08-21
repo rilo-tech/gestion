@@ -1,7 +1,7 @@
 import { db } from '../firebase.ts';
 import { getContactClaim } from './trial-registration-store.ts';
 import { getCommercialCatalog } from './commercial-catalog.ts';
-import type { UserRole } from './constants.ts';
+import { DEFAULT_BUSINESS_ID, type UserRole } from './constants.ts';
 import {
   countActiveAdministrators,
   countActiveOperators,
@@ -161,6 +161,18 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
 
 function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
   return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefinedDeep);
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, nested]) => nested !== undefined)
+        .map(([key, nested]) => [key, stripUndefinedDeep(nested)])
+    );
+  }
+  return value;
 }
 
 function businessRef(businessId: string) {
@@ -364,7 +376,7 @@ export async function ensureDefaultBusiness(
   }
 
   const payload = {
-    nombre: 'Rilo Gestión (demo)',
+    nombre: 'RILO Gestión (demo)',
     planId: DEFAULT_PLAN_ID,
     estadoSuscripcion: 'activa' as SubscriptionStatus,
     creadoPor: 'system',
@@ -487,7 +499,8 @@ export async function updateBusiness(
     updates.suscripcion = omitUndefinedFields(mergedSub);
   }
 
-  await ref.update(updates);
+  const cleaned = stripUndefinedDeep(updates) as Record<string, unknown>;
+  await ref.update(cleaned);
   let after = mapBusiness(businessId, (await ref.get()).data() as Record<string, unknown>);
   after = await syncExpiredTrialStatus(after);
 
@@ -586,7 +599,7 @@ function buildPublicBusinessInfo(
           : trial.isTrialBillingActive
             ? 'trial'
             : business.enPrueba === true
-              ? 'lite'
+              ? 'blocked'
               : 'paid',
     liteLimits: null,
     source: business.source,

@@ -441,7 +441,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       !supervisorPhone
     ) {
       return res.status(400).json({
-        error: 'Con producto RiloBot o Completo necesitás el WhatsApp del responsable (+598…).',
+        error: 'Con producto RILO Bot o Completo necesitás el WhatsApp del responsable (+598…).',
       });
     }
 
@@ -751,7 +751,7 @@ router.put('/businesses/:businessId/platform-access', async (req, res) => {
     });
     await updateBusiness(req.params.businessId, { platformAccess: next });
 
-    if (next.whatsappEnabled) {
+    if (next.whatsappEnabled && next.whatsappPaused !== true) {
       const phone = business.contactVerification?.phone?.trim() || '';
       if (phone) {
         const { seedBusinessWhatsappAccess } = await import('../whatsapp/seed-access.ts');
@@ -806,6 +806,13 @@ async function syncWhatsappSeatLimit(businessId: string): Promise<void> {
       },
     },
     { allowSubscriptionFields: true, historyNote: 'Cupo WhatsApp sincronizado' }
+  );
+  await db.collection(`negocios/${businessId}/whatsapp_config`).doc('default').set(
+    {
+      enabled: enabled > 0,
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
   );
 }
 

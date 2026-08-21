@@ -73,7 +73,7 @@ export async function sendWhatsappPhoneCode(params: {
   if (isWhatsappOutboundConfigured()) {
     const sent = await sendWhatsappText(
       phone,
-      `Tu código RiloTech para activar RiloBot es ${code}. Vence en 10 minutos.`
+      `Tu código RiloTech para activar RILO Bot es ${code}. Vence en 10 minutos.`
     );
     whatsappSent = sent.ok;
     if (!sent.ok) {
@@ -123,10 +123,10 @@ export async function verifyWhatsappPhoneCode(params: {
     params.businessId,
     {
       contactVerification: {
-        email: prev?.email ?? '',
+        email: String(prev?.email ?? ''),
         emailVerified: prev?.emailVerified === true,
         emailVerifiedAt: prev?.emailVerifiedAt ?? null,
-        emailStatus: prev?.emailStatus,
+        emailStatus: prev?.emailStatus ?? (prev?.emailVerified ? 'verified' : 'pending'),
         phone,
         phoneVerified: true,
         phoneVerifiedAt: now,
@@ -136,12 +136,12 @@ export async function verifyWhatsappPhoneCode(params: {
         termsAcceptedAt: prev?.termsAcceptedAt ?? null,
         termsVersion: prev?.termsVersion ?? null,
         privacyAcceptedAt: prev?.privacyAcceptedAt ?? null,
-        marketingEmailOptIn: prev?.marketingEmailOptIn,
+        marketingEmailOptIn: prev?.marketingEmailOptIn === true,
         lastOtpSentAt: now,
         otpAttempts: 0,
       },
     },
-    { changedBy: 'system', historyNote: 'WhatsApp verificado para activar RiloBot' }
+    { changedBy: 'system', historyNote: 'WhatsApp verificado para activar RILO Bot' }
   );
 
   await bindContactClaimToBusiness('phone', phone.toLowerCase(), params.businessId);
