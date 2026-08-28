@@ -18,7 +18,9 @@ import {
 } from '../../core/services/business.service';
 import { DialogService } from '../../core/services/dialog.service';
 import {
+  clampCommercialCatalog,
   DEFAULT_COMMERCIAL_CATALOG,
+  overlayUsagePacksForCountry,
   type CommercialCatalog,
 } from '../../../../../shared/commercial-catalog.ts';
 import {
@@ -787,7 +789,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <h3 class="font-bold text-gray-900">Embudo comercial (landing + checkout)</h3>
             <p class="text-sm text-gray-600 mt-1 leading-relaxed">
               Estos números se ven en la landing, en /planes y en el registro.
-              Precios de lanzamiento, días de prueba y operador extra. Al guardar, se publican en landing y checkout.
+              Precios de lanzamiento, días de prueba, cupos incluidos y packs extra. Al guardar, se publican en landing y checkout.
               Promo % off y techos de plan gratis: dejar en 0 / no usar en el MVP (no hay plan gratis permanente).
             </p>
           </div>
@@ -797,6 +799,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             </label>
             <label class="text-xs font-medium text-gray-600">IA prueba / mes
               <input type="number" min="0" [(ngModel)]="commercialDraft.trialAccionesIaMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            </label>
+            <label class="text-xs font-medium text-gray-600">WhatsApp prueba / mes
+              <input type="number" min="0" [(ngModel)]="commercialDraft.trialWhatsappMensajes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
             <label class="text-xs font-medium text-gray-600">Usuario extra UYU
               <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyUY" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
@@ -826,6 +831,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               <label class="text-xs font-medium text-gray-600">Cargas WhatsApp / mes
                 <input type="number" min="0" [(ngModel)]="commercialDraft.lite.maxOperacionesMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               </label>
+              <label class="text-xs font-medium text-gray-600">Burbujas WhatsApp / mes
+                <input type="number" min="0" [(ngModel)]="commercialDraft.lite.maxWhatsappMensajes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              </label>
             </div>
           </div>
           <div class="overflow-x-auto">
@@ -836,6 +844,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                   <th class="text-left py-2">UYU / mes</th>
                   <th class="text-left py-2">ARS / mes</th>
                   <th class="text-left py-2">IA incluida</th>
+                  <th class="text-left py-2">WhatsApp incluido</th>
                 </tr>
               </thead>
               <tbody>
@@ -847,12 +856,69 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                   <td class="py-2 pr-2">
                     <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].amountMonthlyAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
                   </td>
-                  <td class="py-2">
+                  <td class="py-2 pr-2">
                     <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedAi" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedWhatsapp" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
                   </td>
                 </tr>
               </tbody>
             </table>
+            <p class="text-[11px] text-gray-500 mt-2 leading-relaxed">
+              WhatsApp incluido = burbujas de salida del bot (SÍ, NO y elegir un número también cuentan). 0 = sin bot o sin tope.
+            </p>
+          </div>
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Packs extra (este mes)</p>
+            <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
+              Mismos números en la landing, /planes, checkout de Mercado Pago y Mi plan.
+              El cliente los compra una vez; suman al cupo de ese mes. El extra de la ficha de empresa es un regalo y no se reinicia.
+            </p>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm min-w-[640px]">
+                <thead class="text-xs uppercase text-gray-500">
+                  <tr>
+                    <th class="text-left py-2">Pack</th>
+                    <th class="text-left py-2">Cantidad</th>
+                    <th class="text-left py-2">UYU</th>
+                    <th class="text-left py-2">ARS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="py-2 font-medium text-gray-800">Mensajes WhatsApp</td>
+                    <td class="py-2 pr-2">
+                      <input type="number" min="1" [(ngModel)]="commercialDraft.usagePacks.whatsapp.quantity" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                    <td class="py-2 pr-2">
+                      <input type="number" min="0" [(ngModel)]="commercialDraft.usagePacks.whatsapp.amountUY" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                    <td class="py-2">
+                      <input type="number" min="0" [(ngModel)]="commercialDraft.usagePacks.whatsapp.amountAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="py-2 font-medium text-gray-800">Acciones IA</td>
+                    <td class="py-2 pr-2">
+                      <input type="number" min="1" [(ngModel)]="commercialDraft.usagePacks.ai.quantity" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                    <td class="py-2 pr-2">
+                      <input type="number" min="0" [(ngModel)]="commercialDraft.usagePacks.ai.amountUY" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                    <td class="py-2">
+                      <input type="number" min="0" [(ngModel)]="commercialDraft.usagePacks.ai.amountAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="text-[11px] text-gray-500 mt-3 leading-relaxed" *ngIf="packPreviewUy.length">
+              Así se publica ahora:
+              <span *ngFor="let pack of packPreviewUy; let last = last">
+                {{ pack.title }} {{ pack.priceLabel }}<span *ngIf="!last"> · </span>
+              </span>
+            </p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <button
@@ -1263,13 +1329,17 @@ export class PlatformComponent implements OnInit {
   plans: PublicPlanInfo[] = [];
   landingCatalogHint: BillingCatalogProduct[] = [];
   syncingLandingPrices = false;
-  commercialDraft: CommercialCatalog = structuredClone(DEFAULT_COMMERCIAL_CATALOG);
+  commercialDraft: CommercialCatalog = clampCommercialCatalog(DEFAULT_COMMERCIAL_CATALOG);
   savingCommercial = false;
   readonly commercialProductRows: { id: 'whatsapp' | 'erp' | 'completo'; label: string }[] = [
     { id: 'whatsapp', label: 'RILO Bot' },
     { id: 'erp', label: 'RILO Gestión' },
     { id: 'completo', label: 'RILO Completo' },
   ];
+
+  get packPreviewUy() {
+    return overlayUsagePacksForCountry(this.commercialDraft, 'UY');
+  }
 
   loadingBusinesses = false;
   creatingBusiness = false;
@@ -1525,7 +1595,7 @@ export class PlatformComponent implements OnInit {
   loadCommercialCatalog() {
     this.platformService.getCommercialCatalog().subscribe({
       next: (catalog) => {
-        this.commercialDraft = structuredClone(catalog);
+        this.commercialDraft = clampCommercialCatalog(catalog);
       },
     });
   }
@@ -1535,7 +1605,7 @@ export class PlatformComponent implements OnInit {
     this.platformService.saveCommercialCatalog(this.commercialDraft).subscribe({
       next: (res) => {
         this.savingCommercial = false;
-        this.commercialDraft = structuredClone(res.catalog);
+        this.commercialDraft = clampCommercialCatalog(res.catalog);
         this.plans = [...res.plans]
           .map((plan) => this.normalizePlan(plan))
           .sort((a, b) => a.precioMensual - b.precioMensual);

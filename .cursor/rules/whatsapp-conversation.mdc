@@ -1,0 +1,38 @@
+---
+description: El bot de WhatsApp debe seguir el paso pendiente y, si se pierde, volver al contexto. No usar MCP ni skills de Cursor como memoria del chat.
+globs: backend/whatsapp/**/*.ts
+alwaysApply: false
+---
+
+# Conversación WhatsApp (RILO)
+
+El operador corre en Cloud Functions (`backend/whatsapp/`), no en Cursor. MCP y skills de Cursor no recuerdan el chat del dueño.
+
+## Regla de oro
+
+Hay un paso pendiente (`pendingIntent` + `pendingPayload`). El mensaje o **llena ese paso**, o **se contesta al margen y se vuelve a preguntar lo mismo**. Nunca se salta a otro slot (producto, cliente, fecha) porque un typo o una pregunta se pareció a otra cosa.
+
+**Excepción:** si el último mensaje es *otra operación completa* (egreso/ingreso de caja, compra, pedido nuevo) y no comparte contexto con el paso pendiente, se suelta el pending (`isFreshTaskUtterance`) y se sigue ese mensaje. El dueño no tiene que escribir “cancelar”.
+
+## Qué está permitido
+
+- Número / SÍ / NO / LISTO / cancelar
+- Fecha aunque tenga typo (`mañan` = mañana) si estábamos pidiendo fecha
+- Nombre exacto (sin importar mayúsculas) para cliente/producto
+- Pregunta al margen: responder y **repegar** la lista o el resumen
+- En el resumen final sí se puede corregir cualquier dato
+- Soltar el paso anterior cuando el mensaje es un comando nuevo (caja, compra, pedido nuevo)
+
+## Qué está prohibido
+
+- Tratar una fecha o un “¿está registrado?” como búsqueda de producto
+- Asumir un cliente parecido si el nombre no es el mismo (salvo mayúsculas)
+- Dejar `pendingIntent` y seguir como mensaje nuevo, **salvo** la excepción de operación nueva
+- Meter regex de catálogo por encima de Gemini para interpretar el pedido; el modelo interpreta, el código solo engancha el paso
+- Tratar un egreso de caja como cobro de pedido porque había un `select_order` pendiente
+
+## Dónde se implementa
+
+- Estado: `conversation-state.ts` (`pendingIntent`, `pendingPayload`, `pendingPrompt`)
+- Director: `conversation-follow.ts` (`isFreshTaskUtterance`, `doesFillCurrentSlot`, `reconstructPendingPrompt`)
+- Intercepto: `message-handler.ts` (operación nueva → soltar pending; si no llena el slot → `holdPendingAndAnswer`)

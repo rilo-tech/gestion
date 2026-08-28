@@ -486,7 +486,8 @@ async function applyPedidoPayment(
   monto: number,
   medioPago: string,
   notas: string,
-  ambito?: string
+  ambito?: string,
+  tipo?: 'seña' | 'pago'
 ): Promise<{ movimientoCajaId: string; label: string }> {
   const orderRef = db.collection(`negocios/${businessId}/pedidos`).doc(orderId);
   const orderSnap = await orderRef.get();
@@ -515,14 +516,16 @@ async function applyPedidoPayment(
     ambito && parseCashAmbitoOrNull(ambito, caja)
       ? parseCashAmbitoOrNull(ambito, caja)!
       : getBusinessCashAmbitoId(caja);
+  const pagoTipo: OrderPayment['tipo'] =
+    tipo === 'seña' && pagosBase.length === 0 ? 'seña' : 'pago';
   const movimientoCajaId = await createCashIncome(businessId, {
     monto,
-    concepto: `Pago pedido #${orderLabel}`,
+    concepto: pagoConcepto(pagoTipo, orderLabel),
     origenId: orderId,
-    origenTipo: 'pedido_pago',
+    origenTipo: pagoOrigenTipo(pagoTipo),
     origenGrupo: 'pedido',
     medio: medioPago,
-    clienteId,
+    clienteId: clientId,
     pedidoId: orderId,
     numeroPedido: order.numeroPedido ?? null,
     numeroPedidoLabel: order.numeroPedidoLabel ?? orderLabel,
@@ -531,8 +534,8 @@ async function applyPedidoPayment(
 
   const nuevosPagos: OrderPayment[] = [
     {
-      id: `pago_${timestamp}`,
-      tipo: 'pago',
+      id: `${pagoTipo === 'seña' ? 'senia' : 'pago'}_${timestamp}`,
+      tipo: pagoTipo,
       monto,
       fecha: new Date().toISOString(),
       movimientoCajaId,
@@ -595,7 +598,7 @@ async function applyVentaCobro(
       origenTipo: 'venta_mostrador_cobro',
       origenGrupo: 'venta',
       medio: medioPago,
-      clienteId,
+      clienteId: clientId,
       ventaId,
       ventaLabel,
       pedidoId: null,
@@ -636,7 +639,16 @@ async function applyVentaCobro(
 export async function collectClientBalance(
   businessId: string,
   clientId: string,
-  params: { monto: number; medioPago?: string; notas?: string; ambito?: string }
+  params: {
+    monto: number;
+    medioPago?: string;
+    notas?: string;
+    ambito?: string;
+    /** Cobrar solo contra este pedido/venta en vez de repartir del más viejo al más nuevo. */
+    target?: { kind: 'pedido' | 'venta'; id: string };
+    /** Tipo de pago que queda anotado en el pedido (seña para el primer pago). */
+    tipo?: 'seña' | 'pago';
+  }
 ): Promise<{
   monto: number;
   saldoAnterior: number;
@@ -648,11 +660,22 @@ export async function collectClientBalance(
     throw new Error('El monto debe ser mayor a cero.');
   }
 
-  const debts = await getClientPendingDebts(businessId, clientId);
+  const pending = await getClientPendingDebts(businessId, clientId);
+  const target = params.target;
+  const debts = target
+    ? pending.filter((debt) => debt.kind === target.kind && debt.id === target.id)
+    : pending;
+  if (target && !debts.length) {
+    throw new Error('Ese pedido no tiene saldo pendiente.');
+  }
   const saldoAnterior = debts.reduce((acc, debt) => acc + debt.saldo, 0);
 
   if (monto > saldoAnterior) {
-    throw new Error(`El monto supera el saldo pendiente del cliente ($${saldoAnterior}).`);
+    throw new Error(
+      target
+        ? `El monto supera el saldo de ese pedido ($${saldoAnterior}).`
+        : `El monto supera el saldo pendiente del cliente ($${saldoAnterior}).`
+    );
   }
 
   const medioPago = String(params.medioPago ?? 'efectivo').trim() || 'efectivo';
@@ -670,7 +693,8 @@ export async function collectClientBalance(
         entry.monto,
         medioPago,
         notas,
-        requestedAmbito
+        requestedAmbito,
+        params.tipo
       );
       allocations.push({
         kind: 'pedido',

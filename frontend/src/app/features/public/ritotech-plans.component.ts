@@ -1,6 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { RitotechPublicShellComponent } from './ritotech-public-shell.component';
 import { RitotechFaqComponent } from './ritotech-faq.component';
 import { RitotechVisualGuideComponent } from './ritotech-visual-guide.component';
@@ -15,6 +15,7 @@ import {
   priceLabelFromCatalog,
   pricingFootnoteFromCatalog,
   pricingTiersFromCatalog,
+  usagePackCardsFromCatalog,
 } from '../../../../../shared/ritotech-marketing.ts';
 import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 import { AuthService } from '../../core/services/auth.service';
@@ -44,51 +45,17 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
         <p class="text-center text-xs text-teal-400/90 mt-3 font-medium leading-relaxed max-w-2xl mx-auto">
           {{ stayFreePitch }}
         </p>
-        <div
+        <p
           *ngIf="auth.currentUser && !auth.isPlatformAdmin"
-          class="mt-6 rounded-xl border border-teal-800 bg-teal-950/40 p-4 text-left max-w-xl mx-auto space-y-2">
-          <p class="text-sm font-semibold text-white">
-            {{ auth.currentUser?.loginUsername || auth.currentUserName }}
-            <span *ngIf="auth.currentBusiness?.nombre" class="font-normal text-gray-300">
-              · {{ auth.currentBusiness?.nombre }}
-            </span>
-          </p>
-          <p class="text-xs text-gray-300 leading-relaxed">
-            <ng-container *ngIf="auth.canAccessWhatsapp && auth.canAccessErpWeb">
-              Tenés RILO Bot y RILO Gestión.
-            </ng-container>
-            <ng-container *ngIf="auth.canAccessWhatsapp && !auth.canAccessErpWeb">
-              Tenés solo RILO Bot. RILO Gestión no está incluido todavía.
-            </ng-container>
-            <ng-container *ngIf="!auth.canAccessWhatsapp && auth.canAccessErpWeb">
-              Tenés solo RILO Gestión. RILO Bot no está incluido todavía.
-            </ng-container>
-            <ng-container *ngIf="!auth.canAccessWhatsapp && !auth.canAccessErpWeb">
-              Panel: {{ auth.isErpPaused ? 'dado de baja' : 'no incluido' }}
-              · RILO Bot: {{ auth.isWhatsappPaused ? 'dado de baja' : 'no incluido' }}.
-            </ng-container>
-            El alta se hace acá. La baja, en Plan (solo el administrador).
-          </p>
-          <div class="flex flex-wrap gap-3">
-            <a
-              *ngIf="auth.isSupervisor"
-              [routerLink]="auth.planRoute"
-              class="text-xs font-semibold text-teal-300 hover:underline">
-              Dar de baja en Plan
-            </a>
-            <a [routerLink]="auth.homeRoute" class="text-xs font-semibold text-teal-300 hover:underline">
-              {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
-            </a>
-            <button
-              type="button"
-              (click)="logout()"
-              class="text-xs text-gray-400 hover:text-white hover:underline">
-              Salir
-            </button>
-          </div>
-          <div *ngIf="sumarProduct" class="pt-2">
-            <app-ritotech-product-cta [product]="sumarProduct" [guestLabel]="'Probar 30 días'"></app-ritotech-product-cta>
-          </div>
+          class="mt-5 text-center text-sm text-gray-400 max-w-xl mx-auto leading-relaxed">
+          Esta página es el catálogo.
+          <a *ngIf="auth.isSupervisor" [routerLink]="auth.planRoute" class="text-teal-300 hover:underline">
+            Lo que tenés contratado está en Mi plan</a><span *ngIf="auth.isSupervisor"> · </span>
+          <a [routerLink]="auth.homeRoute" class="text-teal-300 hover:underline">
+            {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}</a>.
+        </p>
+        <div *ngIf="sumarProduct" class="mt-4 max-w-xl mx-auto">
+          <app-ritotech-product-cta [product]="sumarProduct" [guestLabel]="'Probar 30 días'"></app-ritotech-product-cta>
         </div>
         <div class="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div
@@ -267,6 +234,26 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             Los precios son de referencia y pueden reajustarse. Si ya pagás un plan, te avisamos antes de cambiar tu cuota.
           </p>
         </section>
+
+        <section *ngIf="usagePacks.length" class="mt-10 rounded-2xl border border-gray-800 bg-gray-900/40 p-5 sm:p-6">
+          <h2 class="text-xl font-bold text-white">Packs extra (este mes)</h2>
+          <p class="mt-2 text-sm text-gray-400 leading-relaxed">
+            El plan incluye un cupo de mensajes e IA. Si operás más, comprás un pack para ese mes.
+            SÍ, NO y elegir un número también cuentan. No es una segunda suscripción: se cobra una vez y vale hasta fin de mes.
+          </p>
+          <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <article
+              *ngFor="let pack of usagePacks"
+              class="rounded-xl border border-gray-800 bg-gray-950/50 p-4">
+              <p class="text-sm font-semibold text-white">{{ pack.title }}</p>
+              <p class="mt-1 text-lg font-bold text-teal-300">{{ pack.priceLabel }}</p>
+              <p class="mt-1 text-xs text-gray-500 leading-relaxed">{{ pack.hint }}</p>
+            </article>
+          </div>
+          <p class="mt-4 text-xs text-gray-500 leading-relaxed">
+            Se compra desde Mi plan, con la cuenta ya creada. Los mismos números se publican desde Plataforma.
+          </p>
+        </section>
       </section>
 
       <app-ritotech-faq
@@ -284,18 +271,12 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
 export class RitotechPlansComponent implements OnInit {
   private commercial = inject(CommercialCatalogService);
   private route = inject(ActivatedRoute);
-  private router = inject(Router);
   readonly auth = inject(AuthService);
   readonly audiencePitch = RILOTECH_AUDIENCE_PITCH;
   catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
   country: BillingCountryCode = 'UY';
   readonly showArgentinaBilling = SHOW_ARGENTINA_BILLING;
   sumarProduct: TrialProductId | null = null;
-
-  logout() {
-    this.auth.logout();
-    void this.router.navigateByUrl('/');
-  }
 
   get trialDays(): number {
     return this.catalog.trialDays || RILOBOT_TRIAL_DAYS;
@@ -324,7 +305,11 @@ export class RitotechPlansComponent implements OnInit {
   }
 
   get faqItems() {
-    return faqFromCatalog(this.catalog);
+    return faqFromCatalog(this.catalog, this.country);
+  }
+
+  get usagePacks() {
+    return usagePackCardsFromCatalog(this.catalog, this.country);
   }
 
   get plans() {
@@ -332,6 +317,8 @@ export class RitotechPlansComponent implements OnInit {
   }
 
   get matrix() {
+    const wa = this.catalog.products;
+    const fmt = (n: number) => (n > 0 ? n.toLocaleString('es-UY') : '—');
     return [
       { label: 'Pedidos y ventas', bot: '✓', panel: '✓', both: '✓' },
       { label: 'Cobros y saldos', bot: '✓', panel: '✓', both: '✓' },
@@ -339,6 +326,8 @@ export class RitotechPlansComponent implements OnInit {
       { label: 'Caja del día', bot: '✓', panel: '✓', both: '✓' },
       { label: 'Cargar desde el celular', bot: '✓', panel: '—', both: '✓' },
       { label: 'Listados y ficha en la web', bot: '—', panel: '✓', both: '✓' },
+      { label: 'Mensajes WhatsApp / mes', bot: fmt(wa.whatsapp.includedWhatsapp), panel: '—', both: fmt(wa.completo.includedWhatsapp) },
+      { label: 'Acciones IA / mes', bot: fmt(wa.whatsapp.includedAi), panel: fmt(wa.erp.includedAi), both: fmt(wa.completo.includedAi) },
     ];
   }
 

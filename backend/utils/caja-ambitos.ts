@@ -85,10 +85,80 @@ export function parseCashAmbitoOrNull(
   caja: Record<string, unknown> = {}
 ): string | null {
   const ambitos = normalizeCajaAmbitos(caja);
-  const raw = String(value ?? '').trim().toLowerCase();
+  const raw = foldCashText(value);
   if (!raw) return null;
   if (ambitos.some((entry) => entry.id === raw)) return raw;
-  return null;
+  const byLabel = ambitos.find((entry) => foldCashText(entry.label) === raw);
+  return byLabel?.id ?? null;
+}
+
+function foldCashText(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cashAmbitoTokens(ambito: CajaAmbitoConfig): string[] {
+  const id = foldCashText(ambito.id);
+  const label = foldCashText(ambito.label);
+  const tokens = new Set<string>([id, label].filter((token) => token.length >= 2));
+  if (id === 'personal' || /\bpersonal\b/.test(label)) {
+    tokens.add('personal');
+    tokens.add('mia');
+    tokens.add('particular');
+    tokens.add('propia');
+  }
+  if (id === BUSINESS_CASH_AMBITO_ID || LEGACY_BUSINESS_AMBITO_IDS.has(id) || /\bnegocio\b/.test(label)) {
+    tokens.add('negocio');
+    tokens.add('empresa');
+    tokens.add('local');
+    tokens.add('general');
+    tokens.add('comercio');
+  }
+  return [...tokens];
+}
+
+/** «en personal», «caja del negocio», «la mía». Uno solo o null si no se entiende. */
+export function matchCashAmbitoFromText(
+  text: string,
+  ambitos: CajaAmbitoConfig[]
+): CajaAmbitoConfig | null {
+  if (!ambitos.length) return null;
+  const folded = foldCashText(text);
+  if (!folded) return null;
+
+  const hits: CajaAmbitoConfig[] = [];
+  for (const ambito of ambitos) {
+    const matched = cashAmbitoTokens(ambito).some((token) => {
+      const re = new RegExp(`(?<![\\p{L}])${escapeRegExp(token)}(?![\\p{L}])`, 'iu');
+      return re.test(folded);
+    });
+    if (matched) hits.push(ambito);
+  }
+  return hits.length === 1 ? hits[0]! : null;
+}
+
+export function formatCashAmbitoChoices(
+  ambitos: CajaAmbitoConfig[],
+  cashType?: 'ingreso' | 'egreso'
+): string {
+  const tipo = cashType === 'ingreso' ? 'el ingreso' : 'el egreso';
+  const lines = [`¿En qué caja anoto ${tipo}?`, ''];
+  ambitos.forEach((ambito, index) => {
+    lines.push(`${index + 1}) ${ambito.label}`);
+  });
+  lines.push('');
+  lines.push('*Cómo responder*');
+  lines.push('• Un *número* o el nombre (negocio, personal, …)');
+  lines.push('• *NO* — cancelar');
+  return lines.join('\n');
 }
 
 export function normalizeMovementAmbito(

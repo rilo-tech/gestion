@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth, type AuthenticatedRequest } from '../auth/middleware.ts';
+import { requireAuth, requireSupervisor, type AuthenticatedRequest } from '../auth/middleware.ts';
 import { getBusiness } from '../auth/business.ts';
 import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
 import {
@@ -7,6 +7,9 @@ import {
   hasIntroDiscount,
   introMonthsRemaining,
   overlayProductsForCountry,
+  overlayUsagePacksForCountry,
+  usagePackAmountFor,
+  usagePackTitle,
 } from '../../shared/commercial-catalog.ts';
 import { countSubscriptionPaymentPeriods } from '../auth/subscription-payments.ts';
 import { normalizePlatformAccess } from '../../shared/platform-access.ts';
@@ -23,6 +26,7 @@ import {
   isMercadoPagoConfigured,
 } from '../billing/mercadopago.ts';
 import { activatePaidSubscription } from '../billing/activate-paid-subscription.ts';
+import { activateUsagePack, isUsagePackId } from '../billing/activate-usage-pack.ts';
 
 const router = express.Router();
 
@@ -64,6 +68,7 @@ router.get('/plans', requireAuth, async (req, res) => {
     const country = countryFromBusiness(business);
     const catalog = await getCommercialCatalog();
     const products = overlayProductsForCountry(catalog, country);
+    const usagePacks = overlayUsagePacksForCountry(catalog, country);
     const configured = isMercadoPagoConfigured(country);
     const paymentsUsed = await countSubscriptionPaymentPeriods(businessId);
 
@@ -81,6 +86,7 @@ router.get('/plans', requireAuth, async (req, res) => {
         ? null
         : `Mercado Pago aún no configurado para ${country}. Contactá a soporte.`,
       products,
+      usagePacks,
     });
   } catch (error) {
     console.error('[billing] plans error', error);
@@ -167,6 +173,7 @@ router.post('/checkout', requireAuth, async (req, res) => {
         billingInterval,
         coverageMonths: String(checkout.coverageMonths),
         introApplied: introApplied ? 'true' : 'false',
+        kind: 'plan',
       },
       payerEmail: userEmail || undefined,
       successUrl: `${base}/activar-suscripcion?status=success`,
@@ -193,6 +200,89 @@ router.post('/checkout', requireAuth, async (req, res) => {
     console.error('[billing] checkout error', error);
     res.status(500).json({
       error: error instanceof Error ? error.message : 'No se pudo iniciar el pago.',
+    });
+  }
+});
+
+router.post('/checkout-pack', requireAuth, requireSupervisor, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    const userEmail =
+      authReq.auth?.scope === 'company' ? authReq.auth.user.email : undefined;
+    if (!businessId) {
+      return res.status(401).json({ error: 'No autenticado.' });
+    }
+
+    const packId = String(req.body?.packId ?? '').trim();
+    if (!isUsagePackId(packId)) {
+      return res.status(400).json({ error: 'Pack inválido.' });
+    }
+
+    const business = await getBusiness(businessId);
+    if (!business) {
+      return res.status(404).json({ error: 'Empresa no encontrada.' });
+    }
+
+    const country = countryFromBusiness(business);
+    if (!isMercadoPagoConfigured(country)) {
+      return res.status(503).json({
+        error: `El pago online para ${country} todavía no está habilitado. Escribinos por WhatsApp.`,
+        country,
+      });
+    }
+
+    const catalog = await getCommercialCatalog();
+    const pack = catalog.usagePacks[packId];
+    const unitPrice = usagePackAmountFor(catalog, packId, country);
+    if (unitPrice <= 0 || pack.quantity <= 0) {
+      return res.status(400).json({ error: 'Este pack no está a la venta.' });
+    }
+
+    const currency = country === 'AR' ? 'ARS' : 'UYU';
+    const productId = `pack-${packId}`;
+    const externalReference = `${businessId}|${productId}|${country}|month|${Date.now()}`;
+    const base = appBaseUrl();
+    const title = `RILO · ${usagePackTitle(packId, pack.quantity)} (este mes)`;
+
+    const preference = await createCheckoutPreference({
+      country,
+      currency,
+      title,
+      unitPrice,
+      externalReference,
+      metadata: {
+        kind: 'usage_pack',
+        businessId,
+        packId,
+        productId,
+        country,
+        quantity: String(pack.quantity),
+      },
+      payerEmail: userEmail || undefined,
+      successUrl: `${base}/plan?pack=success`,
+      failureUrl: `${base}/plan?pack=failure`,
+      pendingUrl: `${base}/plan?pack=pending`,
+      notificationUrl: `${apiBaseUrl()}/billing/webhooks/mercadopago`,
+      itemDescription: `Pack extra este mes · ${title}`,
+    });
+
+    const useSandbox =
+      process.env.MERCADOPAGO_USE_SANDBOX === 'true' && preference.sandboxInitPoint;
+
+    res.json({
+      preferenceId: preference.id,
+      checkoutUrl: useSandbox ? preference.sandboxInitPoint : preference.initPoint,
+      country,
+      currency,
+      amount: unitPrice,
+      packId,
+      quantity: pack.quantity,
+    });
+  } catch (error) {
+    console.error('[billing] checkout-pack error', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'No se pudo iniciar el pago del pack.',
     });
   }
 });
@@ -251,6 +341,33 @@ router.post('/webhooks/mercadopago', async (req, res) => {
       return res.sendStatus(200);
     }
 
+    const kind = String(meta.kind ?? meta.Kind ?? '').trim();
+    const packFromMeta = String(meta.packId ?? meta.pack_id ?? '').trim();
+    const packId = isUsagePackId(packFromMeta)
+      ? packFromMeta
+      : productId.startsWith('pack-') && isUsagePackId(productId.slice(5))
+        ? productId.slice(5)
+        : null;
+
+    if (kind === 'usage_pack' || packId) {
+      if (!packId || !isUsagePackId(packId)) {
+        console.error('[billing] usage pack missing packId', payment);
+        return res.sendStatus(200);
+      }
+      const packResult = await activateUsagePack({
+        businessId,
+        packId,
+        country,
+        amount: payment.transactionAmount,
+        currency: payment.currencyId,
+        mercadoPagoPaymentId: payment.id,
+      });
+      if (packResult.ok === false) {
+        console.error('[billing] activate pack failed', packResult.reason);
+      }
+      return res.sendStatus(200);
+    }
+
     const result = await activatePaidSubscription({
       businessId,
       productId,
@@ -262,7 +379,7 @@ router.post('/webhooks/mercadopago', async (req, res) => {
       coverageMonths,
     });
 
-    if (!result.ok) {
+    if (result.ok === false) {
       console.error('[billing] activate failed', result.reason);
     }
 

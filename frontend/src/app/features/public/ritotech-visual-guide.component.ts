@@ -160,7 +160,7 @@ type GuideTab = 'whatsapp' | 'erp';
             <span class="text-3xl leading-none" aria-hidden="true">🧠</span>
             <p class="text-sm text-gray-300 leading-relaxed">
               <span class="font-bold text-white">La magia:</span>
-              también podés mandar la foto de una factura de compra. Rilo arma el resumen y, si confirmás, entra stock.
+              también podés mandar la foto de una factura de compra. Rilo registra la compra, suma stock y te pide confirmación. El egreso de caja y el costo del producto van en otros mensajes.
             </p>
           </div>
         </div>

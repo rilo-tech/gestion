@@ -65,6 +65,9 @@ import { getCommercialCatalog, saveCommercialCatalog } from '../auth/commercial-
 import { extraUserMonthlyFor, overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
+import { USAGE_TOOL_LABELS, parseBusinessUsageQuota } from '../../shared/usage-cost.ts';
+import { buildUsageReport } from '../auth/usage-gates.ts';
+import { clearWhatsappQuotaNotices } from '../auth/usage-meter.ts';
 import {
   countActiveSupervisors,
   getStoredUser,
@@ -170,6 +173,74 @@ router.get('/billing-catalog', async (req, res) => {
   } catch (error) {
     console.error('Error loading billing catalog:', error);
     res.status(500).json({ error: 'No se pudo cargar el catálogo de precios.' });
+  }
+});
+
+router.get('/usage', async (_req, res) => {
+  try {
+    const businesses = await listPublicBusinessInfos();
+    const rows = await Promise.all(
+      businesses.map(async (business) => {
+        const usage = await buildUsageReport(business.id);
+        return {
+          businessId: business.id,
+          nombre: business.nombre,
+          product: business.platformAccess?.trialProduct ?? null,
+          estadoSuscripcion: business.estadoSuscripcion,
+          ...usage,
+        };
+      })
+    );
+    res.json({
+      period: rows[0]?.period ?? new Date().toISOString().slice(0, 10).slice(0, 7),
+      toolLabels: USAGE_TOOL_LABELS,
+      rows,
+    });
+  } catch (error) {
+    console.error('Error loading platform usage:', error);
+    res.status(500).json({ error: 'No se pudo cargar el gasto por empresa.' });
+  }
+});
+
+router.get('/businesses/:businessId/usage', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const business = await getBusiness(businessId);
+    if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
+    const usage = await buildUsageReport(businessId);
+    res.json({
+      businessId,
+      nombre: business.nombre,
+      toolLabels: USAGE_TOOL_LABELS,
+      ...usage,
+    });
+  } catch (error) {
+    console.error('Error loading business usage:', error);
+    res.status(500).json({ error: 'No se pudo cargar el uso de la empresa.' });
+  }
+});
+
+router.put('/businesses/:businessId/usage-quota', async (req: AuthenticatedRequest, res) => {
+  try {
+    const { businessId } = req.params;
+    const usageQuota = parseBusinessUsageQuota(req.body ?? {});
+    const business = await getBusiness(businessId);
+    if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
+    await updateBusiness(businessId, { usageQuota }, { allowSubscriptionFields: true });
+    await clearWhatsappQuotaNotices(businessId);
+    const usage = await buildUsageReport(businessId);
+    const publicBusiness = await toPublicBusinessInfo(businessId);
+    res.json({
+      business: publicBusiness,
+      usage,
+      message:
+        usageQuota.extraWhatsapp || usageQuota.extraAi
+          ? 'Cupo extra aplicado. El bot vuelve a contestar si estaba cortado.'
+          : 'Sin cupo extra. Vale el incluido del plan.',
+    });
+  } catch (error) {
+    console.error('Error updating usage quota:', error);
+    res.status(500).json({ error: 'No se pudo actualizar el cupo extra.' });
   }
 });
 

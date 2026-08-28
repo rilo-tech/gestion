@@ -1,11 +1,15 @@
-import { Component, Input, inject } from '@angular/core';
+import { Component, Input, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import {
+  BusinessService,
   SUBSCRIPTION_PAYMENT_STATUS_LABELS,
   SUBSCRIPTION_STATUS_LABELS,
+  type ClientUsageSummary,
+  type UsagePackId,
+  type UsagePackOffer,
 } from '../../../core/services/business.service';
 import { formatMoneyValue } from '../../pipes/money.pipe';
 import { productLabelForAccess } from '../../../../../../shared/platform-access.ts';
@@ -53,6 +57,81 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
             <p class="text-xs text-gray-500 dark:text-gray-400">RILO Bot</p>
             <p class="font-medium" [ngClass]="rilobotStatusClass">{{ rilobotStatusLabel }}</p>
           </div>
+        </div>
+
+        <div *ngIf="usage" class="rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-3 space-y-3">
+          <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Este mes ({{ usage.period }})</p>
+          <div>
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+              <span>Acciones IA</span>
+              <span class="tabular-nums">{{ usage.ai.used }} / {{ usage.ai.max || '—' }}</span>
+            </div>
+            <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div class="h-full bg-teal-600 rounded-full" [style.width.%]="pct(usage.ai.used, usage.ai.max)"></div>
+            </div>
+            <p
+              *ngIf="usage.ai.purchased || usage.ai.extra"
+              class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+              <span *ngIf="usage.ai.purchased">{{ usage.ai.purchased }} de pack este mes</span>
+              <span *ngIf="usage.ai.purchased && usage.ai.extra"> · </span>
+              <span *ngIf="usage.ai.extra">{{ usage.ai.extra }} de cortesía</span>
+            </p>
+          </div>
+          <div *ngIf="usage.whatsapp.max > 0 || usage.whatsapp.used > 0">
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+              <span>Mensajes WhatsApp</span>
+              <span class="tabular-nums">{{ usage.whatsapp.used }} / {{ usage.whatsapp.max || '—' }}</span>
+            </div>
+            <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div class="h-full bg-teal-600 rounded-full" [style.width.%]="pct(usage.whatsapp.used, usage.whatsapp.max)"></div>
+            </div>
+            <p class="text-[11px] text-gray-400 mt-1 leading-relaxed">
+              SÍ, NO y elegir un número también cuentan. Así el bot sigue claro y el mes no se va de precio.
+            </p>
+            <p
+              *ngIf="usage.whatsapp.purchased || usage.whatsapp.extra"
+              class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+              <span *ngIf="usage.whatsapp.purchased">{{ usage.whatsapp.purchased }} de pack este mes</span>
+              <span *ngIf="usage.whatsapp.purchased && usage.whatsapp.extra"> · </span>
+              <span *ngIf="usage.whatsapp.extra">{{ usage.whatsapp.extra }} de cortesía</span>
+            </p>
+          </div>
+        </div>
+
+        <div
+          *ngIf="packNotice"
+          class="rounded-lg px-3 py-2 text-sm leading-relaxed"
+          [ngClass]="packNotice.tone">
+          {{ packNotice.text }}
+        </div>
+
+        <div
+          *ngIf="auth.isSupervisor && usagePacks.length"
+          class="rounded-lg border border-teal-100 dark:border-teal-900 bg-teal-50/50 dark:bg-teal-950/20 px-3 py-3 space-y-3">
+          <div>
+            <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Cupo extra este mes</p>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+              Si te quedás corto, comprás un pack. Vale hasta fin de mes. No es una segunda suscripción.
+            </p>
+          </div>
+          <div *ngFor="let pack of usagePacks" class="flex flex-wrap items-center justify-between gap-2">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ pack.title }}</p>
+              <p class="text-xs text-teal-800 dark:text-teal-300 font-semibold">{{ pack.priceLabel }}</p>
+              <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ pack.hint }}</p>
+            </div>
+            <button
+              type="button"
+              (click)="buyPack(pack.id)"
+              [disabled]="payingPack !== null || !checkoutAvailable"
+              class="inline-flex justify-center items-center rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+              {{ payingPack === pack.id ? 'Abriendo…' : 'Comprar' }}
+            </button>
+          </div>
+          <p *ngIf="!checkoutAvailable && checkoutMessage" class="text-xs text-amber-800 dark:text-amber-300">
+            {{ checkoutMessage }}
+          </p>
+          <p *ngIf="packError" class="text-xs text-red-600">{{ packError }}</p>
         </div>
 
         <div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-3 space-y-1.5">
@@ -167,8 +246,10 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
     </article>
   `,
 })
-export class PlanStatusCardComponent {
+export class PlanStatusCardComponent implements OnInit {
   readonly auth = inject(AuthService);
+  private businessApi = inject(BusinessService);
+  private route = inject(ActivatedRoute);
 
   /** `home`: copy para clientes solo WhatsApp. `settings`: copy dentro del ERP. */
   @Input() variant: 'home' | 'settings' = 'settings';
@@ -178,6 +259,82 @@ export class PlanStatusCardComponent {
   pendingBaja: 'whatsapp' | 'erp' | null = null;
   bajaPassword = '';
   bajaConfirmNombre = '';
+  usage: ClientUsageSummary | null = null;
+  usagePacks: UsagePackOffer[] = [];
+  checkoutAvailable = false;
+  checkoutMessage = '';
+  payingPack: UsagePackId | null = null;
+  packError = '';
+  packNotice: { text: string; tone: string } | null = null;
+
+  ngOnInit() {
+    const businessId = this.auth.currentBusinessId;
+    if (!businessId || this.auth.isPlatformAdmin || !this.auth.isSupervisor) return;
+    this.loadUsage(businessId);
+    this.businessApi.getBillingPlans().subscribe({
+      next: (data) => {
+        this.checkoutAvailable = data.available === true;
+        this.usagePacks = data.usagePacks ?? [];
+        this.checkoutMessage = data.message || '';
+      },
+      error: () => {
+        this.checkoutAvailable = false;
+      },
+    });
+    this.route.queryParamMap.subscribe((params) => {
+      const pack = params.get('pack');
+      if (pack === 'success') {
+        this.packNotice = {
+          text: 'Pago recibido. El cupo extra se suma a este mes en unos segundos.',
+          tone: 'bg-teal-50 border border-teal-100 text-teal-900 dark:bg-teal-950/40 dark:border-teal-900 dark:text-teal-200',
+        };
+        setTimeout(() => this.loadUsage(businessId), 2500);
+      } else if (pack === 'failure') {
+        this.packNotice = {
+          text: 'El pago del pack no se completó. Podés intentar de nuevo.',
+          tone: 'bg-red-50 border border-red-100 text-red-800 dark:bg-red-950/40 dark:border-red-900 dark:text-red-200',
+        };
+      } else if (pack === 'pending') {
+        this.packNotice = {
+          text: 'El pago quedó pendiente. Cuando Mercado Pago lo acredite, el cupo se suma solo.',
+          tone: 'bg-amber-50 border border-amber-100 text-amber-900 dark:bg-amber-950/40 dark:border-amber-900 dark:text-amber-200',
+        };
+      }
+    });
+  }
+
+  private loadUsage(businessId: string) {
+    this.businessApi.getUsage(businessId).subscribe({
+      next: (usage) => {
+        this.usage = usage;
+      },
+    });
+  }
+
+  buyPack(packId: UsagePackId) {
+    if (this.payingPack || !this.checkoutAvailable) return;
+    this.payingPack = packId;
+    this.packError = '';
+    this.businessApi.checkoutUsagePack(packId).subscribe({
+      next: (data) => {
+        if (data.checkoutUrl) {
+          window.location.href = data.checkoutUrl;
+          return;
+        }
+        this.packError = 'No se pudo abrir Mercado Pago.';
+        this.payingPack = null;
+      },
+      error: (err: { error?: { error?: string } }) => {
+        this.packError = err.error?.error || 'No se pudo iniciar el pago del pack.';
+        this.payingPack = null;
+      },
+    });
+  }
+
+  pct(used: number, max: number): number {
+    if (!max) return 0;
+    return Math.min(100, Math.round((Math.max(0, used) / max) * 100));
+  }
 
   get business() {
     return this.auth.currentBusiness;
@@ -188,14 +345,14 @@ export class PlanStatusCardComponent {
   }
 
   get heading(): string {
-    return this.variant === 'home' ? 'Tu plan' : 'Plan, pago y canales';
+    return this.variant === 'home' ? 'Tu plan' : 'Lo que tenés contratado';
   }
 
   get subtitle(): string {
     if (this.variant === 'home') {
       return 'Estado de tu prueba o suscripción. El trabajo del día a día es por WhatsApp.';
     }
-    return 'Suscripción de la empresa: qué está activo, qué se da de baja acá y qué se suma desde Planes.';
+    return 'Qué está activo en esta cuenta. Sumar otro producto se hace en Precios; la baja, acá.';
   }
 
   get isTrialActive(): boolean {

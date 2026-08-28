@@ -32,6 +32,7 @@ import { LoginComponent } from './features/auth/login.component';
 import { PlatformLoginComponent } from './features/auth/platform-login.component';
 import { PlatformComponent } from './features/platform/platform.component';
 import { PlatformBusinessDetailComponent } from './features/platform/platform-business-detail.component';
+import { PlatformUsageComponent } from './features/platform/platform-usage.component';
 import { AccountComponent } from './features/account/account.component';
 import { AppearancePageComponent } from './features/settings/appearance-page.component';
 import { PriceCatalogComponent } from './features/price-catalog/price-catalog.component';
@@ -308,6 +309,10 @@ const routes: Routes = [
       {
         path: '',
         component: PlatformComponent,
+      },
+      {
+        path: 'gastos',
+        component: PlatformUsageComponent,
       },
       {
         path: 'empresas/:businessId',

@@ -25,6 +25,7 @@ export interface CreatePreferenceInput {
   failureUrl: string;
   pendingUrl: string;
   notificationUrl: string;
+  itemDescription?: string;
 }
 
 export interface MercadoPagoPreferenceResult {
@@ -46,7 +47,7 @@ export async function createCheckoutPreference(
       {
         id: input.metadata.productId ?? 'rilo-plan',
         title: input.title,
-        description: `Suscripción RILO · ${input.country}`,
+        description: input.itemDescription ?? `Suscripción RILO · ${input.country}`,
         quantity: 1,
         currency_id: input.currency,
         unit_price: input.unitPrice,

@@ -41,6 +41,10 @@ export async function saveCommercialCatalog(
       erp: { ...current.products.erp, ...payload.products?.erp },
       completo: { ...current.products.completo, ...payload.products?.completo },
     },
+    usagePacks: {
+      whatsapp: { ...current.usagePacks.whatsapp, ...payload.usagePacks?.whatsapp },
+      ai: { ...current.usagePacks.ai, ...payload.usagePacks?.ai },
+    },
     updatedAt: new Date().toISOString(),
   });
   await ref().set(next, { merge: false });

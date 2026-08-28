@@ -7,6 +7,7 @@ import {
   PlatformService,
   SubscriptionStatus,
   type BillingCatalogProduct,
+  type PlatformBusinessUsage,
   type PlatformWhatsappUser,
   type SubscriptionHistoryEntry,
 } from '../../core/services/platform.service';
@@ -39,6 +40,7 @@ import {
   type ClientPlatformAccess,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
+import { USAGE_TOOL_LABELS, type UsageToolId } from '../../../../../shared/usage-cost.ts';
 import {
   DEFAULT_EXTRA_USER_MONTHLY,
   getBillingProduct,
@@ -435,6 +437,99 @@ import {
                 · ahora: {{ productLabel(selectedProductId) }}
               </span>
             </p>
+          </section>
+
+          <section *ngIf="usage" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-gray-900">Gasto este mes</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Estimado internamente (Meta + Gemini). El cliente ve cupos, no dólares.
+              </p>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <p class="text-xs text-gray-500">Total</p>
+                <p class="text-lg font-bold text-gray-900">US$ {{ usage.totalUsd | number:'1.2-2' }}</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">WhatsApp</p>
+                <p class="text-lg font-bold text-gray-900">US$ {{ usage.whatsappUsd | number:'1.2-2' }}</p>
+                <p class="text-[11px] text-gray-400">{{ usage.whatsapp.used }} / {{ usage.whatsapp.max || '—' }} msgs</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">Gemini</p>
+                <p class="text-lg font-bold text-gray-900">US$ {{ usage.geminiUsd | number:'1.2-2' }}</p>
+                <p class="text-[11px] text-gray-400">{{ usage.ai.used }} / {{ usage.ai.max || '—' }} acciones</p>
+              </div>
+            </div>
+            <div class="space-y-2" *ngIf="usageToolRows.length">
+              <p class="text-xs font-semibold text-gray-500 uppercase">Tokens por herramienta</p>
+              <div *ngFor="let tool of usageToolRows" class="flex items-center gap-2">
+                <span class="w-40 shrink-0 text-xs text-gray-600 truncate">{{ tool.label }}</span>
+                <div class="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div class="h-full bg-teal-600 rounded-full" [style.width.%]="tool.pct"></div>
+                </div>
+                <span class="w-24 text-right text-[11px] tabular-nums text-gray-500">
+                  {{ tool.tokens | number }} tok
+                </span>
+              </div>
+            </div>
+            <a routerLink="/platform/gastos" class="text-sm font-semibold text-teal-700 hover:underline">
+              Ver todas las empresas
+            </a>
+
+            <div class="border-t border-gray-100 pt-4 space-y-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900">Cupo extra de este cliente</h3>
+                <p class="text-xs text-gray-500 mt-1 leading-relaxed">
+                  Suma al incluido del plan. Si el bot ya se cortó, al guardar vuelve a contestar. Vale todos los meses hasta que lo saques.
+                </p>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="block">
+                  <span class="text-xs text-gray-500">WhatsApp extra</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    [(ngModel)]="quotaDraft.extraWhatsapp"
+                    name="extraWhatsapp"
+                    class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+                </label>
+                <label class="block">
+                  <span class="text-xs text-gray-500">IA extra</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    [(ngModel)]="quotaDraft.extraAi"
+                    name="extraAi"
+                    class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+                </label>
+              </div>
+              <p class="text-[11px] text-gray-400" *ngIf="usage">
+                Tope actual: {{ usage.whatsapp.used }} / {{ usage.whatsapp.max }} msgs
+                <span *ngIf="usage.whatsapp.extra"> ({{ usage.whatsapp.extra }} extra de cortesía)</span>
+                <span *ngIf="usage.whatsapp.purchased"> · {{ usage.whatsapp.purchased }} de pack este mes</span>
+                · {{ usage.ai.used }} / {{ usage.ai.max }} IA
+                <span *ngIf="usage.ai.extra"> ({{ usage.ai.extra }} extra de cortesía)</span>
+                <span *ngIf="usage.ai.purchased"> · {{ usage.ai.purchased }} de pack este mes</span>
+              </p>
+              <p class="text-[11px] text-gray-400 leading-relaxed">
+                El extra de cortesía vale todos los meses hasta que lo saques. Los packs que compra el cliente valen solo este mes.
+              </p>
+              <div class="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  (click)="saveUsageQuota()"
+                  [disabled]="savingQuota"
+                  class="rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+                  {{ savingQuota ? 'Guardando…' : 'Aplicar cupo extra' }}
+                </button>
+                <p *ngIf="quotaSaveMessage" class="text-xs text-teal-700">{{ quotaSaveMessage }}</p>
+                <p *ngIf="quotaSaveError" class="text-xs text-red-600">{{ quotaSaveError }}</p>
+              </div>
+            </div>
           </section>
 
           <section *ngIf="activePlan as plan" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
@@ -964,6 +1059,11 @@ export class PlatformBusinessDetailComponent implements OnInit {
   ];
 
   selectedProductId: TrialProductId = 'completo';
+  usage: PlatformBusinessUsage | null = null;
+  quotaDraft = { extraWhatsapp: 0, extraAi: 0 };
+  savingQuota = false;
+  quotaSaveMessage = '';
+  quotaSaveError = '';
 
   platformAccessDraft: ClientPlatformAccess = normalizePlatformAccess(null);
   botSimPhone = '';
@@ -1275,6 +1375,12 @@ export class PlatformBusinessDetailComponent implements OnInit {
         this.business = { ...business, planId: business.planId };
         this.subscriptionDraft = businessSubscriptionDraftFromPublic(this.business);
         this.platformAccessDraft = normalizePlatformAccess(business.platformAccess);
+        this.quotaDraft = {
+          extraWhatsapp: business.usageQuota?.extraWhatsapp ?? 0,
+          extraAi: business.usageQuota?.extraAi ?? 0,
+        };
+        this.quotaSaveMessage = '';
+        this.quotaSaveError = '';
         this.selectedProductId = this.resolveProductFromBusiness(business);
         this.ensureSubscriptionDraftPricing();
         this.botSimPhone = business.contactVerification?.phone?.trim() ?? '';
@@ -1289,6 +1395,7 @@ export class PlatformBusinessDetailComponent implements OnInit {
         this.loadHistory(businessId);
         this.loadWhatsappUsers(businessId);
         this.loadErpUsers(businessId);
+        this.loadUsage(businessId);
       },
       error: () => {
         this.business = null;
@@ -1299,6 +1406,58 @@ export class PlatformBusinessDetailComponent implements OnInit {
 
   productLabel(id: TrialProductId): string {
     return TRIAL_PRODUCT_LABELS[id];
+  }
+
+  get usageToolRows(): { label: string; tokens: number; pct: number }[] {
+    if (!this.usage) return [];
+    const entries = (Object.keys(USAGE_TOOL_LABELS) as UsageToolId[])
+      .map((id) => {
+        const totals = this.usage?.tools?.[id];
+        const tokens = (totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0);
+        return { label: USAGE_TOOL_LABELS[id], tokens };
+      })
+      .filter((row) => row.tokens > 0);
+    const max = Math.max(1, ...entries.map((row) => row.tokens));
+    return entries.map((row) => ({ ...row, pct: Math.round((row.tokens / max) * 100) }));
+  }
+
+  private loadUsage(businessId: string) {
+    this.platformService.getBusinessUsage(businessId).subscribe({
+      next: (usage) => {
+        this.usage = usage;
+      },
+      error: () => {
+        this.usage = null;
+      },
+    });
+  }
+
+  saveUsageQuota() {
+    if (!this.business) return;
+    this.savingQuota = true;
+    this.quotaSaveMessage = '';
+    this.quotaSaveError = '';
+    this.platformService
+      .saveBusinessUsageQuota(this.business.id, {
+        extraWhatsapp: Math.max(0, Math.round(Number(this.quotaDraft.extraWhatsapp) || 0)),
+        extraAi: Math.max(0, Math.round(Number(this.quotaDraft.extraAi) || 0)),
+      })
+      .subscribe({
+        next: (res) => {
+          this.savingQuota = false;
+          this.business = { ...res.business, planId: res.business.planId };
+          this.usage = { ...res.usage, businessId: this.business.id, nombre: this.business.nombre };
+          this.quotaDraft = {
+            extraWhatsapp: res.business.usageQuota?.extraWhatsapp ?? 0,
+            extraAi: res.business.usageQuota?.extraAi ?? 0,
+          };
+          this.quotaSaveMessage = res.message;
+        },
+        error: () => {
+          this.savingQuota = false;
+          this.quotaSaveError = 'No se pudo guardar el cupo extra.';
+        },
+      });
   }
 
   priceLabelFor(id: TrialProductId): string {

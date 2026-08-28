@@ -73,7 +73,7 @@ import {
 const router = createCompanyRouter();
 router.use(requireBusinessModule('pedidos'));
 
-async function loadOrderPedidosConfig(businessId: string) {
+export async function loadOrderPedidosConfig(businessId: string) {
   const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
   const data = appDoc.exists ? (appDoc.data() as Record<string, unknown>) : {};
   const pedidos = (data.pedidos as Record<string, unknown>) ?? {};
@@ -104,7 +104,7 @@ function estadoMatchesStockTrigger(estado: string | undefined, trigger: string):
   return orderEstadoMatchesTrigger(estado, trigger);
 }
 
-type OrderPayment = {
+export type OrderPayment = {
   id: string;
   tipo: 'seña' | 'cuota' | 'pago';
   monto: number;
@@ -127,7 +127,7 @@ type OrderLine = {
   estadoStockItem?: string;
 };
 
-type OrderRecord = {
+export type OrderRecord = {
   senia?: number;
   seniaBloqueada?: boolean;
   movimientoSeniaId?: string;
@@ -279,7 +279,7 @@ function orderAllowsPayments(order: OrderRecord): boolean {
   return true;
 }
 
-function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
+export function sanitizePagoForFirestore(pago: OrderPayment): Record<string, unknown> {
   const clean: Record<string, unknown> = {
     id: pago.id,
     tipo: pago.tipo,
@@ -375,12 +375,12 @@ function isDraftStatus(estado?: string) {
   return value === 'borrador' || value.includes('borrador');
 }
 
-function isCancelledStatus(estado?: string) {
+export function isCancelledStatus(estado?: string) {
   const value = normalizeEstado(estado);
   return value === 'cancelado' || value.includes('cancelad');
 }
 
-function isEntregadoTotalStatus(
+export function isEntregadoTotalStatus(
   estado?: string,
   order?: Pick<OrderRecord, 'entregaConSaldo' | 'saldo'>
 ) {
@@ -391,7 +391,7 @@ function isEntregadoTotalStatus(
   return true;
 }
 
-function isDeliveredEstado(estado: ResolvedOrderEstado): boolean {
+export function isDeliveredEstado(estado: ResolvedOrderEstado): boolean {
   return estado === 'entregado' || estado === 'entregado_con_saldo';
 }
 
@@ -402,7 +402,7 @@ function orderCanCreateDeliverySale(order: OrderRecord): boolean {
   return orderAllowsPayments(order) || !!order.stockDescontado;
 }
 
-type ResolvedOrderEstado =
+export type ResolvedOrderEstado =
   | 'borrador'
   | 'pendiente'
   | 'en_produccion'
@@ -412,7 +412,7 @@ type ResolvedOrderEstado =
   | 'cancelado'
   | 'otro';
 
-function resolveOrderEstado(estado?: string): ResolvedOrderEstado {
+export function resolveOrderEstado(estado?: string): ResolvedOrderEstado {
   const value = normalizeEstado(estado);
 
   if (value === 'borrador' || value.includes('borrador')) return 'borrador';
@@ -436,7 +436,7 @@ function resolveOrderEstado(estado?: string): ResolvedOrderEstado {
   return 'otro';
 }
 
-function resolveOrderGananciaForStorage(
+export function resolveOrderGananciaForStorage(
   total: number,
   costoReal: number,
   estado: string,
@@ -450,7 +450,7 @@ function resolveOrderGananciaForStorage(
   return Math.round((total - costo) * 100) / 100;
 }
 
-async function applyEntregaCompletaPayment(
+export async function applyEntregaCompletaPayment(
   businessId: string,
   orderId: string,
   order: OrderRecord
@@ -589,7 +589,7 @@ async function applyEntregaCompletaPayment(
   return deliveryPatch;
 }
 
-async function applyEntregaConSaldoVenta(
+export async function applyEntregaConSaldoVenta(
   businessId: string,
   orderId: string,
   order: OrderRecord
@@ -875,7 +875,7 @@ async function restoreStockForOrder(
   return restored;
 }
 
-async function restoreStockForOrderEstadoRollback(
+export async function restoreStockForOrderEstadoRollback(
   businessId: string,
   orderId: string,
   order: OrderRecord,

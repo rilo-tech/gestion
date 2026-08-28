@@ -7,7 +7,14 @@ import { TRIAL_PRODUCT_LABELS, type TrialProductId } from './platform-access.ts'
 import type { BillingCountryCode } from './billing-catalog.ts';
 import { getProductPriceForCountry } from './billing-catalog.ts';
 import type { CommercialCatalog } from './commercial-catalog.ts';
-import { amountMonthlyFor, formatCatalogPriceLabel, litePitch } from './commercial-catalog.ts';
+import {
+  amountMonthlyFor,
+  DEFAULT_COMMERCIAL_CATALOG,
+  formatCatalogPriceLabel,
+  litePitch,
+  overlayUsagePacksForCountry,
+  usagePackPriceLabel,
+} from './commercial-catalog.ts';
 
 export interface RitotechUseCase {
   title: string;
@@ -226,6 +233,12 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
       'Los precios de lista se ven en Planes y los publica Superadmin. Primero 30 días gratis; después contratás el plan mensual. Completo sale menos que Bot + Gestión por separado. Si ya pagás, te avisamos antes de cambiar tu cuota.',
   },
   {
+    id: 'cupos',
+    question: '¿Qué pasa si me quedo corto de mensajes o de IA?',
+    answer:
+      'Cada plan incluye un cupo mensual. SÍ, NO y elegir un número también cuentan. Si operás más, en Mi plan comprás un pack extra para ese mes, al mismo precio que ves en Planes.',
+  },
+  {
     id: 'instalacion',
     question: '¿Hay que instalar algo?',
     answer: 'No. WhatsApp + navegador. Celular o PC.',
@@ -259,35 +272,79 @@ export function priceLabelFromCatalog(
   return getProductPriceForCountry(productId, country)?.label ?? '';
 }
 
+export function quotaLinesForProduct(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): string[] {
+  const quote = catalog.products[productId];
+  const lines: string[] = [];
+  if (quote?.includedWhatsapp > 0) {
+    lines.push(`${quote.includedWhatsapp.toLocaleString('es-UY')} mensajes de WhatsApp al mes`);
+  }
+  if (quote?.includedAi > 0) {
+    lines.push(`${quote.includedAi.toLocaleString('es-UY')} acciones IA al mes`);
+  }
+  return lines;
+}
+
 export function pricingTiersFromCatalog(catalog: CommercialCatalog): RitotechPricingTier[] {
   return RILOTECH_PRICING_TIERS.map((tier) => ({
     ...tier,
     trialDays: catalog.trialDays,
     trialIncludes: `${catalog.trialDays} días gratis, sin tarjeta`,
     afterTrial: litePitch(catalog),
+    includes: [...quotaLinesForProduct(catalog, tier.id), ...tier.includes],
   }));
 }
 
-export function faqFromCatalog(catalog: CommercialCatalog): RitotechFaqItem[] {
+export function usagePackCardsFromCatalog(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode
+) {
+  return overlayUsagePacksForCountry(catalog, country);
+}
+
+export function faqFromCatalog(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode = 'UY'
+): RitotechFaqItem[] {
+  const packed: CommercialCatalog = {
+    ...catalog,
+    usagePacks: catalog.usagePacks ?? DEFAULT_COMMERCIAL_CATALOG.usagePacks,
+  };
   return RILOTECH_FAQ.map((item) => {
     if (item.id === 'prueba') {
       return {
         ...item,
-        answer: `No. ${catalog.trialDays} días gratis, sin tarjeta. Al vencer, tus datos siguen. Para seguir usando RILO, activá un plan.`,
+        answer: `No. ${packed.trialDays} días gratis, sin tarjeta. Al vencer, tus datos siguen. Para seguir usando RILO, activá un plan.`,
       };
     }
     if (item.id === 'limites') {
       return {
         ...item,
-        answer: `${catalog.trialDays} días gratis en los tres planes, sin tarjeta. No hay plan gratis permanente: al vencer, contratás para seguir operando. Tus datos no se borran.`,
+        answer: `${packed.trialDays} días gratis en los tres planes, sin tarjeta. No hay plan gratis permanente: al vencer, contratás para seguir operando. Tus datos no se borran.`,
       };
     }
     if (item.id === 'precio') {
+      const wa = packed.usagePacks.whatsapp;
       return {
         ...item,
         answer:
-          `Primero ${catalog.trialDays} días gratis. Después contratás el plan mensual al precio publicado. ` +
+          `Primero ${packed.trialDays} días gratis. Después contratás el plan mensual al precio publicado. ` +
+          `Cada plan incluye un cupo de mensajes e IA. Si te quedás corto, comprás un pack de ${wa.quantity.toLocaleString('es-UY')} mensajes para ese mes, al precio de Planes. ` +
           `RILO Completo sale menos que RILO Bot + RILO Gestión por separado. Si ya pagás, te avisamos antes de cambiar tu cuota.`,
+      };
+    }
+    if (item.id === 'cupos') {
+      const wa = packed.usagePacks.whatsapp;
+      const ai = packed.usagePacks.ai;
+      return {
+        ...item,
+        answer:
+          `Cada plan incluye un cupo mensual. SÍ, NO y elegir un número también cuentan: así el bot sigue claro. ` +
+          `Si te quedás corto, en Mi plan comprás un pack de ${wa.quantity.toLocaleString('es-UY')} mensajes ` +
+          `(${usagePackPriceLabel(packed, 'whatsapp', country)}) o ${ai.quantity.toLocaleString('es-UY')} acciones IA ` +
+          `(${usagePackPriceLabel(packed, 'ai', country)}). El plan se cobra aparte y se renueva solo.`,
       };
     }
     return item;

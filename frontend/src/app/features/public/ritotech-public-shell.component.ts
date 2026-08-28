@@ -94,6 +94,12 @@ import { AuthService } from '../../core/services/auth.service';
                 class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
                 {{ homeCtaLabel }}
               </a>
+              <a
+                *ngIf="auth.isSupervisor"
+                [routerLink]="auth.planRoute"
+                class="hidden sm:inline text-sm text-gray-300 hover:text-white px-1">
+                Mi plan
+              </a>
               <button
                 type="button"
                 (click)="logout()"
@@ -104,6 +110,7 @@ import { AuthService } from '../../core/services/auth.service';
             <ng-container *ngIf="!auth.currentUser">
               <a
                 routerLink="/login"
+                routerLinkActive="text-white"
                 class="inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
                 Ingresar
               </a>

@@ -13,8 +13,41 @@ import {
   requireSupervisor,
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
+import { buildUsageReport } from '../auth/usage-gates.ts';
 
 const router = express.Router();
+
+router.get(
+  '/:businessId/usage',
+  requireAuth,
+  assertCompanyTenantAccess,
+  requireSupervisor,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { businessId } = req.params;
+      const usage = await buildUsageReport(businessId);
+      res.json({
+        ai: {
+          used: usage.ai.used,
+          max: usage.ai.max,
+          extra: usage.ai.extra,
+          purchased: usage.ai.purchased,
+        },
+        whatsapp: {
+          used: usage.whatsapp.used,
+          max: usage.whatsapp.max,
+          extra: usage.whatsapp.extra,
+          purchased: usage.whatsapp.purchased,
+        },
+        period: usage.period,
+        mode: usage.mode,
+      });
+    } catch (error) {
+      console.error('Error fetching usage:', error);
+      res.status(500).json({ error: 'No se pudo cargar el uso del plan.' });
+    }
+  }
+);
 
 router.get(
   '/:businessId',

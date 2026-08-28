@@ -16,6 +16,33 @@ import type { ClientPlatformAccess } from '../../../../../shared/platform-access
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 export type SubscriptionPaymentStatus = 'al_dia' | 'pendiente' | 'vencido';
 
+export interface ClientUsageSummary {
+  period: string;
+  mode?: string;
+  ai: { used: number; max: number; extra?: number; purchased?: number };
+  whatsapp: { used: number; max: number; extra?: number; purchased?: number };
+}
+
+export type UsagePackId = 'whatsapp' | 'ai';
+
+export interface UsagePackOffer {
+  id: UsagePackId;
+  quantity: number;
+  amount: number;
+  currency: string;
+  title: string;
+  priceLabel: string;
+  hint: string;
+}
+
+export interface BillingPlansResponse {
+  available: boolean;
+  country: string;
+  currency: string;
+  usagePacks: UsagePackOffer[];
+  message?: string | null;
+}
+
 export interface PublicPlanInfo {
   id: string;
   nombre: string;
@@ -102,6 +129,7 @@ export interface PublicBusinessInfo {
   lifecycle?: TrialLifecycle | null;
   source?: string | null;
   platformAccess?: ClientPlatformAccess;
+  usageQuota?: { extraWhatsapp: number; extraAi: number };
 }
 
 export const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionStatus, string> = {
@@ -124,5 +152,17 @@ export class BusinessService {
 
   getBusinessInfo(businessId: string): Observable<PublicBusinessInfo> {
     return this.http.get<PublicBusinessInfo>(`/api/business/${businessId}`);
+  }
+
+  getUsage(businessId: string): Observable<ClientUsageSummary> {
+    return this.http.get<ClientUsageSummary>(`/api/business/${businessId}/usage`);
+  }
+
+  getBillingPlans(): Observable<BillingPlansResponse> {
+    return this.http.get<BillingPlansResponse>('/api/billing/plans');
+  }
+
+  checkoutUsagePack(packId: UsagePackId): Observable<{ checkoutUrl: string }> {
+    return this.http.post<{ checkoutUrl: string }>('/api/billing/checkout-pack', { packId });
   }
 }

@@ -719,6 +719,10 @@ function buildPurchaseDocumentFields(
 type ApplyPurchaseSideEffectsOptions = {
   /** No bloquear la respuesta HTTP (reserva de pedidos en segundo plano). */
   deferAutoReserve?: boolean;
+  /** No pisar el costo de catálogo (compras por WhatsApp: solo stock). */
+  skipProductCostUpdate?: boolean;
+  /** Compra por WhatsApp: el pago se corrige en el panel, no sale de caja. */
+  skipCash?: boolean;
 };
 
 async function reserveStockForPurchaseProducts(
@@ -745,7 +749,8 @@ async function applyPurchaseStockEntries(
   compraId: string,
   compraLabel: string,
   lines: Array<ParsedPurchaseLine & { subtotal?: number; productoNombre?: string }>,
-  tipoComprobante: ComprobanteTipoId = 'factura'
+  tipoComprobante: ComprobanteTipoId = 'factura',
+  options?: { skipProductCostUpdate?: boolean }
 ): Promise<void> {
   const stockLines = stockLinesFromItems(lines);
   if (stockLines.length === 0) return;
@@ -773,8 +778,11 @@ async function applyPurchaseStockEntries(
       stockActual: esEntrada
         ? currentStock + line.cantidad
         : Math.max(0, currentStock - line.cantidad),
-      // El costo del producto solo se actualiza con ingresos reales (no devoluciones).
-      ...(esEntrada && line.costoUnitario > 0 && !line.enOferta
+      // El costo del catálogo se actualiza con ingresos reales, salvo que se pida no tocarlo.
+      ...(esEntrada &&
+      line.costoUnitario > 0 &&
+      !line.enOferta &&
+      !options?.skipProductCostUpdate
         ? { costo: line.costoUnitario }
         : {}),
       updatedAt: timestamp,
@@ -860,7 +868,8 @@ async function applyPurchaseSideEffects(
     compraId,
     compraLabel,
     normalizedItems,
-    input.tipoComprobante
+    input.tipoComprobante,
+    { skipProductCostUpdate: options?.skipProductCostUpdate }
   );
   scheduleStockMetricsRefresh(businessId);
 
@@ -872,7 +881,7 @@ async function applyPurchaseSideEffects(
 
   const totalsByAmbito = totalsByAmbitoFromItems(input.items);
 
-  if (medioPagoGeneratesImmediateCash(medio)) {
+  if (medioPagoGeneratesImmediateCash(medio) && !options?.skipCash) {
     if (isNotaCredito) {
       // Devolución al negocio: el dinero vuelve a caja.
       await createCashIngresoForAmbitoTotals(businessId, totalsByAmbito, {
@@ -996,7 +1005,8 @@ export async function confirmPurchaseDraft(
 
 export async function persistPurchase(
   businessId: string,
-  input: ParsedPurchaseInput
+  input: ParsedPurchaseInput,
+  options?: { skipProductCostUpdate?: boolean; skipCash?: boolean }
 ): Promise<{ id: string; compraLabel: string; numeroCompra: number }> {
   const { numero: numeroCompra, label: compraLabel } = await allocatePurchaseNumber(businessId);
   const normalizedItems = await normalizePurchaseItems(businessId, input);
@@ -1013,6 +1023,8 @@ export async function persistPurchase(
   const finanzas = await loadFinanzasConfig(businessId);
   await applyPurchaseSideEffects(businessId, docRef.id, compraLabel, input, normalizedItems, {
     finanzas,
+    skipProductCostUpdate: options?.skipProductCostUpdate,
+    skipCash: options?.skipCash,
   });
   await ensurePurchasePayablesFromDocument(
     businessId,

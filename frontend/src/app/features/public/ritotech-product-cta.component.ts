@@ -37,8 +37,8 @@ import {
 
       <ng-container *ngIf="auth.isSupervisor">
         <p *ngIf="isOperational" class="text-xs text-teal-300 font-medium">
-          Lo tenés activo.
-          <a [routerLink]="auth.planRoute" class="underline hover:text-teal-200">Ir a Plan</a>
+          Ya lo tenés.
+          <a [routerLink]="auth.planRoute" class="underline hover:text-teal-200">Verlo en Mi plan</a>
         </p>
 
         <ng-container *ngIf="!isOperational && !showPhoneForm">

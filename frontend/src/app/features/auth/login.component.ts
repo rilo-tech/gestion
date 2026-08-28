@@ -15,11 +15,12 @@ import {
   isHtmlInsteadOfJsonError,
 } from '../../core/utils/api-response-error';
 import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
+import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.component';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, PasswordInputComponent],
+  imports: [CommonModule, FormsModule, RouterLink, PasswordInputComponent, RitotechPublicShellComponent],
   styles: [
     `
       .login-field:-webkit-autofill,
@@ -32,17 +33,19 @@ import { PasswordInputComponent } from '../../shared/components/password-input/p
     `,
   ],
   template: `
-    <div class="min-h-screen bg-gray-950 flex items-center justify-center p-4">
-      <div class="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8 shadow-2xl">
-        <div class="mb-8 text-center">
+    <app-ritotech-public-shell>
+    <section class="max-w-md mx-auto px-4 py-10 sm:py-14">
+      <div class="rounded-2xl border border-white/10 bg-gray-900/80 p-6 sm:p-8 shadow-2xl">
+        <div class="mb-8">
+          <h1 class="sr-only">Ingresar</h1>
           <img
             src="/brand/rilotech-lockup-on-dark.png"
             alt="RiloTech"
-            width="240"
-            height="80"
-            class="mx-auto mt-1 h-20 w-auto object-contain sm:h-24"
+            width="128"
+            height="128"
+            class="h-20 sm:h-24 w-auto object-contain object-left -ml-3"
             decoding="async" />
-          <p class="text-sm text-gray-400 mt-1.5">Ingresá para continuar</p>
+          <p class="text-sm text-gray-400 mt-2">Ingresá para continuar</p>
           <p class="text-xs text-gray-500 mt-2 leading-relaxed">
             Si usás RILO Bot, operás por WhatsApp. Acá ves tu cuenta o RILO Gestión, según el plan.
           </p>
@@ -135,11 +138,12 @@ import { PasswordInputComponent } from '../../shared/components/password-input/p
         </p>
 
         <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
-          ¿Querés probar el sistema?
-          <a routerLink="/registro" class="text-teal-400 font-semibold hover:underline">30 días gratis</a>
+          ¿Todavía no tenés cuenta?
+          <a routerLink="/registro" [queryParams]="{ producto: 'completo' }" class="text-teal-400 font-semibold hover:underline">Probar 30 días</a>
         </p>
       </div>
-    </div>
+    </section>
+    </app-ritotech-public-shell>
   `,
 })
 export class LoginComponent implements OnInit {

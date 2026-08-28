@@ -12,24 +12,41 @@ export type CommercialProductQuote = {
   amountMonthlyUY: number;
   amountMonthlyAR: number;
   includedAi: number;
+  /** Burbujas de salida de WhatsApp incluidas (SÍ/NO cuenta). 0 = no hay bot. */
+  includedWhatsapp: number;
+};
+
+/** Pack de cupo extra (este mes). Lo publica Superadmin y se cobra por Mercado Pago. */
+export type UsagePackId = 'whatsapp' | 'ai';
+
+export type CommercialUsagePack = {
+  quantity: number;
+  amountUY: number;
+  amountAR: number;
 };
 
 export type CommercialCatalog = {
   trialDays: number;
   /** Acciones IA por mes durante la prueba (uso generoso para que carguen el negocio). */
   trialAccionesIaMes: number;
+  /** Burbujas de WhatsApp por mes durante la prueba. */
+  trialWhatsappMensajes: number;
   lite: {
     maxClientes: number;
     maxProductos: number;
     maxAccionesIaMes: number;
     /** Altas por WhatsApp (pedido/venta/compra/cobro/caja) en plan libre. Consultas no cuentan. */
     maxOperacionesMes: number;
+    /** Burbujas de salida (incluye SÍ/NO) en plan libre. */
+    maxWhatsappMensajes: number;
   };
   /** Promo al pasar a pago (0 = no mostrar). Se edita desde la plataforma. */
   introDiscountMonths: number;
   introDiscountPercent: number;
   extraUserMonthlyUY: number;
   extraUserMonthlyAR: number;
+  /** Packs de cupo extra (este mes). Mismos números en landing, Planes y checkout. */
+  usagePacks: Record<UsagePackId, CommercialUsagePack>;
   products: Record<TrialProductId, CommercialProductQuote>;
   updatedAt?: string | null;
 };
@@ -70,20 +87,41 @@ export function commercialFunnelSteps(catalog: CommercialCatalog): CommercialFun
 export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
   trialDays: 30,
   trialAccionesIaMes: 150,
+  trialWhatsappMensajes: 400,
   lite: {
     maxClientes: 40,
     maxProductos: 50,
     maxAccionesIaMes: 20,
     maxOperacionesMes: 100,
+    maxWhatsappMensajes: 200,
   },
   extraUserMonthlyUY: 190,
   extraUserMonthlyAR: 4900,
+  usagePacks: {
+    whatsapp: { quantity: 500, amountUY: 390, amountAR: 9900 },
+    ai: { quantity: 500, amountUY: 90, amountAR: 2500 },
+  },
   introDiscountMonths: 0,
   introDiscountPercent: 0,
   products: {
-    whatsapp: { amountMonthlyUY: 690, amountMonthlyAR: 16900, includedAi: 1000 },
-    erp: { amountMonthlyUY: 590, amountMonthlyAR: 14900, includedAi: 0 },
-    completo: { amountMonthlyUY: 990, amountMonthlyAR: 24900, includedAi: 2000 },
+    whatsapp: {
+      amountMonthlyUY: 690,
+      amountMonthlyAR: 16900,
+      includedAi: 1000,
+      includedWhatsapp: 800,
+    },
+    erp: {
+      amountMonthlyUY: 590,
+      amountMonthlyAR: 14900,
+      includedAi: 0,
+      includedWhatsapp: 0,
+    },
+    completo: {
+      amountMonthlyUY: 990,
+      amountMonthlyAR: 24900,
+      includedAi: 2000,
+      includedWhatsapp: 1200,
+    },
   },
   updatedAt: null,
 };
@@ -102,6 +140,63 @@ export function extraUserMonthlyFor(
   country: BillingCountryCode
 ): number {
   return country === 'AR' ? catalog.extraUserMonthlyAR : catalog.extraUserMonthlyUY;
+}
+
+export function usagePackAmountFor(
+  catalog: CommercialCatalog,
+  packId: UsagePackId,
+  country: BillingCountryCode
+): number {
+  const pack = catalog.usagePacks[packId];
+  return country === 'AR' ? pack.amountAR : pack.amountUY;
+}
+
+export function usagePackTitle(packId: UsagePackId, quantity: number): string {
+  if (packId === 'whatsapp') {
+    return `${quantity.toLocaleString('es-UY')} mensajes de WhatsApp`;
+  }
+  return `${quantity.toLocaleString('es-UY')} acciones IA`;
+}
+
+export function formatCatalogAmountLabel(
+  country: BillingCountryCode,
+  amount: number
+): string {
+  const currency = country === 'AR' ? 'ARS' : 'UYU';
+  return `${currency} ${amount.toLocaleString('es-UY')}`;
+}
+
+export function usagePackPriceLabel(
+  catalog: CommercialCatalog,
+  packId: UsagePackId,
+  country: BillingCountryCode
+): string {
+  return `${formatCatalogAmountLabel(country, usagePackAmountFor(catalog, packId, country))} · este mes`;
+}
+
+export function overlayUsagePacksForCountry(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode
+) {
+  const packs = catalog.usagePacks ?? DEFAULT_COMMERCIAL_CATALOG.usagePacks;
+  return (['whatsapp', 'ai'] as UsagePackId[])
+    .map((id) => {
+      const pack = packs[id] ?? DEFAULT_COMMERCIAL_CATALOG.usagePacks[id];
+      const amount = country === 'AR' ? pack.amountAR : pack.amountUY;
+      return {
+        id,
+        quantity: pack.quantity,
+        amount,
+        currency: (country === 'AR' ? 'ARS' : 'UYU') as BillingCurrency,
+        title: usagePackTitle(id, pack.quantity),
+        priceLabel: `${formatCatalogAmountLabel(country, amount)} · este mes`,
+        hint:
+          id === 'whatsapp'
+            ? 'SÍ/NO también cuentan. Sirve para este mes; el plan se renueva solo.'
+            : 'Parser, foto de boleta y match de catálogo. Este mes.',
+      };
+    })
+    .filter((row) => row.amount > 0 && row.quantity > 0);
 }
 
 export function formatCatalogPriceLabel(
@@ -126,11 +221,13 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
       amountMonthlyUY: num(row.amountMonthlyUY, base.products[id].amountMonthlyUY, 0),
       amountMonthlyAR: num(row.amountMonthlyAR, base.products[id].amountMonthlyAR, 0),
       includedAi: num(row.includedAi, base.products[id].includedAi, 0),
+      includedWhatsapp: num(row.includedWhatsapp, base.products[id].includedWhatsapp, 0),
     };
   };
   return {
     trialDays: num(raw?.trialDays, base.trialDays, 1),
     trialAccionesIaMes: num(raw?.trialAccionesIaMes, base.trialAccionesIaMes, 0),
+    trialWhatsappMensajes: num(raw?.trialWhatsappMensajes, base.trialWhatsappMensajes, 0),
     lite: {
       maxClientes: num(lite.maxClientes, base.lite.maxClientes, 1),
       maxProductos: num(lite.maxProductos, base.lite.maxProductos, 1),
@@ -140,9 +237,30 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
         base.lite.maxOperacionesMes,
         0
       ),
+      maxWhatsappMensajes: num(
+        'maxWhatsappMensajes' in lite ? lite.maxWhatsappMensajes : undefined,
+        base.lite.maxWhatsappMensajes,
+        0
+      ),
     },
     extraUserMonthlyUY: num(raw?.extraUserMonthlyUY, base.extraUserMonthlyUY, 0),
     extraUserMonthlyAR: num(raw?.extraUserMonthlyAR, base.extraUserMonthlyAR, 0),
+    usagePacks: {
+      whatsapp: {
+        quantity: num(
+          raw?.usagePacks?.whatsapp?.quantity,
+          base.usagePacks.whatsapp.quantity,
+          1
+        ),
+        amountUY: num(raw?.usagePacks?.whatsapp?.amountUY, base.usagePacks.whatsapp.amountUY, 0),
+        amountAR: num(raw?.usagePacks?.whatsapp?.amountAR, base.usagePacks.whatsapp.amountAR, 0),
+      },
+      ai: {
+        quantity: num(raw?.usagePacks?.ai?.quantity, base.usagePacks.ai.quantity, 1),
+        amountUY: num(raw?.usagePacks?.ai?.amountUY, base.usagePacks.ai.amountUY, 0),
+        amountAR: num(raw?.usagePacks?.ai?.amountAR, base.usagePacks.ai.amountAR, 0),
+      },
+    },
     introDiscountMonths: Math.min(24, num(raw?.introDiscountMonths, base.introDiscountMonths, 0)),
     introDiscountPercent: Math.min(90, num(raw?.introDiscountPercent, base.introDiscountPercent, 0)),
     products: {
@@ -170,6 +288,7 @@ export function overlayProductsForCountry(
       amountYearly,
       extraUserMonthly,
       includedAi: catalog.products[product.id].includedAi,
+      includedWhatsapp: catalog.products[product.id].includedWhatsapp,
       trialDays: catalog.trialDays,
       priceLabel: formatMoneyLabel(currency, amountMonthly, '/ mes'),
       priceLabelYearly: formatMoneyLabel(currency, amountYearly, '/ año'),

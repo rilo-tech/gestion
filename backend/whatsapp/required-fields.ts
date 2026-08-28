@@ -1,6 +1,6 @@
-import type { WhatsappCommandEntities, WhatsappIntent } from './ai-command-parser.ts';
+import type { WhatsappCommandEntities } from './ai-command-parser.ts';
 import { todayDateOnly } from './lookups.ts';
-import { whatsappCopyForRubro } from './copy.ts';
+import { waBold, waCard } from '../../shared/whatsapp-format.ts';
 
 export type RequiredFieldKey = 'clientName' | 'productName' | 'amount' | 'deliveryDate' | 'supplierName';
 
@@ -13,7 +13,6 @@ const ORDER_FIELDS: RequiredFieldSpec[] = [
   { key: 'clientName', label: 'Cliente (nombre y apellido)' },
   { key: 'productName', label: 'Producto (con el detalle que lo distingue)' },
   { key: 'amount', label: 'Precio de venta' },
-  { key: 'deliveryDate', label: 'Fecha de entrega' },
 ];
 
 const SALE_FIELDS: RequiredFieldSpec[] = [
@@ -27,28 +26,25 @@ const PAYMENT_FIELDS: RequiredFieldSpec[] = [
   { key: 'amount', label: 'Monto cobrado' },
 ];
 
-const CASH_FIELDS: RequiredFieldSpec[] = [{ key: 'amount', label: 'Monto' }];
+const CASH_FIELDS: RequiredFieldSpec[] = [{ key: 'amount', label: 'Monto (ej. 500 o 4015)' }];
 
 const PURCHASE_FIELDS: RequiredFieldSpec[] = [
   { key: 'supplierName', label: 'Proveedor' },
   { key: 'productName', label: 'Productos (foto de factura/remito o detalle con cantidad y costo)' },
 ];
 
+const COST_FIELDS: RequiredFieldSpec[] = [
+  { key: 'productName', label: 'Producto del catálogo' },
+  { key: 'amount', label: 'Nuevo costo' },
+];
+
+const CLIENT_FIELDS: RequiredFieldSpec[] = [
+  { key: 'clientName', label: 'Nombre y apellido del cliente' },
+];
+
 const BALANCE_FIELDS: RequiredFieldSpec[] = [
   { key: 'clientName', label: 'Cliente (nombre y apellido)' },
 ];
-
-function examplesFor(rubro?: string | null): Partial<Record<WhatsappIntent, string>> {
-  const copy = whatsappCopyForRubro(rubro);
-  return {
-    create_order: `Ej: ${copy.exampleOrder}`,
-    create_sale: `Ej: ${copy.exampleSale}`,
-    create_purchase: 'Ej: Compra a Distribuidora López, 10 remeras a $800, pagó transferencia. O mandá la foto de la factura/remito.',
-    register_payment: 'Ej: Pago de Pedro Gómez 500',
-    register_cash: 'Ej: Gasto 500 nafta  ·  Ingreso de caja 2000',
-    query_balance: 'Ej: Saldo de María Silva',
-  };
-}
 
 function specsFor(intent: string): RequiredFieldSpec[] {
   if (intent === 'create_order') return ORDER_FIELDS;
@@ -56,7 +52,9 @@ function specsFor(intent: string): RequiredFieldSpec[] {
   if (intent === 'create_purchase') return PURCHASE_FIELDS;
   if (intent === 'register_payment') return PAYMENT_FIELDS;
   if (intent === 'register_cash') return CASH_FIELDS;
+  if (intent === 'update_product_cost') return COST_FIELDS;
   if (intent === 'query_balance') return BALANCE_FIELDS;
+  if (intent === 'create_client') return CLIENT_FIELDS;
   return [];
 }
 
@@ -78,6 +76,8 @@ function hasValue(entities: WhatsappCommandEntities, key: RequiredFieldKey): boo
     );
   }
   if (key === 'amount') {
+    // «ya pagó todo»: el monto lo saca del saldo, no hace falta preguntarlo.
+    if (entities.payFullBalance) return true;
     return Number(entities.amount) > 0;
   }
   if (key === 'deliveryDate') {
@@ -103,46 +103,59 @@ export function formatMissingFieldsReply(
   intent: string,
   missing: RequiredFieldSpec[],
   entities: WhatsappCommandEntities,
-  rubro?: string | null
+  _rubro?: string | null
 ): string {
-  const example = examplesFor(rubro)[intent as WhatsappIntent] ?? '';
   const allSpecs = specsFor(intent);
   const noneFilled = allSpecs.length > 0 && missing.length === allSpecs.length;
 
   if (noneFilled) {
-    const lines = allSpecs.map((field) => `• ${field.label}`);
     const carga =
       intent === 'create_order' || intent === 'create_sale'
-        ? 'La fecha de carga, si no la decís, queda hoy.\n'
-        : '';
-    return (
-      `Para ${intentLabel(intent)} pasame:\n` +
-      `${lines.join('\n')}\n` +
-      carga +
-      (example ? `\n${example}` : '')
-    );
+        ? 'La fecha de carga, si no la decís, queda hoy.'
+        : undefined;
+    return waCard({
+      title: intentTitle(intent),
+      lines: [
+        'Para anotarlo necesito:',
+        ...allSpecs.map((field) => `• ${field.label}`),
+        ...(carga ? [carga] : []),
+      ],
+      ask: 'Mandamelo como hablás, en el orden que quieras.',
+    });
   }
 
-  const lines = missing.map((field) => `• ${field.label}`);
   const known: string[] = [];
-  if (entities.supplierName) known.push(`proveedor ${entities.supplierName}`);
-  if (entities.clientName) known.push(`cliente ${entities.clientName}`);
-  if (entities.productName) known.push(entities.productName);
-  if (Number(entities.amount) > 0) known.push(`$${entities.amount}`);
-  const prefix = known.length ? `Tengo ${known.join(', ')}. ` : '';
-  return (
-    `${prefix}Me faltan:\n${lines.join('\n')}\n` +
-    (example ? `\n${example}` : '') +
-    `\nMandame esos datos o NO para cancelar.`
-  );
+  if (entities.supplierName) known.push(`Proveedor: ${entities.supplierName}`);
+  if (entities.clientName) known.push(`Cliente: ${entities.clientName}`);
+  if (entities.productName) known.push(`Producto: ${entities.productName}`);
+  if (Number(entities.amount) > 0) known.push(`Monto: $${entities.amount}`);
+  const extras = (entities.extraCosts ?? []).filter((item) => Number(item.costo) > 0);
+  if (extras.length) {
+    known.push(extras.map((item) => `${item.nombre} $${item.costo}`).join(', '));
+  }
+  const have = known.map((item) => `• ${item}`);
+  if (missing.length === 1) {
+    return waCard({
+      title: intentTitle(intent),
+      lines: have.length ? have : undefined,
+      ask: `Me falta ${missing[0]!.label.toLowerCase()}.\nEscribilo como quieras, o ${waBold('NO')} para cancelar.`,
+    });
+  }
+  return waCard({
+    title: intentTitle(intent),
+    lines: [...have, 'Me faltan:', ...missing.map((field) => `• ${field.label}`)],
+    ask: `Mandamelos en una frase. ${waBold('NO')} cancela.`,
+  });
 }
 
-function intentLabel(intent: string): string {
-  if (intent === 'create_purchase') return 'una compra';
-  if (intent === 'create_order') return 'un pedido';
-  if (intent === 'create_sale') return 'una venta';
-  if (intent === 'register_payment') return 'un cobro';
-  if (intent === 'register_cash') return 'caja';
-  if (intent === 'query_balance') return 'consultar un saldo';
-  return 'eso';
+function intentTitle(intent: string): string {
+  if (intent === 'create_purchase') return 'Compra';
+  if (intent === 'create_order') return 'Pedido';
+  if (intent === 'create_sale') return 'Venta';
+  if (intent === 'register_payment') return 'Cobro';
+  if (intent === 'register_cash') return 'Caja';
+  if (intent === 'update_product_cost') return 'Costo de catálogo';
+  if (intent === 'query_balance') return 'Saldo';
+  if (intent === 'create_client') return 'Cliente nuevo';
+  return 'Falta un dato';
 }

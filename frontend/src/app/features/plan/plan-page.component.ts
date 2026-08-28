@@ -13,9 +13,9 @@ import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-actio
         <div class="mb-6 sm:mb-8">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">Plan y suscripción</h1>
+              <h1 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">Lo que tenés contratado</h1>
               <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Alta, baja y pago de la empresa. Los datos no se borran.
+                RILO Bot, RILO Gestión, estado y baja. Los datos de la empresa no se borran.
               </p>
             </div>
             <app-form-back-button

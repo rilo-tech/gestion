@@ -8,6 +8,7 @@ import {
 } from '../utils/finance-config.ts';
 import { todayDateOnly } from './lookups.ts';
 import type { WhatsappCommandEntities } from './ai-command-parser.ts';
+import { waBold, waHowToRespond } from '../../shared/whatsapp-format.ts';
 
 export const SELECT_PAYMENT_INTENT = 'select_purchase_payment';
 export const SELECT_CARD_INTENT = 'select_purchase_card';
@@ -145,27 +146,36 @@ export function canConfirmPurchaseFully(
 }
 
 export function formatPaymentChoices(medios: MedioPagoConfig[]): string {
-  const lines = ['¿Cómo se pagó esta compra?'];
+  const lines = [waBold('Pago de la compra'), '', '¿Cómo se pagó?'];
   medios.forEach((medio, index) => {
     const extra = medioPagoGeneratesImmediateCash(medio)
       ? ' — sale de caja'
       : medioPagoGeneratesPayables(medio)
         ? ' — cuentas a pagar'
         : '';
-    lines.push(`${index + 1}. ${medio.label}${extra}`);
+    lines.push(`${index + 1}) ${medio.label}${extra}`);
   });
-  lines.push(`${medios.length + 1}. Guardar borrador (completar en el panel, no mueve stock)`);
-  lines.push('\nRespondé el número, el nombre del medio, o NO para cancelar.');
+  lines.push(`${medios.length + 1}) Guardar borrador (completar en el panel)`);
+  lines.push('');
+  lines.push(
+    waHowToRespond([
+      `Un ${waBold('número')} o el nombre del medio`,
+      `${waBold('NO')} — cancelar`,
+    ])
+  );
   return lines.join('\n');
 }
 
 export function formatCardChoices(cards: Array<{ id: string; label: string }>): string {
-  const lines = ['¿Con qué cuenta o tarjeta se pagó?'];
+  const lines = [waBold('Cuenta o tarjeta'), '', '¿Con cuál se pagó?'];
   cards.forEach((card, index) => {
-    lines.push(`${index + 1}. ${card.label}`);
+    lines.push(`${index + 1}) ${card.label}`);
   });
-  lines.push(`${cards.length + 1}. Guardar borrador (completar en el panel)`);
-  lines.push('\nRespondé el número o NO para cancelar.');
+  lines.push(`${cards.length + 1}) Guardar borrador (completar en el panel)`);
+  lines.push('');
+  lines.push(
+    waHowToRespond([`Un ${waBold('número')}`, `${waBold('NO')} — cancelar`])
+  );
   return lines.join('\n');
 }
 

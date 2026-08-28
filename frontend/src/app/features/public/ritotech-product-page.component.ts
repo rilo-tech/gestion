@@ -12,6 +12,7 @@ import { RILOTECH_CHAT_DEMO, pricingTiersFromCatalog } from '../../../../../shar
 import { trialDaysForProduct } from '../../../../../shared/trial-state.ts';
 import { DEFAULT_COMMERCIAL_CATALOG, trialCtaForProduct, type CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
 import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-ritotech-product-page',
@@ -36,7 +37,7 @@ import { CommercialCatalogService } from '../../core/services/commercial-catalog
           </app-ritotech-chat-demo>
         </div>
 
-        <div *ngIf="productId === 'erp'" class="mt-10 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
+        <div *ngIf="productId === 'erp' && !isSessionCustomer" class="mt-10 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
           <h2 class="text-lg font-bold mb-2">¿Y si después quiero WhatsApp?</h2>
           <p class="text-sm text-gray-400 leading-relaxed">
             Sumá RILO Bot después desde Planes, con la misma cuenta. No hace falta registrarte de nuevo.
@@ -44,7 +45,7 @@ import { CommercialCatalogService } from '../../core/services/commercial-catalog
           </p>
         </div>
 
-        <div *ngIf="productId === 'whatsapp'" class="mt-6 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
+        <div *ngIf="productId === 'whatsapp' && !isSessionCustomer" class="mt-6 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
           <h2 class="text-lg font-bold mb-2">¿Y si después quiero RILO Gestión?</h2>
           <p class="text-sm text-gray-400 leading-relaxed">
             Sumá RILO Gestión desde Planes cuando quieras, con la misma cuenta. Lo que cargaste por
@@ -53,14 +54,30 @@ import { CommercialCatalogService } from '../../core/services/commercial-catalog
         </div>
 
         <div class="mt-8 flex flex-col sm:flex-row gap-3 items-start">
-          <app-ritotech-product-cta
-            [product]="productId"
-            [guestLabel]="ctaLabel">
-          </app-ritotech-product-cta>
+          <ng-container *ngIf="isSessionCustomer; else productGuestCta">
+            <a
+              [routerLink]="auth.homeRoute"
+              class="inline-flex justify-center rounded-xl bg-teal-600 px-6 py-3 font-semibold text-white hover:bg-teal-500">
+              {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
+            </a>
+            <a
+              *ngIf="auth.isSupervisor"
+              [routerLink]="auth.planRoute"
+              class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
+              Lo que tenés contratado
+            </a>
+          </ng-container>
+          <ng-template #productGuestCta>
+            <app-ritotech-product-cta
+              [product]="productId"
+              [guestLabel]="ctaLabel">
+            </app-ritotech-product-cta>
+          </ng-template>
           <a
+            *ngIf="!isSessionCustomer"
             routerLink="/planes"
             class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
-            Ver planes
+            Ver precios
           </a>
         </div>
       </section>
@@ -70,10 +87,15 @@ import { CommercialCatalogService } from '../../core/services/commercial-catalog
 export class RitotechProductPageComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private commercial = inject(CommercialCatalogService);
+  readonly auth = inject(AuthService);
 
   readonly productId = (this.route.snapshot.data['product'] ?? 'erp') as TrialProductId;
   catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
   readonly chatDemo = RILOTECH_CHAT_DEMO;
+
+  get isSessionCustomer(): boolean {
+    return Boolean(this.auth.currentUser && !this.auth.isPlatformAdmin);
+  }
 
   get trialDays(): number {
     return this.catalog.trialDays || trialDaysForProduct(this.productId);

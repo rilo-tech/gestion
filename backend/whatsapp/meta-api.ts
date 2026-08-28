@@ -114,6 +114,25 @@ export async function sendWhatsappText(
   }
 }
 
+export async function sendWhatsappTexts(
+  toE164OrDigits: string,
+  bodies: string[]
+): Promise<{ ok: true; messageId?: string } | { ok: false; error: string; status?: number }> {
+  const texts = bodies.map((body) => String(body ?? '').trim()).filter(Boolean);
+  if (!texts.length) return { ok: false, error: 'Sin texto' };
+  let last: { ok: true; messageId?: string } | { ok: false; error: string; status?: number } = {
+    ok: true,
+  };
+  for (let i = 0; i < texts.length; i++) {
+    last = await sendWhatsappText(toE164OrDigits, texts[i]!);
+    if (!last.ok) return last;
+    if (i < texts.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 280));
+    }
+  }
+  return last;
+}
+
 export async function downloadWhatsappMedia(
   mediaId: string
 ): Promise<{ buffer: Buffer; contentType: string } | null> {

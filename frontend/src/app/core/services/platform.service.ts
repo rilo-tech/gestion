@@ -14,6 +14,7 @@ import type {
 } from '../../../../../shared/subscription-modules.ts';
 import type { ClientPlatformAccess } from '../../../../../shared/platform-access.ts';
 import type { CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
+import type { UsageToolId, UsageToolTotals } from '../../../../../shared/usage-cost.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -175,6 +176,38 @@ export interface MarkPaidPayload {
   precioPorOperador?: number;
 }
 
+export interface PlatformUsageQuota {
+  used: number;
+  max: number;
+  extra?: number;
+  purchased?: number;
+}
+
+export interface PlatformBusinessUsage {
+  businessId?: string;
+  nombre?: string;
+  period: string;
+  mode?: string;
+  product?: string | null;
+  estadoSuscripcion?: string;
+  ai: PlatformUsageQuota;
+  whatsapp: PlatformUsageQuota;
+  waInbound: number;
+  waOps: number;
+  tools: Partial<Record<UsageToolId, UsageToolTotals>>;
+  models: Record<string, UsageToolTotals>;
+  whatsappUsd: number;
+  geminiUsd: number;
+  totalUsd: number;
+  toolLabels?: Record<UsageToolId, string>;
+}
+
+export interface PlatformUsageResponse {
+  period: string;
+  toolLabels: Record<UsageToolId, string>;
+  rows: PlatformBusinessUsage[];
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -203,6 +236,29 @@ export class PlatformService {
 
   getCommercialCatalog(): Observable<CommercialCatalog> {
     return this.http.get<CommercialCatalog>('/api/platform/commercial');
+  }
+
+  getPlatformUsage(): Observable<PlatformUsageResponse> {
+    return this.http.get<PlatformUsageResponse>('/api/platform/usage');
+  }
+
+  getBusinessUsage(businessId: string): Observable<PlatformBusinessUsage> {
+    return this.http.get<PlatformBusinessUsage>(`/api/platform/businesses/${businessId}/usage`);
+  }
+
+  saveBusinessUsageQuota(
+    businessId: string,
+    payload: { extraWhatsapp: number; extraAi: number }
+  ): Observable<{
+    business: PublicBusinessInfo;
+    usage: PlatformBusinessUsage;
+    message: string;
+  }> {
+    return this.http.put<{
+      business: PublicBusinessInfo;
+      usage: PlatformBusinessUsage;
+      message: string;
+    }>(`/api/platform/businesses/${businessId}/usage-quota`, payload);
   }
 
   saveCommercialCatalog(payload: CommercialCatalog): Observable<{

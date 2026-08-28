@@ -4,10 +4,14 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
+import {
+  BusinessService,
+  type ClientUsageSummary,
+} from '../../core/services/business.service';
 import { ThemeService } from '../../core/services/theme.service';
 import { FormFooterComponent } from '../../shared/components/form-shell/form-footer.component';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
-import { whatsappCopyForRubro } from '../../../../../shared/whatsapp-copy.ts';
+import { riloBotManualLines, whatsappCopyForRubro } from '../../../../../shared/whatsapp-copy.ts';
 import { productLabelForAccess } from '../../../../../shared/platform-access.ts';
 
 type AccountPanel = 'profile' | 'password' | null;
@@ -27,11 +31,15 @@ type AccountPanel = 'profile' | 'password' | null;
         </div>
 
         <article
-          *ngIf="isWhatsappHome"
+          *ngIf="showBotHelp"
           class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:p-6 mb-4">
           <h2 class="text-sm font-bold text-gray-900 dark:text-gray-100 mb-1">Cómo usar RILO Bot</h2>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            Operás desde WhatsApp. Acá no hay listados: el bot confirma cada operación con SÍ o NO.
+            {{
+              isWhatsappHome
+                ? 'Operás desde WhatsApp. Escribís como hablás; el bot va aprendiendo tu forma, arma un resumen y SÍ guarda. El detalle de cada cosa te lo explica si se lo pedís.'
+                : 'Además del panel, podés cargar por WhatsApp. Escribís como hablás; el bot resume y SÍ guarda. Pedile el detalle de una opción si lo necesitás.'
+            }}
           </p>
           <p *ngIf="registeredPhone" class="text-sm text-gray-800 dark:text-gray-200 mb-3">
             Número registrado:
@@ -42,10 +50,7 @@ type AccountPanel = 'profile' | 'password' | null;
           </p>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">{{ botCopy.productHint }}</p>
           <ul class="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
-            <li>• “{{ botCopy.exampleSale }}”</li>
-            <li>• “{{ botCopy.exampleOrder }}”</li>
-            <li>• “¿Cuánto debe Pedro?” / “¿Cuánto vendí hoy?”</li>
-            <li>• Dudas: escribí <span class="font-semibold">Consultame</span></li>
+            <li *ngFor="let line of botManualLines">• {{ line }}</li>
           </ul>
         </article>
 
@@ -254,6 +259,44 @@ type AccountPanel = 'profile' | 'password' | null;
           <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-2 px-0.5">
             Empresa
           </h2>
+          <article
+            *ngIf="usage"
+            class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:px-6 sm:py-5 mb-3">
+            <p class="text-sm font-bold text-gray-900 dark:text-gray-100">Este mes</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-3">
+              Lo incluido en tu cuota. Se renueva el mes que viene.
+            </p>
+            <div class="space-y-3">
+              <div *ngIf="usage.ai.max > 0 || usage.ai.used > 0">
+                <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  <span>Acciones IA</span>
+                  <span class="tabular-nums">{{ usage.ai.used }} / {{ usage.ai.max }}</span>
+                </div>
+                <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                  <div class="h-full bg-teal-600 rounded-full" [style.width.%]="usagePct(usage.ai.used, usage.ai.max)"></div>
+                </div>
+              </div>
+              <div *ngIf="usage.whatsapp.max > 0 || usage.whatsapp.used > 0">
+                <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  <span>Mensajes WhatsApp</span>
+                  <span class="tabular-nums">{{ usage.whatsapp.used }} / {{ usage.whatsapp.max }}</span>
+                </div>
+                <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                  <div
+                    class="h-full bg-teal-600 rounded-full"
+                    [style.width.%]="usagePct(usage.whatsapp.used, usage.whatsapp.max)"></div>
+                </div>
+                <p class="text-[11px] text-gray-400 mt-1 leading-relaxed">
+                  SÍ, NO y elegir un número también cuentan: así el bot sigue claro.
+                </p>
+                <p *ngIf="auth.isSupervisor" class="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+                  Si te quedás corto, en
+                  <a routerLink="/plan" class="text-teal-700 dark:text-teal-400 hover:underline">Mi plan</a>
+                  comprás un pack extra para este mes.
+                </p>
+              </div>
+            </div>
+          </article>
           <a
             routerLink="/plan"
             class="flex items-start gap-3 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:px-6 sm:py-5 hover:border-teal-200 hover:bg-teal-50/40 dark:hover:border-teal-800 dark:hover:bg-teal-950/30 transition-colors">
@@ -263,13 +306,13 @@ type AccountPanel = 'profile' | 'password' | null;
               <i-lucide name="credit-card" class="w-5 h-5"></i-lucide>
             </span>
             <span class="min-w-0 flex-1">
-              <span class="block text-sm font-bold text-gray-900 dark:text-gray-100">Plan y suscripción</span>
+              <span class="block text-sm font-bold text-gray-900 dark:text-gray-100">Lo que tenés contratado</span>
               <span class="block text-sm text-gray-800 dark:text-gray-200 mt-0.5">{{ planProductLabel }}</span>
               <span class="block text-sm text-gray-500 dark:text-gray-400 mt-1">
                 RILO Gestión {{ erpChannelLabel }} · RILO Bot {{ rilobotChannelLabel }}
               </span>
               <span class="mt-2 inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400">
-                Administrar plan
+                Ver plan y canales
               </span>
             </span>
             <i-lucide name="chevron-right" class="w-5 h-5 shrink-0 text-gray-400 mt-1"></i-lucide>
@@ -282,9 +325,11 @@ type AccountPanel = 'profile' | 'password' | null;
 export class AccountComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly theme = inject(ThemeService);
+  private businessApi = inject(BusinessService);
   readonly pageShellClass = PAGE_SHELL_CLASS;
 
   openPanel: AccountPanel = null;
+  usage: ClientUsageSummary | null = null;
 
   profileNombre = '';
   profileEmail = '';
@@ -304,6 +349,7 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.loadProfileFromSession();
+    this.loadUsage();
   }
 
   ngOnDestroy() {
@@ -316,6 +362,13 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   get isWhatsappHome(): boolean {
     return !this.auth.isPlatformAdmin && this.auth.canAccessWhatsapp && !this.auth.canAccessErpWeb;
+  }
+
+  get showBotHelp(): boolean {
+    return (
+      !this.auth.isPlatformAdmin &&
+      (this.auth.canAccessWhatsapp || this.auth.hasWhatsappEntitlement)
+    );
   }
 
   get pageTitle(): string {
@@ -335,6 +388,10 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   get botCopy() {
     return whatsappCopyForRubro(this.auth.currentBusiness?.lifecycle?.rubro);
+  }
+
+  get botManualLines(): string[] {
+    return riloBotManualLines(this.botCopy);
   }
 
   get savedNombre(): string {
@@ -363,6 +420,21 @@ export class AccountComponent implements OnInit, OnDestroy {
     if (this.auth.canAccessWhatsapp) return 'activo';
     if (this.auth.isWhatsappPaused) return 'inactivo';
     return 'no incluido';
+  }
+
+  usagePct(used: number, max: number): number {
+    if (!max) return 0;
+    return Math.min(100, Math.round((Math.max(0, used) / max) * 100));
+  }
+
+  private loadUsage() {
+    const businessId = this.auth.currentBusinessId;
+    if (!businessId || this.auth.isPlatformAdmin || !this.auth.isSupervisor) return;
+    this.businessApi.getUsage(businessId).subscribe({
+      next: (usage) => {
+        this.usage = usage;
+      },
+    });
   }
 
   openProfile() {

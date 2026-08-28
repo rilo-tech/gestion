@@ -3,6 +3,7 @@ import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
 import {
   extraUserMonthlyFor,
   overlayProductsForCountry,
+  overlayUsagePacksForCountry,
   litePitch,
 } from '../../shared/commercial-catalog.ts';
 import { TRIAL_PRODUCT_DESCRIPTIONS, TRIAL_PRODUCT_LABELS } from '../../shared/platform-access.ts';
@@ -23,6 +24,7 @@ router.get('/', async (req, res) => {
       featured: row.id === 'completo',
       trialDays: catalog.trialDays,
       includedAi: row.includedAi,
+      includedWhatsapp: row.includedWhatsapp,
       amountMonthly: row.amountMonthly,
       amountYearly: row.amountYearly,
       extraUserMonthly: extraUser,
@@ -33,10 +35,13 @@ router.get('/', async (req, res) => {
       country,
       trialDays: catalog.trialDays,
       trialAccionesIaMes: catalog.trialAccionesIaMes,
+      trialWhatsappMensajes: catalog.trialWhatsappMensajes,
       lite: catalog.lite,
       introDiscountMonths: catalog.introDiscountMonths,
       introDiscountPercent: catalog.introDiscountPercent,
       extraUserMonthly: extraUser,
+      usagePacks: overlayUsagePacksForCountry(catalog, country),
+      usagePacksRaw: catalog.usagePacks,
       litePitch: litePitch(catalog),
       products,
       updatedAt: catalog.updatedAt,

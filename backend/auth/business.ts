@@ -49,6 +49,10 @@ import type {
 } from '../../shared/trial-registration.ts';
 import type { ClientPlatformAccess } from '../../shared/platform-access.ts';
 import { resolvePlatformAccessForBusiness } from './platform-access.ts';
+import {
+  parseBusinessUsageQuota,
+  type BusinessUsageQuota,
+} from '../../shared/usage-cost.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -81,6 +85,7 @@ export interface BusinessRecord {
   contactVerification?: TrialContactVerification;
   lifecycle?: TrialLifecycle;
   platformAccess?: ClientPlatformAccess;
+  usageQuota?: BusinessUsageQuota;
   suscripcion?: BusinessSubscriptionRecord;
   billing?: BusinessBillingInfo;
   creadoPor?: string;
@@ -134,6 +139,7 @@ export interface PublicBusinessInfo {
   contactClaims?: { emailBound: boolean; phoneBound: boolean };
   lifecycle?: TrialLifecycle;
   platformAccess?: ClientPlatformAccess;
+  usageQuota?: BusinessUsageQuota;
   createdAt?: string;
   administradoresActivos: number;
   operadoresActivos: number;
@@ -154,6 +160,7 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'trialEndDate',
   'trialStatus',
   'platformAccess',
+  'usageQuota',
   'contactVerification',
   'creadoPor',
   'updatedAt',
@@ -269,6 +276,7 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
         ? (data.lifecycle as TrialLifecycle)
         : undefined,
     platformAccess: resolvePlatformAccessForBusiness(data),
+    usageQuota: parseBusinessUsageQuota(data.usageQuota),
     suscripcion: parseBusinessSubscription(data),
     billing: parseBusinessBilling(data),
     creadoPor: data.creadoPor ? String(data.creadoPor) : undefined,
@@ -327,6 +335,10 @@ export function sanitizeBusinessPayload(
 
   if (payload.platformAccess && typeof payload.platformAccess === 'object') {
     next.platformAccess = payload.platformAccess as BusinessRecord['platformAccess'];
+  }
+
+  if (payload.usageQuota && typeof payload.usageQuota === 'object') {
+    next.usageQuota = parseBusinessUsageQuota(payload.usageQuota);
   }
 
   if (payload.contactVerification && typeof payload.contactVerification === 'object') {
@@ -606,6 +618,7 @@ function buildPublicBusinessInfo(
     contactVerification: business.contactVerification,
     lifecycle: business.lifecycle,
     platformAccess: business.platformAccess ?? resolvePlatformAccessForBusiness({}),
+    usageQuota: parseBusinessUsageQuota(business.usageQuota),
     createdAt: business.createdAt,
     administradoresActivos: counts.administradoresActivos,
     operadoresActivos: counts.operadoresActivos,

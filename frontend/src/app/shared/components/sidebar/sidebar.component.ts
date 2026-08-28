@@ -44,6 +44,7 @@ interface NavItem {
             *ngFor="let item of visibleNavItems"
             [routerLink]="item.path"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
+            [routerLinkActiveOptions]="{ exact: item.path === '/platform' }"
             (click)="onModuleNavClick($event, item)"
             class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-800/80 transition-colors">
             <i-lucide [name]="item.icon" class="w-5 h-5 shrink-0"></i-lucide>
@@ -128,6 +129,7 @@ export class SidebarComponent implements OnInit, OnDestroy {
 
   readonly platformNavItems: NavItem[] = [
     { path: '/platform', icon: 'building-2', label: 'Empresas y planes' },
+    { path: '/platform/gastos', icon: 'bar-chart-3', label: 'Gastos' },
   ];
 
   get navItems(): NavItem[] {
