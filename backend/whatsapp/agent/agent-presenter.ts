@@ -1,10 +1,11 @@
 import { formatWhatsappMessage, waBold } from '../../../shared/whatsapp-format.ts';
 import { presentEntityList, presentOrderListItem } from '../conversation-query.ts';
+import { normalizeCandidateRows, type CandidateSelectionEntityType } from '../v4-candidate-selection.ts';
 import {
-  CANDIDATE_SELECTION_PROMPT,
-  normalizeCandidateRows,
-  type CandidateSelectionEntityType,
-} from '../v4-candidate-selection.ts';
+  formatV4CandidateSelection,
+  formatV4Confirmation,
+  V4_CANDIDATE_SELECTION_PROMPT,
+} from '../v4-ui-copy.ts';
 import type { AgentOperationPlan } from './tool-types.ts';
 
 function money(value: number): string {
@@ -70,10 +71,9 @@ export function presentCashBalance(output: Record<string, unknown>): string {
 }
 
 export function presentConfirmationPlan(plan: AgentOperationPlan): string {
-  return formatWhatsappMessage({
+  return formatV4Confirmation({
     title: plan.summary.title,
     lines: plan.summary.lines,
-    ask: '¿Confirmo?',
   });
 }
 
@@ -97,26 +97,18 @@ export function presentAmbiguousEntity(message: string, candidates: unknown[]): 
   return presentNumberedCandidateSelection('client', candidates, message);
 }
 
-const ENTITY_HEADINGS: Record<string, string> = {
-  client: 'Encontré más de un cliente',
-  product: 'Encontré más de un producto',
-  supplier: 'Encontré más de un proveedor',
-  order: 'Encontré más de un pedido',
-};
-
 export function presentNumberedCandidateSelection(
   entityType: CandidateSelectionEntityType,
   candidates: unknown[],
   title?: string
 ): string {
   const options = normalizeCandidateRows(entityType, candidates);
-  const lines = options.map((row) => `${row.index}. ${row.label}`);
-  return formatWhatsappMessage({
-    title: title ?? ENTITY_HEADINGS[entityType] ?? 'Encontré más de una opción',
-    lines,
-    ask: CANDIDATE_SELECTION_PROMPT,
-  });
+  const numberedLines = options.map((row) => `${row.index}. ${row.label}`);
+  return formatV4CandidateSelection({ entityType, numberedLines, title });
 }
+
+/** Re-export for callers that need the canonical prompt string. */
+export { V4_CANDIDATE_SELECTION_PROMPT };
 
 export function presentOrderBalance(output: Record<string, unknown>): string {
   const label = String(output.number ?? output.orderId ?? '');

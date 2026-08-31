@@ -1,4 +1,5 @@
 import type { ConversationState } from './conversation-state.ts';
+import { V4_CANDIDATE_SELECTION_PROMPT } from './v4-ui-copy.ts';
 
 /** Protocolo de UI conversacional — no interpreta negocio, solo resuelve opciones numeradas. */
 export type CandidateSelectionEntityType = 'client' | 'product' | 'supplier' | 'order';
@@ -26,7 +27,8 @@ export type CandidateSelectionAwaiting = {
   resume: CandidateSelectionResume;
 };
 
-export const CANDIDATE_SELECTION_PROMPT = 'Respondeme con el número de la opción.';
+
+export const CANDIDATE_SELECTION_PROMPT = V4_CANDIDATE_SELECTION_PROMPT;
 
 export const V4_CANDIDATE_SELECTION_INTENT = 'awaiting:candidate_selection';
 
@@ -124,7 +126,7 @@ export function buildCandidateSelectionState(input: {
   return {
     pendingIntent: V4_CANDIDATE_SELECTION_INTENT,
     pendingPayload: { candidateSelection: awaiting },
-    pendingPrompt: CANDIDATE_SELECTION_PROMPT,
+    pendingPrompt: V4_CANDIDATE_SELECTION_PROMPT,
     activeTask: {
       intent: V4_CANDIDATE_SELECTION_INTENT,
       awaiting: { field: 'selection', type: 'candidate_selection', reason: input.entityType },

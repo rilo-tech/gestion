@@ -133,7 +133,7 @@ describe('V4 turn: numeric selection without LLM', () => {
     );
     assert.equal(agentCalls, 0);
     assert.equal(result.intent, 'v4_candidate_invalid');
-    assert.match(result.reply, /1 al 3/);
+    assert.match(result.reply, /Respondeme con un número del 1 al 3/);
   });
 
   it('"2, solo los pendientes" selects B and sends remainder to agent', async () => {

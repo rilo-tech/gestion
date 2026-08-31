@@ -30,6 +30,7 @@ import {
   resolveCandidateSelectionTurn,
   focusPatchFromCandidate,
 } from './v4-candidate-selection.ts';
+import { formatV4InvalidCandidateSelection } from './v4-ui-copy.ts';
 import { resumeBlockedToolAfterSelection } from './v4-resume-blocked-tool.ts';
 
 const AI_QUOTA_REPLY = 'Llegaste al límite de acciones de tu plan.';
@@ -163,7 +164,7 @@ export async function handleV4WhatsappTurn(
   if (candidateAwaiting) {
     const resolution = resolveCandidateSelectionTurn(text, candidateAwaiting);
     if (resolution.kind === 'invalid') {
-      const reply = `Esa opción no está en la lista. Elegí del 1 al ${resolution.max}.`;
+      const reply = formatV4InvalidCandidateSelection(resolution.max);
       await appendTurns(tenant.businessId, phone, [
         { role: 'user', text },
         { role: 'bot', text: reply },
