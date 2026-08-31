@@ -43,6 +43,12 @@ export type UsageToolTotals = {
   outputTokens: number;
 };
 
+export type PhoneUsageTotals = {
+  aiActions: number;
+  waInbound: number;
+  waOutbound: number;
+};
+
 export type UsageMeterSnapshot = {
   period: string;
   aiActions: number;
@@ -58,6 +64,10 @@ export type UsageMeterSnapshot = {
   waQuotaWarned80?: boolean;
   tools: Partial<Record<UsageToolId, UsageToolTotals>>;
   models: Record<string, UsageToolTotals>;
+  /** Consumo por línea (el cupo sigue siendo de la empresa). */
+  phones?: Record<string, PhoneUsageTotals>;
+  /** Acciones por día (YYYY-MM-DD) en el documento del mes. */
+  dailyAi?: Record<string, number>;
   updatedAt?: string;
 };
 
@@ -72,6 +82,8 @@ export function emptyUsageMeter(period: string): UsageMeterSnapshot {
     purchasedAi: 0,
     tools: {},
     models: {},
+    phones: {},
+    dailyAi: {},
   };
 }
 

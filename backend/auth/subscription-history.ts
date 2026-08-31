@@ -101,6 +101,14 @@ export async function recordBusinessSubscriptionChange(params: {
       prevSub?.precioBaseOverride !== nextSub?.precioBaseOverride ||
       prevSub?.precioPorAdministradorOverride !== nextSub?.precioPorAdministradorOverride ||
       prevSub?.precioPorOperadorOverride !== nextSub?.precioPorOperadorOverride ||
+      prevSub?.precioPorWhatsappOverride !== nextSub?.precioPorWhatsappOverride ||
+      prevSub?.extraErpUserPriceOverride !== nextSub?.extraErpUserPriceOverride ||
+      prevSub?.extraWhatsappNumberPriceOverride !== nextSub?.extraWhatsappNumberPriceOverride ||
+      prevSub?.includedErpUsersOverride !== nextSub?.includedErpUsersOverride ||
+      prevSub?.includedWhatsappNumbersOverride !== nextSub?.includedWhatsappNumbersOverride ||
+      prevSub?.includedAiOverride !== nextSub?.includedAiOverride ||
+      prevSub?.usageModeOverride !== nextSub?.usageModeOverride ||
+      prevSub?.precioFinalOverride !== nextSub?.precioFinalOverride ||
       prevSub?.descuentoMensual !== nextSub?.descuentoMensual ||
       JSON.stringify(prevSub?.preciosAddonModuloOverride) !==
         JSON.stringify(nextSub?.preciosAddonModuloOverride)
@@ -111,6 +119,7 @@ export async function recordBusinessSubscriptionChange(params: {
       prevSub?.limiteAdministradores !== nextSub?.limiteAdministradores ||
       prevSub?.limiteOperadores !== nextSub?.limiteOperadores ||
       prevSub?.limiteUsuariosTotal !== nextSub?.limiteUsuariosTotal ||
+      prevSub?.limiteWhatsapp !== nextSub?.limiteWhatsapp ||
       prevSub?.maxAmbitosCaja !== nextSub?.maxAmbitosCaja
     ) {
       changes.push('limits');

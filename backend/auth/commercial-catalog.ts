@@ -4,6 +4,7 @@ import {
   DEFAULT_COMMERCIAL_CATALOG,
   type CommercialCatalog,
 } from '../../shared/commercial-catalog.ts';
+import { applyIncludedAi200Migration } from '../../shared/commercial-migrations.ts';
 
 const DOC_PATH = 'plataforma/comercial';
 const CACHE_MS = 30_000;
@@ -14,16 +15,23 @@ function ref() {
   return db.doc(DOC_PATH);
 }
 
+/**
+ * Lee el catálogo publicado. Superadmin es la fuente de precios.
+ * No reescribe importes en cada GET. La cuota 1000/2000 → 200 es one-shot.
+ */
 export async function getCommercialCatalog(): Promise<CommercialCatalog> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.value;
   const snap = await ref().get();
   const raw = clampCommercialCatalog(
     snap.exists ? (snap.data() as Partial<CommercialCatalog>) : DEFAULT_COMMERCIAL_CATALOG
   );
-  const value = applyEfMvpSeedIfUnchanged(raw);
-  if (value !== raw) {
-    await ref().set(value, { merge: false });
+  const migrated = applyIncludedAi200Migration(raw);
+  if (migrated.changed) {
+    await ref().set(migrated.catalog, { merge: false });
+  } else if (!snap.exists) {
+    await ref().set(raw, { merge: false });
   }
+  const value = migrated.catalog;
   cache = { at: Date.now(), value };
   return value;
 }
@@ -45,6 +53,8 @@ export async function saveCommercialCatalog(
       whatsapp: { ...current.usagePacks.whatsapp, ...payload.usagePacks?.whatsapp },
       ai: { ...current.usagePacks.ai, ...payload.usagePacks?.ai },
     },
+    migrations: current.migrations,
+    finops: { ...current.finops, ...payload.finops },
     updatedAt: new Date().toISOString(),
   });
   await ref().set(next, { merge: false });
@@ -54,21 +64,4 @@ export async function saveCommercialCatalog(
 
 export function clearCommercialCatalogCache(): void {
   cache = null;
-}
-
-/** Si el doc de Firestore sigue el seed anterior (1490/2490/3490 + 70% off), aplica el MVP de la EF. */
-function applyEfMvpSeedIfUnchanged(catalog: CommercialCatalog): CommercialCatalog {
-  const oldPrices =
-    catalog.products.whatsapp.amountMonthlyUY === 1490 &&
-    catalog.products.erp.amountMonthlyUY === 2490 &&
-    catalog.products.completo.amountMonthlyUY === 3490;
-  const oldIntro = catalog.introDiscountMonths === 6 && catalog.introDiscountPercent === 70;
-  if (!oldPrices && !oldIntro) return catalog;
-  return clampCommercialCatalog({
-    ...catalog,
-    introDiscountMonths: 0,
-    introDiscountPercent: 0,
-    extraUserMonthlyUY: catalog.extraUserMonthlyUY === 490 ? 190 : catalog.extraUserMonthlyUY,
-    products: oldPrices ? DEFAULT_COMMERCIAL_CATALOG.products : catalog.products,
-  });
 }

@@ -477,6 +477,12 @@ import {
             <a routerLink="/platform/gastos" class="text-sm font-semibold text-teal-700 hover:underline">
               Ver todas las empresas
             </a>
+            <div *ngIf="phoneUsageRows.length" class="border-t border-gray-100 pt-3 space-y-1">
+              <p class="text-xs font-semibold text-gray-500 uppercase">Consumo por número</p>
+              <p *ngFor="let row of phoneUsageRows" class="text-xs text-gray-600">
+                {{ row.phone }}: {{ row.aiActions }} acciones · {{ row.waInbound }} in / {{ row.waOutbound }} out
+              </p>
+            </div>
 
             <div class="border-t border-gray-100 pt-4 space-y-3">
               <div>
@@ -1419,6 +1425,16 @@ export class PlatformBusinessDetailComponent implements OnInit {
       .filter((row) => row.tokens > 0);
     const max = Math.max(1, ...entries.map((row) => row.tokens));
     return entries.map((row) => ({ ...row, pct: Math.round((row.tokens / max) * 100) }));
+  }
+
+  get phoneUsageRows(): { phone: string; aiActions: number; waInbound: number; waOutbound: number }[] {
+    const phones = this.usage?.phones ?? {};
+    return Object.entries(phones).map(([phone, row]) => ({
+      phone,
+      aiActions: row.aiActions || 0,
+      waInbound: row.waInbound || 0,
+      waOutbound: row.waOutbound || 0,
+    }));
   }
 
   private loadUsage(businessId: string) {

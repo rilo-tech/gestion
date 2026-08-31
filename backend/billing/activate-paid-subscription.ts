@@ -127,6 +127,8 @@ export async function activatePaidSubscription(params: {
         billingInterval,
         paidUntil: coverage.paidUntil,
         lastMercadoPagoPaymentId: params.mercadoPagoPaymentId,
+        lastPaymentStatus: 'approved',
+        lifecycleStatus: 'active',
         source: 'mercadopago',
         updatedAt: now.toISOString(),
       },

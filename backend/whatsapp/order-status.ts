@@ -12,9 +12,11 @@ import {
   type OrderRecord,
 } from '../routes/orders.ts';
 import {
+  buildOrderStockDiscountPreview,
   computeOrderStockStatus,
   consumeOrderStockOnDelivery,
   consumeOrderStockOnStatusChange,
+  isNoReservedUnitsStockError,
   orderStockFullyConsumed,
   type OrderLineStock,
   type OrderStockRecord,
@@ -23,11 +25,17 @@ import {
   getOrderEstadoLabel,
   getOrderStockDiscountRank,
   resolveOrderPhysicalStockScope,
+  resolveStockDiscountAsk,
   shouldConsumeStockOnStatusChange,
   validateOrderEstadoTransition,
+  type OrderPhysicalStockScope,
+  type StockDiscountAsk,
 } from '../utils/order-config.ts';
+import { formatStockResolutionAsk, parseRequestedStockScope } from './stock-resolution.ts';
 import { formatOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
 import { resolveOrderBalance } from '../../shared/order-balance.ts';
+import { parseOrderQueryFilter, filterOrdersByQuery } from './order-query-filter.ts';
+import { lockedOrderFromFocus, shouldUseLockedOrder } from './order-lock.ts';
 import { waBold, waCard } from '../../shared/whatsapp-format.ts';
 import { getConversationState, type LastWhatsappOperation } from './conversation-state.ts';
 import { resolveClientMatch, personNamesLookRelated } from './lookups.ts';
@@ -143,13 +151,62 @@ export type OpenOrderListOptions = {
   amountHint?: number;
   withBalance?: boolean;
   includeClosed?: boolean;
+  onlyClosed?: boolean;
+  sourceText?: string;
   limit?: number;
 };
 
 function hintTokens(value: string): string[] {
   return foldSearch(value)
     .split(' ')
-    .filter((token) => token.length >= 3 && !/^(del|los|las|una|con|por|para)$/.test(token));
+    .filter(
+      (token) =>
+        token.length >= 3 &&
+        !/^(del|los|las|una|con|por|para|que|este|esta|estado|pedido|pedidos|mostrame|listame|buscame)$/.test(
+          token
+        )
+    );
+}
+
+/** Listar abiertos por defecto. Entregados solo si el dueño los pide. */
+export function closedOrdersListMode(text: string): 'open' | 'closed' | 'all' {
+  return parseOrderQueryFilter(text).listMode;
+}
+
+function stripListNoise(value: string): string {
+  return foldSearch(value)
+    .replace(
+      /\b(mostrame|mostr[aá]|listame|list[aá]|buscame|buscar?|pedido|pedidos|abiertos?|pendientes?|entregad[oa]s?|cerrad[oa]s?|estado|que no|este|esta|en estado)\b/g,
+      ' '
+    )
+    .replace(
+      /\b(que\s+no\s+(est[ae]\s+)?(en\s+(estado\s+)?)?entregad[oa]s?|no\s+est[ae]\s+(en\s+(estado\s+)?)?entregad[oa]s?)\b/g,
+      ' '
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const PRODUCT_HINT_STOP =
+  /^(pedido|pedidos|saldo|pago|pagos|abierto|abiertos|pendiente|pendientes|con saldo|llego|llegó|estado|entregado|entregados|entregada|cerrado|cerrados|que no|no en|en estado|en)$/;
+
+function isJunkProductHint(fold: string): boolean {
+  const t = String(fold ?? '').trim();
+  if (!t) return true;
+  if (PRODUCT_HINT_STOP.test(t)) return true;
+  const tokens = t.split(' ').filter(Boolean);
+  if (!tokens.length) return true;
+  if (
+    tokens.every(
+      (token) =>
+        token.length < 3 ||
+        PRODUCT_HINT_STOP.test(token) ||
+        /^(no|en|que|el|de|del|la|los|un|una|este|esta)$/.test(token)
+    )
+  ) {
+    return true;
+  }
+  return !hintTokens(t).length;
 }
 
 function matchesOpenOrderHint(
@@ -197,115 +254,134 @@ async function loadPedidoDocs(businessId: string, clientId?: string) {
   }
 }
 
+function ordersMatchingHints(
+  docs: Array<{ id: string; data: () => Record<string, unknown> }>,
+  opts: {
+    clientHint: string;
+    clientFold: string;
+    productFold: string;
+    amountHint: number;
+    includeClosed: boolean;
+    onlyClosed: boolean;
+    withBalance?: boolean;
+  }
+): OrderStatusTarget[] {
+  let open = ordersFromDocs(docs, '', opts.includeClosed);
+  if (opts.onlyClosed) {
+    open = open.filter((order) => isDeliveredEstado(resolveOrderEstado(order.estado)));
+  }
+  if (opts.withBalance) {
+    const withSaldo = open.filter((order) => order.saldo > 0);
+    if (withSaldo.length) open = withSaldo;
+  }
+  let hinted = open.filter((order) =>
+    matchesOpenOrderHint(order, opts.clientFold, opts.productFold)
+  );
+  if (!hinted.length && opts.clientHint) {
+    hinted = open.filter((order) => personNamesLookRelated(opts.clientHint, order.clientName));
+  }
+  if (opts.amountHint > 0) {
+    const byAmount = hinted.filter((order) => matchesAmountHint(order, opts.amountHint));
+    if (byAmount.length) {
+      hinted = [...byAmount].sort(
+        (a, b) => amountDistance(a, opts.amountHint) - amountDistance(b, opts.amountHint)
+      );
+    }
+  }
+  if (hinted.length) return hinted;
+  if (!opts.clientFold && !opts.productFold && !(opts.amountHint > 0)) return open;
+  return hinted;
+}
+
 /** Pedidos abiertos para cuando el dueño no recuerda el número. */
 export async function listOpenOrdersForWhatsapp(
   businessId: string,
   options: OpenOrderListOptions = {}
 ): Promise<OrderStatusTarget[]> {
   const clientHint = String(options.clientHint ?? '').trim();
-  const productHint = String(options.productHint ?? '').trim();
+  const productHint = stripListNoise(String(options.productHint ?? '').trim());
   const amountHint = Number(options.amountHint) || 0;
   const cap = Math.min(8, Math.max(1, options.limit ?? 8));
-  const includeClosed = options.includeClosed === true;
-  let scopedByClient = false;
-  let clientId: string | undefined;
+  const mode = closedOrdersListMode(String(options.sourceText ?? ''));
+  const onlyClosed = options.onlyClosed === true || mode === 'closed';
+  const includeClosed = onlyClosed || mode === 'all' || (options.includeClosed === true && mode !== 'open');
+  let productFold = foldSearch(productHint);
+  if (isJunkProductHint(productFold)) productFold = '';
+
+  const rankOpts = {
+    clientHint,
+    productFold,
+    amountHint,
+    includeClosed,
+    onlyClosed,
+    withBalance: options.withBalance,
+  };
+
+  const filter = parseOrderQueryFilter(String(options.sourceText ?? ''));
+  const finish = (rows: OrderStatusTarget[]) => filterOrdersByQuery(rows, filter).slice(0, cap);
 
   if (clientHint) {
     const resolved = await resolveClientMatch(businessId, clientHint, { utterance: clientHint });
     if (resolved.status === 'unique') {
-      clientId = resolved.client.id;
-      scopedByClient = true;
+      const scoped = ordersMatchingHints(await loadPedidoDocs(businessId, resolved.client.id), {
+        ...rankOpts,
+        clientFold: '',
+      });
+      if (scoped.length) return finish(scoped);
     } else if (resolved.status === 'ambiguous' && resolved.candidates.length) {
       const bags = await Promise.all(
         resolved.candidates.slice(0, 6).map((candidate) => loadPedidoDocs(businessId, candidate.id))
       );
-      const merged = bags.flat();
       const seen = new Set<string>();
-      const uniqueDocs = merged.filter((doc) => {
+      const uniqueDocs = bags.flat().filter((doc) => {
         if (seen.has(doc.id)) return false;
         seen.add(doc.id);
         return true;
       });
-      const clientFoldAmbiguous = '';
-      let productFoldAmbiguous = foldSearch(productHint);
-      if (
-        /^(pedido|pedidos|saldo|pago|pagos|abierto|abiertos|pendiente|pendientes|con saldo|llego|llegó)$/.test(
-          productFoldAmbiguous
-        )
-      ) {
-        productFoldAmbiguous = '';
-      }
-      let openAmbiguous = ordersFromDocs(uniqueDocs, '', includeClosed);
-      if (options.withBalance) {
-        const withSaldo = openAmbiguous.filter((order) => order.saldo > 0);
-        if (withSaldo.length) openAmbiguous = withSaldo;
-      }
-      let hintedAmbiguous = openAmbiguous.filter((order) =>
-        matchesOpenOrderHint(order, clientFoldAmbiguous, productFoldAmbiguous)
-      );
-      if (amountHint > 0) {
-        const byAmount = hintedAmbiguous.filter((order) => matchesAmountHint(order, amountHint));
-        if (byAmount.length) {
-          hintedAmbiguous = [...byAmount].sort(
-            (a, b) => amountDistance(a, amountHint) - amountDistance(b, amountHint)
-          );
-        }
-      }
-      return (hintedAmbiguous.length ? hintedAmbiguous : openAmbiguous).slice(0, cap);
+      const scoped = ordersMatchingHints(uniqueDocs, { ...rankOpts, clientFold: '' });
+      if (scoped.length) return finish(scoped);
     }
   }
 
-  const docs = await loadPedidoDocs(businessId, clientId);
-  const clientFold = scopedByClient ? '' : foldSearch(clientHint);
-  let productFold = foldSearch(productHint);
-  if (
-    /^(pedido|pedidos|saldo|pago|pagos|abierto|abiertos|pendiente|pendientes|con saldo|llego|llegó)$/.test(
-      productFold
-    )
-  ) {
-    productFold = '';
-  }
-  let open = ordersFromDocs(docs, '', includeClosed);
-  if (options.withBalance) {
-    const withSaldo = open.filter((order) => order.saldo > 0);
-    if (withSaldo.length) open = withSaldo;
-  }
+  const docs = await loadPedidoDocs(businessId);
+  const clientFold = foldSearch(clientHint);
+  const rows = ordersMatchingHints(docs, { ...rankOpts, clientFold });
+  return finish(rows);
+}
 
-  let hinted = open.filter((order) => matchesOpenOrderHint(order, clientFold, productFold));
-  if (!hinted.length && clientHint && !scopedByClient) {
-    hinted = open.filter((order) => personNamesLookRelated(clientHint, order.clientName));
-  }
-  if (amountHint > 0) {
-    const byAmount = hinted.filter((order) => matchesAmountHint(order, amountHint));
-    if (byAmount.length) {
-      hinted = [...byAmount].sort(
-        (a, b) => amountDistance(a, amountHint) - amountDistance(b, amountHint)
-      );
-    }
-  }
-
-  const rows =
-    productFold && hinted.length
-      ? hinted
-      : scopedByClient
-        ? hinted.length
-          ? hinted
-          : open
-        : clientFold || productFold || amountHint > 0
-          ? hinted
-          : open;
-  return rows.slice(0, cap);
+/** Abiertos primero. Si no hay y pidió abiertos, muestra entregados del mismo cliente. */
+export async function listWhatsappOrdersWithFallback(
+  businessId: string,
+  options: OpenOrderListOptions = {}
+): Promise<{ items: OrderStatusTarget[]; closedFallback: boolean }> {
+  const items = await listOpenOrdersForWhatsapp(businessId, options);
+  if (items.length) return { items, closedFallback: false };
+  const clientHint = String(options.clientHint ?? '').trim();
+  if (!clientHint || options.onlyClosed === true) return { items, closedFallback: false };
+  const filter = parseOrderQueryFilter(String(options.sourceText ?? ''));
+  if (!filter.allowClosedFallback || filter.statusNotEquals) return { items, closedFallback: false };
+  const mode = filter.listMode;
+  if (mode === 'closed' || mode === 'all') return { items, closedFallback: false };
+  const closed = await listOpenOrdersForWhatsapp(businessId, {
+    ...options,
+    onlyClosed: true,
+    includeClosed: true,
+  });
+  return { items: closed, closedFallback: closed.length > 0 };
 }
 
 export function formatOpenOrderChoices(items: OrderStatusTarget[], ask: string): string {
   const lines = items.map((item, index) => {
     const product = item.productSummary ? ` · ${item.productSummary.slice(0, 36)}` : '';
-    const saldo = item.saldo > 0 ? ` · saldo $${money(item.saldo)}` : ' · pago';
-    return `${index + 1}) #${item.label} · ${item.clientName}${product}${saldo}`;
+    const estado = getOrderEstadoLabel(item.estado);
+    const saldo = item.saldo > 0 ? `saldo $${money(item.saldo)}` : 'pago';
+    return `${index + 1}) #${item.label} · ${item.clientName}${product} · ${estado} · ${saldo}`;
   });
   const hasClosed = items.some((item) => isDeliveredEstado(resolveOrderEstado(item.estado)));
+  const allClosed =
+    hasClosed && items.every((item) => isDeliveredEstado(resolveOrderEstado(item.estado)));
   return waCard({
-    title: hasClosed ? 'Pedidos' : 'Pedidos abiertos',
+    title: allClosed ? 'Pedidos entregados' : hasClosed ? 'Pedidos' : 'Pedidos abiertos',
     lines,
     ask,
   });
@@ -342,7 +418,7 @@ export function formatFindOrderGuide(opts?: {
     lines,
     ask: query
       ? 'Con eso lo busco de nuevo.'
-      : 'Con el número de la lista cobrás, lo asociás o lo marcás *listo*.',
+      : 'Con el número de la lista cobrás, lo asociás o le cambiás el *estado*.',
   });
 }
 
@@ -350,28 +426,76 @@ export function formatOrderActionAsk(item: OrderStatusTarget): string {
   const lines = [
     `• Cliente: ${item.clientName}`,
     item.productSummary ? `• Producto: ${item.productSummary}` : '',
+    `• Estado: ${getOrderEstadoLabel(item.estado)}`,
+    item.total > 0 ? `• Total: $${money(item.total)}` : '',
     `• Saldo: ${item.saldo > 0 ? `$${money(item.saldo)}` : 'saldado'}`,
   ].filter(Boolean);
-  const ask =
-    item.saldo > 0
-      ? `¿Qué hago?\n• *listo*\n• *saldalo* (entra a caja)\n• *pagó 500*`
-      : `¿Lo marco *listo*?`;
   return waCard({
     title: `Pedido #${item.label}`,
     lines,
-    ask,
+    ask: `¿Qué hago?\n• *1* registrar un pago\n• *2* cambiar el estado`,
+  });
+}
+
+export function formatOrderStatusAsk(item: OrderStatusTarget): string {
+  return waCard({
+    title: `Pedido #${item.label}`,
+    lines: [`• Estado ahora: ${getOrderEstadoLabel(item.estado)}`],
+    ask: `¿A cuál lo paso?\n• *1* pendiente\n• *2* en producción\n• *3* listo\n• *4* entregado`,
+  });
+}
+
+export function formatPaymentAmountAsk(item: OrderStatusTarget): string {
+  const saldo = item.saldo > 0 ? `$${money(item.saldo)}` : 'saldado';
+  return waCard({
+    title: `Pedido #${item.label}`,
+    lines: [`• Cliente: ${item.clientName}`, `• Saldo: ${saldo}`],
+    ask:
+      item.saldo > 0
+        ? '¿Cuánto cobro?\nUn monto, o *saldalo* para el total.'
+        : 'Este pedido no tiene saldo. Decime un monto si cobrás igual.',
   });
 }
 
 export function formatSettleAsk(label: string, clientName: string, saldo: number): string {
   return waCard({
-    title: '¿Lo saldo?',
+    title: '¿Cobro el saldo?',
     lines: [
       `• Pedido #${label}${clientName ? ` · ${clientName}` : ''}`,
-      `• Saldo: $${money(saldo)}`,
+      `• Voy a cobrar: $${money(saldo)} (entra a caja)`,
+      '• El pedido queda en $0',
     ],
-    ask: `${waBold('SÍ')} cobra todo a caja\nUn número = cobro esa plata\n${waBold('NO')} = queda el saldo`,
+    ask: `${waBold('SÍ')} = cobro todo\nUn número = cobro esa plata\n${waBold('NO')} = no cobro, queda el saldo`,
   });
+}
+
+/** Un pedido cerrado no admite cambios de estado: conviene decirlo antes de pedir confirmación. */
+export function closedOrderReason(estado: string): 'cancelado' | 'entregado' | null {
+  if (isCancelledStatus(estado)) return 'cancelado';
+  if (isDeliveredEstado(resolveOrderEstado(estado))) return 'entregado';
+  return null;
+}
+
+/** Después de este rato, «marcalo listo» ya no puede referirse a lo de antes. */
+const CONTEXT_TTL_MS = 12 * 60 * 60 * 1000;
+
+function isFreshContext(at: unknown): boolean {
+  const ts = Date.parse(String(at ?? ''));
+  return Number.isFinite(ts) && Date.now() - ts < CONTEXT_TTL_MS;
+}
+
+/** El pedido recordado solo sirve si sigue abierto; si no, mejor preguntar. */
+async function openTargetById(
+  businessId: string,
+  id: string,
+  fallbackClient = ''
+): Promise<OrderStatusTarget | null> {
+  if (!id) return null;
+  const snap = await db.doc(`negocios/${businessId}/pedidos/${id}`).get();
+  if (!snap.exists) return null;
+  const data = snap.data() ?? {};
+  if (closedOrderReason(String(data.estado ?? ''))) return null;
+  return targetFromDoc(snap.id, data, fallbackClient);
 }
 
 /** El pedido al que se le cambia el estado: número, cliente, «ese», o el último del chat. */
@@ -400,6 +524,16 @@ export async function resolveOrderForStatus(
     return { status: 'none' };
   }
 
+  const state = await getConversationState(businessId, phone);
+  const locked = lockedOrderFromFocus(state?.focusOrder);
+  const source = String(entities.sourceText ?? '');
+  if (locked && shouldUseLockedOrder(source, entities, locked)) {
+    const snap = await col.doc(locked.id).get();
+    if (snap.exists) {
+      return { status: 'unique', order: targetFromDoc(snap.id, snap.data() ?? {}, String(locked.clientName ?? '')) };
+    }
+  }
+
   const clientQuery = String(entities.clientName ?? '').trim();
   if (clientQuery) {
     const resolved = await resolveClientMatch(businessId, clientQuery, {
@@ -410,10 +544,6 @@ export async function resolveOrderForStatus(
       const open = openOrdersFrom(snap.docs, resolved.client.nombre);
       if (open.length === 1) return { status: 'unique', order: open[0]! };
       if (open.length > 1) return { status: 'ambiguous', candidates: open.slice(0, 5) };
-      const recent = ordersFromDocs(snap.docs, resolved.client.nombre, true);
-      if (recent.length === 1) return { status: 'unique', order: recent[0]! };
-      if (recent.length > 1) return { status: 'ambiguous', candidates: recent.slice(0, 5) };
-      return { status: 'none' };
     }
     if (resolved.status === 'ambiguous' && resolved.candidates.length) {
       const bags = await Promise.all(
@@ -428,7 +558,7 @@ export async function resolveOrderForStatus(
     }
     const listed = await listOpenOrdersForWhatsapp(businessId, {
       clientHint: clientQuery,
-      includeClosed: true,
+      sourceText: String(entities.sourceText ?? ''),
       limit: 5,
     });
     if (listed.length === 1) return { status: 'unique', order: listed[0]! };
@@ -436,16 +566,15 @@ export async function resolveOrderForStatus(
     return { status: 'none' };
   }
 
-  const state = await getConversationState(businessId, phone);
+  const focus = state?.focusOrder;
+  if (focus?.id && isFreshContext(focus.at)) {
+    const focused = await openTargetById(businessId, focus.id, String(focus.clientName ?? ''));
+    if (focused) return { status: 'unique', order: focused };
+  }
   const last: LastWhatsappOperation | null | undefined = state?.lastOperation;
-  if (last?.kind === 'order' && last.id) {
-    const snap = await col.doc(last.id).get();
-    if (snap.exists) {
-      return {
-        status: 'unique',
-        order: targetFromDoc(snap.id, snap.data() ?? {}, String(last.clientName ?? '')),
-      };
-    }
+  if (last?.kind === 'order' && last.id && isFreshContext(last.at)) {
+    const fromLast = await openTargetById(businessId, last.id, String(last.clientName ?? ''));
+    if (fromLast) return { status: 'unique', order: fromLast };
   }
 
   const waSnap = await col.where('whatsappPhone', '==', phone).limit(20).get();
@@ -517,7 +646,10 @@ export async function updateOrderStatusFromWhatsapp(
   orderId: string;
   label: string;
   clientName: string;
+  clientId: string;
   amount: number;
+  status: string;
+  needsStockDecision?: StockDiscountAsk;
 }> {
   const nextEstadoValue: WhatsappOrderStatus = entities.orderStatus ?? 'listo';
   const resolution = await resolveOrderForStatus(tenant.businessId, tenant.phone, entities);
@@ -548,6 +680,17 @@ export async function updateOrderStatusFromWhatsapp(
   const nextEstado = resolveOrderEstado(nextEstadoValue);
 
   if (isDeliveredEstado(previousEstado)) {
+    if (isDeliveredEstado(nextEstado)) {
+      return {
+        orderId: target.id,
+        label: target.label,
+        clientName: target.clientName,
+        clientId: target.clientId,
+        amount: target.total,
+        status: nextEstadoValue,
+        reply: `El pedido #${target.label} ya estaba entregado.`,
+      };
+    }
     throw new Error(`El pedido #${target.label} ya estaba entregado y cerrado.`);
   }
 
@@ -570,7 +713,9 @@ export async function updateOrderStatusFromWhatsapp(
       orderId: target.id,
       label: target.label,
       clientName: target.clientName,
+      clientId: target.clientId,
       amount: target.total,
+      status: nextEstadoValue,
       reply: `El pedido #${target.label} ya estaba en ${getOrderEstadoLabel(
         nextEstadoValue,
         config.estados
@@ -614,26 +759,85 @@ export async function updateOrderStatusFromWhatsapp(
     stockFullyConsumed: orderStockFullyConsumed(stockLines(merged)),
     estados: config.estados,
   });
+  const chosenScope =
+    parseRequestedStockScope(entities.descuentoFisicoAlcance) ??
+    parseRequestedStockScope(entities.stockResolution);
+  let appliedScope: OrderPhysicalStockScope | undefined;
+
   if (crossesTrigger || catchUpStock) {
-    const consumption = await consumeOrderStockOnStatusChange(
+    const preview = await buildOrderStockDiscountPreview(
       tenant.businessId,
-      target.id,
       asStockRecord(merged),
-      {
-        pedidosConfig: config,
-        targetEstado: nextEstado,
-        scope: resolveOrderPhysicalStockScope(config, nextEstado),
-      }
+      config,
+      nextEstado
     );
-    stockPatch = {
-      items: consumption.items,
-      stockDescontado: consumption.stockDescontado,
-      estadoStock: consumption.estadoStock,
-      stockPreparado: consumption.stockPreparado ?? merged.stockPreparado,
-    };
-    Object.assign(merged, stockPatch);
-    stockDescontado = consumption.stockDescontado;
-    stockWarning = consumption.stockWarning;
+    if (preview.blocked) {
+      throw new Error(preview.blockReason ?? 'No podés guardar con este estado todavía.');
+    }
+    const ask = resolveStockDiscountAsk(preview);
+    if (ask && !chosenScope) {
+      return {
+        orderId: target.id,
+        label: target.label,
+        clientName: target.clientName,
+        clientId: target.clientId,
+        amount: target.total,
+        status: nextEstadoValue,
+        reply: formatStockResolutionAsk(ask),
+        needsStockDecision: ask,
+      };
+    }
+    appliedScope = chosenScope ?? preview.defaultScope ?? resolveOrderPhysicalStockScope(config, nextEstado);
+    try {
+      const consumption = await consumeOrderStockOnStatusChange(
+        tenant.businessId,
+        target.id,
+        asStockRecord(merged),
+        {
+          pedidosConfig: config,
+          targetEstado: nextEstado,
+          scope: appliedScope,
+        }
+      );
+      stockPatch = {
+        items: consumption.items,
+        stockDescontado: consumption.stockDescontado,
+        estadoStock: consumption.estadoStock,
+        stockPreparado: consumption.stockPreparado ?? merged.stockPreparado,
+      };
+      Object.assign(merged, stockPatch);
+      stockDescontado = consumption.stockDescontado;
+      stockWarning = consumption.stockWarning;
+    } catch (error) {
+      if (isNoReservedUnitsStockError(error) && !chosenScope) {
+        const fallbackAsk = resolveStockDiscountAsk({
+          willConsume: preview.totalCompleto > 0,
+          blocked: false,
+          canChooseScope: preview.canChooseScope,
+          requiresFullStock: preview.requiresFullStock,
+          defaultScope: 'solo_reservado',
+          totalReservado: 0,
+          totalCompleto: preview.totalCompleto,
+        }) ?? {
+          reason: 'no_reserved_units' as const,
+          options: ['pedido_completo' as const],
+          defaultScope: 'pedido_completo' as const,
+          totalReservado: 0,
+          totalCompleto: preview.totalCompleto,
+        };
+        return {
+          orderId: target.id,
+          label: target.label,
+          clientName: target.clientName,
+          clientId: target.clientId,
+          amount: target.total,
+          status: nextEstadoValue,
+          reply: formatStockResolutionAsk(fallbackAsk),
+          needsStockDecision: fallbackAsk,
+        };
+      }
+      throw error;
+    }
   }
 
   const isDelivery = isDeliveredEstado(nextEstado) && !isDeliveredEstado(previousEstado);
@@ -716,29 +920,33 @@ export async function updateOrderStatusFromWhatsapp(
     isDelivery ? 'entregado' : nextEstadoValue,
     config.estados
   );
-  const parts = [
+  const stockDropped = Boolean(
+    appliedScope || stockDescontado || crossesTrigger || catchUpStock || (isDelivery && stockDescontado)
+  );
+  const lines = [
     previousEstado === nextEstado
-      ? `Pedido #${target.label} de ${target.clientName}: ya estaba ${estadoLabel}.`
-      : `Listo. Pedido #${target.label} de ${target.clientName}: ${estadoLabel}.`,
+      ? `Pedido #${target.label} ya estaba ${estadoLabel}.`
+      : 'Pedido actualizado ✅',
   ];
-  if (crossesTrigger || catchUpStock || (isDelivery && stockDescontado)) {
-    parts.push('Descontado del stock.');
+  if (previousEstado !== nextEstado) {
+    lines.push(stockDropped ? `Estado: ${estadoLabel} · Stock descontado` : `Estado: ${estadoLabel}`);
   }
   if (isDelivery) {
     if (cobrado > 0) {
-      parts.push(`Cobré el saldo de $${money(cobrado)} y quedó saldado.`);
+      lines.push(`Cobré el saldo de $${money(cobrado)} y quedó saldado.`);
     } else if (entregaConSaldo) {
-      parts.push(`Queda saldo de $${money(Number(updatePayload.saldo) || target.saldo)}.`);
+      lines.push(`Queda saldo de $${money(Number(updatePayload.saldo) || target.saldo)}.`);
     }
-    if (deliveryPatch.ventaLabel) parts.push(`Venta #${deliveryPatch.ventaLabel}.`);
   }
-  if (stockWarning) parts.push(stockWarning);
+  if (stockWarning) lines.push(stockWarning);
 
   return {
     orderId: target.id,
     label: target.label,
     clientName: target.clientName,
+    clientId: target.clientId,
     amount: total,
-    reply: parts.join(' '),
+    status: isDelivery ? 'entregado' : nextEstadoValue,
+    reply: lines.join('\n'),
   };
 }

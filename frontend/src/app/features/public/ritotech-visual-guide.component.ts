@@ -1,6 +1,7 @@
 import { Component, HostListener, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
+import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 
 type GuideTab = 'whatsapp' | 'erp';
 
@@ -129,7 +130,7 @@ type GuideTab = 'whatsapp' | 'erp';
               <div class="mt-2 ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-teal-800/80 px-3 py-2 text-sm text-white leading-snug">
                 Venta a María, 2 remeras, cobró 800
               </div>
-              <p class="mt-auto pt-3 text-xs text-gray-500">RILO Bot entiende cliente, producto y plata.</p>
+              <p class="mt-auto pt-3 text-xs text-gray-500">Tu agente con IA entiende cliente, producto y plata.</p>
             </article>
 
             <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
@@ -213,19 +214,27 @@ type GuideTab = 'whatsapp' | 'erp';
         <div
           class="shrink-0 border-t border-teal-900/40 bg-gray-950 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
           <p class="text-xs text-gray-500 order-2 sm:order-1 text-center sm:text-left leading-snug">
-            Prueba 30 días gratis. Sin tarjeta.
+            Prueba {{ trialDays }} días gratis. Sin tarjeta.
           </p>
           <div class="order-1 sm:order-2 flex flex-col sm:flex-row gap-2">
             <button type="button" class="text-xs text-gray-500 hover:text-gray-300 py-2 sm:px-2" (click)="close()">
               Ahora no
             </button>
             <a
+              *ngIf="showSignupCta"
               [routerLink]="['/registro']"
               [queryParams]="{ producto: tab === 'erp' ? 'erp' : 'whatsapp' }"
               (click)="close()"
               class="inline-flex justify-center rounded-xl bg-teal-500 px-5 py-3 text-sm font-black text-gray-950 hover:bg-teal-400">
               {{ tab === 'erp' ? 'Probar el panel →' : 'Probar RILO Bot →' }}
             </a>
+            <button
+              *ngIf="!showSignupCta"
+              type="button"
+              (click)="close()"
+              class="inline-flex justify-center rounded-xl bg-teal-500 px-5 py-3 text-sm font-black text-gray-950 hover:bg-teal-400">
+              Entendido
+            </button>
           </div>
         </div>
       </div>
@@ -236,6 +245,8 @@ export class RitotechVisualGuideComponent {
   @Input() showTrigger = true;
   @Input() triggerLabel = 'Mirá cómo te ordena el día';
   @Input() defaultTab: GuideTab = 'whatsapp';
+  @Input() showSignupCta = true;
+  readonly trialDays = DEFAULT_TRIAL_DAYS;
 
   isOpen = false;
   tab: GuideTab = 'whatsapp';

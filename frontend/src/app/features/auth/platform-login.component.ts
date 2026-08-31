@@ -136,8 +136,7 @@ export class PlatformLoginComponent implements OnInit {
       .login(this.login.trim(), this.password, { scope: 'platform' })
       .subscribe({
         next: () => {
-          this.loading = false;
-          this.router.navigate(['/platform']);
+          window.location.assign('/platform');
         },
         error: (err) => {
           this.loading = false;

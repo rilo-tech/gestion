@@ -135,6 +135,24 @@ export function requireCompanyUserManager(
   next();
 }
 
+/** Supervisor o administrador delegado: cambios que afectan la facturación (add-ons). */
+export function requireCompanyBillingManager(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  if (
+    req.auth?.scope !== 'company' ||
+    !canManageCompanyUsers(req.auth.user.rol, req.auth.user.permisos)
+  ) {
+    return res.status(403).json({
+      error: 'Solo el administrador de la empresa puede cambiar la facturación.',
+      code: 'BILLING_FORBIDDEN',
+    });
+  }
+  next();
+}
+
 export function requireSuperadmin(
   req: AuthenticatedRequest,
   res: Response,

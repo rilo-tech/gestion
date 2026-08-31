@@ -797,17 +797,17 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <label class="text-xs font-medium text-gray-600">Días de prueba
               <input type="number" min="1" [(ngModel)]="commercialDraft.trialDays" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
-            <label class="text-xs font-medium text-gray-600">IA prueba / mes
+            <label class="text-xs font-medium text-gray-600">Acciones WhatsApp prueba / mes
               <input type="number" min="0" [(ngModel)]="commercialDraft.trialAccionesIaMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
             <label class="text-xs font-medium text-gray-600">WhatsApp prueba / mes
               <input type="number" min="0" [(ngModel)]="commercialDraft.trialWhatsappMensajes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
-            <label class="text-xs font-medium text-gray-600">Usuario extra UYU
-              <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyUY" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            <label class="text-xs font-medium text-gray-600">Número WhatsApp extra UYU
+              <input type="number" min="0" [(ngModel)]="commercialDraft.extraWhatsappNumberMonthlyUY" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
-            <label class="text-xs font-medium text-gray-600">Usuario extra ARS
-              <input type="number" min="0" [(ngModel)]="commercialDraft.extraUserMonthlyAR" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+            <label class="text-xs font-medium text-gray-600">Número WhatsApp extra ARS
+              <input type="number" min="0" [(ngModel)]="commercialDraft.extraWhatsappNumberMonthlyAR" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
             </label>
             <label class="text-xs font-medium text-gray-600">Meses de promo (MVP: 0)
               <input type="number" min="0" max="24" [(ngModel)]="commercialDraft.introDiscountMonths" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
@@ -817,7 +817,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             </label>
           </div>
           <div>
-            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Plan gratis (después de los 30 días, sin pagar)</p>
+            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Plan gratis (después de la prueba, sin pagar)</p>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <label class="text-xs font-medium text-gray-600">Máx. clientes
                 <input type="number" min="1" [(ngModel)]="commercialDraft.lite.maxClientes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
@@ -825,7 +825,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
               <label class="text-xs font-medium text-gray-600">Máx. productos
                 <input type="number" min="1" [(ngModel)]="commercialDraft.lite.maxProductos" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               </label>
-              <label class="text-xs font-medium text-gray-600">IA / mes
+              <label class="text-xs font-medium text-gray-600">Acciones WhatsApp / mes
                 <input type="number" min="0" [(ngModel)]="commercialDraft.lite.maxAccionesIaMes" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               </label>
               <label class="text-xs font-medium text-gray-600">Cargas WhatsApp / mes
@@ -837,14 +837,15 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             </div>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full text-sm min-w-[640px]">
+            <table class="w-full text-sm min-w-[760px]">
               <thead class="text-xs uppercase text-gray-500">
                 <tr>
                   <th class="text-left py-2">Producto</th>
                   <th class="text-left py-2">UYU / mes</th>
                   <th class="text-left py-2">ARS / mes</th>
-                  <th class="text-left py-2">IA incluida</th>
-                  <th class="text-left py-2">WhatsApp incluido</th>
+                  <th class="text-left py-2">Acciones WhatsApp / mes</th>
+                  <th class="text-left py-2">Tope</th>
+                  <th class="text-left py-2">WhatsApp burbujas</th>
                 </tr>
               </thead>
               <tbody>
@@ -857,7 +858,20 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].amountMonthlyAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
                   </td>
                   <td class="py-2 pr-2">
-                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedAi" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                    <input
+                      type="number"
+                      min="0"
+                      [(ngModel)]="commercialDraft.products[row.id].includedAi"
+                      [disabled]="commercialDraft.products[row.id].usageMode === 'unlimited'"
+                      class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm disabled:bg-gray-50">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <select
+                      [(ngModel)]="commercialDraft.products[row.id].usageMode"
+                      class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                      <option value="limited">Limitado</option>
+                      <option value="unlimited">Libre</option>
+                    </select>
                   </td>
                   <td class="py-2">
                     <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedWhatsapp" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
@@ -865,8 +879,52 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div class="overflow-x-auto">
+            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Add-ons por plan</p>
+            <table class="w-full text-sm min-w-[1080px]">
+              <thead class="text-xs uppercase text-gray-500">
+                <tr>
+                  <th class="text-left py-2">Producto</th>
+                  <th class="text-left py-2">Usuarios ERP incl.</th>
+                  <th class="text-left py-2">$/usuario extra UYU</th>
+                  <th class="text-left py-2">$/usuario extra ARS</th>
+                  <th class="text-left py-2">Números WA incl.</th>
+                  <th class="text-left py-2">$/número extra UYU</th>
+                  <th class="text-left py-2">$/número extra ARS</th>
+                  <th class="text-left py-2">Máx. números</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of commercialProductRows">
+                  <td class="py-2 font-medium text-gray-800">{{ row.label }}</td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedErpUsers" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].extraErpUserPriceUY" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].extraErpUserPriceAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].includedWhatsappNumbers" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].extraWhatsappNumberPriceUY" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2 pr-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].extraWhatsappNumberPriceAR" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
+                  </td>
+                  <td class="py-2">
+                    <input type="number" min="0" [(ngModel)]="commercialDraft.products[row.id].maxWhatsappNumbers" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm" placeholder="sin tope">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
             <p class="text-[11px] text-gray-500 mt-2 leading-relaxed">
-              WhatsApp incluido = burbujas de salida del bot (SÍ, NO y elegir un número también cuentan). 0 = sin bot o sin tope.
+              Acciones por WhatsApp = lo que ve el cliente (“N acciones por WhatsApp por mes”). Libre = se mide, sin tope.
+              WhatsApp incluido = burbujas de salida (SÍ, NO y elegir un número también cuentan).
             </p>
           </div>
           <div>
@@ -899,7 +957,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                     </td>
                   </tr>
                   <tr>
-                    <td class="py-2 font-medium text-gray-800">Acciones IA</td>
+                    <td class="py-2 font-medium text-gray-800">Acciones por WhatsApp</td>
                     <td class="py-2 pr-2">
                       <input type="number" min="1" [(ngModel)]="commercialDraft.usagePacks.ai.quantity" class="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm">
                     </td>
@@ -963,7 +1021,12 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">{{ product.name }}</p>
             <p class="text-lg font-bold text-gray-900 mt-1">{{ product.priceLabel }}</p>
             <p class="text-xs text-gray-500 mt-1">
-              + {{ formatMoney(product.extraUserMonthly) }}/usuario extra · plan {{ product.erpPlanId }}
+              + {{ formatMoney(product.extraUserMonthly) }}/usuario extra
+              <span *ngIf="product.extraWhatsappNumberMonthly">
+                · + {{ formatMoney(product.extraWhatsappNumberMonthly) }}/número extra
+              </span>
+              · {{ product.includedErpUsers }} usuario{{ product.includedErpUsers === 1 ? '' : 's' }}
+              · {{ product.includedWhatsappNumbers }} número{{ product.includedWhatsappNumbers === 1 ? '' : 's' }} WA
             </p>
           </div>
         </div>

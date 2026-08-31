@@ -1,4 +1,4 @@
-import { inject } from '@angular/core';
+import { inject, Injector } from '@angular/core';
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { AuthService } from '../services/auth.service';
@@ -29,7 +29,7 @@ let redirectingForExpiredSession = false;
 
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const auth = inject(AuthService);
-  const router = inject(Router);
+  const injector = inject(Injector);
   const token = auth.authToken;
   if (!token || isPublicAuthRoute(req.url)) {
     return next(req);
@@ -47,7 +47,8 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         if (!redirectingForExpiredSession) {
           redirectingForExpiredSession = true;
           auth.logout();
-          void router
+          void injector
+            .get(Router)
             .navigate(['/login'], { queryParams: { session: 'expired' } })
             .finally(() => {
               redirectingForExpiredSession = false;
@@ -62,7 +63,7 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         isSubscriptionAccessError(String(error.error?.error ?? ''))
       ) {
         auth.logout();
-        router.navigate(['/login'], {
+        void injector.get(Router).navigate(['/login'], {
           queryParams: { subscription: 'inactive' },
         });
       }

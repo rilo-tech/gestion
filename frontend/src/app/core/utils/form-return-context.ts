@@ -8,11 +8,14 @@ const SALES_DRAFT_KEY = 'gestion:return:sales-draft';
 export interface OrderFormDraftSnapshot {
   order: Partial<Order>;
   orderLines: OrderLineItem[];
+  orderPhotos?: Order['fotos'];
   pendingClientName: string;
+  selectedClientLabel?: string;
   editingOrderId: string | null;
   isDraftOrder: boolean;
   savedOrderEstado: string;
   orderFormLocked: boolean;
+  savedAt?: number;
 }
 
 export interface SalesFormDraftSnapshot {
@@ -93,6 +96,26 @@ export function readOrderFormDraft(): OrderFormDraftSnapshot | null {
 
 export function clearOrderFormDraft(): void {
   sessionStorage.removeItem(ORDER_DRAFT_KEY);
+}
+
+const ORDER_DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function normalizeDraftOrderId(value: string | null | undefined): string | null {
+  const id = String(value ?? '').trim();
+  return id || null;
+}
+
+export function orderFormDraftMatchesRoute(
+  draft: OrderFormDraftSnapshot,
+  routeOrderId: string | null
+): boolean {
+  return normalizeDraftOrderId(draft.editingOrderId) === normalizeDraftOrderId(routeOrderId);
+}
+
+export function orderFormDraftIsFresh(draft: OrderFormDraftSnapshot): boolean {
+  const savedAt = Number(draft.savedAt);
+  if (!Number.isFinite(savedAt) || savedAt <= 0) return true;
+  return Date.now() - savedAt <= ORDER_DRAFT_MAX_AGE_MS;
 }
 
 export function saveSalesFormDraft(snapshot: SalesFormDraftSnapshot): void {

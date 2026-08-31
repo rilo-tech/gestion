@@ -58,7 +58,16 @@ export class ResizableTableService {
   private scheduleBind(): void {
     clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
-      requestAnimationFrame(() => bindResizableTables());
+      this.observer?.disconnect();
+      requestAnimationFrame(() => {
+        try {
+          bindResizableTables();
+        } finally {
+          if (this.started) {
+            this.observer?.observe(document.body, { childList: true, subtree: true });
+          }
+        }
+      });
     }, 60);
   }
 }

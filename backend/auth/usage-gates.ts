@@ -1,12 +1,14 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../firebase.ts';
 import { getBusiness } from './business.ts';
 import { getCommercialCatalog } from './commercial-catalog.ts';
 import { resolveTrialState } from '../../shared/trial-state.ts';
-import type { CommercialCatalog } from '../../shared/commercial-catalog.ts';
+import { parseUsageMode, type CommercialCatalog } from '../../shared/commercial-catalog.ts';
 import { productIdFromAccess } from '../../shared/platform-access.ts';
 import {
   incrementUsageField,
   loadUsageMeter,
+  loadDailyAiSeries,
   decorateUsageForApi,
   markWhatsappQuotaNotified,
   markWhatsappQuotaWarned80,
@@ -54,27 +56,33 @@ function aiUsageRef(businessId: string) {
 }
 
 export async function getAiUsageCount(businessId: string): Promise<number> {
-  const snap = await aiUsageRef(businessId).get();
-  return Number(snap.data()?.count) || 0;
+  const [snap, meter] = await Promise.all([
+    aiUsageRef(businessId).get(),
+    loadUsageMeter(businessId),
+  ]);
+  const legado = Number(snap.data()?.count) || 0;
+  return Math.max(legado, meter.aiActions);
 }
 
 export async function incrementAiUsage(businessId: string, amount = 1): Promise<number> {
-  const ref = aiUsageRef(businessId);
-  const next = (await getAiUsageCount(businessId)) + Math.max(1, amount);
-  await ref.set(
-    {
-      period: usagePeriod(),
-      count: next,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+  const n = Math.max(1, amount);
+  const period = usagePeriod();
   try {
-    await incrementUsageField(businessId, 'aiActions', Math.max(1, amount));
+    await Promise.all([
+      aiUsageRef(businessId).set(
+        {
+          period,
+          count: FieldValue.increment(n),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      ),
+      incrementUsageField(businessId, 'aiActions', n),
+    ]);
   } catch (error) {
-    console.warn('[usage] aiActions meter:', error);
+    console.warn('[usage] aiActions increment:', error);
   }
-  return next;
+  return getAiUsageCount(businessId);
 }
 
 export async function aiQuotaForBusiness(businessId: string): Promise<{
@@ -83,6 +91,7 @@ export async function aiQuotaForBusiness(businessId: string): Promise<{
   max: number;
   extra: number;
   purchased: number;
+  unlimited: boolean;
   catalog: CommercialCatalog;
 }> {
   const [business, catalog, used, meter] = await Promise.all([
@@ -93,23 +102,38 @@ export async function aiQuotaForBusiness(businessId: string): Promise<{
   ]);
   if (!business) throw new Error('BUSINESS_NOT_FOUND');
   const mode = resolveBillingMode(business);
+  const product =
+    productIdFromAccess(
+      business.platformAccess ?? {
+        erpCoreEnabled: true,
+        erpWebEnabled: false,
+        whatsappEnabled: false,
+        aiEnabled: false,
+      }
+    ) ?? 'completo';
+  const quote = catalog.products[product] ?? catalog.products.completo;
+  const usageMode =
+    business.suscripcion?.usageModeOverride ?? parseUsageMode(quote.usageMode);
+  const unlimited = mode === 'paid' && usageMode === 'unlimited';
   let max = catalog.trialAccionesIaMes;
   if (mode === 'lite') max = catalog.lite.maxAccionesIaMes;
   if (mode === 'paid') {
-    const product = productIdFromAccess(business.platformAccess ?? { erpCoreEnabled: true, erpWebEnabled: false, whatsappEnabled: false, aiEnabled: false }) ?? 'completo';
-    max = catalog.products[product]?.includedAi ?? catalog.products.completo.includedAi;
+    max =
+      business.suscripcion?.includedAiOverride ??
+      quote.includedAi ??
+      catalog.products.completo.includedAi;
   }
   const extra = parseBusinessUsageQuota(business.usageQuota).extraAi;
   const purchased = meter.purchasedAi;
-  if (mode === 'blocked') max = 0;
+  if (mode === 'blocked' || unlimited) max = 0;
   else max += extra + purchased;
-  return { mode, used, max, extra, purchased, catalog };
+  return { mode, used, max, extra, purchased, unlimited, catalog };
 }
 
 export async function assertCanUseAi(businessId: string, cost = 1): Promise<void> {
   const quota = await aiQuotaForBusiness(businessId);
   if (quota.mode === 'blocked') throw new Error('SUBSCRIPTION_INACTIVE');
-  if (quota.max <= 0) return;
+  if (quota.unlimited || quota.max <= 0) return;
   if (quota.used + cost > quota.max) throw new Error('AI_QUOTA_EXCEEDED');
 }
 
@@ -263,7 +287,7 @@ export function usageLimitMessage(code: string, catalog: CommercialCatalog, maxA
   }
   if (code === 'AI_QUOTA_EXCEEDED') {
     const max = maxAi ?? catalog.lite.maxAccionesIaMes;
-    return `Llegaste al tope de ${max} acciones IA este mes. Activá un plan o esperá al próximo mes para seguir usando la IA de RILO Bot.`;
+    return `Llegaste al tope de ${max} acciones por WhatsApp este mes. Activá un plan o esperá al próximo mes para seguir usando RILO Bot.`;
   }
   if (code === 'OPS_LIMIT_REACHED') {
     return `En el plan libre podés cargar hasta ${catalog.lite.maxOperacionesMes} operaciones por WhatsApp este mes. Activá un plan para seguir al ritmo de tu negocio.`;
@@ -282,12 +306,12 @@ export async function replyForUsageError(code: string, businessId: string): Prom
   if (code === 'AI_QUOTA_EXCEEDED') {
     const quota = await aiQuotaForBusiness(businessId);
     if (quota.mode === 'trial') {
-      return `Llegaste al tope de ${quota.max} acciones IA de la prueba este mes. Seguí con mensajes simples (sin foto) o activá un plan.`;
+      return `Llegaste al tope de ${quota.max} acciones por WhatsApp de la prueba este mes. Seguí con mensajes simples (sin foto) o activá un plan.`;
     }
     if (quota.mode === 'paid') {
-      return `Llegaste al tope de ${quota.max} acciones IA este mes. En Mi plan podés comprar un pack extra.`;
+      return `Llegaste al tope de ${quota.max} acciones por WhatsApp este mes. En Mi plan podés comprar un pack extra.`;
     }
-    return `En el plan libre tenés ${quota.max} acciones IA al mes. Activá un plan para seguir usando la IA de RILO Bot.`;
+    return `En el plan libre tenés ${quota.max} acciones por WhatsApp al mes. Activá un plan para seguir usando RILO Bot.`;
   }
   if (code === 'WA_BUBBLE_QUOTA_EXCEEDED') {
     const quota = await whatsappBubbleQuotaForBusiness(businessId);
@@ -310,16 +334,23 @@ export async function formatThrownUsage(error: unknown, businessId: string): Pro
 }
 
 export async function buildUsageReport(businessId: string) {
-  const [ai, wa, meter] = await Promise.all([
+  const [ai, wa, meter, dailyUsage] = await Promise.all([
     aiQuotaForBusiness(businessId),
     whatsappBubbleQuotaForBusiness(businessId),
     loadUsageMeter(businessId),
+    loadDailyAiSeries(businessId, 30),
   ]);
   const cost = decorateUsageForApi(meter);
   return {
     period: meter.period,
     mode: ai.mode,
-    ai: { used: Math.max(ai.used, meter.aiActions), max: ai.max, extra: ai.extra, purchased: ai.purchased },
+    ai: {
+      used: Math.max(ai.used, meter.aiActions),
+      max: ai.max,
+      extra: ai.extra,
+      purchased: ai.purchased,
+      unlimited: ai.unlimited === true,
+    },
     whatsapp: { used: wa.used, max: wa.max, extra: wa.extra, purchased: wa.purchased },
     waInbound: meter.waInbound,
     waOps: meter.waOps,
@@ -328,6 +359,8 @@ export async function buildUsageReport(businessId: string) {
     whatsappUsd: cost.whatsappUsd,
     geminiUsd: cost.geminiUsd,
     totalUsd: cost.totalUsd,
+    phones: meter.phones ?? {},
+    dailyUsage,
   };
 }
 

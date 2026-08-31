@@ -44,11 +44,21 @@ export type OrderStockRecord = {
   clienteId?: string;
 };
 
+export const ORDER_STOCK_NO_RESERVED = 'NO_RESERVED_UNITS';
+
 export class OrderStockError extends Error {
-  constructor(message: string) {
+  code?: string;
+  constructor(message: string, code?: string) {
     super(message);
     this.name = 'OrderStockError';
+    this.code = code;
   }
+}
+
+export function isNoReservedUnitsStockError(error: unknown): boolean {
+  if (!(error instanceof OrderStockError)) return false;
+  if (error.code === ORDER_STOCK_NO_RESERVED) return true;
+  return /No hay unidades reservadas para descontar/i.test(error.message);
 }
 export type ConsumeOrderStockResult = {
   items: OrderLineStock[];
@@ -1459,7 +1469,8 @@ export async function consumeOrderStockForProduction(
       );
       if (totalReserved <= 0) {
         throw new OrderStockError(
-          'No hay unidades reservadas para descontar del depósito. Revisá la preparación de stock o elegí descontar todo el pedido.'
+          'No hay unidades reservadas para descontar del depósito. Revisá la preparación de stock o elegí descontar todo el pedido.',
+          ORDER_STOCK_NO_RESERVED
         );
       }
     }

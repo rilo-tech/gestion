@@ -69,6 +69,13 @@ export interface BusinessBillingInfo {
   source?: string;
   updatedAt?: string;
   lastMercadoPagoPaymentId?: string;
+  autoRenew?: boolean;
+  mpPreapprovalId?: string;
+  mpPreapprovalStatus?: string;
+  mpQuotedAmount?: number;
+  nextPaymentDate?: string;
+  lastPaymentStatus?: string;
+  lifecycleStatus?: string;
 }
 
 export interface BusinessRecord {
@@ -130,8 +137,11 @@ export interface PublicBusinessInfo {
   trialDaysRemaining?: number | null;
   trialExpiringSoon?: boolean;
   trialBillingActive?: boolean;
-  /** trial = 30 días a full. lite = prueba vencida sin pago (techos). paid = cobertura. */
+  /** trial = prueba a full. lite = prueba vencida sin pago (techos). paid = cobertura. */
   billingMode?: 'trial' | 'lite' | 'paid' | 'blocked';
+  lifecycleStatus?: 'trial' | 'active' | 'past_due' | 'inactive' | 'archived';
+  autoRenew?: boolean;
+  mpPreapprovalStatus?: string | null;
   liteLimits?: { maxClientes: number; maxProductos: number; maxAccionesIaMes: number; maxOperacionesMes: number } | null;
   source?: BusinessSource;
   contactVerification?: TrialContactVerification;
@@ -217,6 +227,16 @@ function parseBusinessBilling(data: Record<string, unknown>): BusinessBillingInf
     lastMercadoPagoPaymentId: billing.lastMercadoPagoPaymentId
       ? String(billing.lastMercadoPagoPaymentId)
       : undefined,
+    autoRenew: billing.autoRenew === true,
+    mpPreapprovalId: billing.mpPreapprovalId ? String(billing.mpPreapprovalId) : undefined,
+    mpPreapprovalStatus: billing.mpPreapprovalStatus
+      ? String(billing.mpPreapprovalStatus)
+      : undefined,
+    mpQuotedAmount:
+      billing.mpQuotedAmount != null ? Number(billing.mpQuotedAmount) : undefined,
+    nextPaymentDate: billing.nextPaymentDate ? String(billing.nextPaymentDate) : undefined,
+    lastPaymentStatus: billing.lastPaymentStatus ? String(billing.lastPaymentStatus) : undefined,
+    lifecycleStatus: billing.lifecycleStatus ? String(billing.lifecycleStatus) : undefined,
   };
 }
 
@@ -285,7 +305,7 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
   };
 }
 
-async function resolveForBusiness(
+export async function resolveForBusiness(
   business: BusinessRecord,
   plan?: PlanRecord
 ): Promise<{ plan: PlanRecord; resolved: ResolvedBusinessSubscription }> {
@@ -598,6 +618,9 @@ function buildPublicBusinessInfo(
     trialDaysRemaining: trial.daysRemaining,
     trialExpiringSoon: trial.isExpiringSoon,
     trialBillingActive: trial.isTrialBillingActive,
+    lifecycleStatus: (business.billing?.lifecycleStatus as PublicBusinessInfo['lifecycleStatus']) ?? undefined,
+    autoRenew: business.billing?.autoRenew === true,
+    mpPreapprovalStatus: business.billing?.mpPreapprovalStatus ?? null,
     billingMode:
       business.estadoSuscripcion === 'suspendida' || business.estadoSuscripcion === 'vencida'
         ? 'blocked'

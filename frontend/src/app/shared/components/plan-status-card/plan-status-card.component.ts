@@ -11,7 +11,7 @@ import {
   type UsagePackId,
   type UsagePackOffer,
 } from '../../../core/services/business.service';
-import { formatMoneyValue } from '../../pipes/money.pipe';
+import { AddonsService, type AddonsSnapshot } from '../../../core/services/addons.service';
 import { productLabelForAccess } from '../../../../../../shared/platform-access.ts';
 
 @Component({
@@ -40,6 +40,60 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
           <p class="font-medium text-gray-900 dark:text-gray-100">{{ productLabel }}</p>
         </div>
 
+        <div *ngIf="addons" class="rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-3 space-y-2 text-sm">
+          <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Plan base</p>
+          <p class="font-medium text-gray-900 dark:text-gray-100">
+            {{ productLabel }} · {{ addons.currency }} {{ addons.quote.rates.baseAmount }} / mes
+          </p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Incluye</p>
+          <ul class="text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
+            <li *ngIf="addons.rates.monthlyActionLimit">
+              {{ addons.rates.monthlyActionLimit }} acciones por WhatsApp / mes
+            </li>
+            <li>{{ addons.erp.included }} usuarios ERP</li>
+            <li>{{ addons.whatsapp.included }} número{{ addons.whatsapp.included === 1 ? '' : 's' }} de WhatsApp</li>
+          </ul>
+          <div *ngIf="addons.quote.extraErpCost || addons.quote.extraWhatsappCost" class="pt-1">
+            <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Adicionales</p>
+            <p *ngIf="addons.quote.extraErpUsers" class="text-xs text-gray-600 dark:text-gray-300">
+              {{ addons.quote.extraErpUsers }} usuarios ERP · {{ addons.quote.extraErpUsers }} × {{ addons.erp.extraUnit }} = {{ addons.erp.extraCost }}
+            </p>
+            <p *ngIf="addons.quote.extraWhatsappNumbers" class="text-xs text-gray-600 dark:text-gray-300">
+              {{ addons.quote.extraWhatsappNumbers }} número{{ addons.quote.extraWhatsappNumbers === 1 ? '' : 's' }} WhatsApp adicional ·
+              {{ addons.quote.extraWhatsappNumbers }} × {{ addons.whatsapp.extraUnit }} = {{ addons.whatsapp.extraCost }}
+            </p>
+          </div>
+          <p class="text-sm font-bold text-gray-900 dark:text-gray-100 pt-1">
+            Total mensual {{ addons.currency }} {{ addons.quote.total }}
+          </p>
+          <p *ngIf="addons.paidUntil" class="text-[11px] text-gray-500">
+            Próxima renovación: {{ addons.paidUntil | date:'shortDate' }}
+          </p>
+          <div *ngIf="auth.isSupervisor" class="pt-2 space-y-2">
+            <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Renovación automática</p>
+            <p class="text-[11px] text-gray-500 leading-relaxed">
+              {{ subscription?.autoRenew ? 'Mercado Pago cobrará el total calculado cada mes. No guardamos tarjetas.' : 'Si no la activás, al terminar la prueba la empresa queda inactiva. Los datos no se borran.' }}
+            </p>
+            <button
+              *ngIf="!subscription?.autoRenew"
+              type="button"
+              (click)="enableAutoRenew()"
+              [disabled]="renewing"
+              class="inline-flex rounded-lg bg-teal-700 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-60">
+              {{ renewing ? 'Abriendo Mercado Pago…' : 'Activar renovación automática' }}
+            </button>
+            <button
+              *ngIf="subscription?.autoRenew"
+              type="button"
+              (click)="pauseAutoRenew()"
+              [disabled]="renewing"
+              class="inline-flex rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+              {{ renewing ? 'Pausando…' : 'Pausar renovación' }}
+            </button>
+            <p *ngIf="renewError" class="text-xs text-red-600">{{ renewError }}</p>
+          </div>
+        </div>
+
         <div class="rounded-lg px-3 py-2 border" [ngClass]="billingToneClass">
           <p class="text-xs text-gray-500 dark:text-gray-400">Estado y pago</p>
           <p class="font-medium text-gray-900 dark:text-gray-100">{{ billingHeadline }}</p>
@@ -63,12 +117,16 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
           <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Este mes ({{ usage.period }})</p>
           <div>
             <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-              <span>Acciones IA</span>
-              <span class="tabular-nums">{{ usage.ai.used }} / {{ usage.ai.max || '—' }}</span>
+              <span>Acciones por WhatsApp</span>
+              <span *ngIf="usage.ai.unlimited" class="tabular-nums">{{ usage.ai.used }} · sin tope</span>
+              <span *ngIf="!usage.ai.unlimited" class="tabular-nums">{{ usage.ai.used }} / {{ usage.ai.max || '—' }}</span>
             </div>
             <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
               <div class="h-full bg-teal-600 rounded-full" [style.width.%]="pct(usage.ai.used, usage.ai.max)"></div>
             </div>
+            <p *ngIf="!usage.ai.unlimited && usage.ai.max" class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+              Quedan {{ remainingAi }} · {{ renewalHint }}
+            </p>
             <p
               *ngIf="usage.ai.purchased || usage.ai.extra"
               class="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
@@ -134,7 +192,7 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
           <p *ngIf="packError" class="text-xs text-red-600">{{ packError }}</p>
         </div>
 
-        <div class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-3 space-y-1.5">
+        <div *ngIf="variant !== 'home'" class="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-3 py-3 space-y-1.5">
           <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">Alta y baja</p>
           <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             <strong class="font-semibold text-gray-700 dark:text-gray-300">Dar de alta o sumar el otro</strong>
@@ -169,7 +227,7 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
         </div>
 
         <section
-          *ngIf="auth.isSupervisor && (canPauseWhatsapp || canPauseErp)"
+          *ngIf="variant !== 'home' && auth.isSupervisor && (canPauseWhatsapp || canPauseErp)"
           class="rounded-xl border border-red-200 dark:border-red-900 bg-red-50/70 dark:bg-red-950/30 px-4 py-4 space-y-3">
           <div>
             <p class="text-sm font-bold text-red-800 dark:text-red-300">Dar de baja</p>
@@ -249,6 +307,7 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
 export class PlanStatusCardComponent implements OnInit {
   readonly auth = inject(AuthService);
   private businessApi = inject(BusinessService);
+  private addonsApi = inject(AddonsService);
   private route = inject(ActivatedRoute);
 
   /** `home`: copy para clientes solo WhatsApp. `settings`: copy dentro del ERP. */
@@ -266,11 +325,31 @@ export class PlanStatusCardComponent implements OnInit {
   payingPack: UsagePackId | null = null;
   packError = '';
   packNotice: { text: string; tone: string } | null = null;
+  addons: AddonsSnapshot | null = null;
+  subscription: {
+    autoRenew: boolean;
+    mpPreapprovalStatus: string | null;
+    nextPaymentDate: string | null;
+    quotedAmount: number;
+    lifecycleStatus: string;
+  } | null = null;
+  renewing = false;
+  renewError = '';
 
   ngOnInit() {
     const businessId = this.auth.currentBusinessId;
     if (!businessId || this.auth.isPlatformAdmin || !this.auth.isSupervisor) return;
     this.loadUsage(businessId);
+    this.addonsApi.getSnapshot().subscribe({
+      next: (row) => {
+        this.addons = row;
+      },
+    });
+    this.businessApi.getSubscription().subscribe({
+      next: (row) => {
+        this.subscription = row;
+      },
+    });
     this.businessApi.getBillingPlans().subscribe({
       next: (data) => {
         this.checkoutAvailable = data.available === true;
@@ -311,6 +390,47 @@ export class PlanStatusCardComponent implements OnInit {
     });
   }
 
+  enableAutoRenew() {
+    if (this.renewing) return;
+    this.renewing = true;
+    this.renewError = '';
+    this.businessApi.startAutoRenew().subscribe({
+      next: (data) => {
+        const url = data.checkoutUrl || data.initPoint;
+        if (url) {
+          window.location.href = url;
+          return;
+        }
+        this.renewError = 'Mercado Pago no devolvió un enlace de autorización.';
+        this.renewing = false;
+      },
+      error: (err) => {
+        this.renewError = err?.error?.error || 'No se pudo iniciar la renovación automática.';
+        this.renewing = false;
+      },
+    });
+  }
+
+  pauseAutoRenew() {
+    if (this.renewing) return;
+    this.renewing = true;
+    this.renewError = '';
+    this.businessApi.pauseAutoRenew().subscribe({
+      next: () => {
+        this.renewing = false;
+        this.businessApi.getSubscription().subscribe({
+          next: (row) => {
+            this.subscription = row;
+          },
+        });
+      },
+      error: (err) => {
+        this.renewError = err?.error?.error || 'No se pudo pausar la renovación.';
+        this.renewing = false;
+      },
+    });
+  }
+
   buyPack(packId: UsagePackId) {
     if (this.payingPack || !this.checkoutAvailable) return;
     this.payingPack = packId;
@@ -329,6 +449,19 @@ export class PlanStatusCardComponent implements OnInit {
         this.payingPack = null;
       },
     });
+  }
+
+  get remainingAi(): number {
+    if (!this.usage || this.usage.ai.unlimited) return 0;
+    return Math.max(0, this.usage.ai.max - this.usage.ai.used);
+  }
+
+  get renewalHint(): string {
+    const period = this.usage?.period;
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) return 'se renueva el mes que viene';
+    const [year, month] = period.split('-').map(Number);
+    const next = new Date(year, month, 1);
+    return `se renueva el ${next.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' })}`;
   }
 
   pct(used: number, max: number): number {

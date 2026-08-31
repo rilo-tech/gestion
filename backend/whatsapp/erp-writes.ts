@@ -15,8 +15,12 @@ import {
 } from '../utils/order-photos.ts';
 import { downloadWhatsappMedia } from './meta-api.ts';
 import { findClientByName, findStockItemByName, isGenericWhatsappNotes, resolveClientMatch, type ExtraCostItem } from './lookups.ts';
+import { clientLookupQuery } from './entity-name.ts';
+import { planRelatedOrderFinance } from './order-finance.ts';
+import { resolveOrderGananciaForStorage } from '../routes/orders.ts';
 import { whatsappCopyForRubro } from './copy.ts';
 import type { WhatsappCommandEntities, WhatsappPurchaseLine } from './ai-command-parser.ts';
+import { ensureOrderItems } from './turn-interpreter.ts';
 import type { WhatsappTenantContext } from './tenant-resolver.ts';
 import { parsePurchaseInput, persistPurchase, persistPurchaseDraft } from '../utils/purchase-finance.ts';
 import { loadPurchasePaymentContext, matchMedioFromText, purchasePanelUrl } from './purchase-payment.ts';
@@ -24,15 +28,35 @@ import { assertCanCreateClient, assertCanCreateProduct } from '../auth/usage-gat
 import { formatClientNombreConCel } from './client-identity.ts';
 import { normalizeLineExtraCosts, sumLineExtraCosts } from '../utils/line-extra-costs.ts';
 import { resolveOrderLabel } from '../utils/order-number.ts';
-import { normalizeOrderPedidosConfig } from '../utils/order-config.ts';
+import { normalizeOrderPedidosConfig, getOrderEstadoLabel } from '../utils/order-config.ts';
 import { getConversationState, type LastWhatsappOperation } from './conversation-state.ts';
 import { waCard } from '../../shared/whatsapp-format.ts';
 import { looksLikeCashBalanceQuery } from '../../shared/whatsapp-copy.ts';
+import { updateOrderStatusFromWhatsapp } from './order-status.ts';
 import {
+  assertNoUndefinedDeep,
+  stripUndefinedDeep,
+  toFirestoreCashMovement,
+  toFirestoreOrder,
+  toFirestoreOrderItem,
+  toFirestorePayment,
+} from './firestore-mappers.ts';
+import {
+  getBusinessCashAmbitoId,
   getCashAmbitoLabelFromCaja,
   normalizeMovementAmbito,
 } from '../utils/caja-ambitos.ts';
-import { cleanCashConcept, loadWhatsappCajaAmbitos } from './cash-ambito.ts';
+import { loadWhatsappCajaAmbitos, resolveSpokenCashAmbito } from './cash-ambito.ts';
+import { calendarDayAr, cashCommandFromOperation } from './semantic-command.ts';
+import { isLlmFirstEngine } from './engine-version.ts';
+import {
+  getCashBalance,
+  getCashDayTotals,
+  getCashMovements,
+  isCashDomainError,
+  registerCashMovement,
+  type RegisterCashMovementCommand,
+} from '../domain/cash/index.ts';
 
 function money(value: number): string {
   return Number(value || 0).toLocaleString('es-AR', {
@@ -63,7 +87,7 @@ async function resolveClient(
     };
   }
 
-  const name = String(entities.clientName ?? '').trim();
+  const name = clientLookupQuery(entities);
   if (!name) return null;
   return findClientByName(businessId, name);
 }
@@ -87,13 +111,34 @@ async function buildLineItems(
   }>;
   total: number;
 }> {
-  const quantity = Math.max(1, Number(entities.quantity) || 1);
-  const productName = String(entities.productName ?? '').trim();
-  const amount = Number(entities.amount) || 0;
+  type BuiltLine = {
+    stockItemId: string;
+    nombre: string;
+    cantidad: number;
+    precioVenta: number;
+    costoUnitario: number;
+    precioUnitario: number;
+    subtotal: number;
+    tipoLinea: 'producto' | 'concepto';
+    mueveStock: boolean;
+  };
 
-  if (productName) {
-    if (entities.productId) {
-      const snap = await db.doc(`negocios/${businessId}/stock/${entities.productId}`).get();
+  const orderRows = ensureOrderItems(entities).filter((item) => !item.skipped);
+  const sharedAmount = Number(entities.amount) || 0;
+
+  const buildOne = async (input: {
+    productId?: string;
+    productName: string;
+    quantity: number;
+    unitPrice?: number | null;
+    asConcept?: boolean;
+    shareTotal: boolean;
+  }): Promise<BuiltLine> => {
+    const quantity = Math.max(1, Number(input.quantity) || 1);
+    const productName = String(input.productName ?? '').trim();
+    const explicit = Number(input.unitPrice) || 0;
+    if (productName && input.productId && !input.asConcept) {
+      const snap = await db.doc(`negocios/${businessId}/stock/${input.productId}`).get();
       if (snap.exists) {
         const data = snap.data() as {
           nombre?: string;
@@ -103,88 +148,102 @@ async function buildLineItems(
         };
         const nombre = String(data.nombre ?? productName).trim() || productName;
         const stockPrice = Number(data.precioVenta ?? data.precio) || 0;
-        const unitPrice = amount > 0 ? amount / quantity : stockPrice || amount;
+        const unitPrice = explicit > 0 ? explicit : input.shareTotal && sharedAmount > 0 ? sharedAmount / quantity : stockPrice || sharedAmount;
         const precio = unitPrice > 0 ? unitPrice : stockPrice;
         const subtotal = precio * quantity;
         return {
-          items: [
-            {
-              stockItemId: snap.id,
-              nombre,
-              cantidad: quantity,
-              precioVenta: precio,
-              costoUnitario: Number(data.costo) || 0,
-              precioUnitario: precio,
-              subtotal,
-              tipoLinea: 'producto',
-              mueveStock: false,
-            },
-          ],
-          total: subtotal,
+          stockItemId: snap.id,
+          nombre,
+          cantidad: quantity,
+          precioVenta: precio,
+          costoUnitario: Number(data.costo) || 0,
+          precioUnitario: precio,
+          subtotal,
+          tipoLinea: 'producto',
+          mueveStock: false,
         };
       }
     }
-
-    const stock = await findStockItemByName(businessId, productName);
-    if (stock) {
-      const unitPrice = amount > 0 ? amount / quantity : stock.precioVenta || amount;
-      const precio = unitPrice > 0 ? unitPrice : stock.precioVenta;
-      const subtotal = precio * quantity;
-      return {
-        items: [
-          {
-            stockItemId: stock.id,
-            nombre: stock.nombre,
-            cantidad: quantity,
-            precioVenta: precio,
-            costoUnitario: stock.costo,
-            precioUnitario: precio,
-            subtotal,
-            tipoLinea: 'producto',
-            mueveStock: false,
-          },
-        ],
-        total: subtotal,
-      };
+    if (productName && !input.asConcept) {
+      const stock = await findStockItemByName(businessId, productName);
+      if (stock) {
+        const unitPrice = explicit > 0 ? explicit : input.shareTotal && sharedAmount > 0 ? sharedAmount / quantity : stock.precioVenta || sharedAmount;
+        const precio = unitPrice > 0 ? unitPrice : stock.precioVenta;
+        const subtotal = precio * quantity;
+        return {
+          stockItemId: stock.id,
+          nombre: stock.nombre,
+          cantidad: quantity,
+          precioVenta: precio,
+          costoUnitario: stock.costo,
+          precioUnitario: precio,
+          subtotal,
+          tipoLinea: 'producto',
+          mueveStock: false,
+        };
+      }
     }
+    const label =
+      productName ||
+      String(entities.notes ?? '').trim().slice(0, 80) ||
+      String(entities.imageSummary ?? '').trim().slice(0, 80) ||
+      'Concepto WhatsApp';
+    const unit = explicit > 0 ? explicit : input.shareTotal && sharedAmount > 0 ? sharedAmount / quantity : 0;
+    return {
+      stockItemId: '',
+      nombre: label,
+      cantidad: quantity,
+      precioVenta: unit,
+      costoUnitario: 0,
+      precioUnitario: unit,
+      subtotal: unit * quantity,
+      tipoLinea: 'concepto',
+      mueveStock: false,
+    };
+  };
+
+  if (orderRows.length) {
+    const built: BuiltLine[] = [];
+    for (const row of orderRows) {
+      built.push(
+        await buildOne({
+          productId: row.productId || (orderRows.length === 1 ? entities.productId : undefined),
+          productName: String(row.productName || row.productHint || row.rawText || entities.productName || '').trim(),
+          quantity: row.quantity,
+          unitPrice: row.unitPrice,
+          asConcept: row.tipoLinea === 'concepto' || entities.productAsConcept,
+          shareTotal: orderRows.length === 1,
+        })
+      );
+    }
+    const total = built.reduce((sum, line) => sum + line.subtotal, 0);
+    return { items: built, total };
   }
 
-  const label =
-    productName ||
-    String(entities.notes ?? '').trim().slice(0, 80) ||
-    String(entities.imageSummary ?? '').trim().slice(0, 80) ||
-    'Concepto WhatsApp';
-  const total = amount > 0 ? amount : 0;
-  const unit = quantity > 0 ? total / quantity : total;
-
-  return {
-    items: [
-      {
-        stockItemId: '',
-        nombre: label,
-        cantidad: quantity,
-        precioVenta: unit,
-        costoUnitario: 0,
-        precioUnitario: unit,
-        subtotal: total,
-        tipoLinea: 'concepto',
-        mueveStock: false,
-      },
-    ],
-    total,
-  };
+  const fallback = await buildOne({
+    productId: entities.productId,
+    productName: String(entities.productName ?? '').trim(),
+    quantity: Math.max(1, Number(entities.quantity) || 1),
+    shareTotal: true,
+    asConcept: entities.productAsConcept,
+  });
+  return { items: [fallback], total: fallback.subtotal };
 }
 
 function attachExtraCostsToItems<T extends { nombre?: string; cantidad?: number; costosExtra?: ExtraCostItem[]; costoPersonalizacion?: number }>(
   items: T[],
   extraCosts: ExtraCostItem[] | undefined,
-  productHint?: string
+  productHint?: string,
+  targetIndex?: number
 ): T[] {
   if (!items.length || !extraCosts?.length) return items;
   const hint = String(productHint ?? '').trim().toLowerCase();
-  const index = hint
-    ? items.findIndex((line) => String(line.nombre ?? '').toLowerCase().includes(hint))
-    : 0;
+  let index =
+    Number.isInteger(targetIndex) && Number(targetIndex) >= 0 && Number(targetIndex) < items.length
+      ? Number(targetIndex)
+      : hint
+        ? items.findIndex((line) => String(line.nombre ?? '').toLowerCase().includes(hint))
+        : 0;
   const target = index >= 0 ? index : 0;
   return items.map((line, i) => {
     if (i !== target) return line;
@@ -223,6 +282,11 @@ async function loadPedidosConfig(businessId: string) {
   const snap = await db.doc(`negocios/${businessId}/config/app`).get();
   const pedidos = (snap.data()?.pedidos as Record<string, unknown>) ?? {};
   return normalizeOrderPedidosConfig(pedidos);
+}
+
+export async function loadBusinessOrderExtraCostsEnabled(businessId: string): Promise<boolean> {
+  const config = await loadPedidosConfig(businessId);
+  return config.costosPersonalizacionDetallados !== false;
 }
 
 function matchCostPreset(
@@ -302,7 +366,9 @@ export async function createOrderFromWhatsapp(
   orderId: string;
   label: string;
   clientName: string;
+  clientId: string;
   amount: number;
+  status: string;
 }> {
   const client = await resolveClient(tenant.businessId, entities);
   if (!client) {
@@ -323,7 +389,8 @@ export async function createOrderFromWhatsapp(
   const extras = (await fillExtraCostsFromPresets(tenant.businessId, entities.extraCosts)).filter(
     (item) => item.costo > 0
   );
-  const total = built.total > 0 ? built.total : 0;
+  const productTotal = built.total > 0 ? built.total : 0;
+  const total = productTotal;
   const enriched = await enrichOrderItemsStockControl(
     tenant.businessId,
     built.items.map((line) => ({
@@ -333,21 +400,63 @@ export async function createOrderFromWhatsapp(
       precioVenta: line.precioVenta,
       costoUnitario: line.costoUnitario,
       controlaStock: false,
-      costosExtra: line.costosExtra,
-      costoPersonalizacion: line.costoPersonalizacion,
+      costosExtra: line.costosExtra ?? [],
+      costoPersonalizacion: line.costoPersonalizacion ?? 0,
     }))
   );
-  const orderItems = attachExtraCostsToItems(enriched, extras, entities.productName);
+  const attached = extras.length
+    ? attachExtraCostsToItems(
+        enriched,
+        extras,
+        entities.extraCostsProductHint,
+        entities.extraCostsTargetItemIndex ?? (enriched.length <= 1 ? 0 : undefined)
+      )
+    : enriched;
+  const orderItems = attached.map((line) => toFirestoreOrderItem(line));
   const costoReal = computeItemsCostoReal(orderItems);
+
+  if (!entities.deliveryDate) {
+    throw new Error('Falta la fecha de entrega.');
+  }
 
   const { numero, label } = await allocateOrderNumber(tenant.businessId);
   const now = normalizeTransactionDateToIso(entities.orderDate ?? new Date().toISOString());
-  const fechaEntrega = normalizeTransactionDateToIso(
-    entities.deliveryDate ?? entities.orderDate ?? now
-  );
+  const fechaEntrega = normalizeTransactionDateToIso(entities.deliveryDate);
   const descripcion = whatsappDetailDescription(entities);
 
-  const docRef = await db.collection(`negocios/${tenant.businessId}/pedidos`).add({
+  const plan = planRelatedOrderFinance({
+    amount: productTotal,
+    extraCosts: extras,
+    collectionAmount: entities.collectionAmount,
+    seniaAmount: entities.seniaAmount,
+    paid: entities.paid,
+    payFullBalance: entities.payFullBalance,
+    sourceText: entities.sourceText,
+  });
+  const cobro = plan.kind === 'none' ? 0 : plan.cobro;
+  const tipo = plan.kind === 'partial' ? 'seña' : 'pago';
+  const pagos: ReturnType<typeof toFirestorePayment>[] = [];
+  const orderRef = db.collection(`negocios/${tenant.businessId}/pedidos`).doc();
+  const cashRef =
+    cobro > 0 ? db.collection(`negocios/${tenant.businessId}/movimientos_caja`).doc() : null;
+
+  if (cobro > 0 && cashRef) {
+    const timestamp = Date.now();
+    pagos.push(
+      toFirestorePayment({
+        id: `${tipo === 'seña' ? 'senia' : 'pago'}_${timestamp}`,
+        tipo,
+        monto: cobro,
+        fecha: now,
+        movimientoCajaId: cashRef.id,
+        notas: tipo === 'seña' ? 'Seña vía WhatsApp RILO Bot' : 'Cobro vía WhatsApp RILO Bot',
+      })
+    );
+  }
+
+  const totalPagado = cobro;
+  const saldo = Math.max(0, Math.round((total - totalPagado) * 100) / 100);
+  const orderDoc = toFirestoreOrder({
     clienteId: client.id,
     clienteNombre: client.nombre,
     descripcion,
@@ -356,15 +465,15 @@ export async function createOrderFromWhatsapp(
     items: orderItems,
     total,
     costoReal,
-    gananciaEstimada: Math.round((total - costoReal) * 100) / 100,
+    gananciaEstimada: resolveOrderGananciaForStorage(total, costoReal, 'pendiente'),
     numeroPedido: numero,
     numeroPedidoLabel: label || formatOrderNumber(numero),
     esDonacion: total === 0,
-    senia: 0,
-    totalPagado: 0,
-    saldo: total,
-    pagos: [],
-    seniaBloqueada: false,
+    senia: tipo === 'seña' ? cobro : 0,
+    totalPagado,
+    saldo,
+    pagos,
+    seniaBloqueada: cobro > 0,
     stockDescontado: false,
     stockPreparado: false,
     estadoStock: 'sin_preparar',
@@ -375,81 +484,84 @@ export async function createOrderFromWhatsapp(
     createdAt: now,
   });
 
+  const batch = db.batch();
+  batch.set(orderRef, orderDoc);
+  if (cobro > 0 && cashRef) {
+    const medio = await resolvePaymentMedio(tenant.businessId, entities);
+    const appDoc = await db.doc(`negocios/${tenant.businessId}/config/app`).get();
+    const caja = (appDoc.data()?.caja as Record<string, unknown>) ?? {};
+    const cashDoc = toFirestoreCashMovement({
+      tipo: 'ingreso',
+      monto: cobro,
+      medio: medio.id,
+      concepto: tipo === 'seña' ? `Seña pedido #${label}` : `Pago pedido #${label}`,
+      ambito: normalizeMovementAmbito(getBusinessCashAmbitoId(caja), caja),
+      fecha: now,
+      origenId: orderRef.id,
+      origenTipo: tipo === 'seña' ? 'pedido_senia' : 'pedido_pago',
+      origenGrupo: 'pedido',
+      pedidoId: orderRef.id,
+      ventaId: null,
+      ventaLabel: null,
+      numeroPedido: numero,
+      numeroPedidoLabel: label || formatOrderNumber(numero),
+      clienteId: client.id,
+      negocioId: tenant.businessId,
+    });
+    assertNoUndefinedDeep(cashDoc, 'caja');
+    batch.set(cashRef, stripUndefinedDeep(cashDoc));
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error('[whatsapp] No se pudo registrar pedido+cobro+caja:', error);
+    throw new Error('ORDER_WRITE_FAILED');
+  }
+
   let photoNote = '';
   try {
-    const photo = await attachWhatsappPhotoToOrder(
-      tenant.businessId,
-      docRef.id,
-      entities.mediaId
-    );
+    const photo = await attachWhatsappPhotoToOrder(tenant.businessId, orderRef.id, entities.mediaId);
     if (photo) photoNote = ' Adjunté la foto al pedido.';
   } catch (error) {
     console.warn('[whatsapp] No se pudo adjuntar foto al pedido:', error);
     photoNote = ' (No pude adjuntar la foto; el pedido igual quedó registrado.)';
   }
 
-  const seniaNote = await applySeniaToNewOrder(tenant, {
-    orderId: docRef.id,
-    clientId: client.id,
-    total,
-    entities,
-  });
+  const requested = entities.requestedStatus;
+  if (requested && requested !== 'pendiente') {
+    try {
+      await updateOrderStatusFromWhatsapp(tenant, {
+        ...entities,
+        targetOrderId: orderRef.id,
+        orderStatus: requested,
+        paid: false,
+        payFullBalance: false,
+        amount: undefined,
+      });
+    } catch (error) {
+      console.error('[whatsapp] Pedido y cobro ok; falló el cambio de estado:', error);
+      photoNote += ' El pedido y el cobro quedaron registrados, pero no pude cambiar el estado.';
+    }
+  }
+
+  const estadoLine = requested
+    ? `Estado: ${getOrderEstadoLabel(requested)} · Saldo: $${money(saldo)}`
+    : cobro > 0
+      ? `Pago: $${money(cobro)} · Saldo: $${money(saldo)}`
+      : `Saldo: $${money(saldo)}`;
+
+  const status = requested && requested !== 'pendiente' ? requested : 'pendiente';
 
   return {
-    orderId: docRef.id,
+    orderId: orderRef.id,
     label,
     clientName: client.nombre,
+    clientId: client.id,
     amount: total,
-    reply: waCard({
-      title: 'Listo',
-      lines: [
-        `• Pedido #${label}`,
-        `• Cliente: ${client.nombre}`,
-        `• Total: $${money(total)}`,
-        ...(extras.length
-          ? extras.map((item) => `• Costo extra: ${item.nombre} $${money(item.costo)}`)
-          : []),
-        ...(seniaNote ? [seniaNote.replace(/^\s+/, '')] : []),
-        ...(photoNote ? [photoNote.replace(/^\s+/, '')] : []),
-      ],
-    }),
+    status,
+    reply: `Pedido registrado ✅\n${estadoLine}${photoNote}`.trim(),
   };
-}
-
-/**
- * Cobra la seña que vino en el mismo mensaje del pedido. El pedido ya está guardado:
- * si el cobro falla lo avisamos, no tiramos abajo la carga.
- */
-async function applySeniaToNewOrder(
-  tenant: WhatsappTenantContext,
-  input: {
-    orderId: string;
-    clientId: string;
-    total: number;
-    entities: WhatsappCommandEntities;
-  }
-): Promise<string> {
-  const senia = Number(input.entities.seniaAmount) || 0;
-  if (senia <= 0) return '';
-  if (input.total <= 0) return '';
-
-  const monto = Math.min(senia, input.total);
-  try {
-    const medio = await resolvePaymentMedio(tenant.businessId, input.entities);
-    const result = await collectClientBalance(tenant.businessId, input.clientId, {
-      monto,
-      medioPago: medio.id,
-      notas: 'Seña vía WhatsApp RILO Bot',
-      target: { kind: 'pedido', id: input.orderId },
-      tipo: 'seña',
-    });
-    const saldo = Math.max(0, input.total - result.monto);
-    const recorte = monto < senia ? ` (la seña era $${money(senia)}, ajusté al total)` : '';
-    return ` Seña de $${money(result.monto)} cobrada en ${medio.label}${recorte}. Saldo: $${money(saldo)}.`;
-  } catch (error) {
-    console.error('[whatsapp] No se pudo cobrar la seña del pedido nuevo:', error);
-    return ` El pedido quedó guardado pero no pude cobrar la seña de $${money(senia)}; cargala desde el panel.`;
-  }
 }
 
 const ORDER_COST_BLOCKED = /cancelad|entregad/i;
@@ -590,14 +702,15 @@ export async function addOrderCostFromWhatsapp(
   const nextItems = attachExtraCostsToItems(
     items as Array<{ nombre?: string; cantidad?: number; costosExtra?: ExtraCostItem[]; costoPersonalizacion?: number }>,
     extras,
-    entities.productName
+    entities.extraCostsProductHint || entities.productName,
+    entities.extraCostsTargetItemIndex
   );
   const costoReal = computeItemsCostoReal(nextItems);
   const total = Number(data.total) || 0;
   await ref.update({
     items: nextItems,
     costoReal,
-    gananciaEstimada: Math.round((total - costoReal) * 100) / 100,
+    gananciaEstimada: resolveOrderGananciaForStorage(total, costoReal, String(data.estado ?? '')),
     updatedAt: new Date().toISOString(),
   });
 
@@ -743,7 +856,9 @@ async function resolvePaymentMedio(
       label: entities.paymentMedioLabel || entities.paymentMedioId,
     };
   }
-  const hint = String(entities.paymentHint ?? entities.sourceText ?? '').trim();
+  const hint = String(
+    entities.paymentHint ?? (isLlmFirstEngine() ? '' : entities.sourceText ?? '')
+  ).trim();
   if (!hint) return { id: 'efectivo', label: 'Efectivo' };
   const ctx = await loadPurchasePaymentContext(businessId);
   const medio = matchMedioFromText(hint, ctx.medios);
@@ -874,22 +989,14 @@ export async function queryBalanceFromWhatsapp(
   const total = debts.reduce((acc, debt) => acc + debt.saldo, 0);
   if (total <= 0) {
     return {
-      reply: waCard({
-        title: 'Saldo',
-        lines: [`• ${client.nombre}: $0`, 'No tiene saldo pendiente.'],
-      }),
+      reply: `${client.nombre} no tiene saldo pendiente.`,
     };
   }
 
-  const detail = debts
-    .slice(0, 5)
-    .map((debt) => `• ${debt.label}: $${money(debt.saldo)}`)
-    .join('\n');
-
   return {
     reply: waCard({
-      title: 'Saldo',
-      lines: [`• ${client.nombre}: $${money(total)}`, detail],
+      title: `Saldo de ${client.nombre}`,
+      lines: [`Debe: *$${money(total)}*`],
     }),
   };
 }
@@ -1014,139 +1121,156 @@ export async function queryCashTodayFromWhatsapp(
   tenant: WhatsappTenantContext,
   entities?: WhatsappCommandEntities
 ): Promise<{ reply: string }> {
-  const source = String(entities?.sourceText ?? '');
-  const todayOnly =
-    /\b(hoy|vend[ií]|movimientos?|resumen)\b/i.test(source) && !looksLikeCashBalanceQuery(source);
+  const source = isLlmFirstEngine() ? '' : String(entities?.sourceText ?? '');
+  const todayOnly = isLlmFirstEngine()
+    ? String(entities?.orderDate ?? '').slice(0, 10) === calendarDayAr()
+    : /\b(hoy|vend[ií]|movimientos?|resumen)\b/i.test(source) && !looksLikeCashBalanceQuery(source);
+  const wantList = entities?.listWantAll === true;
 
-  const { caja, ambitos } = await loadWhatsappCajaAmbitos(tenant.businessId);
-  const snap = await db
-    .collection(`negocios/${tenant.businessId}/movimientos_caja`)
-    .select('tipo', 'monto', 'ambito', 'fecha')
-    .get();
+  const { ambitos } = await loadWhatsappCajaAmbitos(tenant.businessId);
+  const spoken = entities ? resolveSpokenCashAmbito(entities, ambitos) : null;
+  const ambitoId = spoken && ambitos.length > 1 ? spoken.id : entities?.cashAmbitoId;
+
+  if (wantList) {
+    const listed = await getCashMovements(tenant.businessId, { limit: 8, ambitoId });
+    const items = Array.isArray(listed) ? listed : listed.items;
+    if (!items.length) {
+      return {
+        reply: waCard({
+          title: 'Movimientos',
+          lines: ['No hay movimientos de caja.'],
+        }),
+      };
+    }
+    return {
+      reply: waCard({
+        title: 'Últimos movimientos',
+        lines: items.map((row) => {
+          const tipo = row.tipo === 'egreso' ? 'Egreso' : 'Ingreso';
+          const concepto = String(row.concepto ?? '').trim() || tipo;
+          return `• ${tipo} $${money(Number(row.monto) || 0)} · ${concepto}`;
+        }),
+      }),
+    };
+  }
 
   if (todayOnly) {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    const startIso = start.toISOString();
-    const endIso = end.toISOString();
-
-    let ingresos = 0;
-    let egresos = 0;
-    let count = 0;
-    for (const doc of snap.docs) {
-      const data = doc.data() as { tipo?: string; monto?: number; fecha?: string };
-      const fecha = String(data.fecha ?? '');
-      if (!fecha || fecha < startIso || fecha > endIso) continue;
-      const monto = Number(data.monto) || 0;
-      if (data.tipo === 'egreso') egresos += monto;
-      else ingresos += monto;
-      count += 1;
-    }
-    const neto = ingresos - egresos;
+    const day = calendarDayAr();
+    const totals = await getCashDayTotals(tenant.businessId, { day, ambitoId });
     return {
       reply: waCard({
         title: 'Caja de hoy',
         lines:
-          count === 0
+          totals.count === 0
             ? ['Hoy no hay movimientos.']
             : [
-                `• Ingresos: $${money(ingresos)}`,
-                `• Egresos: $${money(egresos)}`,
-                `• Neto: $${money(neto)}`,
-                `• Movimientos: ${count}`,
+                `• Ingresos: $${money(totals.ingresos)}`,
+                `• Egresos: $${money(totals.egresos)}`,
+                `• Neto: $${money(totals.neto)}`,
+                `• Movimientos: ${totals.count}`,
               ],
       }),
     };
   }
 
-  const byAmbito = new Map<string, number>();
-  for (const ambito of ambitos) byAmbito.set(ambito.id, 0);
-  for (const doc of snap.docs) {
-    const data = doc.data() as { tipo?: string; monto?: number; ambito?: unknown };
-    const monto = Number(data.monto) || 0;
-    if (monto <= 0) continue;
-    const ambito = normalizeMovementAmbito(data.ambito, caja);
-    const signed = data.tipo === 'egreso' ? -monto : monto;
-    byAmbito.set(ambito, (byAmbito.get(ambito) ?? 0) + signed);
-  }
-
-  const rows = ambitos.map((ambito) => ({
-    label: ambito.label,
-    saldo: byAmbito.get(ambito.id) ?? 0,
-  }));
-  for (const [id, saldo] of byAmbito.entries()) {
-    if (ambitos.some((ambito) => ambito.id === id)) continue;
-    if (!saldo) continue;
-    rows.push({ label: getCashAmbitoLabelFromCaja(id, caja), saldo });
-  }
-  const neto = rows.reduce((acc, row) => acc + row.saldo, 0);
+  const balance = await getCashBalance(tenant.businessId, { ambitoId });
+  const rows = ambitoId
+    ? balance.byAmbito.filter((row) => row.id === balance.scope)
+    : balance.byAmbito;
   const lines =
     rows.length > 1
-      ? [...rows.map((row) => `• ${row.label}: $${money(row.saldo)}`), '', `Neto: $${money(neto)}`]
-      : [`• $${money(neto)}`];
+      ? [...rows.map((row) => `• ${row.label}: $${money(row.saldo)}`), '', `Neto: $${money(balance.saldo)}`]
+      : [`• $${money(balance.saldo)}`];
 
   return {
     reply: waCard({
       title: 'Saldo de caja',
-      lines: snap.empty ? ['Las cajas están en *$0*.'] : lines,
+      lines: balance.empty
+        ? ['Las cajas están en *$0*.']
+        : lines,
     }),
   };
+}
+
+/** @deprecated Persistencia directa eliminada. Adapter de WhatsApp → CashDomainService. */
+export async function executeRegisterCashMovement(
+  tenant: WhatsappTenantContext,
+  command: RegisterCashMovementCommand
+): Promise<{ reply: string }> {
+  const tipo = command.type === 'egreso' ? 'egreso' : 'ingreso';
+  const concepto =
+    String(command.concept || '').trim() || (tipo === 'egreso' ? 'Egreso' : 'Ingreso');
+  try {
+    const created = await registerCashMovement({
+      ...command,
+      businessId: tenant.businessId,
+      type: tipo,
+      concept: concepto,
+      medio: command.medio || 'efectivo',
+      source: command.source ?? 'whatsapp',
+      actor: command.actor ?? {
+        type: 'whatsapp_user',
+        phone: tenant.phone,
+      },
+      descripcion: command.descripcion ?? null,
+    });
+    const { caja, ambitos } = await loadWhatsappCajaAmbitos(tenant.businessId);
+    const ambitoLabel = getCashAmbitoLabelFromCaja(created.scope, caja);
+    return {
+      reply: waCard({
+        title: 'Listo',
+        lines: [
+          `• ${created.type === 'egreso' ? 'Egreso' : 'Ingreso'}: $${money(created.amount)}`,
+          ...(ambitos.length > 1 ? [`• Caja: ${ambitoLabel}`] : []),
+          `• ${created.concept}`,
+        ],
+      }),
+    };
+  } catch (error) {
+    if (isCashDomainError(error) && error.code === 'INVALID_CASH_AMOUNT') {
+      throw new Error('Indicá el monto del movimiento de caja.');
+    }
+    throw error;
+  }
 }
 
 export async function registerCashFromWhatsapp(
   tenant: WhatsappTenantContext,
   entities: WhatsappCommandEntities
 ): Promise<{ reply: string }> {
+  const op =
+    entities.semanticCommand?.operations.find((row) => row.intent === 'register_cash') ??
+    entities.semanticCommand?.operations[0];
+  const typed = op ? cashCommandFromOperation(tenant.businessId, { ...op, intent: 'register_cash' }, tenant.phone) : null;
+  if (typed && !('error' in typed)) {
+    return executeRegisterCashMovement(tenant, {
+      ...typed,
+      scope: entities.cashAmbitoId || typed.scope,
+      concept: String(entities.cashConcept || typed.concept).trim() || typed.concept,
+      idempotencyKey: entities.idempotencyKey || typed.idempotencyKey,
+    });
+  }
+  if (typed && 'error' in typed) {
+    throw new Error(typed.error);
+  }
   const tipo = entities.cashType === 'egreso' ? 'egreso' : 'ingreso';
   const amount = Number(entities.amount) || 0;
   if (amount <= 0) {
-    throw new Error('Indicá el monto, por ejemplo: "gasto 500 nafta".');
+    throw new Error('Indicá el monto del movimiento de caja.');
   }
-  const { caja, ambitos } = await loadWhatsappCajaAmbitos(tenant.businessId);
-  const ambito = normalizeMovementAmbito(entities.cashAmbitoId, caja);
-  const ambitoLabel = getCashAmbitoLabelFromCaja(ambito, caja);
-  const concepto = cleanCashConcept(
-    String(entities.cashConcept ?? entities.notes ?? ''),
-    ambitos,
-    tipo === 'egreso' ? 'Egreso' : 'Ingreso'
-  );
-
-  const fecha = new Date().toISOString();
-  await db.collection(`negocios/${tenant.businessId}/movimientos_caja`).add({
-    tipo,
-    monto: amount,
-    medio: 'efectivo',
-    concepto,
-    categoriaId: null,
-    descripcion: 'Origen: WhatsApp RILO Bot',
-    ambito,
-    fecha,
-    createdAt: fecha,
-    origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
-    origenGrupo: 'manual',
-    origenId: null,
-    pedidoId: null,
-    numeroPedido: null,
-    numeroPedidoLabel: null,
-    clienteId: null,
-    negocioId: tenant.businessId,
-    origenWhatsapp: true,
-    whatsappPhone: tenant.phone,
+  return executeRegisterCashMovement(tenant, {
+    businessId: tenant.businessId,
+    type: tipo,
+    amount,
+    concept: String(entities.cashConcept ?? entities.notes ?? '').trim() || (tipo === 'egreso' ? 'Egreso' : 'Ingreso'),
+    scope: entities.cashAmbitoId,
+    date: String(entities.orderDate || ''),
+    source: 'whatsapp',
+    actor: { type: 'whatsapp_user', phone: tenant.phone },
+    idempotencyKey: entities.idempotencyKey,
   });
-
-  return {
-    reply: waCard({
-      title: 'Listo',
-      lines: [
-        `• ${tipo === 'egreso' ? 'Egreso' : 'Ingreso'}: $${money(amount)}`,
-        ...(ambitos.length > 1 ? [`• Caja: ${ambitoLabel}`] : []),
-        `• ${concepto}`,
-      ],
-    }),
-  };
 }
+
 
 function purchaseLinesFromEntities(entities: WhatsappCommandEntities): WhatsappPurchaseLine[] {
   const existing = Array.isArray(entities.purchaseLines) ? entities.purchaseLines : [];

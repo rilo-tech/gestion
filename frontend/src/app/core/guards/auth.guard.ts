@@ -1,10 +1,23 @@
 import { inject } from '@angular/core';
-import { CanActivateFn, Router } from '@angular/router';
+import { CanActivateFn, Router, UrlTree } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 import { Permission } from '../constants/permissions';
-import { map } from 'rxjs';
+import { catchError, map, of, timeout } from 'rxjs';
 
-const ERP_WEB_EXEMPT_PATHS = ['/mi-cuenta', '/apariencia', '/activar-suscripcion', '/plan'];
+const GUARD_INIT_TIMEOUT_MS = 12_000;
+
+function probeSession(auth: AuthService) {
+  return auth.initialize().pipe(
+    timeout({ first: GUARD_INIT_TIMEOUT_MS }),
+    catchError(() => of(false))
+  );
+}
+
+function homeUrlTree(router: Router, auth: AuthService): UrlTree {
+  return router.parseUrl(auth.homeRoute);
+}
+
+const ERP_WEB_EXEMPT_PATHS = ['/inicio', '/mi-cuenta', '/apariencia', '/activar-suscripcion', '/plan'];
 
 export const authGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
@@ -14,7 +27,7 @@ export const authGuard: CanActivateFn = () => {
     return true;
   }
 
-  return auth.initialize().pipe(
+  return probeSession(auth).pipe(
     map((authenticated) => {
       if (authenticated) return true;
       return router.createUrlTree(['/login']);
@@ -22,7 +35,40 @@ export const authGuard: CanActivateFn = () => {
   );
 };
 
-export const loginGuard: CanActivateFn = () => true;
+/** /inicio es home bot-only: empresas con ERP van al panel. */
+export const botOnlyHomeGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  if (auth.isPlatformAdmin || !auth.canAccessErpWeb) {
+    return true;
+  }
+  return router.parseUrl('/dashboard');
+};
+
+export const loginGuard: CanActivateFn = (route) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+
+  // El usuario pidió ver el formulario (navbar "Ingresar"): no redirigir por token guardado.
+  if (route.queryParamMap.get('manual') === '1') {
+    return true;
+  }
+
+  const resolve = (authenticated: boolean) => {
+    if (!authenticated) return true;
+    return homeUrlTree(router, auth);
+  };
+
+  if (auth.currentUser) {
+    return resolve(true);
+  }
+
+  if (!auth.authToken) {
+    return true;
+  }
+
+  return probeSession(auth).pipe(map((authenticated) => resolve(authenticated)));
+};
 
 /** Permite /acceso-plataforma salvo que ya haya sesión de superadmin plataforma. */
 export const platformLoginGuard: CanActivateFn = () => {
@@ -38,7 +84,7 @@ export const platformLoginGuard: CanActivateFn = () => {
     return resolve(true);
   }
 
-  return auth.initialize().pipe(map((authenticated) => resolve(authenticated)));
+  return probeSession(auth).pipe(map((authenticated) => resolve(authenticated)));
 };
 
 export const platformGuard: CanActivateFn = () => {
@@ -46,13 +92,13 @@ export const platformGuard: CanActivateFn = () => {
   const router = inject(Router);
 
   if (auth.currentUser) {
-    return auth.isPlatformAdmin ? true : router.createUrlTree([auth.homeRoute]);
+    return auth.isPlatformAdmin ? true : homeUrlTree(router, auth);
   }
 
-  return auth.initialize().pipe(
+  return probeSession(auth).pipe(
     map((authenticated) => {
       if (!authenticated) return router.createUrlTree(['/login']);
-      return auth.isPlatformAdmin ? true : router.createUrlTree([auth.homeRoute]);
+      return auth.isPlatformAdmin ? true : homeUrlTree(router, auth);
     })
   );
 };
@@ -65,7 +111,7 @@ export const companyGuard: CanActivateFn = () => {
     return auth.isPlatformAdmin ? router.createUrlTree(['/platform']) : true;
   }
 
-  return auth.initialize().pipe(
+  return probeSession(auth).pipe(
     map((authenticated) => {
       if (!authenticated) return router.createUrlTree(['/login']);
       return auth.isPlatformAdmin ? router.createUrlTree(['/platform']) : true;
@@ -77,7 +123,7 @@ export const companyGuard: CanActivateFn = () => {
 export const supervisorGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  return auth.isSupervisor ? true : router.createUrlTree([auth.homeRoute]);
+  return auth.isSupervisor ? true : homeUrlTree(router, auth);
 };
 
 export function requirePermission(permission: Permission): CanActivateFn {
@@ -108,7 +154,7 @@ export function requireModule(...moduleIds: import('../../../../../shared/subscr
   };
 }
 
-/** Bloquea el panel ERP si la empresa solo tiene WhatsApp; permite /mi-cuenta y similares. */
+/** Bloquea el panel ERP si la empresa solo tiene WhatsApp; permite /inicio, /mi-cuenta y similares. */
 export const erpWebGuard: CanActivateFn = (_route, state) => {
   const auth = inject(AuthService);
   const router = inject(Router);
@@ -117,7 +163,7 @@ export const erpWebGuard: CanActivateFn = (_route, state) => {
     return true;
   }
   if (auth.isPlatformAdmin || auth.canAccessErpWeb) return true;
-  return router.createUrlTree(['/mi-cuenta']);
+  return router.createUrlTree(['/inicio']);
 };
 
 /** Si el trial venció o la cuenta está bloqueada, manda a contratar. Cuenta/Plan siguen accesibles. */

@@ -19,8 +19,9 @@ export type SubscriptionPaymentStatus = 'al_dia' | 'pendiente' | 'vencido';
 export interface ClientUsageSummary {
   period: string;
   mode?: string;
-  ai: { used: number; max: number; extra?: number; purchased?: number };
+  ai: { used: number; max: number; extra?: number; purchased?: number; unlimited?: boolean };
   whatsapp: { used: number; max: number; extra?: number; purchased?: number };
+  dailyUsage?: { date: string; actions: number }[];
 }
 
 export type UsagePackId = 'whatsapp' | 'ai';
@@ -71,6 +72,13 @@ export interface BusinessSubscriptionInfo {
   preciosAddonModuloOverride?: Partial<Record<SubscriptionModuleId, number>>;
   descuentoMensual?: number;
   notasComerciales?: string;
+  includedErpUsersOverride?: number | null;
+  extraErpUserPriceOverride?: number | null;
+  includedWhatsappNumbersOverride?: number | null;
+  extraWhatsappNumberPriceOverride?: number | null;
+  includedAiOverride?: number | null;
+  usageModeOverride?: 'limited' | 'unlimited' | null;
+  precioFinalOverride?: number | null;
 }
 
 export interface SubscriptionPayment {
@@ -164,5 +172,33 @@ export class BusinessService {
 
   checkoutUsagePack(packId: UsagePackId): Observable<{ checkoutUrl: string }> {
     return this.http.post<{ checkoutUrl: string }>('/api/billing/checkout-pack', { packId });
+  }
+
+  getSubscription() {
+    return this.http.get<{
+      autoRenew: boolean;
+      mpPreapprovalStatus: string | null;
+      nextPaymentDate: string | null;
+      paidUntil: string | null;
+      quotedAmount: number;
+      currency: string;
+      remainingTrialDays: number;
+      lifecycleStatus: string;
+    }>('/api/billing/subscription');
+  }
+
+  startAutoRenew() {
+    return this.http.post<{ checkoutUrl?: string; initPoint?: string; requiresReauth?: boolean; amount: number }>(
+      '/api/billing/subscribe',
+      {}
+    );
+  }
+
+  pauseAutoRenew() {
+    return this.http.post('/api/billing/subscription/pause', {});
+  }
+
+  cancelAutoRenew() {
+    return this.http.post('/api/billing/subscription/cancel', {});
   }
 }

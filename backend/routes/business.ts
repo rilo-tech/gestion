@@ -21,7 +21,6 @@ router.get(
   '/:businessId/usage',
   requireAuth,
   assertCompanyTenantAccess,
-  requireSupervisor,
   async (req: AuthenticatedRequest, res) => {
     try {
       const { businessId } = req.params;
@@ -32,6 +31,7 @@ router.get(
           max: usage.ai.max,
           extra: usage.ai.extra,
           purchased: usage.ai.purchased,
+          unlimited: usage.ai.unlimited === true,
         },
         whatsapp: {
           used: usage.whatsapp.used,
@@ -41,6 +41,7 @@ router.get(
         },
         period: usage.period,
         mode: usage.mode,
+        dailyUsage: usage.dailyUsage ?? [],
       });
     } catch (error) {
       console.error('Error fetching usage:', error);

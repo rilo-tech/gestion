@@ -8,7 +8,9 @@ import {
   litePitch,
   overlayProductsForCountry,
   overlayUsagePacksForCountry,
+  parseUsageMode,
   type CommercialCatalog,
+  type CommercialUsageMode,
   type CommercialUsagePack,
   type UsagePackId,
 } from '../../../../../shared/commercial-catalog.ts';
@@ -23,9 +25,17 @@ export type PublicCommercialProduct = {
   trialDays: number;
   includedAi: number;
   includedWhatsapp: number;
+  includedErpUsers?: number;
+  extraErpUserPrice?: number;
+  includedWhatsappNumbers?: number;
+  extraWhatsappNumberPrice?: number;
+  maxWhatsappNumbers?: number | null;
+  usageMode?: CommercialUsageMode;
+  riloBotUsageMode?: CommercialUsageMode;
   amountMonthly: number;
   amountYearly: number;
   extraUserMonthly: number;
+  extraWhatsappNumberMonthly?: number;
   priceLabel: string;
   priceLabelYearly: string;
 };
@@ -49,6 +59,7 @@ export type PublicCommercialResponse = {
   introDiscountMonths: number;
   introDiscountPercent: number;
   extraUserMonthly: number;
+  extraWhatsappNumberMonthly?: number;
   usagePacks: PublicUsagePack[];
   usagePacksRaw?: CommercialCatalog['usagePacks'];
   litePitch: string;
@@ -90,6 +101,14 @@ function catalogFromPublic(
       country === 'UY' ? row.extraUserMonthly : DEFAULT_COMMERCIAL_CATALOG.extraUserMonthlyUY,
     extraUserMonthlyAR:
       country === 'AR' ? row.extraUserMonthly : DEFAULT_COMMERCIAL_CATALOG.extraUserMonthlyAR,
+    extraWhatsappNumberMonthlyUY:
+      country === 'UY'
+        ? row.extraWhatsappNumberMonthly ?? DEFAULT_COMMERCIAL_CATALOG.extraWhatsappNumberMonthlyUY
+        : DEFAULT_COMMERCIAL_CATALOG.extraWhatsappNumberMonthlyUY,
+    extraWhatsappNumberMonthlyAR:
+      country === 'AR'
+        ? row.extraWhatsappNumberMonthly ?? DEFAULT_COMMERCIAL_CATALOG.extraWhatsappNumberMonthlyAR
+        : DEFAULT_COMMERCIAL_CATALOG.extraWhatsappNumberMonthlyAR,
     usagePacks: reconstructUsagePacks(row, country),
     products: {
       whatsapp: productQuote(row, country, 'whatsapp'),
@@ -111,7 +130,56 @@ function productQuote(
     amountMonthlyAR: country === 'AR' ? productAmount(row, id) : defaults.amountMonthlyAR,
     includedAi: productAi(row, id),
     includedWhatsapp: productWhatsapp(row, id),
+    includedErpUsers: productNum(row, id, 'includedErpUsers', defaults.includedErpUsers ?? 1),
+    extraErpUserPriceUY:
+      country === 'UY'
+        ? productNum(row, id, 'extraErpUserPrice', defaults.extraErpUserPriceUY)
+        : defaults.extraErpUserPriceUY,
+    extraErpUserPriceAR:
+      country === 'AR'
+        ? productNum(row, id, 'extraErpUserPrice', defaults.extraErpUserPriceAR)
+        : defaults.extraErpUserPriceAR,
+    includedWhatsappNumbers: productNum(
+      row,
+      id,
+      'includedWhatsappNumbers',
+      defaults.includedWhatsappNumbers ?? (id === 'erp' ? 0 : 1)
+    ),
+    extraWhatsappNumberPriceUY:
+      country === 'UY'
+        ? productNum(row, id, 'extraWhatsappNumberPrice', defaults.extraWhatsappNumberPriceUY)
+        : defaults.extraWhatsappNumberPriceUY,
+    extraWhatsappNumberPriceAR:
+      country === 'AR'
+        ? productNum(row, id, 'extraWhatsappNumberPrice', defaults.extraWhatsappNumberPriceAR)
+        : defaults.extraWhatsappNumberPriceAR,
+    maxWhatsappNumbers: productMax(row, id, defaults.maxWhatsappNumbers),
+    usageMode: productMode(row, id),
   };
+}
+
+function productNum(
+  row: PublicCommercialResponse,
+  id: TrialProductId,
+  key:
+    | 'includedErpUsers'
+    | 'extraErpUserPrice'
+    | 'includedWhatsappNumbers'
+    | 'extraWhatsappNumberPrice',
+  fallback: number | undefined
+): number {
+  const n = row.products.find((p) => p.id === id)?.[key];
+  return typeof n === 'number' ? n : fallback ?? 0;
+}
+
+function productMax(
+  row: PublicCommercialResponse,
+  id: TrialProductId,
+  fallback: number | null | undefined
+): number | null {
+  const n = row.products.find((p) => p.id === id)?.maxWhatsappNumbers;
+  if (n == null) return fallback ?? null;
+  return n > 0 ? n : null;
 }
 
 function productAmount(row: PublicCommercialResponse, id: TrialProductId): number {
@@ -129,6 +197,13 @@ function productWhatsapp(row: PublicCommercialResponse, id: TrialProductId): num
   return (
     row.products.find((p) => p.id === id)?.includedWhatsapp ??
     DEFAULT_COMMERCIAL_CATALOG.products[id].includedWhatsapp
+  );
+}
+
+function productMode(row: PublicCommercialResponse, id: TrialProductId): CommercialUsageMode {
+  return parseUsageMode(
+    row.products.find((p) => p.id === id)?.usageMode ??
+      DEFAULT_COMMERCIAL_CATALOG.products[id].usageMode
   );
 }
 
@@ -191,6 +266,8 @@ function fallback(country: BillingCountryCode): {
       introDiscountMonths: catalog.introDiscountMonths,
       introDiscountPercent: catalog.introDiscountPercent,
       extraUserMonthly: country === 'AR' ? catalog.extraUserMonthlyAR : catalog.extraUserMonthlyUY,
+      extraWhatsappNumberMonthly:
+        country === 'AR' ? catalog.extraWhatsappNumberMonthlyAR : catalog.extraWhatsappNumberMonthlyUY,
       usagePacks: overlayUsagePacksForCountry(catalog, country),
       usagePacksRaw: catalog.usagePacks,
       litePitch: litePitch(catalog),
@@ -204,9 +281,16 @@ function fallback(country: BillingCountryCode): {
         trialDays: catalog.trialDays,
         includedAi: row.includedAi,
         includedWhatsapp: row.includedWhatsapp,
+        includedErpUsers: row.includedErpUsers,
+        extraErpUserPrice: row.extraErpUserPrice,
+        includedWhatsappNumbers: row.includedWhatsappNumbers,
+        extraWhatsappNumberPrice: row.extraWhatsappNumberPrice,
+        maxWhatsappNumbers: row.maxWhatsappNumbers,
+        usageMode: row.usageMode ?? 'limited',
         amountMonthly: row.amountMonthly,
         amountYearly: row.amountYearly,
         extraUserMonthly: row.extraUserMonthly,
+        extraWhatsappNumberMonthly: row.extraWhatsappNumberMonthly,
         priceLabel: row.priceLabel,
         priceLabelYearly: row.priceLabelYearly,
       })),

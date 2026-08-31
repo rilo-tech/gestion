@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+﻿import { ChangeDetectorRef, Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -8,14 +8,19 @@ import { isAuthEmulatorEnabled, isFirebaseClientConfigured } from '../../core/co
 import { GOOGLE_LOGIN_BUSINESS_KEY, GOOGLE_LOGIN_SCOPE_KEY, GOOGLE_LOGIN_UI_ENABLED } from '../../core/constants/google-auth-storage';
 import { hasPendingGoogleLogin } from '../../core/utils/google-auth-redirect';
 import { HttpErrorResponse } from '@angular/common/http';
-import { TimeoutError } from 'rxjs';
-import { finalize } from 'rxjs/operators';
+import { Subscription, TimeoutError, Observable } from 'rxjs';
 import {
   API_HTML_RESPONSE_MESSAGE,
   isHtmlInsteadOfJsonError,
 } from '../../core/utils/api-response-error';
 import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
 import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.component';
+import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import {
+  createAuthenticatedLoginPipeline,
+  isLoginNavigationFailure,
+  LOGIN_FLOW_TIMEOUT_MS,
+} from './login-flow';
 
 @Component({
   selector: 'app-login',
@@ -36,14 +41,14 @@ import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.co
     <app-ritotech-public-shell>
     <section class="max-w-md mx-auto px-4 py-10 sm:py-14">
       <div class="rounded-2xl border border-white/10 bg-gray-900/80 p-6 sm:p-8 shadow-2xl">
-        <div class="mb-8">
+        <div class="mb-8 text-center">
           <h1 class="sr-only">Ingresar</h1>
           <img
             src="/brand/rilotech-lockup-on-dark.png"
             alt="RiloTech"
             width="128"
             height="128"
-            class="h-20 sm:h-24 w-auto object-contain object-left -ml-3"
+            class="h-20 sm:h-24 w-auto mx-auto object-contain"
             decoding="async" />
           <p class="text-sm text-gray-400 mt-2">Ingresá para continuar</p>
           <p class="text-xs text-gray-500 mt-2 leading-relaxed">
@@ -51,12 +56,12 @@ import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.co
           </p>
         </div>
 
-        <form (submit)="submitPasswordLogin(); $event.preventDefault()" class="space-y-4">
+        <form (ngSubmit)="submitPasswordLogin()" class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">Usuario</label>
             <input
-              [(ngModel)]="login"
-              name="login"
+              [(ngModel)]="username"
+              name="username"
               autocomplete="username"
               class="login-field w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-white text-sm outline-none focus:ring-2 focus:ring-teal-500">
           </div>
@@ -97,9 +102,18 @@ import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.co
 
           <p *ngIf="errorMessage" class="text-sm text-red-400">{{ errorMessage }}</p>
 
+          <details
+            *ngIf="loginDebugDetail"
+            class="rounded-lg border border-gray-800 bg-gray-950/80 p-3 text-xs text-gray-400">
+            <summary class="cursor-pointer text-gray-300 select-none">
+              Detalle técnico (para DevTools / soporte)
+            </summary>
+            <pre class="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed">{{ loginDebugDetail }}</pre>
+          </details>
+
           <button
             type="submit"
-            [disabled]="submitting || googleRedirectPending"
+            [disabled]="submitting || (googleLoginUiEnabled && googleRedirectPending)"
             class="w-full rounded-xl bg-teal-500 py-3 text-sm font-bold text-gray-900 hover:bg-teal-400 disabled:opacity-60">
             {{ submitting ? 'Ingresando...' : 'Ingresar' }}
           </button>
@@ -123,50 +137,222 @@ import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.co
           {{ googleRedirectPending ? 'Volviendo de Google...' : 'Continuar con Google' }}
         </button>
 
-        <p *ngIf="googleLoginUiEnabled" class="mt-6 text-xs text-center text-gray-500 leading-relaxed">
-          Cargá el código de empresa antes de usar Google. Tu email debe estar registrado en Mi cuenta.
-        </p>
-
-        <p *ngIf="googleLoginUiEnabled && !isFirebaseClientConfigured && !isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
-          Google no está configurado: falta <span class="font-mono">VITE_FIREBASE_API_KEY</span> en el
-          <span class="font-mono">.env</span> de la raíz del repo. Reiniciá el servidor después de guardarlo.
-        </p>
-
-        <p *ngIf="googleLoginUiEnabled && isAuthEmulatorEnabled" class="mt-3 text-xs text-center text-amber-500/90 leading-relaxed">
-          Modo desarrollo: Google usa el emulador local (no es la cuenta real). Tras confirmar el email
-          volvés al login y entrás automáticamente.
-        </p>
-
         <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
           ¿Todavía no tenés cuenta?
-          <a routerLink="/registro" [queryParams]="{ producto: 'completo' }" class="text-teal-400 font-semibold hover:underline">Probar 30 días</a>
+          <a routerLink="/registro" [queryParams]="{ producto: 'completo' }" class="text-teal-400 font-semibold hover:underline">Probar {{ trialDays }} días</a>
         </p>
       </div>
     </section>
     </app-ritotech-public-shell>
   `,
 })
-export class LoginComponent implements OnInit {
+export class LoginComponent implements OnInit, OnDestroy {
   private auth = inject(AuthService);
-  private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
+  private cdr = inject(ChangeDetectorRef);
 
   readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
   readonly isFirebaseClientConfigured = isFirebaseClientConfigured;
   readonly googleLoginUiEnabled = GOOGLE_LOGIN_UI_ENABLED;
+  readonly trialDays = DEFAULT_TRIAL_DAYS;
 
   businessCode = '';
-  login = '';
+  username = '';
   password = '';
   submitting = false;
   googleRedirectPending = false;
   errorMessage = '';
+  loginDebugDetail = '';
   subscriptionBlockedMessage = '';
   sessionExpiredMessage = '';
 
+  private loginWatchdog: ReturnType<typeof setTimeout> | null = null;
+  private loginFlowSub: Subscription | null = null;
+
+  ngOnInit(): void {
+    this.submitting = false;
+    this.googleRedirectPending = false;
+
+    if (this.route.snapshot.queryParamMap.get('session') === 'expired') {
+      this.sessionExpiredMessage =
+        'Tu sesión venció. Volvé a ingresar con tu usuario y contraseña.';
+    }
+
+    if (this.route.snapshot.queryParamMap.get('subscription') === 'inactive') {
+      this.subscriptionBlockedMessage =
+        'La suscripción de tu empresa está desactivada. Contactá a RILO para reactivarla.';
+    }
+
+    const pendingBusinessId = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY);
+    const pendingScope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY);
+    if (pendingScope === 'platform') {
+      sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+      sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+      return;
+    }
+    if (pendingBusinessId && !this.googleLoginUiEnabled) {
+      sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+      sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+      this.businessCode = pendingBusinessId;
+      return;
+    }
+    if (pendingBusinessId) {
+      this.businessCode = pendingBusinessId;
+      this.googleRedirectPending = true;
+      this.errorMessage = '';
+    }
+
+    if (!hasPendingGoogleLogin()) return;
+
+    this.submitting = true;
+    this.startLoginWatchdog();
+    this.runAuthenticatedLogin(this.auth.completeGoogleRedirectLogin(), () => {
+      this.googleRedirectPending = false;
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.loginFlowSub?.unsubscribe();
+    this.clearLoginWatchdog();
+  }
+
+  submitPasswordLogin(): void {
+    if (this.submitting) return;
+
+    if (!this.username.trim() || !this.password) {
+      this.errorMessage = 'Ingresá usuario y contraseña.';
+      this.cdr.markForCheck();
+      return;
+    }
+
+    if (!this.businessCode.trim()) {
+      this.errorMessage = 'Ingresá el código de tu empresa.';
+      this.cdr.markForCheck();
+      return;
+    }
+
+    sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+    sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+    this.googleRedirectPending = false;
+    this.errorMessage = '';
+    this.loginDebugDetail = '';
+    console.info('[login:start]');
+    this.submitting = true;
+    this.cdr.markForCheck();
+    this.startLoginWatchdog();
+
+    this.runAuthenticatedLogin(
+      this.auth.login(this.username.trim(), this.password, {
+        businessId: this.businessCode.trim().toLowerCase(),
+        scope: 'company',
+      })
+    );
+  }
+
+  submitGoogleLogin(): void {
+    if (!this.businessCode.trim()) {
+      this.errorMessage = 'Ingresá el código de tu empresa para usar Google.';
+      return;
+    }
+
+    if (!this.isFirebaseClientConfigured && !isAuthEmulatorEnabled) {
+      this.errorMessage =
+        'Google no está configurado. Agregá VITE_FIREBASE_API_KEY al .env de la raíz del proyecto y reiniciá npm run dev.';
+      return;
+    }
+
+    this.errorMessage = '';
+    this.submitting = true;
+    console.info('[login:start]');
+    this.startLoginWatchdog();
+    this.runAuthenticatedLogin(this.auth.loginWithGoogle(this.businessCode.trim().toLowerCase()), () => {
+      this.googleRedirectPending = false;
+    });
+  }
+
+  /** Login HTTP + navegación Angular — un único flujo RxJS. */
+  private runAuthenticatedLogin(login$: Observable<unknown>, onSuccess?: () => void): void {
+    this.loginFlowSub?.unsubscribe();
+    this.loginFlowSub = createAuthenticatedLoginPipeline(login$, {
+      homeRoute: () => this.auth.homeRoute,
+      navigateByUrl: (url) => this.navigateToAuthenticatedHome(url),
+      currentUrl: () => this.router.url,
+      onHttpResponse: () => console.info('[login:http:response]'),
+      onHomeRoute: (route) => console.info('[login:home-route]', { route }),
+      onNavigateStart: (target) => console.info('[login:navigate:start]', { target }),
+      onNavigateEnd: (target, ok, url) => console.info('[login:navigate:end]', { target, ok, url }),
+      onFinally: () => {
+        console.info('[login:finally]');
+        this.submitting = false;
+        this.clearLoginWatchdog();
+        this.cdr.markForCheck();
+      },
+    }).subscribe({
+      next: () => onSuccess?.(),
+      error: (err) => this.handleLoginFlowError(err),
+    });
+  }
+
+  private navigateToAuthenticatedHome(target: string): Promise<boolean> {
+    return this.router.navigateByUrl(target, { replaceUrl: true });
+  }
+
+  private handleLoginFlowError(err: unknown): void {
+    if ((err as { message?: string })?.message === 'NO_REDIRECT') {
+      this.googleRedirectPending = false;
+      sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
+      sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
+      this.errorMessage =
+        'Google no devolvió la sesión al volver. Probá de nuevo o ingresá con usuario y contraseña.';
+    } else if (isLoginNavigationFailure(err)) {
+      this.errorMessage = 'No pudimos abrir tu inicio. Intentá nuevamente.';
+    } else {
+      this.errorMessage = this.mapLoginError(err);
+      this.loginDebugDetail = this.formatLoginDebug(err);
+    }
+    console.error('[login:error]', err);
+    this.cdr.markForCheck();
+  }
+
+  private formatLoginDebug(err: unknown): string {
+    if (err instanceof HttpErrorResponse) {
+      const body =
+        typeof err.error === 'string'
+          ? err.error.slice(0, 400)
+          : JSON.stringify(err.error ?? {}).slice(0, 400);
+      return `HTTP ${err.status} ${err.statusText}\nURL: ${err.url ?? '/api/auth/login'}\n${body}`;
+    }
+    if (err instanceof TimeoutError || (err as { name?: string })?.name === 'TimeoutError') {
+      return `Timeout: el flujo superó ${LOGIN_FLOW_TIMEOUT_MS / 1000}s (login + navegación).`;
+    }
+    if (err instanceof Error) {
+      return `${err.name}: ${err.message}`;
+    }
+    return String(err);
+  }
+
+  private clearLoginWatchdog(): void {
+    if (this.loginWatchdog) {
+      clearTimeout(this.loginWatchdog);
+      this.loginWatchdog = null;
+    }
+  }
+
+  /** Cubre login HTTP + navegación; no resetea submitting (lo hace finalize). */
+  private startLoginWatchdog(): void {
+    this.clearLoginWatchdog();
+    this.loginWatchdog = setTimeout(() => {
+      if (!this.submitting) return;
+      this.loginDebugDetail =
+        'El flujo sigue en curso (>12s). Revisá F12 → Red: POST /api/auth/login y consola [login:navigate:end].';
+      this.cdr.markForCheck();
+    }, 12_000);
+  }
+
   private mapLoginError(err: unknown): string {
     if (err instanceof TimeoutError || (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'TimeoutError')) {
-      return 'El servidor tardó demasiado en responder. Probá de nuevo.';
+      return 'No pudimos ingresar. Revisá tu conexión o intentá nuevamente.';
     }
 
     if (isHtmlInsteadOfJsonError(err)) {
@@ -207,111 +393,5 @@ export class LoginComponent implements OnInit {
         ? (err as { message: string }).message
         : '';
     return message || 'No se pudo iniciar sesión.';
-  }
-
-  ngOnInit() {
-    if (this.route.snapshot.queryParamMap.get('session') === 'expired') {
-      this.sessionExpiredMessage =
-        'Tu sesión venció. Volvé a ingresar con tu usuario y contraseña.';
-    }
-
-    if (this.route.snapshot.queryParamMap.get('subscription') === 'inactive') {
-      this.subscriptionBlockedMessage =
-        'La suscripción de tu empresa está desactivada. Contactá a RILO para reactivarla.';
-    }
-
-    const pendingBusinessId = sessionStorage.getItem(GOOGLE_LOGIN_BUSINESS_KEY);
-    const pendingScope = sessionStorage.getItem(GOOGLE_LOGIN_SCOPE_KEY);
-    if (pendingScope === 'platform') {
-      return;
-    }
-    if (pendingBusinessId) {
-      this.businessCode = pendingBusinessId;
-      this.googleRedirectPending = true;
-      this.errorMessage = '';
-    }
-
-    if (!hasPendingGoogleLogin()) {
-      return;
-    }
-
-    this.auth.completeGoogleRedirectLogin().subscribe({
-      next: () => {
-        this.googleRedirectPending = false;
-        this.router.navigate([this.auth.homeRoute]);
-      },
-      error: (err) => {
-        this.googleRedirectPending = false;
-        if (err?.message === 'NO_REDIRECT') {
-          if (pendingBusinessId) {
-            this.errorMessage =
-              'Google no devolvió la sesión al volver. Probá de nuevo (debería abrirse una ventana de Google). Si persiste, ingresá con usuario y contraseña.';
-          }
-          sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-          sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
-          return;
-        }
-        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-        sessionStorage.removeItem(GOOGLE_LOGIN_SCOPE_KEY);
-        this.errorMessage = this.mapLoginError(err) || mapGoogleAuthError(err);
-      },
-    });
-  }
-
-  submitPasswordLogin() {
-    if (!this.login.trim() || !this.password) {
-      this.errorMessage = 'Ingresá usuario y contraseña.';
-      return;
-    }
-
-    if (!this.businessCode.trim()) {
-      this.errorMessage = 'Ingresá el código de tu empresa.';
-      return;
-    }
-
-    this.submitting = true;
-    this.errorMessage = '';
-
-    this.auth
-      .login(this.login.trim(), this.password, {
-        businessId: this.businessCode.trim().toLowerCase(),
-        scope: 'company',
-      })
-      .pipe(finalize(() => {
-        this.submitting = false;
-      }))
-      .subscribe({
-        next: () => {
-          void this.router.navigateByUrl(this.auth.homeRoute);
-        },
-        error: (err) => {
-          this.errorMessage = this.mapLoginError(err);
-        },
-      });
-  }
-
-  submitGoogleLogin() {
-    if (!this.businessCode.trim()) {
-      this.errorMessage = 'Ingresá el código de tu empresa para usar Google.';
-      return;
-    }
-
-    if (!this.isFirebaseClientConfigured && !this.isAuthEmulatorEnabled) {
-      this.errorMessage =
-        'Google no está configurado. Agregá VITE_FIREBASE_API_KEY al .env de la raíz del proyecto y reiniciá npm run dev.';
-      return;
-    }
-
-    this.errorMessage = '';
-    this.auth.loginWithGoogle(this.businessCode.trim().toLowerCase()).subscribe({
-      next: () => {
-        this.router.navigate([this.auth.homeRoute]);
-      },
-      error: (err) => {
-        this.googleRedirectPending = false;
-        sessionStorage.removeItem(GOOGLE_LOGIN_BUSINESS_KEY);
-        this.errorMessage = this.mapLoginError(err) || mapGoogleAuthError(err);
-      },
-    });
   }
 }

@@ -4,22 +4,72 @@ import { resolveTenantByPhone, type WhatsappTenantContext } from './tenant-resol
 import { assertWhatsappFeatures } from './feature-guard.ts';
 import {
   clearConversationState,
+  clearConversationTask,
+  dropConversationContext,
   getConversationState,
+  rememberFocusOrder,
   rememberLastOperation,
+  rememberLastQuery,
   saveConversationState,
+  activeTaskFromPending,
+  type ConversationState,
+  type ConversationListContext,
   type LastWhatsappOperation,
 } from './conversation-state.ts';
+import { interpretTurn } from './conversation-engine.ts';
+import { buildOperationPlan } from './operation-plan.ts';
+import { isLlmFirstEngine, isV3Engine, isV4Engine } from './engine-version.ts';
+import { handleV4WhatsappTurn } from './handle-v4-turn.ts';
+import { interpretLlmFirstTurn, matchDeterministicBypass, isUnequivocalUiReply } from './conversation-orchestrator-v2.ts';
+import { executeV3QueryTurn } from './conversation-orchestrator-v3.ts';
+import type { TurnInterpretation } from './turn-interpretation.ts';
+import { capabilityNotEnabledReply } from './capability-registry.ts';
 import {
-  parseWhatsappCommand,
+  INTERPRETER_UNAVAILABLE_REPLY,
+  isInterpreterTechnicalFailure,
+} from './interpreter-availability.ts';
+import {
   applyEntityUpdates,
   sanitizeWhatsappEntities,
   looksLikeListOrders,
   looksLikeCashMovement,
   looksLikeOrderStatusUpdate,
+  parseWithRules,
   type ParsedWhatsappCommand,
   type WhatsappCommandEntities,
+  type WhatsappParseConversation,
+  type WhatsappIntent,
 } from './ai-command-parser.ts';
+import { catalogQueryForItem } from './conversation-contract.ts';
+import {
+  applyFollowUpToEntities,
+  appendOrderItemBatch,
+  classifyConfirmReply,
+  ensureOrderItems,
+  parseChoiceFromText,
+  syncLegacyProductFields,
+  normalizeOrderLineItems,
+} from './turn-interpreter.ts';
+import { logWhatsappTurn, traceOrderItems } from './conversation-log.ts';
+import {
+  applyLanguageMemory,
+  loadUserLanguageMemory,
+  rememberSpokenProductTerms,
+} from './language-memory.ts';
 import { executeWhatsappCommand } from './erp-integration.ts';
+import { presentOrderCollecting, presentTransaction } from './whatsapp-present.ts';
+import { shouldAskOrderExtraCosts, ORDER_EXTRA_COST_ASK } from './order-finance.ts';
+import { clientLookupQuery } from './entity-name.ts';
+import {
+  applyQueryFollowUp,
+  entitiesFromLastQuery,
+  isQueryIntent,
+  lastQueryFromEntities,
+  looksLikeListContinue,
+  looksLikeQueryFollowUp,
+  looksLikeWantAll,
+} from './query-follow.ts';
+import { takeDualIntent } from './task-queue.ts';
 import {
   beginWelcome,
   handleOnboardingPending,
@@ -29,14 +79,46 @@ import {
   startSetupStep,
 } from './onboarding.ts';
 import { downloadWhatsappMedia } from './meta-api.ts';
-import { looksLikePendingQuestion, answerWhileWaiting } from './operator-voice.ts';
+import { looksLikePendingQuestion, answerWhileWaiting, isTrivialWhatsappTurn } from './operator-voice.ts';
 import {
+  RESUME_CONTEXT_INTENT,
+  classifyConversationSpeechAct,
   doesFillCurrentSlot,
+  formatResumeAsk,
+  isConversationIdle,
   isFreshTaskUtterance,
+  looksLikeResumeNo,
+  looksLikeResumeYes,
   mergeStashIntoPayload,
+  parsedIntentSkipsIdleResume,
   reconstructPendingPrompt,
+  routeResumeUtterance,
+  shouldAskIdleResume,
   waitingLabel,
 } from './conversation-follow.ts';
+import {
+  STOCK_RESOLUTION_INTENT,
+  formatStockResolutionAsk,
+  interpretStockResolutionFromText,
+  parseRequestedStockScope,
+  scopeFromStockResolution,
+  splitCompoundStockUtterance,
+} from './stock-resolution.ts';
+import {
+  COLLECT_ORDER_ITEMS_INTENT,
+  formatCapabilityOrderReply,
+  formatCollectOrderItemsAsk,
+  formatHowToReply,
+  hasRealOrderItems,
+  howToTopicFromText,
+  isPlaceholderProductLabel,
+  looksLikeCollectingDone,
+  productParserAllowed,
+  shouldOpenItemCollection,
+  utteranceIsCapabilityQuestion,
+  utteranceIsHowTo,
+} from './conversation-speech.ts';
+import type { StockDiscountAsk } from '../utils/order-config.ts';
 import {
   extractAmountFromText,
   extractClientHintFromText,
@@ -46,8 +128,14 @@ import {
   extractProductHintFromText,
   extractSpokenCorrections,
   extractExtraCostsFromText,
+  extractExtraCostProductHint,
   mergeExtraCostItems,
-  formatExtraCostsHint,
+  parseSpokenExtraCostAnswer,
+  needsExtraCostItemAsk,
+  resolveExtraCostTargetIndex,
+  formatExtraCostItemAsk,
+  extraCostItemLabels,
+  looksLikePayEverythingNow,
   formatClientChoices,
   formatOperationSummary,
   formatPurchaseConfirmationMessages,
@@ -64,18 +152,18 @@ import {
   inferPurchasePackUnits,
   parsePurchaseLineDisposition,
   purchaseDispositionChoiceIndexes,
-  isGenericWhatsappNotes,
   sanitizeOrderNotes,
   isUnlikelyPersonName,
   looksLikeIterativeCorrection,
   looksLikeNewOrder,
+  looksLikeCollectFullBalance,
+  looksLikeExistingOrderQuery,
   looksLikeStatusQuery,
   extractQueryClientFromText,
   extractOrderNumberFromText,
   resolveClientMatch,
   resolveProductMatch,
   resolveSupplierMatch,
-  todayDateOnly,
   type MatchedClient,
   type MatchedStockItem,
 } from './lookups.ts';
@@ -89,24 +177,29 @@ import {
   createClientFromWhatsapp,
   createSupplierFromWhatsapp,
   fillExtraCostsFromPresets,
+  loadBusinessOrderExtraCostsEnabled,
   resolveOrderForCost,
 } from './erp-writes.ts';
 import {
+  closedOrderReason,
   formatFindOrderGuide,
   formatOpenOrderChoices,
   formatOrderActionAsk,
+  formatOrderStatusAsk,
+  formatPaymentAmountAsk,
   formatSettleAsk,
-  listOpenOrdersForWhatsapp,
+  listWhatsappOrdersWithFallback,
   previewOrderStatusChange,
   resolveOrderForStatus,
   type OrderStatusTarget,
+  type WhatsappOrderStatus,
 } from './order-status.ts';
 import { handleUnregisteredWhatsapp } from './unregistered-signup.ts';
 import { askWhatYouMeant } from './clarify.ts';
 import { whatsappCopyForRubro } from './copy.ts';
 import { handleHelpTurn, HELP_TOPIC_INTENT, isHelpFollowUp, matchSetupLoad } from './help.ts';
 import { isThanksText } from '../../shared/whatsapp-copy.ts';
-import { splitWaBubbles, waBold, waCard } from '../../shared/whatsapp-format.ts';
+import { splitWaBubbles, waBold, waCard, renderListPage, WA_PRESENT } from '../../shared/whatsapp-format.ts';
 import {
   applyCardToEntities,
   applyDraftToEntities,
@@ -139,6 +232,10 @@ export interface WhatsappInboundMessage {
   text?: string;
   mediaId?: string | null;
   mediaType?: string | null;
+  /** Id del mensaje inbound de Meta; se usa como idempotencyKey de caja. */
+  messageId?: string | null;
+  /** Evita repreguntar “¿seguimos?” al retomar el mismo turno. */
+  skipIdleResume?: boolean;
 }
 
 export interface WhatsappHandlerResult {
@@ -165,7 +262,7 @@ const SELECT_ORDER_INTENT = 'select_order';
 const SELECT_PAYMENT_KIND_INTENT = 'select_payment_kind';
 const CASH_OUT_HINT = /\b(egreso|gasto|salida)\b/i;
 const ORDER_PAY_HINT =
-  /(?<![\p{L}])(pag[oó]|cobr|abon|se[nñ]a|sald(?:alo|ar)|pago\s+del\s+total|ya\s+pag[oó])(?![\p{L}])/iu;
+  /(?<![\p{L}])(pag[oó]|cobr(?:ar|[aeéoó])|abon|se[nñ]a|sald(?:alo|ar)|pago\s+del\s+total|todo\s+el\s+saldo|ya\s+pag[oó])(?![\p{L}])/iu;
 const ORDER_ACTION_INTENT = 'order_action';
 const SETTLE_ORDER_INTENT = 'settle_order';
 const CONFIRM_CREATE_CLIENT = 'confirm_create_client';
@@ -176,12 +273,30 @@ const CONFIRM_INTENT_PREFIX = 'confirm:';
 type NamedCandidate = { id: string; nombre: string; label?: string; score?: number; precioVenta?: number };
 
 function extraCostsDeliveryAsk(entities: WhatsappCommandEntities): string {
-  const extra = formatExtraCostsHint(entities);
-  return waCard({
-    title: 'Fecha de entrega',
-    lines: extra ? [`Tengo ${extra}.`] : undefined,
-    ask: `Ej: viernes, 28/08.\n${waBold('LISTO')} = la dejo para hoy.`,
-  });
+  return presentOrderCollecting(entities, '📅 ¿Para qué fecha es la entrega?');
+}
+
+function extraCostsDirectAsk(entities: WhatsappCommandEntities): string {
+  return presentOrderCollecting(entities, ORDER_EXTRA_COST_ASK);
+}
+
+async function ensureOrderExtraCostsConfig(
+  businessId: string,
+  entities: WhatsappCommandEntities
+): Promise<WhatsappCommandEntities> {
+  if (entities.extraCostsEnabled != null) return entities;
+  entities.extraCostsEnabled = await loadBusinessOrderExtraCostsEnabled(businessId);
+  return entities;
+}
+
+function applyDisabledExtraCosts(entities: WhatsappCommandEntities): string | null {
+  const extras = (entities.extraCosts ?? []).filter((item) => Number(item.costo) > 0);
+  if (entities.extraCostsEnabled !== false || !extras.length) return null;
+  entities.extraCosts = [];
+  entities.extraCostsAsked = true;
+  entities.extraCostsNotice =
+    '⚠️ Este negocio no tiene habilitados costos extra en pedidos.';
+  return entities.extraCostsNotice;
 }
 
 function lastOperationFromResult(
@@ -193,12 +308,23 @@ function lastOperationFromResult(
   const id = String(data.recordId ?? data.orderId ?? data.ventaId ?? data.compraId ?? data.clientId ?? '').trim();
   if (!kind || !id) return null;
   const amount = Number(data.amount ?? entities.amount);
+  const status = String(data.status ?? data.estado ?? entities.orderStatus ?? '').trim() || undefined;
+  const clientId = String(data.clientId ?? entities.clientId ?? '').trim() || undefined;
+  const item = entities.items?.[0];
+  const productId = String(data.productId ?? entities.productId ?? item?.productId ?? '').trim() || undefined;
+  const productName =
+    String(data.productName ?? entities.productName ?? item?.productName ?? item?.productHint ?? '').trim() ||
+    undefined;
   return {
     kind,
     id,
     label: String(data.label ?? '').trim() || undefined,
     clientName: String(data.clientName ?? entities.clientName ?? '').trim() || undefined,
+    clientId,
+    status,
     amount: Number.isFinite(amount) && amount > 0 ? amount : undefined,
+    productId,
+    productName,
     at: new Date().toISOString(),
   };
 }
@@ -269,6 +395,54 @@ function entitiesFromParsed(
     entities.amount = entities.seniaAmount;
   }
   return entities;
+}
+
+function stampInboundIdempotency(
+  entities: WhatsappCommandEntities,
+  messageId?: string | null
+): void {
+  const id = String(messageId ?? '').trim();
+  if (id && !entities.idempotencyKey) {
+    entities.idempotencyKey = `wa:${id}`;
+  }
+}
+
+function parseConversationFromState(
+  state: ConversationState | null | undefined,
+  extra?: WhatsappParseConversation
+): WhatsappParseConversation | undefined {
+  if (!state && !extra) return undefined;
+  const payload = (state?.pendingPayload ?? {}) as Record<string, unknown>;
+  const fromPayload =
+    payload.entities && typeof payload.entities === 'object' && !Array.isArray(payload.entities)
+      ? (payload.entities as WhatsappCommandEntities)
+      : ((payload.clientName || payload.targetOrderId || payload.cashType || payload.amount) && !payload.candidates
+          ? (payload as WhatsappCommandEntities)
+          : undefined);
+  return {
+    lastOperation: extra?.lastOperation ?? state?.lastCompletedOperation ?? state?.lastOperation ?? null,
+    focusOrder: extra?.focusOrder ?? state?.focusOrder ?? null,
+    focusEntities: extra?.focusEntities ?? state?.focusEntities ?? null,
+    lastQuery: extra?.lastQuery ?? state?.lastQuery ?? null,
+    pendingIntent: extra?.pendingIntent ?? state?.pendingIntent ?? undefined,
+    pendingPrompt: extra?.pendingPrompt ?? state?.pendingPrompt ?? undefined,
+    turns: extra?.turns ?? state?.turns ?? undefined,
+    originalIntent:
+      extra?.originalIntent ||
+      (typeof payload.originalIntent === 'string' ? payload.originalIntent : undefined),
+    awaiting:
+      extra?.awaiting ??
+      (String(extra?.pendingIntent ?? state?.pendingIntent ?? '') === STOCK_RESOLUTION_INTENT
+        ? STOCK_RESOLUTION_INTENT
+        : state?.activeTask?.awaiting?.field ||
+          (String(state?.pendingIntent ?? '').startsWith('confirm:') ? 'confirmation' : undefined) ||
+          String(state?.pendingIntent ?? '').trim() ||
+          undefined),
+    knownEntities: extra?.knownEntities ?? fromPayload,
+    missingKeys: extra?.missingKeys,
+    candidates: extra?.candidates,
+    languageMemory: extra?.languageMemory,
+  };
 }
 
 function ensurePurchaseLines(entities: WhatsappCommandEntities): void {
@@ -468,7 +642,7 @@ async function askPurchaseLineCatalog(
       : resolved.status === 'ambiguous'
         ? resolved.candidates
         : [];
-  const query = resolved.status === 'none' ? productQuery : resolved.query;
+  const query = resolved.status === 'unique' ? productQuery : resolved.query;
   const productReply = formatProductChoices(candidates, query, purchaseChoiceOpts(entities, lineIndex));
   await saveConversationState(businessId, phone, {
     pendingIntent: SELECT_PRODUCT_INTENT,
@@ -538,12 +712,27 @@ function applyProductToEntities(
       return;
     }
   }
+  const itemIndex = Number.isInteger(Number(payload.itemIndex)) ? Number(payload.itemIndex) : null;
+  ensureOrderItems(entities);
+  if (itemIndex != null && entities.items?.[itemIndex]) {
+    entities.items[itemIndex] = {
+      ...entities.items[itemIndex]!,
+      productId,
+      productName,
+      skipped: false,
+      productLocked: true,
+    };
+    syncLegacyProductFields(entities);
+    return;
+  }
   entities.productId = productId;
   entities.productName = productName;
 }
 
 function confirmationMessages(intent: string, entities: WhatsappCommandEntities): string[] {
   if (intent === 'create_purchase') return formatPurchaseConfirmationMessages(entities);
+  const presented = presentTransaction(intent, entities);
+  if (presented.length) return presented;
   return [formatOperationSummary(intent, entities)];
 }
 
@@ -581,6 +770,67 @@ async function holdPendingAndAnswer(
   };
 }
 
+async function continueQueryOrList(
+  tenant: WhatsappTenantContext,
+  phone: string,
+  text: string,
+  state: ConversationState | null
+): Promise<WhatsappHandlerResult | null> {
+  const list = state?.listContext;
+  if (list?.hasMore && looksLikeListContinue(text) && state?.lastQuery) {
+    const offset = (Number(list.offset) || 0) + (Number(list.pageSize) || 10);
+    const last = state.lastQuery;
+    const entities = {
+      ...entitiesFromLastQuery({ intent: last.intent as WhatsappIntent, slots: last.slots }),
+      sourceText: text,
+      queryOffset: offset,
+      queryPage: 'next' as const,
+      listOrders: true,
+    };
+    return executeReadQuery(tenant.businessId, phone, last.intent, entities);
+  }
+  if (list?.items?.length && (looksLikeListContinue(text) || looksLikeWantAll(text))) {
+    const wantAll = looksLikeWantAll(text) || list.wantAll === true;
+    const page = looksLikeListContinue(text) ? (list.currentPage || 1) + 1 : list.currentPage || 1;
+    const pages = renderListPage({
+      title: list.title || 'Resultados',
+      items: list.items,
+      currentPage: wantAll ? 1 : page,
+      pageSize: list.pageSize || WA_PRESENT.explorePageSize,
+      wantAll,
+    });
+    await saveConversationState(tenant.businessId, phone, {
+      listContext: {
+        ...list,
+        currentPage: wantAll ? Math.max(1, Math.ceil(list.items.length / (list.pageSize || WA_PRESENT.explorePageSize))) : page,
+        wantAll,
+      },
+    });
+    return {
+      reply: pages[0] ?? '',
+      replies: pages.length > 1 ? pages : undefined,
+      intent: String(state?.lastQuery?.intent ?? 'query_status'),
+      executed: true,
+      businessId: tenant.businessId,
+    };
+  }
+
+  const last = state?.lastQuery;
+  if (last && looksLikeQueryFollowUp(text, { intent: last.intent as WhatsappIntent, slots: last.slots })) {
+    const next = applyQueryFollowUp(text, {
+      intent: last.intent as WhatsappIntent,
+      slots: last.slots,
+    });
+    const entities = {
+      ...entitiesFromLastQuery(next),
+      sourceText: text,
+      listWantAll: looksLikeWantAll(text) || undefined,
+    };
+    return executeReadQuery(tenant.businessId, phone, next.intent, entities);
+  }
+  return null;
+}
+
 async function executeReadQuery(
   businessId: string,
   phone: string,
@@ -602,12 +852,47 @@ async function executeReadQuery(
     raw: String(entities.sourceText ?? ''),
   } as ParsedWhatsappCommand;
   const result = await executeWhatsappCommand(tenant, parsed);
-  await clearConversationState(businessId, phone);
-  if (intent === 'query_cash' || intent === 'query_balance') {
-    await saveConversationState(businessId, phone, { setupStatus: 'done' });
+  const listItems = Array.isArray(result.data?.listItems)
+    ? result.data.listItems.map((item) => String(item))
+    : undefined;
+  const listContext: ConversationListContext | null =
+    listItems && listItems.length
+      ? {
+          type: intent === 'query_stock' ? 'stock' : 'orders',
+          items: listItems,
+          currentPage: 1,
+          pageSize: Number(result.data?.pageSize ?? WA_PRESENT.explorePageSize) || WA_PRESENT.explorePageSize,
+          totalResults: Number(result.data?.total ?? listItems.length) || listItems.length,
+          title: String(result.data?.title ?? ''),
+          wantAll: entities.listWantAll === true,
+          hasMore: result.data?.hasMore === true,
+          offset: Number(result.data?.offset ?? 0) || 0,
+          filters: lastQueryFromEntities(intent as WhatsappIntent, entities).slots,
+        }
+      : null;
+  if (isQueryIntent(intent)) {
+    await rememberLastQuery(
+      businessId,
+      phone,
+      lastQueryFromEntities(intent as WhatsappIntent, entities),
+      listContext
+    );
+  } else {
+    await clearConversationState(businessId, phone);
   }
+  const pages =
+    listItems && listItems.length
+      ? renderListPage({
+          title: String(result.data?.title ?? ''),
+          items: listItems,
+          currentPage: 1,
+          pageSize: WA_PRESENT.explorePageSize,
+          wantAll: entities.listWantAll === true,
+        })
+      : [result.reply];
   return {
-    reply: result.reply,
+    reply: pages[0] ?? result.reply,
+    replies: pages.length > 1 ? pages : undefined,
     intent: result.intent,
     executed: result.executed,
     businessId,
@@ -621,13 +906,36 @@ async function askConfirmation(
   entities: WhatsappCommandEntities
 ): Promise<WhatsappHandlerResult> {
   const pages = confirmationMessages(intent, entities);
+  const targetId = String(entities.targetOrderId ?? '').trim();
+  const operationPlan = buildOperationPlan(intent, entities);
   await saveConversationState(businessId, phone, {
     pendingIntent: `${CONFIRM_INTENT_PREFIX}${intent}`,
     pendingPayload: entities as Record<string, unknown>,
     pendingPrompt: pages[pages.length - 1] ?? confirmationReply(intent, entities),
+    operationPlan: operationPlan as unknown as Record<string, unknown>,
+    activeTask: {
+      intent,
+      collected: {
+        client: entities.clientName,
+        amount: entities.amount,
+        extraCostsEnabled: entities.extraCostsEnabled,
+      },
+      awaiting: { field: 'confirmation', type: 'confirmation' },
+    },
+    ...(targetId
+      ? {
+          focusOrder: {
+            id: targetId,
+            label: entities.targetOrderLabel,
+            clientName: entities.clientName,
+            at: new Date().toISOString(),
+          },
+        }
+      : {}),
   });
+  const notice = entities.extraCostsNotice ? `${entities.extraCostsNotice}\n` : '';
   return {
-    reply: pages[0] ?? confirmationReply(intent, entities),
+    reply: `${notice}${pages[0] ?? confirmationReply(intent, entities)}`.trim(),
     replies: pages.length > 1 ? pages : undefined,
     intent,
     executed: false,
@@ -637,6 +945,11 @@ async function askConfirmation(
 
 function polishCashConcept(entities: WhatsappCommandEntities, ambitos: CajaAmbitoConfig[]): void {
   const fallback = entities.cashType === 'ingreso' ? 'Ingreso' : 'Egreso';
+  if (entities.semanticCommand || isLlmFirstEngine()) {
+    const concept = String(entities.cashConcept ?? entities.notes ?? '').replace(/\s+/g, ' ').trim();
+    entities.cashConcept = concept.slice(0, 80) || fallback;
+    return;
+  }
   entities.cashConcept = cleanCashConcept(
     String(entities.cashConcept ?? entities.notes ?? entities.sourceText ?? ''),
     ambitos,
@@ -810,6 +1123,7 @@ async function prepareOperation(
 
   const source = String(entities.sourceText ?? '').trim();
   if (
+    !isLlmFirstEngine() &&
     intent === 'register_cost' &&
     (looksLikeNewOrder(source) ||
       (!entities.orderNumber &&
@@ -826,13 +1140,18 @@ async function prepareOperation(
   sanitizeWhatsappEntities(entities);
   applyOrderDateDefault(intent, entities);
   if (
+    !isLlmFirstEngine() &&
     entities.sourceText &&
     /\bsin\s+(descripci[oó]n|detalle|notas?|observaciones)\b/i.test(entities.sourceText)
   ) {
     entities.notesAsked = true;
     entities.notes = undefined;
   }
-  if (!String(entities.notes ?? '').trim() && entities.sourceText) {
+  if (
+    !isLlmFirstEngine() &&
+    !String(entities.notes ?? '').trim() &&
+    entities.sourceText
+  ) {
     const notes = sanitizeOrderNotes(extractNotesHintFromText(entities.sourceText) ?? undefined);
     if (notes) {
       entities.notes = notes;
@@ -843,19 +1162,23 @@ async function prepareOperation(
     entities.notes = sanitizeOrderNotes(entities.notes);
   }
   if (
+    !isLlmFirstEngine() &&
     !String(entities.productName ?? '').trim() &&
     entities.sourceText &&
-    intent !== 'register_cash' &&
-    intent !== 'register_payment' &&
-    intent !== 'query_cash' &&
-    intent !== 'query_balance'
+    productParserAllowed(intent)
   ) {
     const product = extractProductHintFromText(entities.sourceText);
-    if (product) entities.productName = product;
+    if (product && !isPlaceholderProductLabel(product)) entities.productName = product;
   }
-  if (entities.sourceText && !(entities.extraCosts?.length)) {
-    const extras = extractExtraCostsFromText(entities.sourceText);
-    if (extras.length) entities.extraCosts = extras;
+  if (!isLlmFirstEngine() && entities.sourceText) {
+    if (!(entities.extraCosts?.length)) {
+      const extras = extractExtraCostsFromText(entities.sourceText);
+      if (extras.length) entities.extraCosts = extras;
+    }
+    if (!entities.extraCostsProductHint) {
+      const hint = extractExtraCostProductHint(entities.sourceText);
+      if (hint) entities.extraCostsProductHint = hint;
+    }
   }
 
   if (
@@ -866,6 +1189,13 @@ async function prepareOperation(
     !String(entities.orderNumber ?? '').trim()
   ) {
     return askPaymentKind(businessId, phone, entities);
+  }
+
+  if (
+    (intent === 'create_order' || intent === 'create_sale') &&
+    shouldOpenItemCollection(isLlmFirstEngine() ? '' : source || String(entities.sourceText ?? ''), entities)
+  ) {
+    return askCollectOrderItems(businessId, phone, intent, entities);
   }
 
   const missing = missingRequiredFields(intent, entities);
@@ -889,7 +1219,7 @@ async function prepareOperation(
 
   // 1) Cliente
   if (needsClient(intent) && !entities.clientId) {
-    const query = String(entities.clientName ?? '').trim();
+    const query = clientLookupQuery(entities);
     if (!query) {
       await saveConversationState(businessId, phone, {
         pendingIntent: CLARIFY_INTENT,
@@ -937,18 +1267,23 @@ async function prepareOperation(
 
     if (resolved.status === 'ambiguous') {
       const candidates: MatchedClient[] = resolved.candidates;
+      const allowCreate = !candidates.some((row) => (Number(row.score) || 0) >= 70);
       await saveConversationState(businessId, phone, {
         pendingIntent: SELECT_CLIENT_INTENT,
         pendingPayload: {
           originalIntent: intent,
           query: resolved.query,
           entities,
-          allowCreate: true,
+          allowCreate,
           candidates: candidates.map((c) => ({ id: c.id, nombre: c.nombre, score: c.score })),
+          hiddenCandidates: (resolved.rest ?? []).map((c) => ({ id: c.id, nombre: c.nombre, score: c.score })),
         },
       });
       return {
-        reply: formatClientChoices(candidates, resolved.query, { allowCreate: true }),
+        reply: formatClientChoices(candidates, resolved.query, {
+          allowCreate,
+          hasMore: Boolean(resolved.rest?.length),
+        }),
         intent: SELECT_CLIENT_INTENT,
         executed: false,
         businessId,
@@ -958,6 +1293,7 @@ async function prepareOperation(
     entities.spokenClientName = entities.spokenClientName || query;
     entities.clientId = resolved.client.id;
     entities.clientName = resolved.client.nombre;
+    entities.clientLocked = true;
   }
 
   if (needsSupplier(intent) && !entities.supplierId) {
@@ -1124,88 +1460,137 @@ async function prepareOperation(
     return ensurePurchasePayment(businessId, phone, entities);
   }
 
-  // 2) Producto (si mencionaron uno)
-  const productQuery = String(entities.productName ?? '').trim();
-  if (
-    (intent === 'create_order' || intent === 'create_sale' || intent === 'update_product_cost') &&
-    productQuery &&
-    !entities.productId &&
-    !entities.productAsConcept
-  ) {
+  // 2) Productos (cada ítem se resuelve por separado)
+  if (intent === 'create_order' || intent === 'create_sale' || intent === 'update_product_cost') {
     const catalogCostOnly = intent === 'update_product_cost';
-    const resolved = await resolveProductMatch(businessId, productQuery, {
-      preferChoices: preferCatalogChoices(intent),
-      utterance: entities.sourceText || productQuery,
-    });
-    if (resolved.status === 'ambiguous') {
-      const candidates: MatchedStockItem[] = resolved.candidates;
-      await saveConversationState(businessId, phone, {
-        pendingIntent: SELECT_PRODUCT_INTENT,
-        pendingPayload: {
-          originalIntent: intent,
-          query: resolved.query,
-          entities,
-          allowCreate: !catalogCostOnly,
-          candidates: candidates.map((c) => ({
-            id: c.id,
-            nombre: c.nombre,
-            label: c.label,
-            score: c.score,
-            precioVenta: c.precioVenta,
-          })),
-        },
+    ensureOrderItems(entities);
+    const items = [...(entities.items ?? [])];
+    if (!items.length && String(entities.productName ?? '').trim() && !entities.productId && !entities.productAsConcept) {
+      items.push({
+        quantity: Math.max(1, Number(entities.quantity) || 1),
+        rawText: String(entities.productName),
+        productHint: String(entities.productName),
       });
-      return {
-        reply: formatProductChoices(candidates, resolved.query, {
-          allowCreate: !catalogCostOnly,
-          context: catalogCostOnly ? 'purchase' : 'order',
-        }),
-        intent: SELECT_PRODUCT_INTENT,
-        executed: false,
-        businessId,
-      };
     }
-    if (resolved.status === 'unique') {
-      entities.spokenProductName = entities.spokenProductName || productQuery;
-      entities.productId = resolved.product.id;
-      entities.productName = resolved.product.label || resolved.product.nombre;
-      if (!catalogCostOnly && entities.amount == null && resolved.product.precioVenta > 0) {
-        const qty = Math.max(1, Number(entities.quantity) || 1);
-        entities.amount = resolved.product.precioVenta * qty;
-      }
-    }
-    if (resolved.status === 'none') {
-      if (catalogCostOnly) {
+    const languageMemory = await loadUserLanguageMemory(businessId, phone).catch(() => ({ aliases: [] }));
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      if (item.productId || item.skipped || item.tipoLinea === 'concepto' || entities.productAsConcept) continue;
+      const spoken = String(item.rawText || item.productHint || item.productName || '').trim();
+      if (!spoken) continue;
+      const hinted = applyLanguageMemory(catalogQueryForItem(item) || spoken, languageMemory);
+      const resolved = await resolveProductMatch(businessId, hinted, {
+        preferChoices: preferCatalogChoices(intent),
+        utterance: spoken,
+        messageContext: entities.sourceText,
+        attributes: item.attributes,
+      });
+      if (resolved.status === 'ambiguous') {
+        const candidates: MatchedStockItem[] = resolved.candidates;
+        const allowCreate =
+          !catalogCostOnly && !candidates.some((row) => (Number(row.score) || 0) >= 70);
+        await saveConversationState(businessId, phone, {
+          pendingIntent: SELECT_PRODUCT_INTENT,
+          pendingPayload: {
+            originalIntent: intent,
+            query: resolved.query,
+            itemIndex: i,
+            entities: { ...entities, items },
+            allowCreate,
+            candidates: candidates.map((c) => ({
+              id: c.id,
+              nombre: c.nombre,
+              label: c.label,
+              score: c.score,
+              precioVenta: c.precioVenta,
+            })),
+            hiddenCandidates: (resolved.rest ?? []).map((c) => ({
+              id: c.id,
+              nombre: c.nombre,
+              label: c.label,
+              score: c.score,
+              precioVenta: c.precioVenta,
+            })),
+          },
+        });
+        logWhatsappTurn({
+          rawMessage: entities.sourceText,
+          activeTask: intent,
+          parsedIntent: intent,
+          itemQueries: items.map((row) => catalogQueryForItem(row)),
+          ambiguities: [`item[${i}] ${resolved.query}`],
+          question: 'product_choice',
+        });
         return {
-          reply: `No encontré "${productQuery}" en el catálogo. Decime el nombre como está guardado, o NO para cancelar.`,
-          intent: 'error',
+          reply: formatProductChoices(candidates, resolved.query, {
+            allowCreate,
+            context: catalogCostOnly ? 'purchase' : 'order',
+            lineIndex: i,
+            lineCount: items.length,
+            hasMore: Boolean(resolved.rest?.length),
+          }),
+          intent: SELECT_PRODUCT_INTENT,
           executed: false,
           businessId,
         };
       }
-      await saveConversationState(businessId, phone, {
-        pendingIntent: CONFIRM_CREATE_PRODUCT,
-        pendingPayload: {
-          originalIntent: intent,
-          entities,
-          proposedName: productQuery,
-        },
-      });
-      const unit = unitPriceFromEntities(entities);
-      const priceHint = unit > 0 ? ` a $${unit}` : '';
-      return {
-        reply: waCard({
-          title: 'Producto nuevo',
-          lines: [
-            `No encontré *${productQuery}* en el catálogo.`,
-            'Si lo creo, queda solo para pedidos/ventas (sin control de stock).',
-          ],
-          ask: `${waBold('SÍ')} = crear y usar${priceHint}\nOtro nombre = busco ese\n${waBold('NO')} = cancelar`,
-        }),
-        intent: CONFIRM_CREATE_PRODUCT,
-        executed: false,
-        businessId,
-      };
+      if (resolved.status === 'unique') {
+        items[i] = {
+          ...item,
+          productId: resolved.product.id,
+          productName: resolved.product.label || resolved.product.nombre,
+          spokenProductName: item.spokenProductName || spoken,
+          productLocked: true,
+          resolvedEntity: {
+            id: resolved.product.id,
+            name: resolved.product.label || resolved.product.nombre,
+          },
+        };
+        if (!catalogCostOnly && items[i]!.unitPrice == null && resolved.product.precioVenta > 0) {
+          items[i]!.unitPrice = resolved.product.precioVenta;
+        }
+      }
+      if (resolved.status === 'none') {
+        if (catalogCostOnly) {
+          return {
+            reply: `No encontré "${spoken}" en el catálogo. Decime el nombre como está guardado, o NO para cancelar.`,
+            intent: 'error',
+            executed: false,
+            businessId,
+          };
+        }
+        await saveConversationState(businessId, phone, {
+          pendingIntent: CONFIRM_CREATE_PRODUCT,
+          pendingPayload: {
+            originalIntent: intent,
+            entities: { ...entities, items },
+            proposedName: spoken,
+            itemIndex: i,
+          },
+        });
+        const unit = unitPriceFromEntities(entities);
+        const priceHint = unit > 0 ? ` a $${unit}` : '';
+        return {
+          reply: waCard({
+            title: 'Producto nuevo',
+            lines: [
+              `No encontré *${spoken}* en el catálogo.`,
+              'Si lo creo, queda solo para pedidos/ventas (sin control de stock).',
+            ],
+            ask: `¿Lo creo${priceHint}?\n${waBold('SÍ')} / ${waBold('NO')}`,
+          }),
+          intent: CONFIRM_CREATE_PRODUCT,
+          executed: false,
+          businessId,
+        };
+      }
+    }
+    entities.items = normalizeOrderLineItems(items, entities.sourceText);
+    traceOrderItems('after-resolveProductMatch', entities.items);
+    syncLegacyProductFields(entities);
+    const priced = items.filter((item) => !item.skipped && Number(item.unitPrice) > 0);
+    if (!catalogCostOnly && entities.amount == null && priced.length === items.filter((item) => !item.skipped).length) {
+      entities.amount = priced.reduce((sum, item) => sum + Number(item.unitPrice) * Math.max(1, item.quantity), 0);
     }
   }
 
@@ -1231,7 +1616,7 @@ async function prepareOperation(
     };
   }
 
-  if (intent === 'register_cash' && !entities.cashType) {
+  if (intent === 'register_cash' && !entities.cashType && !isLlmFirstEngine()) {
     entities.cashType = 'egreso';
   }
 
@@ -1347,12 +1732,90 @@ async function prepareOperation(
       };
     }
     const target = resolution.order;
+    await rememberFocusOrder(businessId, phone, {
+      id: target.id,
+      label: target.label,
+      clientName: target.clientName,
+    });
+    const closed = closedOrderReason(target.estado);
+    if (closed) {
+      const source = String(entities.sourceText ?? '');
+      const wantsPay = isLlmFirstEngine()
+        ? entities.paid === true ||
+          entities.payFullBalance === true ||
+          Number(entities.collectionAmount) > 0 ||
+          Number(entities.amount) > 0
+        : ORDER_PAY_HINT.test(source) ||
+          SETTLE_TURN.test(source) ||
+          looksLikeCollectFullBalance(source) ||
+          entities.paid === true ||
+          entities.payFullBalance === true ||
+          Number(entities.amount) > 0;
+      const saldo = Number(target.saldo) || 0;
+      const money = saldo.toLocaleString('es-AR', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
+      if (closed === 'entregado' && wantsPay && saldo > 0) {
+        entities.targetOrderId = target.id;
+        entities.targetOrderLabel = target.label;
+        entities.targetOrderSaldo = saldo;
+        entities.clientName = entities.clientName || target.clientName;
+        entities.clientId = entities.clientId || target.clientId;
+        if (!(Number(entities.amount) > 0)) {
+          entities.payFullBalance = true;
+          entities.paid = true;
+        }
+        return askConfirmation(businessId, phone, 'register_payment', entities);
+      }
+      await saveConversationState(businessId, phone, {
+        pendingIntent: null,
+        pendingPayload: null,
+        pendingPrompt: null,
+      });
+      if (closed === 'cancelado') {
+        return {
+          reply: `El pedido #${target.label} está cancelado.`,
+          intent: 'update_order_status',
+          executed: false,
+          businessId,
+        };
+      }
+      return {
+        reply: waCard({
+          title: `Pedido #${target.label}`,
+          lines: [
+            target.clientName ? `• ${target.clientName}` : '',
+            '• Ya está entregado',
+            `• Saldo: $${money}`,
+          ].filter(Boolean),
+          ask: undefined,
+        }),
+        intent: 'update_order_status',
+        executed: false,
+        businessId,
+      };
+    }
     const nextEstado = entities.orderStatus ?? 'listo';
     const source = String(entities.sourceText ?? '');
-    if (!ORDER_PAY_HINT.test(source)) {
+    const wantsPay = isLlmFirstEngine()
+      ? entities.paid === true ||
+        entities.payFullBalance === true ||
+        Number(entities.collectionAmount) > 0 ||
+        Number(entities.amount) > 0
+      : ORDER_PAY_HINT.test(source) ||
+        SETTLE_TURN.test(source) ||
+        looksLikeCollectFullBalance(source) ||
+        entities.paid === true ||
+        entities.payFullBalance === true ||
+        Number(entities.amount) > 0;
+    if (!wantsPay) {
       entities.amount = undefined;
       entities.paid = undefined;
       entities.payFullBalance = undefined;
+    } else if (!isLlmFirstEngine() && looksLikeCollectFullBalance(source) && !(Number(entities.amount) > 0)) {
+      entities.payFullBalance = true;
+      entities.paid = true;
     }
     const preview = await previewOrderStatusChange(businessId, target, nextEstado);
     entities.targetOrderId = target.id;
@@ -1435,32 +1898,9 @@ async function prepareOperation(
     };
   }
 
-  if (intent === 'create_order' && !entities.notesAsked) {
-    const notes = String(entities.notes ?? '').trim();
-    if (!notes || isGenericWhatsappNotes(notes)) {
-      entities.notes = undefined;
-      await saveConversationState(businessId, phone, {
-        pendingIntent: CLARIFY_INTENT,
-        pendingPayload: {
-          originalIntent: intent,
-          missingField: 'notes',
-          entities,
-        },
-      });
-      return {
-        reply: waCard({
-          title: 'Descripción',
-          lines: ['Ubicación del estampado, frase, observaciones.'],
-          ask: `${waBold('LISTO')} = sin descripción.`,
-        }),
-        intent: CLARIFY_INTENT,
-        executed: false,
-        businessId,
-      };
-    }
-  }
-
-  if (intent === 'create_order' && !entities.deliveryDate && !entities.deliveryAsked) {
+  if (intent === 'create_order' && !entities.deliveryDate) {
+    await ensureOrderExtraCostsConfig(businessId, entities);
+    applyDisabledExtraCosts(entities);
     await saveConversationState(businessId, phone, {
       pendingIntent: CLARIFY_INTENT,
       pendingPayload: {
@@ -1468,19 +1908,81 @@ async function prepareOperation(
         missingField: 'deliveryDate',
         entities,
       },
+      activeTask: {
+        intent,
+        collected: {
+          client: entities.clientName,
+          amount: entities.amount,
+          extraCostsEnabled: entities.extraCostsEnabled,
+        },
+        awaiting: { field: 'deliveryDate', type: 'field' },
+      },
     });
+    const notice = entities.extraCostsNotice ? `${entities.extraCostsNotice}\n` : '';
     return {
-      reply: extraCostsDeliveryAsk(entities),
+      reply: `${notice}${extraCostsDeliveryAsk(entities)}`.trim(),
       intent: CLARIFY_INTENT,
       executed: false,
       businessId,
     };
   }
 
-  if (intent === 'create_order' && !entities.deliveryDate) {
-    entities.deliveryDate = todayDateOnly();
-    entities.deliveryAsked = true;
-    entities.deliveryDefaulted = true;
+  if (intent === 'create_order') {
+    await ensureOrderExtraCostsConfig(businessId, entities);
+    const disabledNotice = applyDisabledExtraCosts(entities);
+    if (shouldAskOrderExtraCosts(entities)) {
+      await saveConversationState(businessId, phone, {
+        pendingIntent: CLARIFY_INTENT,
+        pendingPayload: {
+          originalIntent: intent,
+          missingField: 'extraCosts',
+          entities,
+        },
+        activeTask: {
+          intent,
+          collected: {
+            client: entities.clientName,
+            amount: entities.amount,
+            extraCostsEnabled: entities.extraCostsEnabled,
+          },
+          awaiting: { field: 'extraCosts', type: 'field' },
+        },
+      });
+      return {
+        reply: extraCostsDirectAsk(entities),
+        intent: CLARIFY_INTENT,
+        executed: false,
+        businessId,
+      };
+    }
+    if (needsExtraCostItemAsk(entities)) {
+      await saveConversationState(businessId, phone, {
+        pendingIntent: CLARIFY_INTENT,
+        pendingPayload: {
+          originalIntent: intent,
+          missingField: 'extraCostsItem',
+          entities,
+        },
+        activeTask: {
+          intent,
+          collected: {
+            client: entities.clientName,
+            amount: entities.amount,
+            extraCostsEnabled: entities.extraCostsEnabled,
+          },
+          awaiting: { field: 'extraCostsItem', type: 'field' },
+        },
+      });
+      return {
+        reply: formatExtraCostItemAsk(entities.extraCosts ?? [], entities),
+        intent: CLARIFY_INTENT,
+        executed: false,
+        businessId,
+      };
+    }
+    if (disabledNotice && !entities.extraCostsAsked) {
+      entities.extraCostsAsked = true;
+    }
   }
 
   if (intent === 'register_cash') {
@@ -1488,7 +1990,7 @@ async function prepareOperation(
     if (asked) return asked;
   }
 
-  if (intent === 'query_cash' || intent === 'query_balance') {
+  if (intent === 'query_cash' || intent === 'query_balance' || intent === 'query_stock') {
     return executeReadQuery(businessId, phone, intent, entities);
   }
 
@@ -1504,7 +2006,7 @@ async function mergeClarifyIntoEntities(
   businessId?: string,
   originalIntent?: string
 ): Promise<WhatsappCommandEntities> {
-  const parsed = await parseWhatsappCommand({
+  const parsed = await interpretTurn({
     text,
     rubro,
     businessId,
@@ -1560,6 +2062,23 @@ async function mergeClarifyIntoEntities(
   return next;
 }
 
+function pinKnownOrder(
+  known: WhatsappCommandEntities,
+  incoming: WhatsappCommandEntities
+): WhatsappCommandEntities {
+  const next = { ...known, ...incoming };
+  const orderId = String(known.targetOrderId ?? '').trim();
+  if (orderId) {
+    next.targetOrderId = orderId;
+    next.targetOrderLabel = known.targetOrderLabel || next.targetOrderLabel;
+    next.clientId = known.clientId || next.clientId;
+    next.clientName = known.clientName || next.clientName;
+    next.spokenClientName = known.spokenClientName || next.spokenClientName;
+    if (known.targetOrderSaldo != null) next.targetOrderSaldo = known.targetOrderSaldo;
+  }
+  return next;
+}
+
 function payloadEntities(payload: Record<string, unknown>): WhatsappCommandEntities {
   if (payload.entities && typeof payload.entities === 'object' && !Array.isArray(payload.entities)) {
     return { ...(payload.entities as WhatsappCommandEntities) };
@@ -1584,6 +2103,7 @@ function pendingIntentForKind(kind: 'client' | 'product' | 'supplier'): string {
 
 async function parsePendingFollowUp(
   businessId: string,
+  phone: string,
   text: string,
   pendingIntent: string,
   payload: Record<string, unknown>,
@@ -1597,11 +2117,12 @@ async function parsePendingFollowUp(
       ? [String(payload.missingField)]
       : [];
   const candidates = (Array.isArray(payload.candidates) ? payload.candidates : []) as NamedCandidate[];
-  return parseWhatsappCommand({
+  const state = await getConversationState(businessId, phone);
+  return interpretTurn({
     text,
     rubro,
     businessId,
-    conversation: {
+    conversation: parseConversationFromState(state, {
       originalIntent,
       pendingIntent,
       awaiting:
@@ -1615,6 +2136,8 @@ async function parsePendingFollowUp(
               ? 'select_supplier'
               : pendingIntent === SELECT_CASH_AMBITO_INTENT
                 ? 'select_cash_ambito'
+              : pendingIntent === STOCK_RESOLUTION_INTENT
+                ? STOCK_RESOLUTION_INTENT
               : pendingIntent.startsWith(CONFIRM_INTENT_PREFIX)
                 ? 'confirm'
                 : String(payload.missingField || 'fields'),
@@ -1624,7 +2147,7 @@ async function parsePendingFollowUp(
         index: index + 1,
         label: candidate.label || candidate.nombre,
       })),
-    },
+    }),
   });
 }
 
@@ -1638,7 +2161,7 @@ async function continueFromFollowUp(
   parsedInput?: ParsedWhatsappCommand
 ): Promise<WhatsappHandlerResult> {
   const parsed =
-    parsedInput ?? (await parsePendingFollowUp(businessId, text, pendingIntent, payload, rubro));
+    parsedInput ?? (await parsePendingFollowUp(businessId, phone, text, pendingIntent, payload, rubro));
   const known = payloadEntities(payload);
   const originalIntent = originalIntentFromPayload(payload, pendingIntent);
   const incoming = 'entities' in parsed ? parsed.entities ?? {} : {};
@@ -1664,12 +2187,27 @@ async function continueFromFollowUp(
     return prepareOperation(businessId, phone, 'register_cash', fresh, rubro);
   }
   if (looksLikeOrderStatusUpdate(text) || parsed.intent === 'update_order_status') {
-    const fresh = entitiesFromParsed(parsed);
-    if (!ORDER_PAY_HINT.test(text)) {
+    const fresh = pinKnownOrder(known, entitiesFromParsed(parsed));
+    const amount = extractAmountFromText(text);
+    if (amount && amount > 0) fresh.amount = amount;
+    const wantsPay =
+      ORDER_PAY_HINT.test(text) ||
+      SETTLE_TURN.test(text) ||
+      looksLikeCollectFullBalance(text) ||
+      fresh.paid === true ||
+      fresh.payFullBalance === true ||
+      Number(fresh.amount) > 0;
+    if (!wantsPay) {
       fresh.amount = undefined;
       fresh.paid = undefined;
       fresh.payFullBalance = undefined;
+    } else if (looksLikeCollectFullBalance(text) && !(Number(fresh.amount) > 0)) {
+      fresh.payFullBalance = true;
+      fresh.paid = true;
     }
+    if (!fresh.orderStatus && ENTREGADO_TURN.test(text)) fresh.orderStatus = 'entregado';
+    if (!fresh.orderStatus && LISTO_TURN.test(text)) fresh.orderStatus = 'listo';
+    if (!fresh.sourceText) fresh.sourceText = text;
     return prepareOperation(businessId, phone, 'update_order_status', fresh, rubro);
   }
 
@@ -1733,7 +2271,16 @@ async function continueFromFollowUp(
     parsed.intent !== originalIntent
   ) {
     const fresh = entitiesFromParsed(parsed);
-    return prepareOperation(businessId, phone, parsed.intent, fresh, rubro);
+    const keepOrder =
+      Boolean(known.targetOrderId) &&
+      ['update_order_status', 'register_payment'].includes(String(parsed.intent));
+    return prepareOperation(
+      businessId,
+      phone,
+      parsed.intent,
+      keepOrder ? pinKnownOrder(known, fresh) : fresh,
+      rubro
+    );
   }
 
   if (parsed.followUpAction === 'confirm' && originalIntent) {
@@ -1754,7 +2301,16 @@ async function continueFromFollowUp(
       businessId,
     };
   }
-  return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+  return prepareOperation(
+    businessId,
+    phone,
+    originalIntent === 'register_payment' &&
+      (looksLikeOrderStatusUpdate(text) || incoming.orderStatus)
+      ? 'update_order_status'
+      : originalIntent,
+    pinKnownOrder(known, entities),
+    rubro
+  );
 }
 
 /** «2», «#00223» o «el de Ana» sobre la lista de pedidos abiertos. */
@@ -1788,8 +2344,8 @@ const LISTO_TURN = /(?<![\p{L}])(listo|pronto|termin[eé]|ya\s+est[aá]\s+(listo
 const ENTREGADO_TURN =
   /(?<![\p{L}])(entregu[eé]|entregad[oa]|se\s+lo\s+(di|llev[oó])|ya\s+lo\s+(retir[oó]|llev[oó]))(?![\p{L}])/iu;
 const SETTLE_TURN =
-  /(?<![\p{L}])(sald(?:alo|ar)|pag[oó]\s+todo|cobr[oó]\s+todo|pago\s+del\s+total|total\s+del\s+saldo|cobra(?:r)?\s+(?:el\s+)?(?:saldo|total)|registr[aeá]\s+(?:el\s+)?pago)(?![\p{L}])/iu;
-const PAY_TURN = /(?<![\p{L}])(pag[oó]|cobr|se[nñ]a|abon)(?![\p{L}])/iu;
+  /(?<![\p{L}])(sald(?:alo|ar)|pag[oó]\s+todo|cobr[aeéoó]\s+todo|pago\s+del\s+total|total\s+del\s+saldo|cobra(?:r)?\s+(?:todo\s+)?(?:el\s+)?(?:saldo|total|resto)|todo\s+el\s+saldo|el\s+saldo\s+(?:entero|completo)|registr[aeá]\s+(?:el\s+)?pago)(?![\p{L}])/iu;
+const PAY_TURN = /(?<![\p{L}])(pag[oó]|cobr(?:ar|[aeéoó])|se[nñ]a|abon)(?![\p{L}])/iu;
 
 function entitiesFromPickedOrder(
   entities: WhatsappCommandEntities,
@@ -1812,12 +2368,18 @@ async function askOrderAction(
   businessId: string,
   phone: string,
   picked: OrderStatusTarget,
-  entities: WhatsappCommandEntities
+  entities: WhatsappCommandEntities,
+  step: 'action' | 'status' | 'amount' = 'action'
 ): Promise<WhatsappHandlerResult> {
-  const reply = formatOrderActionAsk(picked);
+  const reply =
+    step === 'status'
+      ? formatOrderStatusAsk(picked)
+      : step === 'amount'
+        ? formatPaymentAmountAsk(picked)
+        : formatOrderActionAsk(picked);
   await saveConversationState(businessId, phone, {
     pendingIntent: ORDER_ACTION_INTENT,
-    pendingPayload: { originalIntent: 'query_status', entities, picked },
+    pendingPayload: { originalIntent: 'query_status', entities, picked, step },
     pendingPrompt: reply,
     lastOperation: {
       kind: 'order',
@@ -1825,6 +2387,12 @@ async function askOrderAction(
       label: picked.label,
       clientName: picked.clientName,
       amount: picked.total,
+      at: new Date().toISOString(),
+    },
+    focusOrder: {
+      id: picked.id,
+      label: picked.label,
+      clientName: picked.clientName,
       at: new Date().toISOString(),
     },
   });
@@ -1836,6 +2404,31 @@ async function askOrderAction(
   };
 }
 
+function menuIndex(text: string, max: number): number | null {
+  const match = String(text ?? '').trim().match(/^\s*(\d{1,2})\s*$/);
+  if (!match) return null;
+  const index = Number(match[1]);
+  if (index >= 1 && index <= max) return index;
+  return null;
+}
+
+function orderStatusFromMenu(text: string): WhatsappOrderStatus | null {
+  const index = menuIndex(text, 4);
+  if (index === 1) return 'pendiente';
+  if (index === 2) return 'en_produccion';
+  if (index === 3) return 'listo';
+  if (index === 4) return 'entregado';
+  const fold = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (/\bpendiente\b/.test(fold)) return 'pendiente';
+  if (/\bproduccion\b|\ben proceso\b/.test(fold)) return 'en_produccion';
+  if (/\blisto\b|\bpronto\b|\bterminad/.test(fold)) return 'listo';
+  if (/\bentregad/.test(fold)) return 'entregado';
+  return null;
+}
+
 async function continueFromPickedOrder(
   businessId: string,
   phone: string,
@@ -1843,23 +2436,55 @@ async function continueFromPickedOrder(
   originalIntent: string,
   entities: WhatsappCommandEntities,
   text: string,
-  rubro?: string | null
+  rubro?: string | null,
+  fromListPick = false
 ): Promise<WhatsappHandlerResult> {
+  await rememberFocusOrder(businessId, phone, {
+    id: picked.id,
+    label: picked.label,
+    clientName: picked.clientName,
+  });
   const next = entitiesFromPickedOrder(entities, picked);
-  const amount = extractAmountFromText(text);
-  if (amount && amount > 0) next.amount = amount;
-  const wantsListo = LISTO_TURN.test(text);
-  const wantsEntregado = ENTREGADO_TURN.test(text);
-  const wantsSettle = SETTLE_TURN.test(text) || next.payFullBalance === true;
-  const wantsPay = PAY_TURN.test(text) || wantsSettle || Boolean(amount && !wantsEntregado);
+  const indexOnly = fromListPick && /^\s*\d{1,2}\s*$/.test(text.trim());
+  const pickedIndex = indexOnly ? Number(text.trim()) : null;
+  const amountFromText = indexOnly
+    ? null
+    : extractAmountFromText(text.replace(/^\s*\d{1,2}\b/, ' '));
+  if (amountFromText && amountFromText > 0) next.amount = amountFromText;
+  if (pickedIndex != null && Number(next.amount) === pickedIndex) {
+    next.amount = undefined;
+  }
+  const wantsListo = !indexOnly && LISTO_TURN.test(text);
+  const wantsEntregado = !indexOnly && ENTREGADO_TURN.test(text);
+  const wantsSettle =
+    !indexOnly &&
+    (SETTLE_TURN.test(text) || looksLikeCollectFullBalance(text) || next.payFullBalance === true);
+  const wantsPay =
+    !indexOnly && (PAY_TURN.test(text) || wantsSettle || Boolean(amountFromText && !wantsEntregado));
+
+  if (indexOnly) {
+    const hasRealAmount = Number(next.amount) > 0;
+    if (originalIntent === 'register_payment' && (hasRealAmount || next.payFullBalance)) {
+      next.paymentKind = next.paymentKind || 'pago';
+      return prepareOperation(businessId, phone, 'register_payment', next, rubro);
+    }
+    if (originalIntent === 'update_order_status' && next.orderStatus) {
+      return prepareOperation(businessId, phone, 'update_order_status', next, rubro);
+    }
+    return askOrderAction(businessId, phone, picked, next);
+  }
+
+  if (originalIntent === 'update_order_status' && next.orderStatus) {
+    return prepareOperation(businessId, phone, 'update_order_status', next, rubro);
+  }
 
   if (wantsEntregado) {
     next.orderStatus = 'entregado';
-    if (wantsSettle || (wantsPay && !(amount && amount > 0))) {
+    if (wantsSettle || (wantsPay && !(amountFromText && amountFromText > 0))) {
       next.payFullBalance = true;
       next.paid = true;
     }
-    if (!wantsSettle && !PAY_TURN.test(text) && !(amount && amount > 0)) {
+    if (!wantsSettle && !PAY_TURN.test(text) && !(amountFromText && amountFromText > 0)) {
       next.amount = undefined;
       next.paid = undefined;
       next.payFullBalance = undefined;
@@ -1868,7 +2493,7 @@ async function continueFromPickedOrder(
   }
   if (wantsListo) {
     next.orderStatus = next.orderStatus || 'listo';
-    if (wantsSettle || (wantsPay && !(amount && amount > 0))) {
+    if (wantsSettle || (wantsPay && !(amountFromText && amountFromText > 0))) {
       next.payFullBalance = true;
       next.paid = true;
     }
@@ -1881,7 +2506,7 @@ async function continueFromPickedOrder(
     }
     next.paymentKind = next.paymentKind || 'pago';
     if (!(Number(next.amount) > 0) && !next.payFullBalance) {
-      return askOrderAction(businessId, phone, picked, next);
+      return askOrderAction(businessId, phone, picked, next, 'amount');
     }
     return prepareOperation(businessId, phone, 'register_payment', next, rubro);
   }
@@ -1906,10 +2531,11 @@ function leftoverSearchWords(text: string): string {
   return String(text ?? '')
     .replace(/\b(me\s+lleg[oó]\s+(un\s+)?pago|me\s+pagaron|lleg[oó]\s+(una\s+)?transferencia)\b/gi, ' ')
     .replace(/\b(list(?:ame|[áa])?|mostr(?:ame|[áa])|busc(?:ame|[áa]|ar))\b/gi, ' ')
-    .replace(/\b(pedidos?|abiertos?|pendientes?|con\s+saldo|sin\s+pagar)\b/gi, ' ')
+    .replace(/\b(pedidos?|abiertos?|pendientes?|con\s+saldo|sin\s+pagar|entregad[oa]s?|cerrad[oa]s?)\b/gi, ' ')
+    .replace(/\b(que\s+no\s+(est[aáeé]n?\s+)?(en\s+(estado\s+)?)?entregad[oa]s?|no\s+est[aáeé]n?\s+(en\s+(estado\s+)?)?entregad[oa]s?|en\s+estado\s+\w+)\b/gi, ' ')
     .replace(/\$?\s*[\d.]+(?:,\d{2})?/g, ' ')
     .replace(/#\s*\d+/g, ' ')
-    .replace(/\b(el|la|los|las|de|del|un|una|al|es|el\s+de)\b/gi, ' ')
+    .replace(/\b(el|la|los|las|de|del|un|una|al|es|el\s+de|que|no|este|esta|estado)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -1923,33 +2549,53 @@ function isNoiseSearchProduct(value: string | undefined): boolean {
     .trim();
   if (!fold) return true;
   if (
-    /^(me llego un pago|me llego pago|un pago|pago|pagos|pedido|pedidos|saldo|transferencia|busca|buscar|buscame)$/.test(
+    /^(me llego un pago|me llego pago|un pago|pago|pagos|pedido|pedidos|saldo|transferencia|busca|buscar|buscame|entregado|entregados|entregada|abierto|abiertos|pendiente|pendientes|estado|en estado|que no|no este|no esta)$/.test(
       fold
     )
   ) {
     return true;
   }
   const tokens = fold.split(' ').filter(Boolean);
-  return tokens.every((token) =>
-    [
-      'me',
-      'llego',
-      'un',
-      'una',
-      'pago',
-      'pagos',
-      'pedido',
-      'pedidos',
-      'saldo',
-      'busca',
-      'buscar',
-      'buscame',
-      'el',
-      'la',
-      'de',
-      'del',
-    ].includes(token)
-  );
+  const noiseTokens = new Set([
+    'me',
+    'llego',
+    'un',
+    'una',
+    'pago',
+    'pagos',
+    'pedido',
+    'pedidos',
+    'saldo',
+    'entregado',
+    'entregados',
+    'entregada',
+    'estado',
+    'abierto',
+    'abiertos',
+    'pendiente',
+    'pendientes',
+    'cerrado',
+    'cerrados',
+    'busca',
+    'buscar',
+    'buscame',
+    'el',
+    'la',
+    'de',
+    'del',
+    'que',
+    'no',
+    'en',
+    'este',
+    'esta',
+    'esten',
+    'mostrame',
+    'listame',
+  ]);
+  if (tokens.every((token) => noiseTokens.has(token))) return true;
+  const leftover = tokens.filter((token) => !noiseTokens.has(token)).join(' ');
+  if (!leftover && /\b(entregad|estado|abierto|pendiente)\b/.test(fold)) return true;
+  return false;
 }
 
 function mergeOrderSearchHints(
@@ -2048,12 +2694,12 @@ async function offerOpenOrderPick(
     opts.entities = { ...opts.entities, productName: undefined };
   }
   const source = String(opts.entities.sourceText ?? '');
+  opts.entities = mergeOrderSearchHints(opts.entities, source);
   const withBalance =
     opts.withBalance === true ||
     opts.originalIntent === 'register_payment' ||
     /\b(saldo|sin\s+pagar)\b/i.test(source);
   const listed = wantsListedOrders(opts.entities, opts.originalIntent);
-  const forQuery = opts.originalIntent === 'query_status';
   if (!hasOrderSearchHints(opts.entities) && !listed) {
     return askFindOrderGuide(businessId, phone, {
       originalIntent: opts.originalIntent,
@@ -2061,12 +2707,12 @@ async function offerOpenOrderPick(
     });
   }
 
-  const items = await listOpenOrdersForWhatsapp(businessId, {
+  const { items, closedFallback } = await listWhatsappOrdersWithFallback(businessId, {
     clientHint: opts.entities.clientName,
     productHint: opts.entities.productName,
     amountHint: Number(opts.entities.amount) || undefined,
     withBalance,
-    includeClosed: forQuery,
+    sourceText: source,
   });
   if (!items.length) {
     return askFindOrderGuide(businessId, phone, {
@@ -2075,7 +2721,7 @@ async function offerOpenOrderPick(
       missed: true,
     });
   }
-  if (items.length === 1) {
+  if (items.length === 1 && !closedFallback) {
     return continueFromPickedOrder(
       businessId,
       phone,
@@ -2086,11 +2732,17 @@ async function offerOpenOrderPick(
       opts.rubro
     );
   }
+  const who = String(opts.entities.clientName ?? '').trim();
+  const closedAsk = who
+    ? `No hay abiertos de *${who}*.\nEstos ya están entregados. ¿Cuál miro? Número de la lista.`
+    : 'No hay abiertos.\nEstos ya están entregados. ¿Cuál miro? Número de la lista.';
   const ask =
     opts.ask ??
-    (opts.originalIntent === 'register_payment' && Number(opts.entities.amount) > 0
-      ? `¿A qué pedido le pongo los $${opts.entities.amount}? Número de la lista.\nTambién *listo* o *saldalo*.`
-      : '¿Cuál? Número de la lista.\nDespués cobrás, lo asociás o lo marcás *listo*.');
+    (closedFallback
+      ? closedAsk
+      : opts.originalIntent === 'register_payment' && Number(opts.entities.amount) > 0
+        ? `¿A qué pedido le pongo los $${opts.entities.amount}? Número de la lista.\nTambién *listo* o *saldalo*.`
+        : '¿Cuál? Número de la lista.\nDespués cobrás, lo asociás o le cambiás el *estado*.');
   const reply = formatOpenOrderChoices(items, ask);
   await saveConversationState(businessId, phone, {
     pendingIntent: SELECT_ORDER_INTENT,
@@ -2218,7 +2870,32 @@ async function handleSelectOrder(
   const candidates = (Array.isArray(payload.candidates) ? payload.candidates : []) as OrderStatusTarget[];
   const picked = candidates.length ? pickOrderCandidate(candidates, text) : null;
   if (picked?.id) {
-    return continueFromPickedOrder(businessId, phone, picked, originalIntent, entities, text, rubro);
+    return continueFromPickedOrder(businessId, phone, picked, originalIntent, entities, text, rubro, true);
+  }
+
+  const wantsAction =
+    LISTO_TURN.test(text) ||
+    ENTREGADO_TURN.test(text) ||
+    SETTLE_TURN.test(text) ||
+    PAY_TURN.test(text);
+  if (wantsAction) {
+    if (candidates.length === 1) {
+      return continueFromPickedOrder(
+        businessId,
+        phone,
+        candidates[0]!,
+        originalIntent,
+        entities,
+        text,
+        rubro
+      );
+    }
+    return {
+      reply: '¿A cuál? Número de la lista.',
+      intent: SELECT_ORDER_INTENT,
+      executed: false,
+      businessId,
+    };
   }
 
   const shortIndex = /^\s*\d{1,2}\s*$/.test(text.trim());
@@ -2267,6 +2944,7 @@ async function handleOrderAction(
   const payload = pendingPayload ?? {};
   const picked = payload.picked as OrderStatusTarget | undefined;
   const entities = { ...((payload.entities ?? {}) as WhatsappCommandEntities) };
+  const step = String(payload.step ?? 'action');
   if (!picked?.id) {
     await clearConversationState(businessId, phone);
     return {
@@ -2276,28 +2954,131 @@ async function handleOrderAction(
       businessId,
     };
   }
-  const originalIntent = LISTO_TURN.test(text) || ENTREGADO_TURN.test(text)
-    ? 'update_order_status'
-    : SETTLE_TURN.test(text) || PAY_TURN.test(text) || extractAmountFromText(text)
-      ? 'register_payment'
-      : CONFIRM_YES.test(text.trim())
-        ? picked.saldo > 0
-          ? 'register_payment'
-          : 'update_order_status'
-        : 'query_status';
-  if (originalIntent === 'query_status') {
-    return {
-      reply: formatOrderActionAsk(picked),
-      intent: ORDER_ACTION_INTENT,
-      executed: false,
+
+  if (step === 'status') {
+    const status = orderStatusFromMenu(text);
+    if (!status) {
+      return askOrderAction(businessId, phone, picked, entities, 'status');
+    }
+    entities.orderStatus = status;
+    return continueFromPickedOrder(
       businessId,
-    };
+      phone,
+      picked,
+      'update_order_status',
+      entities,
+      text,
+      rubro
+    );
   }
-  if (originalIntent === 'register_payment' && CONFIRM_YES.test(text.trim()) && !(Number(entities.amount) > 0)) {
-    entities.payFullBalance = true;
-    entities.paid = true;
+
+  if (step === 'amount') {
+    const amount = extractAmountFromText(text);
+    if (SETTLE_TURN.test(text) || /todo/.test(text.toLowerCase()) || CONFIRM_YES.test(text.trim())) {
+      entities.payFullBalance = true;
+      entities.paid = true;
+      entities.amount = undefined;
+      return continueFromPickedOrder(
+        businessId,
+        phone,
+        picked,
+        'register_payment',
+        entities,
+        text,
+        rubro
+      );
+    }
+    if (amount && amount > 0) {
+      entities.amount = amount;
+      return continueFromPickedOrder(
+        businessId,
+        phone,
+        picked,
+        'register_payment',
+        entities,
+        text,
+        rubro
+      );
+    }
+    return askOrderAction(businessId, phone, picked, entities, 'amount');
   }
-  return continueFromPickedOrder(businessId, phone, picked, originalIntent, entities, text, rubro);
+
+  const actionChoice = menuIndex(text, 2);
+  const wantsPayMenu =
+    actionChoice === 1 ||
+    /^(pago|cobro|se[nñ]a|registrar\s+(un\s+)?pago)$/i.test(text.trim()) ||
+    PAY_TURN.test(text) ||
+    SETTLE_TURN.test(text);
+  const wantsStatusMenu =
+    actionChoice === 2 ||
+    /^(estado|cambiar(?:le)?(?:\s+el)?\s+estado)$/i.test(text.trim()) ||
+    /\bcambi(?:ar|[aá])\s+(el\s+)?estado\b/i.test(text);
+
+  if (wantsStatusMenu && actionChoice !== 1) {
+    const named = orderStatusFromMenu(text);
+    if (named && actionChoice !== 2) {
+      entities.orderStatus = named;
+      return continueFromPickedOrder(
+        businessId,
+        phone,
+        picked,
+        'update_order_status',
+        entities,
+        text,
+        rubro
+      );
+    }
+    return askOrderAction(businessId, phone, picked, entities, 'status');
+  }
+
+  if (LISTO_TURN.test(text) || ENTREGADO_TURN.test(text)) {
+    return continueFromPickedOrder(
+      businessId,
+      phone,
+      picked,
+      'update_order_status',
+      entities,
+      text,
+      rubro
+    );
+  }
+
+  if (wantsPayMenu) {
+    const amount = actionChoice === 1 ? null : extractAmountFromText(text);
+    if (amount && amount > 0) entities.amount = amount;
+    if (SETTLE_TURN.test(text)) {
+      entities.payFullBalance = true;
+      entities.paid = true;
+    }
+    if (Number(entities.amount) > 0 || entities.payFullBalance) {
+      return continueFromPickedOrder(
+        businessId,
+        phone,
+        picked,
+        'register_payment',
+        entities,
+        text,
+        rubro
+      );
+    }
+    return askOrderAction(businessId, phone, picked, entities, 'amount');
+  }
+
+  const namedStatus = orderStatusFromMenu(text);
+  if (namedStatus && !menuIndex(text, 2)) {
+    entities.orderStatus = namedStatus;
+    return continueFromPickedOrder(
+      businessId,
+      phone,
+      picked,
+      'update_order_status',
+      entities,
+      text,
+      rubro
+    );
+  }
+
+  return askOrderAction(businessId, phone, picked, entities);
 }
 
 async function handleSettleOrder(
@@ -2422,7 +3203,7 @@ async function handleClarifiedIntent(
     original && !answer.toLowerCase().includes(original.toLowerCase())
       ? `${original}. ${answer}`
       : answer;
-  const parsed = await parseWhatsappCommand({
+  const parsed = await interpretTurn({
     text: combined,
     rubro: tenant.rubro,
     businessId: tenant.businessId,
@@ -2475,9 +3256,35 @@ async function handlePendingClarify(
   pendingPayload: Record<string, unknown> | null | undefined,
   rubro?: string | null
 ): Promise<WhatsappHandlerResult> {
+  const dual = takeDualIntent(text);
+  text = dual.currentText;
+  if (dual.queued) {
+    await saveConversationState(businessId, phone, {
+      queuedTasks: [dual.queued],
+      activeTask: activeTaskFromPending({
+        pendingIntent: String(pendingPayload?.originalIntent ?? ''),
+        pendingPayload,
+      }),
+    });
+  }
   const payload = pendingPayload ?? {};
   const originalIntent = String(payload.originalIntent ?? '').trim();
   const missingField = String(payload.missingField ?? '').trim();
+  if (missingField === 'itemColor' || missingField === 'itemSize') {
+    const originalIntent = String(payload.originalIntent ?? '').trim();
+    let entities = { ...((payload.entities ?? {}) as WhatsappCommandEntities) };
+    const itemIndex = Number.isInteger(Number(payload.itemIndex)) ? Number(payload.itemIndex) : undefined;
+    entities = applyFollowUpToEntities(entities, text, {
+      type: 'field',
+      field: missingField,
+      itemIndex,
+    });
+    if (!originalIntent) {
+      await clearConversationState(businessId, phone);
+      return { reply: 'Se me perdió el contexto. Mandá de nuevo el pedido.', intent: 'error', executed: false, businessId };
+    }
+    return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+  }
   const skipNotes = /^(listo|nada|no|n|sin descripci[oó]n|sin detalle|ninguna|ninguno|-)$/i.test(
     text.trim()
   );
@@ -2498,34 +3305,28 @@ async function handlePendingClarify(
       entities.notes = undefined;
       return prepareOperation(businessId, phone, originalIntent, entities, rubro);
     }
-    const merged = await mergeClarifyIntoEntities(
-      text,
-      entities,
-      ['notes'],
-      rubro,
-      businessId,
-      originalIntent
-    );
-    merged.notesAsked = true;
-    const leftover = sanitizeOrderNotes(merged.notes) ?? sanitizeOrderNotes(text);
-    const understoodOther =
-      Boolean(merged.deliveryDate && merged.deliveryDate !== entities.deliveryDate) ||
-      mergeExtraCostItems(merged.extraCosts).length > mergeExtraCostItems(entities.extraCosts).length ||
-      (Number(merged.amount) || 0) !== (Number(entities.amount) || 0);
-    if (leftover) {
-      merged.notes = leftover;
-      return prepareOperation(businessId, phone, originalIntent, merged, rubro);
+    const extras = extractExtraCostsFromText(text);
+    if (extras.length) {
+      entities.extraCosts = mergeExtraCostItems(entities.extraCosts, extras);
     }
-    merged.notes = undefined;
-    if (understoodOther) {
-      return prepareOperation(businessId, phone, originalIntent, merged, rubro);
+    const delivery = extractDeliveryDateFromText(text);
+    if (delivery) {
+      entities.deliveryDate = delivery;
+      entities.deliveryAsked = true;
+      entities.deliveryDefaulted = undefined;
+    }
+    const notes = sanitizeOrderNotes(text) || String(text).trim().slice(0, 240);
+    if (notes.length >= 2) {
+      entities.notes = notes;
+      entities.notesAsked = true;
+      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
     }
     await saveConversationState(businessId, phone, {
       pendingIntent: CLARIFY_INTENT,
       pendingPayload: {
         originalIntent,
         missingField: 'notes',
-        entities: merged,
+        entities,
       },
     });
     return {
@@ -2537,12 +3338,141 @@ async function handlePendingClarify(
     };
   }
 
+  if (missingField === 'extraCosts' || missingField === 'extraCostsItem') {
+    let entities = { ...((payload.entities ?? {}) as WhatsappCommandEntities) };
+    if (!originalIntent) {
+      await clearConversationState(businessId, phone);
+      return {
+        reply: 'Se me perdió el contexto. Mandá de nuevo el pedido o consulta.',
+        intent: 'error',
+        executed: false,
+        businessId,
+      };
+    }
+    const kind = classifyConfirmReply(text);
+    if ((missingField === 'extraCosts' || missingField === 'extraCostsItem') && kind === 'cancel') {
+      entities.extraCosts = [];
+      entities.extraCostsAsked = true;
+      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+    }
+    if (missingField === 'extraCosts' && kind === 'confirm') {
+      await saveConversationState(businessId, phone, {
+        pendingIntent: CLARIFY_INTENT,
+        pendingPayload: {
+          originalIntent,
+          missingField: 'extraCosts',
+          entities,
+        },
+        activeTask: {
+          intent: originalIntent,
+          collected: { extraCostsEnabled: entities.extraCostsEnabled },
+          awaiting: { field: 'extraCosts', type: 'field' },
+        },
+      });
+      return {
+        reply: extraCostsDirectAsk(entities),
+        intent: CLARIFY_INTENT,
+        executed: false,
+        businessId,
+      };
+    }
+
+    if (missingField === 'extraCostsItem') {
+      const labels = extraCostItemLabels(entities);
+      const asNumber = Number(String(text).trim());
+      const fromNumber =
+        Number.isInteger(asNumber) && asNumber >= 1 && asNumber <= labels.length ? asNumber - 1 : null;
+      const index = fromNumber ?? resolveExtraCostTargetIndex(entities, text);
+      if (index == null) {
+        await saveConversationState(businessId, phone, {
+          pendingIntent: CLARIFY_INTENT,
+          pendingPayload: {
+            originalIntent,
+            missingField: 'extraCostsItem',
+            entities,
+          },
+          activeTask: {
+            intent: originalIntent,
+            collected: { extraCostsEnabled: entities.extraCostsEnabled },
+            awaiting: { field: 'extraCostsItem', type: 'field' },
+          },
+        });
+        return {
+          reply: formatExtraCostItemAsk(entities.extraCosts ?? [], entities),
+          intent: CLARIFY_INTENT,
+          executed: false,
+          businessId,
+        };
+      }
+      entities.extraCostsTargetItemIndex = index;
+      entities.extraCostsAsked = true;
+      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+    }
+
+    const parsed = parseSpokenExtraCostAnswer(text);
+    if (parsed.length) {
+      entities.extraCosts = mergeExtraCostItems(entities.extraCosts, parsed);
+      const hint = extractExtraCostProductHint(text);
+      if (hint) entities.extraCostsProductHint = hint;
+      const target = resolveExtraCostTargetIndex(entities, hint);
+      if (target == null) {
+        await saveConversationState(businessId, phone, {
+          pendingIntent: CLARIFY_INTENT,
+          pendingPayload: {
+            originalIntent,
+            missingField: 'extraCostsItem',
+            entities,
+          },
+          activeTask: {
+            intent: originalIntent,
+            collected: { extraCostsEnabled: entities.extraCostsEnabled },
+            awaiting: { field: 'extraCostsItem', type: 'field' },
+          },
+        });
+        return {
+          reply: formatExtraCostItemAsk(entities.extraCosts ?? [], entities),
+          intent: CLARIFY_INTENT,
+          executed: false,
+          businessId,
+        };
+      }
+      entities.extraCostsTargetItemIndex = target;
+      entities.extraCostsAsked = true;
+      if (looksLikePayEverythingNow(text)) {
+        entities.payFullBalance = true;
+        entities.paid = true;
+        entities.collectionAmount = undefined;
+      }
+      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+    }
+
+    await saveConversationState(businessId, phone, {
+      pendingIntent: CLARIFY_INTENT,
+      pendingPayload: {
+        originalIntent,
+        missingField: 'extraCosts',
+        entities,
+      },
+      activeTask: {
+        intent: originalIntent,
+        collected: { extraCostsEnabled: entities.extraCostsEnabled },
+        awaiting: { field: 'extraCosts', type: 'field' },
+      },
+    });
+    return {
+      reply: extraCostsDirectAsk(entities),
+      intent: CLARIFY_INTENT,
+      executed: false,
+      businessId,
+    };
+  }
+
   const skipDelivery = /^(listo|nada|no|n|sin fecha|sin fecha de entrega|despu[eé]s|despues|ahora no|-)$/i.test(
     text.trim()
   );
 
   if (missingField === 'deliveryDate') {
-    const entities = { ...((payload.entities ?? {}) as WhatsappCommandEntities) };
+    let entities = { ...((payload.entities ?? {}) as WhatsappCommandEntities) };
     if (!originalIntent) {
       await clearConversationState(businessId, phone);
       return {
@@ -2553,34 +3483,32 @@ async function handlePendingClarify(
       };
     }
     if (skipDelivery) {
-      entities.deliveryAsked = true;
-      entities.deliveryDate = todayDateOnly();
-      entities.deliveryDefaulted = true;
-      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+      await saveConversationState(businessId, phone, {
+        pendingIntent: CLARIFY_INTENT,
+        pendingPayload: {
+          originalIntent,
+          missingField: 'deliveryDate',
+          entities,
+        },
+      });
+      return {
+        reply: extraCostsDeliveryAsk(entities),
+        intent: CLARIFY_INTENT,
+        executed: false,
+        businessId,
+      };
     }
-    const parsedDate = extractDeliveryDateFromText(text);
-    if (parsedDate) {
-      entities.deliveryDate = parsedDate;
-      entities.deliveryAsked = true;
-      entities.deliveryDefaulted = undefined;
-      return prepareOperation(businessId, phone, originalIntent, entities, rubro);
-    }
-    if (looksLikeIterativeCorrection(text)) {
-      return continueFromFollowUp(businessId, phone, text, CLARIFY_INTENT, payload, rubro);
-    }
+    entities = applyFollowUpToEntities(entities, text, { type: 'field', field: 'deliveryDate' });
     const merged = await mergeClarifyIntoEntities(
       text,
       entities,
-      ['deliveryDate'],
+      ['deliveryDate', 'notes', 'requestedStatus'],
       rubro,
       businessId,
       originalIntent
     );
-    const geminiDate = String(merged.deliveryDate ?? '').trim();
-    if (geminiDate) {
-      entities.deliveryDate = geminiDate;
-      entities.deliveryAsked = true;
-      entities.deliveryDefaulted = undefined;
+    entities = applyFollowUpToEntities(merged, text, { type: 'field', field: 'deliveryDate' });
+    if (entities.deliveryDate) {
       return prepareOperation(businessId, phone, originalIntent, entities, rubro);
     }
     await saveConversationState(businessId, phone, {
@@ -2592,8 +3520,7 @@ async function handlePendingClarify(
       },
     });
     return {
-      reply:
-        'No entendí la fecha. Poné un día (mañana, viernes, 28/08) o LISTO y la dejo para hoy.',
+      reply: extraCostsDeliveryAsk(entities),
       intent: CLARIFY_INTENT,
       executed: false,
       businessId,
@@ -3000,6 +3927,94 @@ async function handlePendingSelection(
   const query = String(payload.query ?? '');
   const allowCreate = payload.allowCreate === true;
 
+  const rejectedCurrent = parseChoiceFromText(text);
+  const hiddenCandidates = (
+    Array.isArray(payload.hiddenCandidates) ? payload.hiddenCandidates : []
+  ) as NamedCandidate[];
+  if (rejectedCurrent.reject) {
+    const rest = candidates.slice(1);
+    if (rest.length) {
+      await saveConversationState(businessId, phone, {
+        pendingIntent: pendingIntentForKind(kind),
+        pendingPayload: {
+          ...payload,
+          candidates: rest.map((c) => ({ id: c.id, nombre: c.nombre, label: c.label, score: c.score })),
+        },
+      });
+      const prompt =
+        kind === 'product'
+          ? formatProductChoices(rest, query, { allowCreate, context: originalIntent === 'create_purchase' ? 'purchase' : 'order' })
+          : kind === 'client'
+            ? formatClientChoices(rest, query, { allowCreate })
+            : formatSupplierChoices(rest, query, { allowCreate });
+      return {
+        reply: prompt,
+        intent: pendingIntentForKind(kind),
+        executed: false,
+        businessId,
+      };
+    }
+  }
+
+  const noneIndex =
+    kind === 'product' && originalIntent !== 'create_purchase' ? candidates.length : -1;
+  const pickedNoneNumber =
+    /^\d{1,2}$/.test(text.trim()) && noneIndex >= 0 && Number(text.trim()) - 1 === noneIndex;
+  const wantsMoreChoices =
+    kind === 'product' &&
+    originalIntent !== 'create_purchase' &&
+    (rejectedCurrent.none === true ||
+      rejectedCurrent.more === true ||
+      pickedNoneNumber ||
+      looksLikeListContinue(text));
+  if (wantsMoreChoices) {
+    if (!hiddenCandidates.length) {
+      return {
+        reply: waCard({
+          title: 'No hay más opciones',
+          ask: '¿Lo escribís de otra forma?',
+        }),
+        intent: pendingIntentForKind(kind),
+        executed: false,
+        businessId,
+      };
+    }
+    const nextShown = hiddenCandidates.slice(0, 3);
+    const nextHidden = hiddenCandidates.slice(3);
+    await saveConversationState(businessId, phone, {
+      pendingIntent: pendingIntentForKind(kind),
+      pendingPayload: {
+        ...payload,
+        candidates: nextShown.map((c) => ({
+          id: c.id,
+          nombre: c.nombre,
+          label: c.label,
+          score: c.score,
+          precioVenta: c.precioVenta,
+        })),
+        hiddenCandidates: nextHidden.map((c) => ({
+          id: c.id,
+          nombre: c.nombre,
+          label: c.label,
+          score: c.score,
+          precioVenta: c.precioVenta,
+        })),
+        choicePage: (Number(payload.choicePage) || 1) + 1,
+      },
+    });
+    return {
+      reply: formatProductChoices(nextShown, query, {
+        allowCreate: false,
+        hasMore: nextHidden.length > 0,
+        morePage: true,
+        context: 'order',
+      }),
+      intent: pendingIntentForKind(kind),
+      executed: false,
+      businessId,
+    };
+  }
+
   if (!originalIntent) {
     await clearConversationState(businessId, phone);
     return {
@@ -3013,6 +4028,13 @@ async function handlePendingSelection(
   const rememberProduct = async (productId: string, productName: string) => {
     if (kind !== 'product' || !query.trim()) return;
     await saveProductAlias(businessId, query, { id: productId, nombre: productName });
+    await rememberSpokenProductTerms({
+      businessId,
+      phone,
+      spoken: query,
+      resolvedName: productName,
+      productId,
+    });
   };
 
   const lineIdx = purchaseLineIndex(payload);
@@ -3061,7 +4083,7 @@ async function handlePendingSelection(
 
   let choiceMatch = text.trim().match(/^(\d{1,2})$/);
   if (!choiceMatch) {
-    const parsedFollow = await parsePendingFollowUp(businessId, text, pendingIntentForKind(kind), payload, rubro);
+    const parsedFollow = await parsePendingFollowUp(businessId, phone, text, pendingIntentForKind(kind), payload, rubro);
     const selectionPrompt =
       kind === 'client'
         ? formatClientChoices(candidates, query, { allowCreate })
@@ -3751,6 +4773,215 @@ async function handleSelectPurchaseCard(
   };
 }
 
+async function persistStockResolution(
+  businessId: string,
+  phone: string,
+  entities: WhatsappCommandEntities,
+  ask: StockDiscountAsk,
+  prompt: string,
+  previous?: ConversationState | null
+): Promise<WhatsappHandlerResult> {
+  const targetId = String(entities.targetOrderId ?? previous?.focusOrder?.id ?? '').trim();
+  await saveConversationState(businessId, phone, {
+    pendingIntent: STOCK_RESOLUTION_INTENT,
+    pendingPayload: {
+      originalIntent: 'update_order_status',
+      entities,
+      stockAsk: ask,
+    },
+    pendingPrompt: prompt,
+    operationPlan: previous?.operationPlan ?? undefined,
+    activeTask: {
+      intent: 'update_order_status',
+      collected: {
+        client: entities.clientName,
+        targetOrderId: entities.targetOrderId,
+        orderStatus: entities.orderStatus,
+      },
+      awaiting: {
+        type: STOCK_RESOLUTION_INTENT,
+        reason: ask.reason,
+        allowedActions: [...ask.options, 'cancel'],
+      },
+    },
+    ...(targetId
+      ? {
+          focusOrder: {
+            id: targetId,
+            label: entities.targetOrderLabel ?? previous?.focusOrder?.label,
+            clientName: entities.clientName ?? previous?.focusOrder?.clientName,
+            clientId: entities.clientId ?? previous?.focusOrder?.clientId,
+            status: previous?.focusOrder?.status,
+            at: new Date().toISOString(),
+          },
+        }
+      : {}),
+  });
+  return {
+    reply: prompt,
+    intent: STOCK_RESOLUTION_INTENT,
+    executed: false,
+    businessId,
+  };
+}
+
+async function handleStockResolution(
+  businessId: string,
+  phone: string,
+  text: string,
+  pendingPayload: Record<string, unknown> | null | undefined,
+  rubro?: string | null,
+  parsedOverride?: ParsedWhatsappCommand | null
+): Promise<WhatsappHandlerResult> {
+  const payload = pendingPayload ?? {};
+  const entities = { ...payloadEntities(payload) };
+  const ask = (payload.stockAsk ?? {}) as StockDiscountAsk;
+  const allowed = Array.isArray(ask.options) && ask.options.length ? ask.options : ['pedido_completo'];
+  const parsed =
+    parsedOverride ??
+    (await parsePendingFollowUp(
+      businessId,
+      phone,
+      text,
+      STOCK_RESOLUTION_INTENT,
+      payload,
+      rubro
+    ));
+  const fromParsed =
+    'entities' in parsed
+      ? parsed.entities?.stockResolution ||
+        (parsed.conversationAction === 'cancel_current' ? 'cancel' : undefined)
+      : parsed.conversationAction === 'cancel_current'
+        ? 'cancel'
+        : undefined;
+  const choice = interpretStockResolutionFromText(text, allowed);
+  const leftover =
+    choice.leftover ||
+    splitCompoundStockUtterance(text).leftover;
+  let action = fromParsed || (parsedOverride ? undefined : choice.action);
+
+  if (
+    !action &&
+    allowed.length === 1 &&
+    allowed[0] === 'pedido_completo' &&
+    parsed.conversationAction !== 'new_task'
+  ) {
+    action = 'discount_full_order';
+  }
+
+  if (!action) {
+    const prompt =
+      ask.options?.length ? formatStockResolutionAsk(ask) : String(payload.pendingPrompt ?? '');
+    return {
+      reply: prompt || '¿Descuento el stock de todo el pedido? SÍ / NO',
+      intent: STOCK_RESOLUTION_INTENT,
+      executed: false,
+      businessId,
+    };
+  }
+
+  if (action === 'cancel') {
+    await clearConversationState(businessId, phone);
+    const cancelReply = 'Dale, el pedido queda como estaba.';
+    if (leftover) {
+      const tenant = await resolveTenantByPhone(phone);
+      if (tenant) {
+        const follow = await executeWhatsappCommand(tenant, {
+          intent: 'query_status',
+          confidence: 1,
+          entities: {
+            ...entities,
+            referToLast: true,
+            targetOrderId: entities.targetOrderId,
+            sourceText: leftover,
+          },
+          raw: leftover,
+        } as ParsedWhatsappCommand);
+        const pages = [cancelReply, follow.reply].filter(Boolean);
+        return {
+          reply: pages[0] ?? cancelReply,
+          replies: pages.length > 1 ? pages : undefined,
+          intent: follow.intent,
+          executed: follow.executed,
+          businessId,
+        };
+      }
+    }
+    return {
+      reply: cancelReply,
+      intent: 'cancelled',
+      executed: false,
+      businessId,
+    };
+  }
+
+  const scope = parseRequestedStockScope(action) ?? scopeFromStockResolution(action);
+  entities.descuentoFisicoAlcance = scope;
+  entities.stockResolution = action;
+  entities.productName = undefined;
+  entities.spokenProductName = undefined;
+  entities.items = undefined;
+
+  const tenant = await resolveTenantByPhone(phone);
+  if (!tenant) {
+    return {
+      reply: 'No encontré tu cuenta. Contactá a soporte.',
+      intent: 'error',
+      executed: false,
+    };
+  }
+
+  const stored = await getConversationState(businessId, phone);
+  const result = await executeWhatsappCommand(tenant, {
+    intent: 'update_order_status',
+    confidence: 1,
+    entities,
+    raw: text,
+  } as ParsedWhatsappCommand);
+
+  if (result.data && (result.data as { needsStockDecision?: StockDiscountAsk }).needsStockDecision) {
+    const nextAsk = (result.data as { needsStockDecision: StockDiscountAsk }).needsStockDecision;
+    return persistStockResolution(businessId, phone, entities, nextAsk, result.reply, stored);
+  }
+
+  if (result.executed) {
+    const last = lastOperationFromResult(result, entities);
+    if (last) await rememberLastOperation(businessId, phone, last);
+    else await clearConversationState(businessId, phone);
+  } else {
+    await clearConversationState(businessId, phone);
+  }
+
+  if (leftover && result.executed) {
+    const follow = await executeWhatsappCommand(tenant, {
+      intent: 'query_status',
+      confidence: 1,
+      entities: {
+        ...entities,
+        referToLast: true,
+        targetOrderId: entities.targetOrderId,
+        sourceText: leftover,
+      },
+      raw: leftover,
+    } as ParsedWhatsappCommand);
+    const pages = [result.reply, follow.reply].filter(Boolean);
+    return {
+      reply: pages[0] ?? result.reply,
+      replies: pages.length > 1 ? pages : undefined,
+      intent: follow.intent,
+      executed: true,
+      businessId,
+    };
+  }
+
+  return {
+    reply: result.reply,
+    intent: result.intent,
+    executed: result.executed,
+    businessId,
+  };
+}
+
 async function handlePendingConfirmation(
   businessId: string,
   phone: string,
@@ -3763,7 +4994,8 @@ async function handlePendingConfirmation(
     ? pendingIntent.slice(CONFIRM_INTENT_PREFIX.length)
     : pendingIntent;
 
-  if (CONFIRM_NO.test(text.trim())) {
+  const kind = classifyConfirmReply(text);
+  if (kind === 'cancel') {
     await clearConversationState(businessId, phone);
     return {
       reply: waCard({
@@ -3776,9 +5008,9 @@ async function handlePendingConfirmation(
     };
   }
 
-  if (!CONFIRM_YES.test(text.trim())) {
+  if (kind !== 'confirm') {
     const payload = pendingPayload ?? {};
-    if (looksLikePendingQuestion(text) || (await parsePendingFollowUp(businessId, text, pendingIntent, payload, rubro)).followUpAction === 'ask') {
+    if (looksLikePendingQuestion(text) || (await parsePendingFollowUp(businessId, phone, text, pendingIntent, payload, rubro)).followUpAction === 'ask') {
       const entities = payloadEntities(payload);
       const prompt = confirmationReply(intent, entities);
       return holdPendingAndAnswer(
@@ -3804,13 +5036,26 @@ async function handlePendingConfirmation(
   }
 
   const entities = (pendingPayload ?? {}) as WhatsappCommandEntities;
+  const stored = await getConversationState(businessId, phone);
+  const plan = stored?.operationPlan ?? (buildOperationPlan(intent, entities) as unknown as Record<string, unknown>);
+  console.info(
+    '[whatsapp:plan]',
+    JSON.stringify({
+      execute: true,
+      rawUserMessage: String(entities.rawUserMessage || entities.sourceText || '').slice(0, 180),
+      operations: Array.isArray((plan as { operations?: Array<{ intent?: string }> }).operations)
+        ? (plan as { operations: Array<{ intent?: string }> }).operations.map((row) => row.intent)
+        : [intent],
+    })
+  );
   const parsed = {
     intent,
     confidence: 1,
     entities,
-    raw: String(entities.notes ?? text),
+    raw: String(entities.rawUserMessage || entities.sourceText || text),
   } as ParsedWhatsappCommand;
 
+  const priorQueued = [...(stored?.queuedTasks ?? [])];
   const result = await executeWhatsappCommand(tenant, parsed);
   if (result.executed) {
     try {
@@ -3874,6 +5119,32 @@ async function handlePendingConfirmation(
     } else {
       await clearConversationState(businessId, phone);
     }
+    const queued = priorQueued;
+    if (queued.length) {
+      const [next, ...rest] = queued;
+      await saveConversationState(businessId, phone, { queuedTasks: rest.length ? rest : null });
+      const follow = await prepareOperation(
+        businessId,
+        phone,
+        String(next?.intent ?? 'create_order'),
+        {
+          ...((next?.entities ?? {}) as WhatsappCommandEntities),
+          sourceText: String(next?.raw ?? ''),
+        },
+        rubro
+      );
+      const pages = [result.reply, ...(follow.replies ?? (follow.reply ? [follow.reply] : []))].filter(Boolean);
+      return {
+        reply: pages[0] ?? result.reply,
+        replies: pages.length > 1 ? pages : undefined,
+        intent: follow.intent,
+        executed: result.executed,
+        businessId,
+      };
+    }
+  } else if (result.data && (result.data as { needsStockDecision?: StockDiscountAsk }).needsStockDecision) {
+    const ask = (result.data as { needsStockDecision: StockDiscountAsk }).needsStockDecision;
+    return persistStockResolution(businessId, phone, entities, ask, result.reply, stored);
   } else {
     await clearConversationState(businessId, phone);
   }
@@ -3884,6 +5155,339 @@ async function handlePendingConfirmation(
     executed: result.executed,
     businessId,
   };
+}
+
+async function askCollectOrderItems(
+  businessId: string,
+  phone: string,
+  intent: string,
+  entities: WhatsappCommandEntities
+): Promise<WhatsappHandlerResult> {
+  const next: WhatsappCommandEntities = {
+    ...entities,
+    collectingItems: true,
+    productName: hasRealOrderItems(entities) ? entities.productName : undefined,
+    items: (entities.items ?? []).filter(
+      (item) => !isPlaceholderProductLabel(item.rawText || item.productHint || item.productName)
+    ),
+  };
+  const reply = formatCollectOrderItemsAsk({
+    clientName: next.clientName,
+    expectedCount: next.expectedItemCount,
+    itemCount: next.items?.length,
+  });
+  await saveConversationState(businessId, phone, {
+    pendingIntent: COLLECT_ORDER_ITEMS_INTENT,
+    pendingPayload: { originalIntent: intent, entities: next },
+    pendingPrompt: reply,
+    activeTask: {
+      intent,
+      collected: next,
+      awaiting: { field: 'items', type: 'collect' },
+    },
+  });
+  return {
+    reply,
+    intent: COLLECT_ORDER_ITEMS_INTENT,
+    executed: false,
+    businessId,
+  };
+}
+
+async function handleCollectOrderItems(
+  businessId: string,
+  phone: string,
+  text: string,
+  pendingPayload: Record<string, unknown> | null | undefined,
+  rubro?: string | null
+): Promise<WhatsappHandlerResult> {
+  const payload = pendingPayload ?? {};
+  const originalIntent = String(payload.originalIntent ?? 'create_order');
+  const entities: WhatsappCommandEntities = {
+    ...((payload.entities && typeof payload.entities === 'object'
+      ? payload.entities
+      : {}) as WhatsappCommandEntities),
+    collectingItems: true,
+  };
+
+  if (looksLikeCollectingDone(text)) {
+    if (!hasRealOrderItems(entities)) {
+      const ask = formatCollectOrderItemsAsk({
+        clientName: entities.clientName,
+        expectedCount: entities.expectedItemCount,
+        itemCount: 0,
+      });
+      await saveConversationState(businessId, phone, {
+        pendingIntent: COLLECT_ORDER_ITEMS_INTENT,
+        pendingPayload: { originalIntent, entities },
+        pendingPrompt: ask,
+      });
+      return { reply: ask, intent: COLLECT_ORDER_ITEMS_INTENT, executed: false, businessId };
+    }
+    entities.collectingItems = false;
+    return prepareOperation(businessId, phone, originalIntent, entities, rubro);
+  }
+
+  const parsed = parseWithRules(text);
+  const incoming = 'entities' in parsed ? { ...(parsed.entities ?? {}) } : {};
+  incoming.sourceText = text;
+  ensureOrderItems(incoming);
+  const batch = (incoming.items ?? []).filter(
+    (item) => !isPlaceholderProductLabel(item.rawText || item.productHint || item.productName)
+  );
+  entities.items = appendOrderItemBatch(entities.items, batch, text);
+  syncLegacyProductFields(entities);
+  const ask = formatCollectOrderItemsAsk({
+    clientName: entities.clientName,
+    expectedCount: entities.expectedItemCount,
+    itemCount: entities.items?.length,
+  });
+  await saveConversationState(businessId, phone, {
+    pendingIntent: COLLECT_ORDER_ITEMS_INTENT,
+    pendingPayload: { originalIntent, entities },
+    pendingPrompt: ask,
+    activeTask: {
+      intent: originalIntent,
+      collected: entities,
+      awaiting: { field: 'items', type: 'collect' },
+    },
+  });
+  return { reply: ask, intent: COLLECT_ORDER_ITEMS_INTENT, executed: false, businessId };
+}
+
+function usageQuestionReply(text: string, parsed?: ParsedWhatsappCommand | null): string {
+  const entities = parsed && 'entities' in parsed ? parsed.entities ?? {} : {};
+  const topic = (entities.helpTopic as ReturnType<typeof howToTopicFromText> | undefined) || howToTopicFromText(text);
+  if (parsed?.intent === 'capability_question' || utteranceIsCapabilityQuestion(text)) {
+    return formatCapabilityOrderReply();
+  }
+  return formatHowToReply(topic, entities.expectedItemCount);
+}
+
+async function answerUsageQuestion(
+  tenant: WhatsappTenantContext,
+  phone: string,
+  text: string,
+  state: ConversationState | null,
+  parsed?: ParsedWhatsappCommand | null
+): Promise<WhatsappHandlerResult> {
+  const reply = usageQuestionReply(text, parsed);
+  const pending = String(state?.pendingIntent ?? '').trim();
+  if (pending && pending !== RESUME_CONTEXT_INTENT) {
+    const prompt =
+      String(state?.pendingPrompt ?? '').trim() ||
+      reconstructPendingPrompt(pending, state?.pendingPayload ?? {});
+    await saveConversationState(tenant.businessId, phone, {
+      pendingIntent: pending,
+      pendingPayload: state?.pendingPayload ?? null,
+      pendingPrompt: prompt || state?.pendingPrompt,
+    });
+    return {
+      reply,
+      replies: prompt ? [reply, prompt] : [reply],
+      intent: parsed?.intent === 'capability_question' ? 'capability_question' : 'how_to',
+      executed: false,
+      businessId: tenant.businessId,
+    };
+  }
+  return {
+    reply,
+    intent: parsed?.intent === 'capability_question' ? 'capability_question' : 'how_to',
+    executed: false,
+    businessId: tenant.businessId,
+  };
+}
+
+async function askIdleResume(
+  businessId: string,
+  phone: string,
+  text: string,
+  mediaId: string | null,
+  mediaType: string | null | undefined,
+  state: ConversationState
+): Promise<WhatsappHandlerResult> {
+  const reply = formatResumeAsk(state);
+  await saveConversationState(businessId, phone, {
+    pendingIntent: RESUME_CONTEXT_INTENT,
+    pendingPayload: {
+      previousIntent: state.pendingIntent ?? null,
+      previousPayload: state.pendingPayload ?? null,
+      previousPrompt: state.pendingPrompt ?? null,
+      previousFocus: state.focusOrder ?? null,
+      resumeUtterance: text,
+      resumeMediaId: mediaId,
+      resumeMediaType: mediaType ?? null,
+    },
+    pendingPrompt: reply,
+    suspendedTask:
+      state.activeTask ??
+      (state.pendingIntent
+        ? { intent: state.pendingIntent, collected: state.pendingPayload ?? {} }
+        : null),
+  });
+  return {
+    reply,
+    intent: RESUME_CONTEXT_INTENT,
+    executed: false,
+    businessId,
+  };
+}
+
+async function handleResumeContext(
+  tenant: WhatsappTenantContext,
+  phone: string,
+  text: string,
+  mediaId: string | null,
+  mediaType: string | null | undefined,
+  state: ConversationState
+): Promise<WhatsappHandlerResult> {
+  const payload = (state.pendingPayload ?? {}) as Record<string, unknown>;
+  const previousIntent = String(payload.previousIntent ?? '').trim() || null;
+  const previousPayload =
+    payload.previousPayload && typeof payload.previousPayload === 'object'
+      ? (payload.previousPayload as Record<string, unknown>)
+      : null;
+  const previousPrompt = String(payload.previousPrompt ?? '').trim() || null;
+  const previousFocus =
+    payload.previousFocus && typeof payload.previousFocus === 'object'
+      ? (payload.previousFocus as ConversationState['focusOrder'])
+      : state.focusOrder ?? null;
+  const stashed = String(payload.resumeUtterance ?? '').trim();
+  const stashedMediaId = String(payload.resumeMediaId ?? '').trim() || null;
+  const stashedMediaType = String(payload.resumeMediaType ?? '').trim() || null;
+  const t = String(text ?? '').trim();
+  const businessId = tenant.businessId;
+  const classified = classifyConversationSpeechAct(t, RESUME_CONTEXT_INTENT);
+
+  const restore = async () => {
+    await saveConversationState(businessId, phone, {
+      pendingIntent: previousIntent,
+      pendingPayload: previousPayload,
+      pendingPrompt: previousPrompt,
+      focusOrder: previousFocus ?? state.focusOrder ?? null,
+      suspendedTask: null,
+    });
+  };
+
+  const parsed = t
+    ? parseWithRules(t, {
+        pendingIntent: RESUME_CONTEXT_INTENT,
+        awaiting: 'resume_context',
+        originalIntent: previousIntent || undefined,
+        focusOrder: previousFocus ?? state.focusOrder ?? null,
+        lastOperation: state.lastOperation ?? null,
+        knownEntities:
+          previousPayload?.entities && typeof previousPayload.entities === 'object'
+            ? (previousPayload.entities as WhatsappCommandEntities)
+            : undefined,
+      })
+    : null;
+  const route = routeResumeUtterance(t, {
+    intent: parsed?.intent ?? 'unknown',
+    confidence: parsed?.confidence ?? 0,
+  });
+
+  logWhatsappTurn({
+    rawMessage: t,
+    stalePending: previousIntent,
+    focusEntities: [
+      previousFocus?.label ? `#${previousFocus.label}` : previousFocus?.id,
+      previousFocus?.clientName,
+    ].filter(Boolean) as string[],
+    classifiedConversationAction: classified,
+    intent: parsed?.intent,
+    parsedIntent: parsed?.intent,
+    productParserExecuted: Boolean(
+      parsed && 'entities' in parsed && (parsed.entities?.productName || parsed.entities?.items?.length)
+    ),
+    whyFallbackWasUsed: parsed?.intent === 'unknown' ? 'no_confident_intent' : null,
+    finalOperationPlan: route.kind,
+  });
+
+  if (route.kind === 'resume_no') {
+    await clearConversationTask(businessId, phone);
+    return {
+      reply: waCard({ title: 'De nuevo', ask: '¿Qué anotamos?' }),
+      intent: RESUME_CONTEXT_INTENT,
+      executed: false,
+      businessId,
+    };
+  }
+
+  if (route.kind === 'help_keep_pending') {
+    await restore();
+    const restored = await getConversationState(businessId, phone);
+    return answerUsageQuestion(tenant, phone, t, restored, parsed);
+  }
+
+  if (route.kind === 'run_new') {
+    await clearConversationTask(businessId, phone);
+    return handleWhatsappTurn({
+      from: phone,
+      text: route.text,
+      skipIdleResume: true,
+    });
+  }
+
+  await restore();
+
+  const continueWithStash = route.kind === 'resume_yes';
+  const nextText = continueWithStash ? stashed : t;
+  const nextMediaId = continueWithStash ? stashedMediaId : mediaId || stashedMediaId;
+  const nextMediaType = continueWithStash ? stashedMediaType : mediaType || stashedMediaType;
+
+  if (!nextText && !nextMediaId && previousPrompt && previousIntent) {
+    return {
+      reply: previousPrompt,
+      intent: previousIntent,
+      executed: false,
+      businessId,
+    };
+  }
+
+  if (
+    !nextMediaId &&
+    (!nextText || isTrivialWhatsappTurn(nextText) || isThanksText(nextText) || looksLikeResumeYes(nextText))
+  ) {
+    if (previousPrompt && previousIntent) {
+      return {
+        reply: previousPrompt,
+        intent: previousIntent,
+        executed: false,
+        businessId,
+      };
+    }
+    if (previousFocus?.id) {
+      const who = previousFocus.clientName ? ` de ${previousFocus.clientName}` : '';
+      const num = previousFocus.label
+        ? ` *#${String(previousFocus.label).replace(/^#/, '')}*`
+        : '';
+      return {
+        reply: waCard({
+          title: 'Seguimos',
+          lines: [`El pedido${num}${who}.`],
+          ask: '¿Qué hacemos con ese pedido?',
+        }),
+        intent: RESUME_CONTEXT_INTENT,
+        executed: false,
+        businessId,
+      };
+    }
+    return {
+      reply: waCard({ title: 'Seguimos', ask: '¿Qué anotamos?' }),
+      intent: RESUME_CONTEXT_INTENT,
+      executed: false,
+      businessId,
+    };
+  }
+
+  return handleWhatsappTurn({
+    from: phone,
+    text: nextText || undefined,
+    mediaId: nextMediaId,
+    mediaType: nextMediaType,
+    skipIdleResume: true,
+  });
 }
 
 export async function handleWhatsappMessage(
@@ -3967,7 +5571,7 @@ async function handleWhatsappTurn(
     subscriptionActive: !isSubscriptionBlocked(business),
   });
 
-  if (!guard.ok) {
+  if (guard.ok === false) {
     return {
       reply: guard.message,
       intent: guard.reason,
@@ -4029,15 +5633,17 @@ async function handleWhatsappTurn(
   }
 
   let parsed: ParsedWhatsappCommand | null = null;
-  if (audio && !text) {
-    parsed = await parseWhatsappCommand({
+  let llmInterpretation: TurnInterpretation | null = null;
+  let llmConversation: WhatsappParseConversation | undefined;
+  if (audio && !text && !isLlmFirstEngine()) {
+    parsed = await interpretTurn({
       text: '',
       audio,
       mediaId: null,
       rubro: tenant.rubro,
       businessId: tenant.businessId,
     });
-    const transcript = String(parsed.raw ?? '').trim();
+    const transcript = String('raw' in parsed ? parsed.raw ?? '' : '').trim();
     if (!transcript) {
       return {
         reply: 'No pude entender el audio. Mandalo de nuevo más corto, o escribilo.',
@@ -4049,36 +5655,173 @@ async function handleWhatsappTurn(
     text = transcript;
   }
 
-  const state = await getConversationState(tenant.businessId, phone);
-  if (state?.pendingIntent === HELP_TOPIC_INTENT && text) {
-    if (isHelpFollowUp(text) || matchSetupLoad(text)) {
-      return handleHelpTurn(
-        tenant,
-        text,
-        state.pendingPayload
-      );
+  let state = await getConversationState(tenant.businessId, phone);
+  if (state?.pendingIntent === HELP_TOPIC_INTENT && text && isUnequivocalUiReply(text)) {
+    return handleHelpTurn(
+      tenant,
+      text,
+      state.pendingPayload
+    );
+  }
+  if (state?.pendingIntent === HELP_TOPIC_INTENT && text && /^(consultame|consultáme|ayuda|help|comandos|menu|menú)[\s?¿!.]*$/i.test(text.trim())) {
+    return handleHelpTurn(tenant, text, state.pendingPayload);
+  }
+
+  if (state?.pendingIntent && text && isOnboardingIntent(state.pendingIntent) && isUnequivocalUiReply(text)) {
+    const onboarded = await handleOnboardingPending(
+      tenant,
+      text,
+      state.pendingIntent,
+      state.pendingPayload
+    );
+    if (onboarded) return onboarded;
+  }
+
+  if (isV4Engine(tenant.businessId)) {
+    if (audio && !text) {
+      const transcriptParsed = await interpretLlmFirstTurn({
+        text: '',
+        audio,
+        mediaId: null,
+        rubro: tenant.rubro,
+        businessId: tenant.businessId,
+        conversation: parseConversationFromState(state),
+      });
+      const transcript = String(transcriptParsed.interpretation.rawMessage ?? '').trim();
+      if (!transcript) {
+        return {
+          reply: 'No pude entender el audio. Mandalo de nuevo más corto, o escribilo.',
+          intent: 'audio_unreadable',
+          executed: false,
+          businessId: tenant.businessId,
+        };
+      }
+      text = transcript;
     }
-    await saveConversationState(tenant.businessId, phone, {
-      pendingIntent: null,
-      pendingPayload: null,
-      pendingPrompt: null,
-    });
-  } else if (state?.pendingIntent && text) {
-    if (isOnboardingIntent(state.pendingIntent)) {
-      const onboarded = await handleOnboardingPending(
-        tenant,
+    return handleV4WhatsappTurn({ tenant, phone, message, text, state });
+  }
+
+  let skipPendingGates = false;
+  if (isLlmFirstEngine() && (text || image || audio)) {
+    const bypass = text ? matchDeterministicBypass(text, state) : null;
+    if (!bypass) {
+      llmConversation = parseConversationFromState(state, {
+        languageMemory: await loadUserLanguageMemory(tenant.businessId, phone).catch(() => ({
+          aliases: [],
+        })),
+      });
+      const v2 = await interpretLlmFirstTurn({
         text,
-        state.pendingIntent,
-        state.pendingPayload
-      );
-      if (onboarded) return onboarded;
-    } else if (isFreshTaskUtterance(text, state.pendingIntent)) {
+        image,
+        audio,
+        mediaId: isImage ? mediaId : null,
+        rubro: tenant.rubro,
+        businessId: tenant.businessId,
+        conversation: llmConversation,
+      });
+      llmInterpretation = v2.interpretation;
+      if (v2.clearPending && state?.pendingIntent) {
+        await clearConversationTask(tenant.businessId, phone);
+        state = await getConversationState(tenant.businessId, phone);
+      }
+      parsed = v2.parsed;
+      skipPendingGates = true;
+      if (isInterpreterTechnicalFailure(v2.interpretation.interpreterFailure)) {
+        return {
+          reply: INTERPRETER_UNAVAILABLE_REPLY,
+          intent: 'interpreter_unavailable',
+          executed: false,
+          businessId: tenant.businessId,
+        };
+      }
+      if (parsed && 'entities' in parsed && parsed.entities) {
+        stampInboundIdempotency(parsed.entities, message.messageId);
+      }
+      if (
+        !v2.clearPending &&
+        state?.pendingIntent === STOCK_RESOLUTION_INTENT &&
+        v2.interpretation.stockResolution
+      ) {
+        return handleStockResolution(
+          tenant.businessId,
+          phone,
+          text,
+          state.pendingPayload,
+          tenant.rubro,
+          v2.parsed
+        );
+      }
+      const pendingNow = String(state?.pendingIntent ?? '');
+      if (
+        !v2.clearPending &&
+        v2.parsed.choiceIndex &&
+        (pendingNow.startsWith('select_') ||
+          pendingNow === 'order_action' ||
+          pendingNow === 'select_payment_kind' ||
+          pendingNow === 'select_order')
+      ) {
+        text = String(v2.parsed.choiceIndex);
+        skipPendingGates = false;
+        parsed = null;
+        llmInterpretation = null;
+      }
+    }
+  }
+
+  if (!skipPendingGates) {
+  const earlyParsed = text ? parseWithRules(text, parseConversationFromState(state)) : null;
+
+  if (
+    state?.pendingIntent &&
+    state.pendingIntent !== RESUME_CONTEXT_INTENT &&
+    text &&
+    (utteranceIsHowTo(text) ||
+      utteranceIsCapabilityQuestion(text) ||
+      earlyParsed?.intent === 'how_to' ||
+      earlyParsed?.intent === 'capability_question')
+  ) {
+    return answerUsageQuestion(tenant, phone, text, state, earlyParsed);
+  }
+
+  if (state?.pendingIntent === RESUME_CONTEXT_INTENT && (text || mediaId)) {
+    const skipResumeGate =
+      parsedIntentSkipsIdleResume(earlyParsed?.intent, earlyParsed?.confidence ?? 0) &&
+      earlyParsed?.intent !== 'how_to' &&
+      earlyParsed?.intent !== 'capability_question';
+    if (skipResumeGate) {
+      await clearConversationTask(tenant.businessId, phone);
+      state = await getConversationState(tenant.businessId, phone);
+    } else {
+      return handleResumeContext(tenant, phone, text, mediaId, message.mediaType, state);
+    }
+  }
+
+  if (
+    !message.skipIdleResume &&
+    state &&
+    (text || mediaId) &&
+    isConversationIdle(state) &&
+    shouldAskIdleResume(text, state, earlyParsed)
+  ) {
+    return askIdleResume(tenant.businessId, phone, text, mediaId, message.mediaType, state);
+  }
+
+  if (text && !state?.pendingIntent) {
+    const continued = await continueQueryOrList(tenant, phone, text, state);
+    if (continued) return continued;
+  }
+
+  if (state?.pendingIntent && text) {
+    if (isFreshTaskUtterance(text, state.pendingIntent)) {
       await saveConversationState(tenant.businessId, phone, {
         pendingIntent: null,
         pendingPayload: null,
         pendingPrompt: null,
+        activeTask: null,
+        suspendedTask: null,
       });
-    } else {
+      state = await getConversationState(tenant.businessId, phone);
+    } else if (!isOnboardingIntent(state.pendingIntent)) {
     if (!doesFillCurrentSlot(text, state.pendingIntent, state.pendingPayload ?? {})) {
       const payload = mergeStashIntoPayload({ ...(state.pendingPayload ?? {}) }, text);
       const prompt =
@@ -4120,6 +5863,15 @@ async function handleWhatsappTurn(
         phone,
         text,
         'product',
+        state.pendingPayload,
+        tenant.rubro
+      );
+    }
+    if (state.pendingIntent === COLLECT_ORDER_ITEMS_INTENT) {
+      return handleCollectOrderItems(
+        tenant.businessId,
+        phone,
+        text,
         state.pendingPayload,
         tenant.rubro
       );
@@ -4214,6 +5966,15 @@ async function handleWhatsappTurn(
     if (state.pendingIntent === SETTLE_ORDER_INTENT) {
       return handleSettleOrder(tenant.businessId, phone, text, state.pendingPayload);
     }
+    if (state.pendingIntent === STOCK_RESOLUTION_INTENT) {
+      return handleStockResolution(
+        tenant.businessId,
+        phone,
+        text,
+        state.pendingPayload,
+        tenant.rubro
+      );
+    }
     if (state.pendingIntent === CONFIRM_CREATE_PRODUCT) {
       return handleConfirmCreateProduct(
         tenant.businessId,
@@ -4253,6 +6014,7 @@ async function handleWhatsappTurn(
     }
     }
   }
+  }
 
   if (!parsed) {
     if (text && !mediaId && isThanksText(text)) {
@@ -4263,18 +6025,39 @@ async function handleWhatsappTurn(
         businessId: tenant.businessId,
       };
     }
-    parsed = await parseWhatsappCommand({
+    parsed = await interpretTurn({
       text,
       image,
       audio,
       mediaId: isImage ? mediaId : null,
       rubro: tenant.rubro,
       businessId: tenant.businessId,
-      conversation: state?.lastOperation
-        ? { lastOperation: state.lastOperation }
-        : undefined,
+      conversation: parseConversationFromState(state, {
+        languageMemory: await loadUserLanguageMemory(tenant.businessId, phone).catch(() => ({ aliases: [] })),
+      }),
     });
-  } else if (parsed.intent === 'unknown' && state?.lastOperation && looksLikeStatusQuery(text)) {
+    logWhatsappTurn({
+      rawMessage: text,
+      stalePending: state?.pendingIntent ?? state?.suspendedTask?.intent ?? null,
+      focusEntities: [
+        state?.focusOrder?.label ? `#${state.focusOrder.label}` : state?.focusOrder?.id,
+        state?.focusOrder?.clientName,
+        state?.focusEntities?.order?.id,
+      ].filter(Boolean) as string[],
+      classifiedConversationAction: classifyConversationSpeechAct(text, state?.pendingIntent),
+      intent: parsed.intent,
+      parsedIntent: parsed.intent,
+      productParserExecuted: productParserAllowed(parsed.intent),
+      whyFallbackWasUsed: parsed.intent === 'unknown' ? 'no_confident_intent' : null,
+      finalOperationPlan: parsed.intent,
+      confidence: parsed.confidence,
+    });
+  } else if (
+    !isLlmFirstEngine() &&
+    parsed.intent === 'unknown' &&
+    (state?.focusOrder?.id || state?.lastOperation) &&
+    looksLikeStatusQuery(text)
+  ) {
     const clientName = extractQueryClientFromText(text) || undefined;
     const orderNumber = extractOrderNumberFromText(text) || undefined;
     parsed = {
@@ -4320,7 +6103,25 @@ async function handleWhatsappTurn(
     return reopenSetupMenu(tenant);
   }
 
+  if (parsed.intent === 'interpreter_unavailable') {
+    return {
+      reply: INTERPRETER_UNAVAILABLE_REPLY,
+      intent: 'interpreter_unavailable',
+      executed: false,
+      businessId: tenant.businessId,
+    };
+  }
+
   if (parsed.intent === 'unknown') {
+    const cap = 'entities' in parsed ? parsed.entities?.requestedCapability : undefined;
+    if ('entities' in parsed && parsed.entities?.capabilityUnwired && cap) {
+      return {
+        reply: capabilityNotEnabledReply(cap),
+        intent: 'capability_question',
+        executed: false,
+        businessId: tenant.businessId,
+      };
+    }
     return askUnknownIntent(tenant, phone, text, state?.lastOperation ?? null, 1);
   }
 
@@ -4328,21 +6129,78 @@ async function handleWhatsappTurn(
     return handleHelpTurn(tenant, text);
   }
 
-  if (parsed.intent === 'query_status' || parsed.intent === 'query_cash') {
-    if (parsed.intent === 'query_status') {
-      const entities = entitiesFromParsed(parsed, isImage ? mediaId : null);
-      if (entities.listOrders || looksLikeListOrders(text) || entities.clientName || entities.productName) {
-        return offerOpenOrderPick(tenant.businessId, phone, {
-          originalIntent: 'query_status',
-          entities,
-          rubro: tenant.rubro,
-        });
+  if (parsed.intent === 'how_to' || parsed.intent === 'capability_question') {
+    return answerUsageQuestion(tenant, phone, text, state, parsed);
+  }
+
+  if (parsed.intent === 'query_status' || parsed.intent === 'query_cash' || parsed.intent === 'query_stock') {
+    if (isV3Engine(tenant.businessId) && llmInterpretation && parsed.intent === 'query_status') {
+      const v3 = await executeV3QueryTurn({
+        tenant,
+        interpretation: llmInterpretation,
+        conversation: llmConversation ?? parseConversationFromState(state),
+      });
+      if (v3) {
+        return {
+          reply: v3.reply,
+          intent: v3.intent,
+          executed: v3.executed,
+          businessId: v3.businessId,
+        };
+      }
+    }
+    if (parsed.intent === 'query_status' && !isLlmFirstEngine()) {
+      const base = entitiesFromParsed(parsed, isImage ? mediaId : null);
+      const thisOrder =
+        looksLikeExistingOrderQuery(text) ||
+        Boolean(base.targetOrderId || base.orderNumber || base.referToLast);
+      if (thisOrder) {
+        parsed = {
+          ...parsed,
+          entities: { ...base, productName: undefined, sourceText: text || base.sourceText },
+        };
+      } else {
+        const entities = mergeOrderSearchHints(base, text);
+        if (
+          entities.listOrders ||
+          looksLikeListOrders(text) ||
+          entities.clientName ||
+          entities.productName
+        ) {
+          return offerOpenOrderPick(tenant.businessId, phone, {
+            originalIntent: 'query_status',
+            entities,
+            rubro: tenant.rubro,
+          });
+        }
+        parsed = { ...parsed, entities };
       }
     }
     const result = await executeWhatsappCommand(tenant, parsed);
-    if (parsed.intent === 'query_cash') {
-      await saveConversationState(tenant.businessId, phone, { setupStatus: 'done' });
-    }
+    const queryEntities = entitiesFromParsed(parsed, isImage ? mediaId : null);
+    const listItems = Array.isArray(result.data?.listItems)
+      ? result.data.listItems.map((item) => String(item))
+      : undefined;
+    const listContext: ConversationListContext | null =
+      listItems && listItems.length
+        ? {
+            type: 'orders',
+            items: listItems,
+            currentPage: Math.floor(Number(result.data?.offset ?? 0) / Math.max(1, Number(result.data?.pageSize ?? 10))) + 1,
+            pageSize: Number(result.data?.pageSize ?? 10) || 10,
+            totalResults: Number(result.data?.total ?? listItems.length) || listItems.length,
+            title: String(result.data?.title ?? ''),
+            hasMore: result.data?.hasMore === true,
+            offset: Number(result.data?.offset ?? 0) || 0,
+            filters: lastQueryFromEntities(parsed.intent, queryEntities).slots,
+          }
+        : null;
+    await rememberLastQuery(
+      tenant.businessId,
+      phone,
+      lastQueryFromEntities(parsed.intent, queryEntities),
+      listContext
+    );
     return {
       reply: result.reply,
       intent: result.intent,
@@ -4351,6 +6209,12 @@ async function handleWhatsappTurn(
     };
   }
 
+  const dual = isLlmFirstEngine() ? { currentText: text } : takeDualIntent(text);
   const entities = entitiesFromParsed(parsed, isImage ? mediaId : null);
+  stampInboundIdempotency(entities, message.messageId);
+  if ('queued' in dual && dual.queued) {
+    await saveConversationState(tenant.businessId, phone, { queuedTasks: [dual.queued] });
+    entities.sourceText = dual.currentText;
+  }
   return prepareOperation(tenant.businessId, phone, parsed.intent, entities, tenant.rubro);
 }

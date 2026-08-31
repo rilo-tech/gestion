@@ -4,6 +4,9 @@ import { isValidE164Phone, normalizePhone } from '../../shared/phone.ts';
 
 export type WhatsappUserRole = 'supervisor' | 'admin' | 'operador';
 
+export type WhatsappLineKind = 'primary' | 'extra';
+export type WhatsappLineStatus = 'active' | 'pending' | 'disconnected';
+
 export interface WhatsappUserRecord {
   id: string;
   phone: string;
@@ -11,6 +14,13 @@ export interface WhatsappUserRecord {
   role: WhatsappUserRole;
   enabled: boolean;
   erpUserId: string | null;
+  kind?: WhatsappLineKind;
+  status?: WhatsappLineStatus;
+  addedAt?: string;
+  addedBy?: string;
+  releasedAt?: string;
+  releasedBy?: string;
+  previousPhone?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -25,17 +35,39 @@ function normalizeRole(value: unknown): WhatsappUserRole {
   return 'operador';
 }
 
+function normalizeKind(value: unknown, id: string): WhatsappLineKind {
+  if (value === 'extra') return 'extra';
+  if (value === 'primary' || id === 'owner') return 'primary';
+  return 'extra';
+}
+
+function normalizeStatus(value: unknown, enabled: boolean, phone: string): WhatsappLineStatus {
+  if (value === 'pending' || value === 'disconnected' || value === 'active') return value;
+  if (!enabled) return 'disconnected';
+  if (!phone.trim()) return 'pending';
+  return 'active';
+}
+
 function mapWhatsappUser(id: string, data: Record<string, unknown>): WhatsappUserRecord {
+  const phone = String(data.phone ?? '').trim();
+  const enabled = data.enabled !== false;
   return {
     id,
-    phone: String(data.phone ?? '').trim(),
+    phone,
     name: String(data.name ?? '').trim(),
     role: normalizeRole(data.role),
-    enabled: data.enabled !== false,
+    enabled,
     erpUserId:
       typeof data.erpUserId === 'string' && data.erpUserId.trim()
         ? data.erpUserId.trim()
         : null,
+    kind: normalizeKind(data.kind, id),
+    status: normalizeStatus(data.status, enabled, phone),
+    addedAt: data.addedAt ? String(data.addedAt) : data.createdAt ? String(data.createdAt) : undefined,
+    addedBy: data.addedBy ? String(data.addedBy) : undefined,
+    releasedAt: data.releasedAt ? String(data.releasedAt) : undefined,
+    releasedBy: data.releasedBy ? String(data.releasedBy) : undefined,
+    previousPhone: data.previousPhone ? String(data.previousPhone) : undefined,
     createdAt: data.createdAt ? String(data.createdAt) : undefined,
     updatedAt: data.updatedAt ? String(data.updatedAt) : undefined,
   };
@@ -196,9 +228,11 @@ export async function setWhatsappUserEnabled(
     await ref.set(
       {
         enabled: true,
+        status: 'active',
         ...(restorePhone ? { phone: restorePhone } : {}),
         previousPhone: FieldValue.delete(),
         releasedAt: FieldValue.delete(),
+        releasedBy: FieldValue.delete(),
         updatedAt: now,
       },
       { merge: true }
@@ -208,6 +242,7 @@ export async function setWhatsappUserEnabled(
     await ref.set(
       {
         enabled: false,
+        status: 'disconnected',
         ...(phone
           ? { phone: FieldValue.delete(), previousPhone: phone }
           : {}),
@@ -226,4 +261,35 @@ export async function deleteWhatsappUser(businessId: string, userId: string): Pr
   const snap = await ref.get();
   if (!snap.exists) throw new Error('WHATSAPP_USER_NOT_FOUND');
   await ref.delete();
+}
+
+export async function createPendingWhatsappLine(params: {
+  businessId: string;
+  name?: string;
+  addedBy: string;
+}): Promise<WhatsappUserRecord> {
+  const now = new Date().toISOString();
+  const ref = collection(params.businessId).doc();
+  await ref.set({
+    phone: '',
+    name: params.name?.trim() || 'Número adicional',
+    role: 'operador',
+    enabled: false,
+    erpUserId: null,
+    kind: 'extra',
+    status: 'pending',
+    addedAt: now,
+    addedBy: params.addedBy,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const saved = await ref.get();
+  return mapWhatsappUser(saved.id, saved.data() as Record<string, unknown>);
+}
+
+export async function countPrimaryWhatsappLines(businessId: string): Promise<number> {
+  const users = await listWhatsappUsers(businessId);
+  return users.filter(
+    (row) => row.kind === 'primary' && row.enabled && row.status === 'active' && row.phone
+  ).length;
 }

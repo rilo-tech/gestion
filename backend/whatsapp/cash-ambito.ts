@@ -42,9 +42,7 @@ export function resolveSpokenCashAmbito(
   const spoken = [
     entities.cashAmbitoHint,
     entities.cashAmbitoLabel,
-    entities.cashConcept,
-    entities.notes,
-    entities.sourceText,
+    ...(entities.semanticCommand ? [] : [entities.cashConcept, entities.notes, entities.sourceText]),
   ]
     .filter(Boolean)
     .join(' ');
@@ -56,7 +54,11 @@ export function cleanCashConcept(
   ambitos: CajaAmbitoConfig[],
   fallback: string
 ): string {
-  let text = String(raw ?? '');
+  const trimmed = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!trimmed) return fallback;
+  const words = trimmed.split(/\s+/).length;
+  if (words <= 8 && trimmed.length <= 80) return trimmed.slice(0, 80);
+  let text = trimmed;
   text = text.replace(
     /\b(hace|hac[eé]|hacele|anot[aá]|registr[aá]|pon[eé]|cargar|carg[aá])\s+(un[ao]?\s+)?/gi,
     ' '
@@ -65,7 +67,7 @@ export function cleanCashConcept(
     /\b(egreso|ingreso|gasto|salida|entrada|retiro|retir[eéo]|sac[aáe](?:lo)?)\b/gi,
     ' '
   );
-  text = text.replace(/\b(de|del|en|a|la|el|por|caja)\b/gi, ' ');
+  text = text.replace(/\b(de|del|en|a|la|el|por|caja|motivo|concepto)\b/gi, ' ');
   for (const ambito of ambitos) {
     const bits = [ambito.id, ambito.label].filter(Boolean);
     for (const bit of bits) {

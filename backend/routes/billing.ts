@@ -22,11 +22,19 @@ import {
 } from '../../shared/billing-catalog.ts';
 import {
   createCheckoutPreference,
-  fetchMercadoPagoPaymentAnyCountry,
   isMercadoPagoConfigured,
 } from '../billing/mercadopago.ts';
-import { activatePaidSubscription } from '../billing/activate-paid-subscription.ts';
-import { activateUsagePack, isUsagePackId } from '../billing/activate-usage-pack.ts';
+import { isUsagePackId } from '../billing/activate-usage-pack.ts';
+import { loadCommercialContext, quoteBusinessMonthly } from '../auth/commercial-pricing.ts';
+import { quoteCommercialMonthly } from '../../shared/commercial-pricing.ts';
+import { handleMercadoPagoWebhook } from '../billing/mp-webhook-handler.ts';
+import {
+  cancelAutoRenew,
+  createAutoRenewCheckout,
+  pauseAutoRenew,
+  remainingTrialDaysFor,
+} from '../billing/recurring.ts';
+import { resolveSubscriptionLifecycle } from '../../shared/subscription-lifecycle.ts';
 
 const router = express.Router();
 
@@ -87,6 +95,23 @@ router.get('/plans', requireAuth, async (req, res) => {
         : `Mercado Pago aún no configurado para ${country}. Contactá a soporte.`,
       products,
       usagePacks,
+      subscription: {
+        autoRenew: business.billing?.autoRenew === true,
+        status: business.billing?.mpPreapprovalStatus ?? null,
+        lifecycleStatus: resolveSubscriptionLifecycle({
+          estadoSuscripcion: business.estadoSuscripcion,
+          enPrueba: business.enPrueba,
+          trialStatus: business.trialStatus,
+          trialEndDate: business.trialEndDate,
+          trialStartDate: business.trialStartDate,
+          paidUntil: business.billing?.paidUntil,
+          autoRenew: business.billing?.autoRenew,
+          mpPreapprovalStatus: business.billing?.mpPreapprovalStatus,
+          lastPaymentStatus: business.billing?.lastPaymentStatus,
+        }),
+        nextPaymentDate: business.billing?.nextPaymentDate ?? null,
+        quotedAmount: (await quoteBusinessMonthly(businessId)).total,
+      },
     });
   } catch (error) {
     console.error('[billing] plans error', error);
@@ -146,13 +171,26 @@ router.post('/checkout', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Sin precio para este país.' });
     }
 
-    const checkout = resolveCheckoutAmount(priced.amountMonthly, billingInterval);
+    const ctx = await loadCommercialContext(businessId);
+    const commercial = quoteCommercialMonthly({
+      catalog,
+      productId: productId as typeof ctx.productId,
+      country,
+      overrides: ctx.overrides,
+      activeErpUsers: ctx.activeErpUsers,
+      billableWhatsappNumbers: ctx.billableWhatsappNumbers,
+      addonTotal: ctx.addonTotal,
+      discount: ctx.discount,
+    });
+    const monthlyTotal = commercial.total > 0 ? commercial.total : priced.amountMonthly;
+
+    const checkout = resolveCheckoutAmount(monthlyTotal, billingInterval);
     const paymentsUsed = await countSubscriptionPaymentPeriods(businessId);
     const introLeft = introMonthsRemaining(paymentsUsed, catalog);
     const introApplied =
       billingInterval === 'month' && introLeft > 0 && hasIntroDiscount(catalog);
     const unitPrice = introApplied
-      ? discountedMonthly(priced.amountMonthly, catalog.introDiscountPercent)
+      ? discountedMonthly(monthlyTotal, catalog.introDiscountPercent)
       : checkout.amount;
     const titleSuffix = introApplied
       ? `1 mes · ${catalog.introDiscountPercent}% off`
@@ -174,6 +212,9 @@ router.post('/checkout', requireAuth, async (req, res) => {
         coverageMonths: String(checkout.coverageMonths),
         introApplied: introApplied ? 'true' : 'false',
         kind: 'plan',
+        extraErpUsers: String(commercial.extraErpUsers),
+        extraWhatsappNumbers: String(commercial.extraWhatsappNumbers),
+        commercialTotal: String(monthlyTotal),
       },
       payerEmail: userEmail || undefined,
       successUrl: `${base}/activar-suscripcion?status=success`,
@@ -195,6 +236,9 @@ router.post('/checkout', requireAuth, async (req, res) => {
       coverageMonths: checkout.coverageMonths,
       introApplied,
       productId,
+      extraErpUsers: commercial.extraErpUsers,
+      extraWhatsappNumbers: commercial.extraWhatsappNumbers,
+      commercialTotal: monthlyTotal,
     });
   } catch (error) {
     console.error('[billing] checkout error', error);
@@ -287,102 +331,106 @@ router.post('/checkout-pack', requireAuth, requireSupervisor, async (req, res) =
   }
 });
 
+router.get('/subscription', requireAuth, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    if (!businessId) return res.status(401).json({ error: 'No autenticado.' });
+    const business = await getBusiness(businessId);
+    if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
+    const quote = await quoteBusinessMonthly(businessId);
+    const trialDays = await remainingTrialDaysFor(business);
+    res.json({
+      autoRenew: business.billing?.autoRenew === true,
+      mpPreapprovalId: business.billing?.mpPreapprovalId ?? null,
+      mpPreapprovalStatus: business.billing?.mpPreapprovalStatus ?? null,
+      nextPaymentDate: business.billing?.nextPaymentDate ?? null,
+      paidUntil: business.billing?.paidUntil ?? null,
+      quotedAmount: quote.total,
+      currency: quote.rates.currency,
+      lines: quote.lines,
+      remainingTrialDays: trialDays,
+      lifecycleStatus: resolveSubscriptionLifecycle({
+        estadoSuscripcion: business.estadoSuscripcion,
+        enPrueba: business.enPrueba,
+        trialStatus: business.trialStatus,
+        trialEndDate: business.trialEndDate,
+        trialStartDate: business.trialStartDate,
+        paidUntil: business.billing?.paidUntil,
+        autoRenew: business.billing?.autoRenew,
+        mpPreapprovalStatus: business.billing?.mpPreapprovalStatus,
+        lastPaymentStatus: business.billing?.lastPaymentStatus,
+      }),
+    });
+  } catch (error) {
+    console.error('[billing] subscription get error', error);
+    res.status(500).json({ error: 'No se pudo cargar la renovación automática.' });
+  }
+});
+
+router.post('/subscribe', requireAuth, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    const userEmail =
+      authReq.auth?.scope === 'company' ? authReq.auth.user.email : undefined;
+    if (!businessId) return res.status(401).json({ error: 'No autenticado.' });
+    const created = await createAutoRenewCheckout({
+      businessId,
+      payerEmail: userEmail || String(req.body?.email ?? ''),
+    });
+    res.json(created);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'PAYER_EMAIL_REQUIRED') {
+      return res.status(400).json({
+        error: 'Necesitamos el email de la cuenta para autorizar la renovación en Mercado Pago.',
+        code,
+      });
+    }
+    if (code === 'MP_NOT_CONFIGURED') {
+      return res.status(503).json({ error: 'Mercado Pago todavía no está habilitado.' });
+    }
+    console.error('[billing] subscribe error', error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'No se pudo iniciar la renovación automática.',
+    });
+  }
+});
+
+router.post('/subscription/pause', requireAuth, requireSupervisor, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    if (!businessId) return res.status(401).json({ error: 'No autenticado.' });
+    const result = await pauseAutoRenew(businessId);
+    res.json(result);
+  } catch (error) {
+    console.error('[billing] pause error', error);
+    res.status(500).json({ error: 'No se pudo pausar la renovación automática.' });
+  }
+});
+
+router.post('/subscription/cancel', requireAuth, requireSupervisor, async (req, res) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    const businessId = authReq.auth?.businessId;
+    if (!businessId) return res.status(401).json({ error: 'No autenticado.' });
+    const result = await cancelAutoRenew(businessId);
+    res.json(result);
+  } catch (error) {
+    console.error('[billing] cancel error', error);
+    res.status(500).json({ error: 'No se pudo cancelar la renovación automática.' });
+  }
+});
+
 /** Webhook Mercado Pago (sin auth JWT). */
 router.post('/webhooks/mercadopago', async (req, res) => {
   try {
-    const topic = String(req.query.topic ?? req.query.type ?? req.body?.type ?? '').toLowerCase();
-    const paymentId = String(
-      req.query['data.id'] ?? req.body?.data?.id ?? req.body?.id ?? ''
-    ).trim();
-
-    // MP a veces manda topic=merchant_order; nos interesan payments
-    if (topic && topic !== 'payment' && !paymentId) {
-      return res.sendStatus(200);
-    }
-
-    if (!paymentId) {
-      return res.sendStatus(200);
-    }
-
-    const fetched = await fetchMercadoPagoPaymentAnyCountry(paymentId);
-    if (!fetched) {
-      console.warn('[billing] webhook payment not found', paymentId);
-      return res.sendStatus(200);
-    }
-
-    const { country, payment } = fetched;
-    if (payment.status !== 'approved') {
-      return res.sendStatus(200);
-    }
-
-    const meta = payment.metadata ?? {};
-    let businessId = String(meta.businessId ?? meta.business_id ?? '').trim();
-    let productId = String(meta.productId ?? meta.product_id ?? '').trim();
-    let billingInterval = parseBillingInterval(
-      meta.billingInterval ?? meta.billing_interval
-    );
-    let coverageMonths = Number(meta.coverageMonths ?? meta.coverage_months);
-
-    if ((!businessId || !productId) && payment.externalReference) {
-      const parts = payment.externalReference.split('|');
-      businessId = businessId || parts[0] || '';
-      productId = productId || parts[1] || '';
-      if (parts[3] === 'year' || parts[3] === 'month') {
-        billingInterval = parseBillingInterval(parts[3]);
-      }
-    }
-
-    if (!Number.isFinite(coverageMonths) || coverageMonths < 1) {
-      coverageMonths = billingInterval === 'year' ? 12 : 1;
-    }
-
-    if (!businessId || !productId) {
-      console.error('[billing] webhook missing business/product', payment);
-      return res.sendStatus(200);
-    }
-
-    const kind = String(meta.kind ?? meta.Kind ?? '').trim();
-    const packFromMeta = String(meta.packId ?? meta.pack_id ?? '').trim();
-    const packId = isUsagePackId(packFromMeta)
-      ? packFromMeta
-      : productId.startsWith('pack-') && isUsagePackId(productId.slice(5))
-        ? productId.slice(5)
-        : null;
-
-    if (kind === 'usage_pack' || packId) {
-      if (!packId || !isUsagePackId(packId)) {
-        console.error('[billing] usage pack missing packId', payment);
-        return res.sendStatus(200);
-      }
-      const packResult = await activateUsagePack({
-        businessId,
-        packId,
-        country,
-        amount: payment.transactionAmount,
-        currency: payment.currencyId,
-        mercadoPagoPaymentId: payment.id,
-      });
-      if (packResult.ok === false) {
-        console.error('[billing] activate pack failed', packResult.reason);
-      }
-      return res.sendStatus(200);
-    }
-
-    const result = await activatePaidSubscription({
-      businessId,
-      productId,
-      country,
-      amount: payment.transactionAmount,
-      currency: payment.currencyId,
-      mercadoPagoPaymentId: payment.id,
-      billingInterval,
-      coverageMonths,
+    await handleMercadoPagoWebhook({
+      query: req.query as Record<string, unknown>,
+      body: (req.body ?? {}) as Record<string, unknown>,
     });
-
-    if (result.ok === false) {
-      console.error('[billing] activate failed', result.reason);
-    }
-
     res.sendStatus(200);
   } catch (error) {
     console.error('[billing] webhook error', error);

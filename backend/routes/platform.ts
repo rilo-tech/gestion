@@ -62,11 +62,13 @@ import {
   resolveBillingCountry,
 } from '../../shared/billing-catalog.ts';
 import { getCommercialCatalog, saveCommercialCatalog } from '../auth/commercial-catalog.ts';
-import { extraUserMonthlyFor, overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
+import { overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
 import { USAGE_TOOL_LABELS, parseBusinessUsageQuota } from '../../shared/usage-cost.ts';
 import { buildUsageReport } from '../auth/usage-gates.ts';
+import { quoteBusinessMonthly, syncBillableWhatsappSeats } from '../auth/commercial-pricing.ts';
+import { attachProfitability } from '../billing/platform-profitability.ts';
 import { clearWhatsappQuotaNotices } from '../auth/usage-meter.ts';
 import {
   countActiveSupervisors,
@@ -181,20 +183,30 @@ router.get('/usage', async (_req, res) => {
     const businesses = await listPublicBusinessInfos();
     const rows = await Promise.all(
       businesses.map(async (business) => {
-        const usage = await buildUsageReport(business.id);
+        const [usage, quote] = await Promise.all([
+          buildUsageReport(business.id),
+          quoteBusinessMonthly(business.id).catch(() => null),
+        ]);
         return {
           businessId: business.id,
           nombre: business.nombre,
           product: business.platformAccess?.trialProduct ?? null,
           estadoSuscripcion: business.estadoSuscripcion,
+          expectedMonthly: quote?.total ?? business.montoMensualEsperado,
+          extraErpCost: quote?.extraErpCost ?? 0,
+          extraWhatsappCost: quote?.extraWhatsappCost ?? 0,
+          quote,
           ...usage,
         };
       })
     );
+    const period = rows[0]?.period ?? new Date().toISOString().slice(0, 10).slice(0, 7);
+    const profit = await attachProfitability(rows, period);
     res.json({
-      period: rows[0]?.period ?? new Date().toISOString().slice(0, 10).slice(0, 7),
+      period,
       toolLabels: USAGE_TOOL_LABELS,
-      rows,
+      rows: profit.rows,
+      totals: profit.totals,
     });
   } catch (error) {
     console.error('Error loading platform usage:', error);
@@ -208,10 +220,14 @@ router.get('/businesses/:businessId/usage', async (req, res) => {
     const business = await getBusiness(businessId);
     if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
     const usage = await buildUsageReport(businessId);
+    const quote = await quoteBusinessMonthly(businessId).catch(() => null);
     res.json({
       businessId,
       nombre: business.nombre,
       toolLabels: USAGE_TOOL_LABELS,
+      expectedMonthly: quote?.total ?? business.montoMensualEsperado,
+      extraErpCost: quote?.extraErpCost ?? 0,
+      extraWhatsappCost: quote?.extraWhatsappCost ?? 0,
       ...usage,
     });
   } catch (error) {
@@ -531,7 +547,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
         },
         undefined,
         enPrueba
-          ? { trialDays: commercial.trialDays || (productForAccess ? trialDaysForProduct(productForAccess) : 30) }
+          ? { trialDays: commercial.trialDays || (productForAccess ? trialDaysForProduct(productForAccess) : trialDaysForProduct('completo')) }
           : undefined
       ),
       creadoPor: req.auth?.userId,
@@ -857,34 +873,7 @@ router.get('/businesses/:businessId', async (req, res) => {
 });
 
 async function syncWhatsappSeatLimit(businessId: string): Promise<void> {
-  const enabled = await countEnabledWhatsappUsers(businessId);
-  const business = await getBusiness(businessId);
-  if (!business) return;
-  const catalog = await getCommercialCatalog();
-  const country = resolveBillingCountry(business.lifecycle?.pais ?? null);
-  const suggested =
-    business.suscripcion?.precioPorWhatsappOverride ??
-    business.suscripcion?.precioPorOperadorOverride ??
-    extraUserMonthlyFor(catalog, country);
-  await updateBusiness(
-    businessId,
-    {
-      suscripcion: {
-        limiteWhatsapp: enabled,
-        ...(business.suscripcion?.precioPorWhatsappOverride == null
-          ? { precioPorWhatsappOverride: suggested }
-          : {}),
-      },
-    },
-    { allowSubscriptionFields: true, historyNote: 'Cupo WhatsApp sincronizado' }
-  );
-  await db.collection(`negocios/${businessId}/whatsapp_config`).doc('default').set(
-    {
-      enabled: enabled > 0,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+  await syncBillableWhatsappSeats({ businessId, actor: 'platform' });
 }
 
 function mapPlatformUserMutationError(error: unknown): { status: number; message: string } | null {

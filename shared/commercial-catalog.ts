@@ -1,4 +1,5 @@
 import type { TrialProductId } from './platform-access.ts';
+import { DEFAULT_TRIAL_DAYS } from './trial-state.ts';
 import {
   ERP_PLAN_BILLING_DEFAULTS,
   formatMoneyLabel,
@@ -8,13 +9,42 @@ import {
   type BillingCurrency,
 } from './billing-catalog.ts';
 
+export type CommercialUsageMode = 'limited' | 'unlimited';
+
 export type CommercialProductQuote = {
   amountMonthlyUY: number;
   amountMonthlyAR: number;
   includedAi: number;
   /** Burbujas de salida de WhatsApp incluidas (SÍ/NO cuenta). 0 = no hay bot. */
   includedWhatsapp: number;
+  /** Tope mensual de acciones por WhatsApp. Default: limited. Alias comercial: riloBotUsageMode. */
+  usageMode?: CommercialUsageMode;
+  /** Usuarios de RILO Gestión incluidos en el precio base. */
+  includedErpUsers?: number;
+  extraErpUserPriceUY?: number;
+  extraErpUserPriceAR?: number;
+  /** Números de WhatsApp incluidos (líneas), no burbujas. */
+  includedWhatsappNumbers?: number;
+  extraWhatsappNumberPriceUY?: number;
+  extraWhatsappNumberPriceAR?: number;
+  /** Tope opcional de líneas. null = sin máximo. */
+  maxWhatsappNumbers?: number | null;
 };
+
+export function parseUsageMode(value: unknown): CommercialUsageMode {
+  return value === 'unlimited' ? 'unlimited' : 'limited';
+}
+
+/** Copy de cliente: nunca “acciones IA” a secas. */
+export function whatsappActionsLabel(
+  limit: number,
+  mode: CommercialUsageMode = 'limited'
+): string {
+  if (mode === 'unlimited') return 'Uso libre por WhatsApp (se mide, sin tope mensual)';
+  const n = Math.max(0, Math.round(Number(limit) || 0));
+  if (n <= 0) return '';
+  return `${n.toLocaleString('es-UY')} acciones por WhatsApp por mes`;
+}
 
 /** Pack de cupo extra (este mes). Lo publica Superadmin y se cobra por Mercado Pago. */
 export type UsagePackId = 'whatsapp' | 'ai';
@@ -27,7 +57,7 @@ export type CommercialUsagePack = {
 
 export type CommercialCatalog = {
   trialDays: number;
-  /** Acciones IA por mes durante la prueba (uso generoso para que carguen el negocio). */
+  /** Acciones por WhatsApp por mes durante la prueba (uso generoso para que carguen el negocio). */
   trialAccionesIaMes: number;
   /** Burbujas de WhatsApp por mes durante la prueba. */
   trialWhatsappMensajes: number;
@@ -45,6 +75,20 @@ export type CommercialCatalog = {
   introDiscountPercent: number;
   extraUserMonthlyUY: number;
   extraUserMonthlyAR: number;
+  extraWhatsappNumberMonthlyUY: number;
+  extraWhatsappNumberMonthlyAR: number;
+  /** Banderas de migraciones one-shot. Superadmin no las edita. */
+  migrations?: {
+    includedAi200AppliedAt?: string | null;
+  };
+  /** Costos de plataforma para Superadmin. Siempre etiquetar estimado vs real. */
+  finops?: {
+    firebaseMonthlyUsd?: number;
+    otherMonthlyUsd?: number;
+    uyuPerUsd?: number;
+    arsPerUsd?: number;
+    mpFeePercent?: number;
+  };
   /** Packs de cupo extra (este mes). Mismos números en landing, Planes y checkout. */
   usagePacks: Record<UsagePackId, CommercialUsagePack>;
   products: Record<TrialProductId, CommercialProductQuote>;
@@ -52,7 +96,7 @@ export type CommercialCatalog = {
 };
 
 export function trialCtaLabel(days: number, productLabel?: string): string {
-  const n = Math.max(1, Math.round(Number(days) || 30));
+  const n = Math.max(1, Math.round(Number(days) || DEFAULT_TRIAL_DAYS));
   return productLabel ? `${productLabel} ${n} días gratis` : `${n} días gratis`;
 }
 
@@ -62,7 +106,7 @@ export type CommercialFunnelStep = {
   body: string;
 };
 
-/** 1) 30 días gratis → 2) usá el producto → 3) contratá mensual. */
+/** 1) días gratis → 2) usá el producto → 3) contratá mensual. */
 export function commercialFunnelSteps(catalog: CommercialCatalog): CommercialFunnelStep[] {
   return [
     {
@@ -85,7 +129,7 @@ export function commercialFunnelSteps(catalog: CommercialCatalog): CommercialFun
 
 /** Precios de lanzamiento MVP (UYU). Superadmin puede publicarlos distintos. */
 export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
-  trialDays: 30,
+  trialDays: DEFAULT_TRIAL_DAYS,
   trialAccionesIaMes: 150,
   trialWhatsappMensajes: 400,
   lite: {
@@ -97,6 +141,8 @@ export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
   },
   extraUserMonthlyUY: 190,
   extraUserMonthlyAR: 4900,
+  extraWhatsappNumberMonthlyUY: 290,
+  extraWhatsappNumberMonthlyAR: 7900,
   usagePacks: {
     whatsapp: { quantity: 500, amountUY: 390, amountAR: 9900 },
     ai: { quantity: 500, amountUY: 90, amountAR: 2500 },
@@ -107,20 +153,44 @@ export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
     whatsapp: {
       amountMonthlyUY: 690,
       amountMonthlyAR: 16900,
-      includedAi: 1000,
+      includedAi: 200,
       includedWhatsapp: 800,
+      usageMode: 'limited',
+      includedErpUsers: 1,
+      extraErpUserPriceUY: 190,
+      extraErpUserPriceAR: 4900,
+      includedWhatsappNumbers: 1,
+      extraWhatsappNumberPriceUY: 290,
+      extraWhatsappNumberPriceAR: 7900,
+      maxWhatsappNumbers: null,
     },
     erp: {
       amountMonthlyUY: 590,
       amountMonthlyAR: 14900,
       includedAi: 0,
       includedWhatsapp: 0,
+      usageMode: 'limited',
+      includedErpUsers: 1,
+      extraErpUserPriceUY: 190,
+      extraErpUserPriceAR: 4900,
+      includedWhatsappNumbers: 0,
+      extraWhatsappNumberPriceUY: 290,
+      extraWhatsappNumberPriceAR: 7900,
+      maxWhatsappNumbers: null,
     },
     completo: {
       amountMonthlyUY: 990,
       amountMonthlyAR: 24900,
-      includedAi: 2000,
+      includedAi: 200,
       includedWhatsapp: 1200,
+      usageMode: 'limited',
+      includedErpUsers: 1,
+      extraErpUserPriceUY: 190,
+      extraErpUserPriceAR: 4900,
+      includedWhatsappNumbers: 1,
+      extraWhatsappNumberPriceUY: 290,
+      extraWhatsappNumberPriceAR: 7900,
+      maxWhatsappNumbers: null,
     },
   },
   updatedAt: null,
@@ -142,6 +212,85 @@ export function extraUserMonthlyFor(
   return country === 'AR' ? catalog.extraUserMonthlyAR : catalog.extraUserMonthlyUY;
 }
 
+export function extraWhatsappNumberMonthlyFor(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode
+): number {
+  return country === 'AR'
+    ? catalog.extraWhatsappNumberMonthlyAR
+    : catalog.extraWhatsappNumberMonthlyUY;
+}
+
+export function includedErpUsersFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): number {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  return Math.max(0, Math.round(Number(row.includedErpUsers) || 0));
+}
+
+export function includedWhatsappNumbersFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): number {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  return Math.max(0, Math.round(Number(row.includedWhatsappNumbers) || 0));
+}
+
+export function extraErpUserPriceFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId,
+  country: BillingCountryCode
+): number {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  const specific = country === 'AR' ? row.extraErpUserPriceAR : row.extraErpUserPriceUY;
+  if (typeof specific === 'number' && Number.isFinite(specific) && specific >= 0) {
+    return Math.round(specific);
+  }
+  return extraUserMonthlyFor(catalog, country);
+}
+
+export function extraWhatsappNumberPriceFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId,
+  country: BillingCountryCode
+): number {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  const specific =
+    country === 'AR' ? row.extraWhatsappNumberPriceAR : row.extraWhatsappNumberPriceUY;
+  if (typeof specific === 'number' && Number.isFinite(specific) && specific >= 0) {
+    return Math.round(specific);
+  }
+  return extraWhatsappNumberMonthlyFor(catalog, country);
+}
+
+export function monthlyActionLimitFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): number {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  return Math.max(0, Math.round(Number(row.includedAi) || 0));
+}
+
+export function riloBotUsageModeFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): CommercialUsageMode {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  return parseUsageMode(row.usageMode);
+}
+
+export function maxWhatsappNumbersFor(
+  catalog: CommercialCatalog,
+  productId: TrialProductId
+): number | null {
+  const row = catalog.products[productId] ?? catalog.products.completo;
+  const raw = row.maxWhatsappNumbers;
+  if (raw == null) return null;
+  const n = Math.round(Number(raw) || 0);
+  return n > 0 ? n : null;
+}
+
 export function usagePackAmountFor(
   catalog: CommercialCatalog,
   packId: UsagePackId,
@@ -155,7 +304,7 @@ export function usagePackTitle(packId: UsagePackId, quantity: number): string {
   if (packId === 'whatsapp') {
     return `${quantity.toLocaleString('es-UY')} mensajes de WhatsApp`;
   }
-  return `${quantity.toLocaleString('es-UY')} acciones IA`;
+  return `${quantity.toLocaleString('es-UY')} acciones por WhatsApp`;
 }
 
 export function formatCatalogAmountLabel(
@@ -193,7 +342,7 @@ export function overlayUsagePacksForCountry(
         hint:
           id === 'whatsapp'
             ? 'SÍ/NO también cuentan. Sirve para este mes; el plan se renueva solo.'
-            : 'Parser, foto de boleta y match de catálogo. Este mes.',
+            : 'Acciones extra por WhatsApp este mes (parser, foto de boleta y match).',
       };
     })
     .filter((row) => row.amount > 0 && row.quantity > 0);
@@ -215,13 +364,62 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(min, Math.round(n)) : fallback;
   };
+  const extraUserUY = num(raw?.extraUserMonthlyUY, base.extraUserMonthlyUY, 0);
+  const extraUserAR = num(raw?.extraUserMonthlyAR, base.extraUserMonthlyAR, 0);
+  const extraWaUY = num(
+    raw?.extraWhatsappNumberMonthlyUY,
+    base.extraWhatsappNumberMonthlyUY,
+    0
+  );
+  const extraWaAR = num(
+    raw?.extraWhatsappNumberMonthlyAR,
+    base.extraWhatsappNumberMonthlyAR,
+    0
+  );
+  const optionalMax = (value: unknown, fallback: number | null | undefined): number | null => {
+    if (value === null || value === undefined || value === '') {
+      return fallback == null ? null : fallback;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n);
+  };
   const product = (id: TrialProductId): CommercialProductQuote => {
     const row = products[id] ?? base.products[id];
+    const fallback = base.products[id];
     return {
-      amountMonthlyUY: num(row.amountMonthlyUY, base.products[id].amountMonthlyUY, 0),
-      amountMonthlyAR: num(row.amountMonthlyAR, base.products[id].amountMonthlyAR, 0),
-      includedAi: num(row.includedAi, base.products[id].includedAi, 0),
-      includedWhatsapp: num(row.includedWhatsapp, base.products[id].includedWhatsapp, 0),
+      amountMonthlyUY: num(row.amountMonthlyUY, fallback.amountMonthlyUY, 0),
+      amountMonthlyAR: num(row.amountMonthlyAR, fallback.amountMonthlyAR, 0),
+      includedAi: num(row.includedAi, fallback.includedAi, 0),
+      includedWhatsapp: num(row.includedWhatsapp, fallback.includedWhatsapp, 0),
+      usageMode: parseUsageMode(row.usageMode ?? fallback.usageMode),
+      includedErpUsers: num(row.includedErpUsers, fallback.includedErpUsers ?? 1, 0),
+      extraErpUserPriceUY: num(
+        row.extraErpUserPriceUY,
+        fallback.extraErpUserPriceUY ?? extraUserUY,
+        0
+      ),
+      extraErpUserPriceAR: num(
+        row.extraErpUserPriceAR,
+        fallback.extraErpUserPriceAR ?? extraUserAR,
+        0
+      ),
+      includedWhatsappNumbers: num(
+        row.includedWhatsappNumbers,
+        fallback.includedWhatsappNumbers ?? (id === 'erp' ? 0 : 1),
+        0
+      ),
+      extraWhatsappNumberPriceUY: num(
+        row.extraWhatsappNumberPriceUY,
+        fallback.extraWhatsappNumberPriceUY ?? extraWaUY,
+        0
+      ),
+      extraWhatsappNumberPriceAR: num(
+        row.extraWhatsappNumberPriceAR,
+        fallback.extraWhatsappNumberPriceAR ?? extraWaAR,
+        0
+      ),
+      maxWhatsappNumbers: optionalMax(row.maxWhatsappNumbers, fallback.maxWhatsappNumbers),
     };
   };
   return {
@@ -243,8 +441,10 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
         0
       ),
     },
-    extraUserMonthlyUY: num(raw?.extraUserMonthlyUY, base.extraUserMonthlyUY, 0),
-    extraUserMonthlyAR: num(raw?.extraUserMonthlyAR, base.extraUserMonthlyAR, 0),
+    extraUserMonthlyUY: extraUserUY,
+    extraUserMonthlyAR: extraUserAR,
+    extraWhatsappNumberMonthlyUY: extraWaUY,
+    extraWhatsappNumberMonthlyAR: extraWaAR,
     usagePacks: {
       whatsapp: {
         quantity: num(
@@ -268,6 +468,22 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
       erp: product('erp'),
       completo: product('completo'),
     },
+    migrations: {
+      includedAi200AppliedAt:
+        typeof raw?.migrations?.includedAi200AppliedAt === 'string'
+          ? raw.migrations.includedAi200AppliedAt
+          : null,
+    },
+    finops: {
+      firebaseMonthlyUsd: num(raw?.finops?.firebaseMonthlyUsd, 25, 0),
+      otherMonthlyUsd: num(raw?.finops?.otherMonthlyUsd, 0, 0),
+      uyuPerUsd: num(raw?.finops?.uyuPerUsd, 40, 1),
+      arsPerUsd: num(raw?.finops?.arsPerUsd, 1400, 1),
+      mpFeePercent: Math.min(
+        30,
+        Math.max(0, Number(raw?.finops?.mpFeePercent) || 4.99)
+      ),
+    },
     updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
   };
 }
@@ -278,7 +494,8 @@ export function overlayProductsForCountry(
 ) {
   return listProductsForCountry(country).map((product) => {
     const amountMonthly = amountMonthlyFor(catalog, product.id, country);
-    const extraUserMonthly = extraUserMonthlyFor(catalog, country);
+    const extraUserMonthly = extraErpUserPriceFor(catalog, product.id, country);
+    const extraWhatsappNumberMonthly = extraWhatsappNumberPriceFor(catalog, product.id, country);
     const amountYearly = yearlyAmountFromMonthly(amountMonthly);
     const currency = product.currency as BillingCurrency;
     return {
@@ -287,8 +504,17 @@ export function overlayProductsForCountry(
       amountMonthly,
       amountYearly,
       extraUserMonthly,
+      extraWhatsappNumberMonthly,
+      extraErpUserPrice: extraUserMonthly,
       includedAi: catalog.products[product.id].includedAi,
+      monthlyActionLimit: catalog.products[product.id].includedAi,
       includedWhatsapp: catalog.products[product.id].includedWhatsapp,
+      includedErpUsers: includedErpUsersFor(catalog, product.id),
+      includedWhatsappNumbers: includedWhatsappNumbersFor(catalog, product.id),
+      extraWhatsappNumberPrice: extraWhatsappNumberMonthly,
+      maxWhatsappNumbers: maxWhatsappNumbersFor(catalog, product.id),
+      usageMode: parseUsageMode(catalog.products[product.id].usageMode),
+      riloBotUsageMode: parseUsageMode(catalog.products[product.id].usageMode),
       trialDays: catalog.trialDays,
       priceLabel: formatMoneyLabel(currency, amountMonthly, '/ mes'),
       priceLabelYearly: formatMoneyLabel(currency, amountYearly, '/ año'),
@@ -306,7 +532,7 @@ export function erpPlanPricesFromCatalog(
   const currency: BillingCurrency = country === 'AR' ? 'ARS' : 'UYU';
   return {
     precioBaseMensual: amountMonthlyFor(catalog, mapping.productId, country),
-    precioPorOperador: extraUserMonthlyFor(catalog, country),
+    precioPorOperador: extraErpUserPriceFor(catalog, mapping.productId, country),
     precioPorAdministrador: 0,
     currency,
     productId: mapping.productId,

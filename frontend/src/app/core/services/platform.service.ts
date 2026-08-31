@@ -160,6 +160,9 @@ export interface BillingCatalogProduct {
   amountMonthly: number;
   amountYearly?: number;
   extraUserMonthly: number;
+  extraWhatsappNumberMonthly?: number;
+  includedErpUsers?: number;
+  includedWhatsappNumbers?: number;
   priceLabel: string;
   priceLabelYearly?: string;
   erpPlanId: string;
@@ -196,16 +199,47 @@ export interface PlatformBusinessUsage {
   waOps: number;
   tools: Partial<Record<UsageToolId, UsageToolTotals>>;
   models: Record<string, UsageToolTotals>;
-  whatsappUsd: number;
-  geminiUsd: number;
-  totalUsd: number;
+  expectedMonthly?: number;
+  extraErpCost?: number;
+  extraWhatsappCost?: number;
+  incomePlan?: number;
+  addonCost?: number;
+  totalUsd?: number;
+  whatsappUsd?: number;
+  geminiUsd?: number;
+  phones?: Record<string, { aiActions: number; waInbound: number; waOutbound: number }>;
   toolLabels?: Record<UsageToolId, string>;
+  profitability?: {
+    income: {
+      currency: string;
+      lines: { code: string; label: string; amount: number }[];
+      total: number;
+      totalUsdEstimated: number;
+    };
+    costs: { code: string; label: string; usd: number; source: 'real' | 'estimated' }[];
+    costUsd: number;
+    costUsdReal: number;
+    costUsdEstimated: number;
+    result: { profitUsd: number; marginPct: number | null; incomeUsdEstimated: number };
+  };
+}
+
+export interface PlatformUsageTotals {
+  incomeUsdEstimated: number;
+  costUsd: number;
+  costUsdReal: number;
+  costUsdEstimated: number;
+  profitUsd: number;
+  marginPct: number | null;
+  byVendor: Record<string, number>;
+  firebaseNote: string;
 }
 
 export interface PlatformUsageResponse {
   period: string;
   toolLabels: Record<UsageToolId, string>;
   rows: PlatformBusinessUsage[];
+  totals?: PlatformUsageTotals;
 }
 
 @Injectable({

@@ -1,16 +1,16 @@
 import type { TrialProductId } from './platform-access.ts';
 
-/** Días de prueba por producto (plan comercial). Un mes para que carguen el negocio. */
+/** Días de prueba por producto. El costo de IA de esos días lo absorbe RiloTech. */
 export const TRIAL_DAYS_BY_PRODUCT: Record<TrialProductId, number> = {
-  whatsapp: 30,
-  erp: 30,
-  completo: 30,
+  whatsapp: 20,
+  erp: 20,
+  completo: 20,
 };
 
-/** RILO Bot: valor rápido el primer día. */
+/** RILO Bot y panel: misma duración de prueba. */
 export const RILOBOT_TRIAL_DAYS = TRIAL_DAYS_BY_PRODUCT.whatsapp;
 
-/** Panel / Completo: más tiempo de aprendizaje. */
+/** Panel / Completo: misma duración que el bot. */
 export const PANEL_TRIAL_DAYS = TRIAL_DAYS_BY_PRODUCT.erp;
 
 /** Default genérico (Panel). Preferir trialDaysForProduct. */

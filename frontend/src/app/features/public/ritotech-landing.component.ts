@@ -62,6 +62,12 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
           class="text-teal-400 text-xs sm:text-sm font-semibold uppercase tracking-wide mb-2">
           {{ heroEyebrow }}
         </p>
+        <div *ngIf="!isSessionCustomer" class="flex justify-center mb-3">
+          <p
+            class="inline-flex items-center rounded-full border border-teal-800/80 bg-teal-950/40 px-3 py-1 text-[11px] font-medium text-teal-200">
+            RILO Bot · tu agente con IA por WhatsApp
+          </p>
+        </div>
         <h1 class="text-3xl sm:text-5xl lg:text-6xl font-bold leading-tight max-w-4xl mx-auto text-white">
           {{ heroTitle }}
         </h1>
@@ -88,7 +94,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             <a
               [routerLink]="auth.homeRoute"
               class="w-full sm:w-auto rounded-xl bg-teal-600 px-6 py-3 font-semibold text-white hover:bg-teal-500 text-center">
-              {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
+              {{ auth.canAccessWhatsapp ? 'Ir a Inicio' : 'Ir al panel' }}
             </a>
             <a
               *ngIf="auth.isSupervisor"
@@ -107,7 +113,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
           <button
             *ngIf="!isSessionCustomer || hasBotContracted"
             type="button"
-            (click)="scrollToDemo()"
+            (click)="isSessionCustomer ? scrollToDemo() : scrollToHowItWorks()"
             class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
             {{ isSessionCustomer ? 'Cómo se usa en WhatsApp' : hero.ctaSecondary }}
           </button>
@@ -142,9 +148,11 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
               </h2>
             </div>
             <p class="mt-3 text-sm text-gray-400 leading-relaxed">
-              Escribís en lenguaje natural. El bot entiende, te resume la operación y
+              Escribile como hablás.
+              <span class="text-teal-300">Tu agente con IA</span>
+              entiende lo que necesitás y trabaja sobre tu negocio.
+              Te resume la operación y
               <span class="text-teal-400 font-medium">solo guarda si confirmás con SÍ</span>.
-              No hace falta aprender menús ni códigos.
             </p>
             <ul class="mt-4 space-y-2 text-sm text-gray-300">
               <li>✓ "Venta a María, 2 remeras, cobró 800"</li>
@@ -277,6 +285,11 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 RILO Bot {{ card.whatsapp ? '✓' : '—' }}
               </span>
               <span
+                *ngIf="card.whatsapp"
+                class="rounded-full px-2 py-0.5 border border-teal-700 text-teal-300">
+                Agente con IA
+              </span>
+              <span
                 class="rounded-full px-2 py-0.5 border"
                 [class.border-teal-700]="card.panel"
                 [class.text-teal-300]="card.panel"
@@ -330,7 +343,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
           </div>
           <p class="mt-3 text-[11px] text-gray-500 leading-relaxed">
             Se compra desde
-            <a routerLink="/login" class="text-teal-400 hover:underline">Mi plan</a>
+            <a routerLink="/login" [queryParams]="{ manual: '1' }" class="text-teal-400 hover:underline">Mi plan</a>
             con la cuenta ya creada. No es una segunda suscripción: vale el mes calendario.
           </p>
         </section>
@@ -339,7 +352,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
         </p>
         <p class="mt-2 text-center text-xs text-gray-500 max-w-lg mx-auto leading-relaxed">
           ¿Ya tenés RILO Bot o RILO Gestión? No te registres otra vez:
-          <a routerLink="/login" class="text-teal-400 hover:underline">ingresá</a>
+          <a routerLink="/login" [queryParams]="{ manual: '1' }" class="text-teal-400 hover:underline">ingresá</a>
           y sumá el otro en <a routerLink="/planes" class="text-teal-400 hover:underline">Planes</a>.
           La baja se hace en Plan (solo el administrador) y no borra los datos.
         </p>
@@ -347,7 +360,10 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
 
       <!-- Cómo funciona -->
       <section id="como-funciona" class="max-w-4xl mx-auto px-4 py-12 border-t border-white/5 scroll-mt-20">
-        <h2 class="text-center text-xl font-bold mb-8">Cómo funciona</h2>
+        <h2 class="text-center text-xl font-bold mb-2">Cómo funciona</h2>
+        <p class="text-center text-sm text-gray-500 mb-8 max-w-xl mx-auto leading-relaxed">
+          Usalo por WhatsApp cuando estás trabajando. Controlalo desde RILO Gestión cuando querés ver todo.
+        </p>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div *ngFor="let step of howItWorks" class="text-center sm:text-left">
             <span
@@ -356,6 +372,71 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             </span>
             <h3 class="mt-3 text-sm font-bold text-white">{{ step.title }}</h3>
             <p class="mt-1.5 text-xs text-gray-400 leading-relaxed">{{ step.description }}</p>
+          </div>
+        </div>
+
+        <div
+          *ngIf="!isSessionCustomer"
+          class="mt-10 rounded-2xl border border-gray-800 bg-gray-900/60 p-5 sm:p-6">
+          <p class="text-center text-[11px] font-bold uppercase tracking-wide text-teal-400">El recorrido</p>
+          <div class="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-1.5">
+            <button
+              type="button"
+              (click)="scrollToDemo()"
+              class="flex-1 rounded-xl border border-gray-800 bg-gray-950/70 px-3 py-3 text-left hover:border-teal-700 transition">
+              <p class="text-lg leading-none" aria-hidden="true">💬</p>
+              <p class="mt-1.5 text-sm font-bold text-white">WhatsApp</p>
+              <p class="mt-0.5 text-[11px] text-gray-400 leading-snug">Escribís como hablás. Sin menús.</p>
+            </button>
+            <span class="hidden sm:flex text-teal-500 shrink-0 px-0.5" aria-hidden="true">→</span>
+            <button
+              type="button"
+              (click)="howGuide.open('whatsapp')"
+              class="flex-1 rounded-xl border border-teal-800/70 bg-teal-950/40 px-3 py-3 text-left hover:border-teal-500 transition">
+              <p class="text-lg leading-none" aria-hidden="true">🤖</p>
+              <p class="mt-1.5 text-sm font-bold text-white">RILO Bot con IA</p>
+              <p class="mt-0.5 text-[11px] text-teal-200/80 leading-snug">Entiende, resume y pide SÍ.</p>
+            </button>
+            <span class="hidden sm:flex text-teal-500 shrink-0 px-0.5" aria-hidden="true">→</span>
+            <button
+              type="button"
+              (click)="howGuide.open('erp')"
+              class="flex-1 rounded-xl border border-gray-800 bg-gray-950/70 px-3 py-3 text-left hover:border-teal-700 transition">
+              <p class="text-lg leading-none" aria-hidden="true">🖥️</p>
+              <p class="mt-1.5 text-sm font-bold text-white">RILO Gestión</p>
+              <p class="mt-0.5 text-[11px] text-gray-400 leading-snug">Ves caja, stock y deudas.</p>
+            </button>
+          </div>
+          <ul class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-gray-300">
+            <li class="flex gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+              <span class="text-teal-400 shrink-0">1</span>
+              <span>Mandá una venta o un pedido por WhatsApp</span>
+            </li>
+            <li class="flex gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+              <span class="text-teal-400 shrink-0">2</span>
+              <span>Confirmá con SÍ. Nada se guarda sin tu OK</span>
+            </li>
+            <li class="flex gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+              <span class="text-teal-400 shrink-0">3</span>
+              <span>Preguntá un saldo o la caja del día</span>
+            </li>
+            <li class="flex gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+              <span class="text-teal-400 shrink-0">4</span>
+              <span>Mirá lo mismo en el panel cuando quieras</span>
+            </li>
+          </ul>
+          <div class="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+            <app-ritotech-visual-guide
+              #howGuide
+              triggerLabel="Ver la guía visual"
+              defaultTab="whatsapp">
+            </app-ritotech-visual-guide>
+            <button
+              type="button"
+              (click)="scrollToDemo()"
+              class="inline-flex w-full sm:w-auto justify-center rounded-xl border border-gray-700 px-4 py-2.5 text-sm font-semibold text-gray-200 hover:bg-gray-900">
+              Ver el chat de ejemplo
+            </button>
           </div>
         </div>
       </section>
@@ -384,7 +465,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             </app-ritotech-product-cta>
             <a
               *ngIf="!auth.currentUser"
-              routerLink="/login"
+              routerLink="/login" [queryParams]="{ manual: '1' }"
               class="w-full sm:w-auto rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-300 hover:bg-gray-900 text-center">
               Ya tengo cuenta
             </a>
@@ -392,7 +473,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
               *ngIf="isSessionCustomer"
               [routerLink]="auth.homeRoute"
               class="w-full sm:w-auto rounded-xl bg-teal-600 px-6 py-3 font-semibold text-white hover:bg-teal-500 text-center">
-              {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
+              {{ auth.canAccessWhatsapp ? 'Ir a Inicio' : 'Ir al panel' }}
             </a>
             <a
               *ngIf="isSessionCustomer && auth.isSupervisor"
@@ -556,7 +637,7 @@ export class RitotechLandingComponent implements OnInit {
   }
 
   get pricingTiers() {
-    return pricingTiersFromCatalog(this.catalog);
+    return pricingTiersFromCatalog(this.catalog, this.country);
   }
 
   get faqItems() {
@@ -578,7 +659,7 @@ export class RitotechLandingComponent implements OnInit {
     this.loadCatalog();
 
     this.route.fragment.subscribe((fragment) => {
-      if (fragment !== 'landing-faq' && fragment !== 'planes') return;
+      if (fragment !== 'landing-faq' && fragment !== 'planes' && fragment !== 'como-funciona') return;
       setTimeout(() => {
         document.getElementById(fragment)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 80);
@@ -608,7 +689,7 @@ export class RitotechLandingComponent implements OnInit {
         featured: Boolean(tier.featured),
         badgeLabel: tier.badgeLabel,
         trialDays: tier.trialDays,
-        quotaLines: quotaLinesForProduct(this.catalog, tier.id),
+        quotaLines: quotaLinesForProduct(this.catalog, tier.id, this.country),
       }));
   }
 
@@ -624,5 +705,9 @@ export class RitotechLandingComponent implements OnInit {
 
   scrollToDemo() {
     document.getElementById('demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  scrollToHowItWorks() {
+    document.getElementById('como-funciona')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }

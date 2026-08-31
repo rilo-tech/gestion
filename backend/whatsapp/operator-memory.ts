@@ -197,6 +197,17 @@ export async function rememberConfirmedOperation(
   if (productId && spokenProduct) {
     await saveProductAlias(businessId, spokenProduct, { id: productId, nombre: productName || spokenProduct });
   }
+  for (const line of entities.items ?? []) {
+    const spoken = String(line.spokenProductName || line.rawText || '').trim();
+    const lineProductId = String(line.productId ?? '').trim();
+    const lineProductName = String(line.productName ?? '').trim();
+    if (lineProductId && spoken) {
+      await saveProductAlias(businessId, spoken, {
+        id: lineProductId,
+        nombre: lineProductName || spoken,
+      });
+    }
+  }
   for (const line of entities.purchaseLines ?? []) {
     const invoiceName = String(line.invoiceName ?? '').trim();
     const lineProductId = String(line.productId ?? '').trim();

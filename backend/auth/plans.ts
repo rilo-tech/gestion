@@ -9,8 +9,8 @@ import {
   type SubscriptionModuleId,
   type SubscriptionModulesMap,
 } from '../../shared/subscription-modules.ts';
-import { getErpPlanTemplatePrices } from '../../shared/billing-catalog.ts';
-import { erpPlanPricesFromCatalog } from '../../shared/commercial-catalog.ts';
+import { ERP_PLAN_BILLING_DEFAULTS, getErpPlanTemplatePrices } from '../../shared/billing-catalog.ts';
+import { erpPlanPricesFromCatalog, includedErpUsersFor } from '../../shared/commercial-catalog.ts';
 import { getCommercialCatalog } from './commercial-catalog.ts';
 
 export interface PlanRecord {
@@ -97,7 +97,7 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     nombre: 'RILO Completo',
     limiteAdministradores: 1,
     limiteOperadores: 0,
-    limiteUsuariosTotal: 2,
+    limiteUsuariosTotal: 1,
     precioMensual: profesionalPrices?.precioBaseMensual ?? 3490,
     precioBaseMensual: profesionalPrices?.precioBaseMensual ?? 3490,
     precioPorAdministrador: 0,
@@ -178,9 +178,14 @@ export async function syncPlanTemplatesFromLandingCatalog(): Promise<PlanRecord[
   const col = plansCollection();
   const now = new Date().toISOString();
   const updated: PlanRecord[] = [];
+  const catalog = await getCommercialCatalog();
 
   for (const plan of DEFAULT_PLANS) {
-    const landing = await landingPricesLive(plan.id);
+    const landing = erpPlanPricesFromCatalog(catalog, plan.id, 'UY') ?? landingPrices(plan.id);
+    const mapping = ERP_PLAN_BILLING_DEFAULTS[plan.id];
+    const includedUsers = mapping
+      ? Math.max(1, includedErpUsersFor(catalog, mapping.productId))
+      : plan.limiteAdministradores;
     const ref = col.doc(plan.id);
     const doc = await ref.get();
     const payload = {
@@ -189,9 +194,9 @@ export async function syncPlanTemplatesFromLandingCatalog(): Promise<PlanRecord[
       precioBaseMensual: landing?.precioBaseMensual ?? plan.precioBaseMensual,
       precioPorAdministrador: landing?.precioPorAdministrador ?? plan.precioPorAdministrador,
       precioPorOperador: landing?.precioPorOperador ?? plan.precioPorOperador,
-      limiteAdministradores: plan.limiteAdministradores,
+      limiteAdministradores: includedUsers,
       limiteOperadores: plan.limiteOperadores,
-      limiteUsuariosTotal: plan.limiteUsuariosTotal,
+      limiteUsuariosTotal: includedUsers,
       maxAmbitosCaja: plan.maxAmbitosCaja,
       modulosIncluidos: plan.modulosIncluidos,
       activo: true,

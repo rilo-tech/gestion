@@ -10,16 +10,27 @@ import { PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, PROGRESSIVE_LIST_FIRST_PAGE_SIZE
 import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
+import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.component';
 
 @Component({
   selector: 'app-home',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, RouterLink],
+  imports: [CommonModule, LucideAngularModule, RouterLink, RitotechVisualGuideComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="mb-6 sm:mb-10">
         <h1 class="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">¡Hola, {{ auth.currentUserName }}!</h1>
-        <p class="text-sm sm:text-base text-gray-500 desc-lg-only">Aquí tienes un resumen de tu negocio hoy.</p>
+        <p class="text-sm sm:text-base text-gray-500 desc-lg-only">
+          Aquí tienes un resumen de tu negocio hoy.
+          <a *ngIf="auth.canAccessWhatsapp" routerLink="/inicio" class="ml-1 font-semibold text-teal-700 hover:underline">Inicio y cupo de RILO Bot</a>
+        </p>
+        <div *ngIf="!auth.canAccessWhatsapp" class="mt-3">
+          <app-ritotech-visual-guide
+            triggerLabel="Guía de RILO Gestión"
+            defaultTab="erp"
+            [showSignupCta]="false">
+          </app-ritotech-visual-guide>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10">

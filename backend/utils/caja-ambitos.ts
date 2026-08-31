@@ -121,6 +121,8 @@ function cashAmbitoTokens(ambito: CajaAmbitoConfig): string[] {
     tokens.add('local');
     tokens.add('general');
     tokens.add('comercio');
+    tokens.add('business');
+    tokens.add('company');
   }
   return [...tokens];
 }
@@ -150,15 +152,8 @@ export function formatCashAmbitoChoices(
   cashType?: 'ingreso' | 'egreso'
 ): string {
   const tipo = cashType === 'ingreso' ? 'el ingreso' : 'el egreso';
-  const lines = [`¿En qué caja anoto ${tipo}?`, ''];
-  ambitos.forEach((ambito, index) => {
-    lines.push(`${index + 1}) ${ambito.label}`);
-  });
-  lines.push('');
-  lines.push('*Cómo responder*');
-  lines.push('• Un *número* o el nombre (negocio, personal, …)');
-  lines.push('• *NO* — cancelar');
-  return lines.join('\n');
+  const lines = ambitos.map((ambito, index) => `${index + 1}. ${ambito.label}`);
+  return [...lines, `¿En qué caja anoto ${tipo}?`].join('\n');
 }
 
 export function normalizeMovementAmbito(

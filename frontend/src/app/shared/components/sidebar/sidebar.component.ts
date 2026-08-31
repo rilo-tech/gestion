@@ -44,7 +44,7 @@ interface NavItem {
             *ngFor="let item of visibleNavItems"
             [routerLink]="item.path"
             routerLinkActive="bg-gray-800 text-teal-400 shadow-sm"
-            [routerLinkActiveOptions]="{ exact: item.path === '/platform' }"
+            [routerLinkActiveOptions]="{ exact: item.path === '/platform' || item.path === '/inicio' || item.path === '/dashboard' }"
             (click)="onModuleNavClick($event, item)"
             class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-gray-800/80 transition-colors">
             <i-lucide [name]="item.icon" class="w-5 h-5 shrink-0"></i-lucide>
@@ -135,7 +135,10 @@ export class SidebarComponent implements OnInit, OnDestroy {
   get navItems(): NavItem[] {
     if (this.auth.isPlatformAdmin) return this.platformNavItems;
     if (!this.auth.canAccessErpWeb) {
-      return [{ path: '/mi-cuenta', icon: 'user-cog', label: 'Inicio' }];
+      return [
+        { path: '/inicio', icon: 'home', label: 'Inicio' },
+        { path: '/mi-cuenta', icon: 'user-cog', label: 'Mi cuenta' },
+      ];
     }
     return this.companyNavItems;
   }

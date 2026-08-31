@@ -9,7 +9,10 @@ import {
   discountedMonthly,
   formatCatalogPriceLabel,
   introDiscountLabel,
+  parseUsageMode,
+  whatsappActionsLabel,
 } from '../../../../../shared/commercial-catalog.ts';
+import { productIdFromAccess } from '../../../../../shared/platform-access.ts';
 import type { BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
 
 type BillingPlan = {
@@ -23,6 +26,13 @@ type BillingPlan = {
   priceLabel: string;
   priceLabelYearly?: string;
   country: string;
+  includedAi?: number;
+  usageMode?: string;
+  includedErpUsers?: number;
+  extraErpUserPrice?: number;
+  extraUserMonthly?: number;
+  includedWhatsappNumbers?: number;
+  extraWhatsappNumberPrice?: number;
 };
 
 type BillingInterval = 'month' | 'year';
@@ -89,7 +99,7 @@ type LiteLimits = {
               <span class="font-semibold text-gray-900 dark:text-gray-100">hasta {{ lite.maxOperacionesMes }}</span>
             </li>
             <li class="rounded-lg bg-white/70 dark:bg-gray-950/40 px-2.5 py-2">
-              <span class="block text-gray-500 dark:text-gray-400">Acciones IA / mes</span>
+              <span class="block text-gray-500 dark:text-gray-400">Acciones por WhatsApp / mes</span>
               <span class="font-semibold text-gray-900 dark:text-gray-100">hasta {{ lite.maxAccionesIaMes }}</span>
             </li>
           </ul>
@@ -134,6 +144,9 @@ type LiteLimits = {
             <p class="mt-2 text-sm font-bold text-teal-700 dark:text-teal-400">
               {{ plan.priceLabel }}
             </p>
+            <ul *ngIf="includesFor(plan).length" class="mt-2 space-y-0.5 text-[11px] text-gray-600 dark:text-gray-400">
+              <li *ngFor="let line of includesFor(plan)">{{ line }}</li>
+            </ul>
           </button>
         </div>
 
@@ -150,9 +163,19 @@ type LiteLimits = {
 
         <button
           type="button"
+          (click)="enableAutoRenew()"
+          [disabled]="paying || !checkoutAvailable"
+          class="w-full rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+          {{ autoRenewLabel }}
+        </button>
+        <p class="text-xs text-center text-gray-500 dark:text-gray-400 leading-relaxed">
+          Autorizás la renovación en Mercado Pago. No guardamos tu tarjeta. El cobro automático empieza cuando termina la prueba.
+        </p>
+        <button
+          type="button"
           (click)="pay()"
           [disabled]="paying || !selectedProductId || !checkoutAvailable"
-          class="w-full rounded-xl bg-teal-600 py-3 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+          class="w-full rounded-xl border border-teal-200 py-3 text-sm font-semibold text-teal-800 hover:bg-teal-50 disabled:opacity-50">
           {{ payLabel }}
         </button>
         <p *ngIf="selectedChargeHint" class="text-xs text-center text-gray-500 dark:text-gray-400 leading-relaxed">
@@ -219,8 +242,9 @@ export class ActivateSubscriptionComponent implements OnInit {
     const status = this.route.snapshot.queryParamMap.get('status');
     if (status === 'success') {
       this.statusKind = 'success';
-      this.statusMessage =
-        'Pago recibido. Actualizamos tu cuenta; si todavía ves la prueba, esperá unos segundos y recargá.';
+      this.statusMessage = this.route.snapshot.queryParamMap.get('renew')
+        ? 'Renovación automática autorizada. Mercado Pago cobrará al terminar la prueba y el plan queda activo.'
+        : 'Pago recibido. Actualizamos tu cuenta; si todavía ves la prueba, esperá unos segundos y recargá.';
       await firstValueFrom(this.auth.initialize()).catch(() => false);
     } else if (status === 'pending') {
       this.statusKind = 'pending';
@@ -291,7 +315,12 @@ export class ActivateSubscriptionComponent implements OnInit {
 
   get payLabel(): string {
     if (this.paying) return 'Abriendo Mercado Pago…';
-    return 'Contratar mes con Mercado Pago';
+    return 'Pagar un mes ahora (sin renovación automática)';
+  }
+
+  get autoRenewLabel(): string {
+    if (this.paying) return 'Abriendo Mercado Pago…';
+    return 'Activar renovación automática';
   }
 
   get selectedChargeHint(): string {
@@ -302,6 +331,29 @@ export class ActivateSubscriptionComponent implements OnInit {
 
   introPriceFor(plan: BillingPlan): string {
     return formatCatalogPriceLabel(this.country, discountedMonthly(plan.amountMonthly, this.introDiscountPercent));
+  }
+
+  includesFor(plan: BillingPlan): string[] {
+    const lines: string[] = [];
+    const actions = whatsappActionsLabel(plan.includedAi ?? 0, parseUsageMode(plan.usageMode));
+    if (actions) lines.push(actions);
+    const numbers = plan.includedWhatsappNumbers ?? 0;
+    if (numbers > 0) {
+      lines.push(numbers === 1 ? '1 número de WhatsApp incluido' : `${numbers} números de WhatsApp incluidos`);
+    }
+    const extraWa = plan.extraWhatsappNumberPrice ?? 0;
+    if (extraWa > 0 && (plan.id === 'whatsapp' || plan.id === 'completo')) {
+      lines.push(`Número adicional: ${formatCatalogPriceLabel(this.country, extraWa)}`);
+    }
+    const users = plan.includedErpUsers ?? 0;
+    if (users > 0) {
+      lines.push(users === 1 ? '1 usuario incluido' : `${users} usuarios incluidos`);
+    }
+    const extraUser = plan.extraErpUserPrice ?? plan.extraUserMonthly ?? 0;
+    if (extraUser > 0 && users > 0) {
+      lines.push(`Usuario adicional: ${formatCatalogPriceLabel(this.country, extraUser)}`);
+    }
+    return lines;
   }
 
   async loadPlans() {
@@ -341,11 +393,12 @@ export class ActivateSubscriptionComponent implements OnInit {
       this.introDiscountPercent = data.introDiscountPercent ?? this.introDiscountPercent;
       this.introMonthsRemaining = data.introMonthsRemaining ?? 0;
       const fromQuery = this.route.snapshot.queryParamMap.get('producto');
+      const currentProduct = productIdFromAccess(this.auth.platformAccess);
       if (fromQuery && this.plans.some((p) => p.id === fromQuery)) {
         this.selectedProductId = fromQuery;
-      } else if (this.auth.canAccessWhatsapp && !this.auth.canAccessErpWeb && this.plans.some((p) => p.id === 'completo')) {
-        this.selectedProductId = 'completo';
-      } else if (!this.auth.canAccessWhatsapp && this.auth.canAccessErpWeb && this.plans.some((p) => p.id === 'completo')) {
+      } else if (currentProduct && this.plans.some((p) => p.id === currentProduct)) {
+        this.selectedProductId = currentProduct;
+      } else if (this.plans.some((p) => p.id === 'completo')) {
         this.selectedProductId = 'completo';
       } else if (this.plans.some((p) => p.id === 'whatsapp')) {
         this.selectedProductId = 'whatsapp';
@@ -361,6 +414,31 @@ export class ActivateSubscriptionComponent implements OnInit {
       this.checkoutAvailable = false;
     } finally {
       this.loadingPlans = false;
+    }
+  }
+
+  async enableAutoRenew() {
+    if (this.paying || !this.checkoutAvailable) return;
+    this.paying = true;
+    this.error = '';
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ checkoutUrl?: string; initPoint?: string }>('/api/billing/subscribe', {})
+      );
+      const url = data.checkoutUrl || data.initPoint;
+      if (url) {
+        window.location.href = url;
+        return;
+      }
+      this.error = 'No se recibió URL de Mercado Pago para autorizar la renovación.';
+    } catch (err: unknown) {
+      const body =
+        err && typeof err === 'object' && 'error' in err
+          ? (err as { error?: { error?: string; code?: string } }).error
+          : undefined;
+      this.error = body?.error || 'No se pudo iniciar la renovación automática.';
+    } finally {
+      this.paying = false;
     }
   }
 

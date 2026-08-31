@@ -42,6 +42,8 @@ export async function seedBusinessWhatsappAccess(params: {
       name: params.ownerName.trim() || 'Responsable',
       role: 'supervisor',
       enabled: true,
+      kind: 'primary',
+      status: 'active',
       erpUserId: params.erpUserId ?? null,
       // Limpia rastro de baja: si queda previousPhone, el resolver lo trata como offboarded.
       previousPhone: FieldValue.delete(),
@@ -63,10 +65,15 @@ export async function seedBusinessWhatsappAccess(params: {
     { merge: true }
   );
 
+  const currentLimite = Number(
+    (await db.collection('negocios').doc(params.businessId).get()).data()?.suscripcion?.limiteWhatsapp
+  );
+  const nextLimite = Number.isFinite(currentLimite) && currentLimite > 1 ? currentLimite : 1;
+
   await db.collection('negocios').doc(params.businessId).set(
     {
       suscripcion: {
-        limiteWhatsapp: 1,
+        limiteWhatsapp: nextLimite,
       },
       updatedAt: now,
     },

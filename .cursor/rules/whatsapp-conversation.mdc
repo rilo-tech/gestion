@@ -14,11 +14,19 @@ Hay un paso pendiente (`pendingIntent` + `pendingPayload`). El mensaje o **llena
 
 **Excepción:** si el último mensaje es *otra operación completa* (egreso/ingreso de caja, compra, pedido nuevo) y no comparte contexto con el paso pendiente, se suelta el pending (`isFreshTaskUtterance`) y se sigue ese mensaje. El dueño no tiene que escribir “cancelar”.
 
+Si pasó ~15 min y hay un paso o un pedido a medias, preguntar *¿Seguimos o empezamos de nuevo?* antes de aplicar el mensaje al contexto viejo. **NO** limpia foco e hilo.
+
 ## Qué está permitido
 
 - Número / SÍ / NO / LISTO / cancelar
 - Fecha aunque tenga typo (`mañan` = mañana) si estábamos pidiendo fecha
 - Nombre exacto (sin importar mayúsculas) para cliente/producto
+- Nombre de entidad completo (`client.raw`): guiones, paréntesis, `@`, números y apodos. Buscar el candidato completo primero; variantes solo como fallback, sin perder el original
+- Pedido nuevo + ya pagado/cobrado/saldado: `create_order` con cobro relacionado. El resumen muestra Total / Pago → saldo (no solo «Monto»)
+- Fecha de entrega solo si el usuario la dijo. Si no, preguntar. Nunca asumir hoy. LISTO no es hoy.
+- Match de producto: filtrar tipo → talle → color primario, después rankear tela/texto. Auto-elegir si el 1.º es claramente superior. Empate real: máximo 3 + *Ninguno de estos*; el resto queda en ConversationState.
+- Cliente/producto resuelto queda locked. No reemplazar en silencio. Entidad completa en `client.raw`.
+- Copy por `formatWhatsappMessage` / `formatChoiceMessage`: sin líneas vacías extra, sin internals, sin «Cómo responder».
 - Pregunta al margen: responder y **repegar** la lista o el resumen
 - En el resumen final sí se puede corregir cualquier dato
 - Soltar el paso anterior cuando el mensaje es un comando nuevo (caja, compra, pedido nuevo)
@@ -28,11 +36,17 @@ Hay un paso pendiente (`pendingIntent` + `pendingPayload`). El mensaje o **llena
 - Tratar una fecha o un “¿está registrado?” como búsqueda de producto
 - Asumir un cliente parecido si el nombre no es el mismo (salvo mayúsculas)
 - Dejar `pendingIntent` y seguir como mensaje nuevo, **salvo** la excepción de operación nueva
-- Meter regex de catálogo por encima de Gemini para interpretar el pedido; el modelo interpreta, el código solo engancha el paso
+- Meter regex de catálogo por encima de Gemini para interpretar el pedido; el modelo interpreta (con `items[]`), el código resuelve cada ítem y engancha el paso
 - Tratar un egreso de caja como cobro de pedido porque había un `select_order` pendiente
+- Cortar un nombre de cliente por un guion, un paréntesis, un `@` o un número
+- Pasar a `register_payment` cuando el cobro viene en el mismo mensaje que crea el pedido
+- Asumir fecha de entrega (hoy u otra) si el usuario no la dijo
+- Mostrar listas largas o texto interno del matcher (rawText, score, “mismo color y talle”)
 
 ## Dónde se implementa
 
 - Estado: `conversation-state.ts` (`pendingIntent`, `pendingPayload`, `pendingPrompt`)
 - Director: `conversation-follow.ts` (`isFreshTaskUtterance`, `doesFillCurrentSlot`, `reconstructPendingPrompt`)
 - Intercepto: `message-handler.ts` (operación nueva → soltar pending; si no llena el slot → `holdPendingAndAnswer`)
+- Nombres: `entity-name.ts` (`client.raw`, candidatos de búsqueda)
+- Cobro de pedido nuevo: `order-finance.ts` (`planRelatedOrderFinance`)

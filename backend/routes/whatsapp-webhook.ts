@@ -1,5 +1,7 @@
 import express from 'express';
+import { db } from '../firebase.ts';
 import { handleWhatsappMessage } from '../whatsapp/message-handler.ts';
+import { appendConversationTurns } from '../whatsapp/conversation-state.ts';
 import {
   isWhatsappOutboundConfigured,
   sendWhatsappText,
@@ -43,23 +45,32 @@ router.post('/', async (req, res) => {
 
   // Cloud Run congela el CPU apenas se envía el 200. Hay que procesar ANTES
   // de responder, si no el lookup del teléfono timeout-ea y parece "no registrado".
+  // Como una vuelta lenta tarda más que el timeout de Meta, Meta reintenta el MISMO
+  // mensaje: sin este candado el bot contesta (y guarda) dos o tres veces.
   const inboundId = inboundMessageId(req.body);
-  if (inboundId && !claimInboundMessage(inboundId)) {
+  if (inboundId && !(await claimInboundMessage(inboundId))) {
+    console.log('[whatsapp] Reintento de Meta ignorado, ese mensaje ya está tomado', {
+      inboundId,
+    });
     return res.sendStatus(200);
   }
 
   try {
     await processWhatsappNotification(req.body);
-    completeInboundMessage(inboundId);
   } catch (error) {
     console.error('[whatsapp] Webhook async error:', error);
   }
   return res.sendStatus(200);
 });
 
-const recentInboundIds = new Map<string, { at: number; done: boolean }>();
-const INBOUND_DEDUP_MS = 10 * 60 * 1000;
-const INBOUND_STALE_MS = 20 * 1000;
+/** Candado en memoria: corta el reintento que cae en la misma instancia. */
+const recentInboundIds = new Map<string, number>();
+const INBOUND_DEDUP_MS = 30 * 60 * 1000;
+/** Candado compartido: corta el reintento que cae en OTRA instancia. */
+const INBOUND_DEDUP_COLLECTION = 'whatsapp_inbound_dedup';
+const INBOUND_CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
+const INBOUND_PURGE_EVERY_MS = 60 * 60 * 1000;
+let lastInboundPurge = 0;
 
 function inboundMessageId(body: unknown): string | null {
   const payload = body as {
@@ -71,22 +82,60 @@ function inboundMessageId(body: unknown): string | null {
   return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
-function claimInboundMessage(id: string): boolean {
+function isAlreadyExistsError(error: unknown): boolean {
+  const code = (error as { code?: number | string })?.code;
+  if (code === 6 || code === 'already-exists') return true;
+  return /ALREADY_EXISTS/i.test(String((error as { message?: string })?.message ?? ''));
+}
+
+function claimInMemory(id: string): boolean {
   const now = Date.now();
-  for (const [key, claim] of recentInboundIds) {
-    if (now - claim.at > INBOUND_DEDUP_MS) recentInboundIds.delete(key);
+  for (const [key, at] of recentInboundIds) {
+    if (now - at > INBOUND_DEDUP_MS) recentInboundIds.delete(key);
   }
-  const prev = recentInboundIds.get(id);
-  if (prev?.done) return false;
-  if (prev && now - prev.at < INBOUND_STALE_MS) return false;
-  recentInboundIds.set(id, { at: now, done: false });
+  if (recentInboundIds.has(id)) return false;
+  recentInboundIds.set(id, now);
   return true;
 }
 
-function completeInboundMessage(id: string | null) {
-  if (!id) return;
-  const prev = recentInboundIds.get(id);
-  if (prev) recentInboundIds.set(id, { at: prev.at, done: true });
+/** Un solo dueño por mensaje: `create` falla si otra instancia ya lo tomó. */
+async function claimInboundMessage(id: string): Promise<boolean> {
+  if (!claimInMemory(id)) return false;
+
+  try {
+    await db.collection(INBOUND_DEDUP_COLLECTION).doc(id).create({
+      at: new Date().toISOString(),
+    });
+  } catch (error) {
+    if (isAlreadyExistsError(error)) return false;
+    // Si Firestore falla por otra causa, mejor contestar que quedarse mudo.
+    console.warn('[whatsapp] candado compartido no disponible:', error);
+    return true;
+  }
+
+  void purgeOldInboundClaims();
+  return true;
+}
+
+async function purgeOldInboundClaims(): Promise<void> {
+  const now = Date.now();
+  if (now - lastInboundPurge < INBOUND_PURGE_EVERY_MS) return;
+  lastInboundPurge = now;
+
+  try {
+    const cutoff = new Date(now - INBOUND_CLAIM_TTL_MS).toISOString();
+    const snap = await db
+      .collection(INBOUND_DEDUP_COLLECTION)
+      .where('at', '<', cutoff)
+      .limit(300)
+      .get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  } catch (error) {
+    console.warn('[whatsapp] limpieza de candados:', error);
+  }
 }
 
 async function processWhatsappNotification(body: unknown) {
@@ -149,12 +198,24 @@ async function processWhatsappNotification(body: unknown) {
       text: combinedText,
       mediaId,
       mediaType,
+      messageId: inboundMessageId(payload),
     });
 
     if (result.businessId) {
-      void incrementUsageField(result.businessId, 'waInbound', 1).catch((error) =>
+      void incrementUsageField(result.businessId, 'waInbound', 1, from).catch((error) =>
         console.warn('[whatsapp] inbound meter:', error)
       );
+      void appendConversationTurns(result.businessId, from, [
+        { role: 'user', text: combinedText },
+        ...(result.reply
+          ? [
+              {
+                role: 'bot' as const,
+                text: result.replies?.length ? result.replies.join('\n\n') : result.reply,
+              },
+            ]
+          : []),
+      ]).catch((error) => console.warn('[whatsapp] turns:', error));
     }
 
     if (!result.reply) {
@@ -188,7 +249,7 @@ async function processWhatsappNotification(body: unknown) {
     } else {
       console.log('[whatsapp] Enviado', { from, messageId: sent.messageId ?? null });
       if (result.businessId) {
-        void incrementUsageField(result.businessId, 'waOutbound', outbound.length).catch((error) =>
+        void incrementUsageField(result.businessId, 'waOutbound', outbound.length, from).catch((error) =>
           console.warn('[whatsapp] outbound meter:', error)
         );
       }
@@ -230,6 +291,7 @@ router.post('/dev', async (req, res) => {
     text: message,
     mediaId,
     mediaType,
+    messageId: req.body?.messageId ? String(req.body.messageId) : undefined,
   });
 
   let send: Awaited<ReturnType<typeof sendWhatsappTexts>> | null = null;

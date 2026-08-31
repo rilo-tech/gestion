@@ -16,7 +16,7 @@ import {
   userHasPermission,
 } from '../../core/constants/permissions';
 import { AppUser, CreateUserPayload, UserService } from '../../core/services/user.service';
-import { AuthService } from '../../core/services/auth.service';
+import { AddonsService, type AddonsSnapshot } from '../../core/services/addons.service';
 import {
   BusinessService,
   PublicBusinessInfo,
@@ -105,6 +105,32 @@ import {
                 {{ info.administradoresDisponibles }} admin · {{ info.operadoresDisponibles }} op.
               </p>
             </div>
+          </div>
+        </div>
+      </article>
+
+      <article *ngIf="addons" class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 p-4 sm:p-5">
+        <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">Usuarios</h3>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+          <div>
+            <p class="text-xs text-gray-500">Incluidos</p>
+            <p class="font-semibold">{{ addons.erp.included }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500">Adicionales contratados</p>
+            <p class="font-semibold">{{ addons.erp.extraContracted }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500">Activos</p>
+            <p class="font-semibold">{{ addons.erp.active }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500">Precio usuario adicional</p>
+            <p class="font-semibold">{{ addons.currency }} {{ addons.erp.extraUnit }} / mes</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500">Costo adicional actual</p>
+            <p class="font-semibold">{{ addons.currency }} {{ addons.erp.extraCost }} / mes</p>
           </div>
         </div>
       </article>
@@ -347,6 +373,7 @@ export class SettingsUsersPanelComponent implements OnInit {
   private userService = inject(UserService);
   private collaboratorsService = inject(CollaboratorsService);
   private businessService = inject(BusinessService);
+  private addonsApi = inject(AddonsService);
   private dialogService = inject(DialogService);
 
   readonly roleLabels = USER_ROLE_LABELS;
@@ -358,6 +385,7 @@ export class SettingsUsersPanelComponent implements OnInit {
   users: AppUser[] = [];
   collaborators: Collaborator[] = [];
   business: PublicBusinessInfo | null = null;
+  addons: AddonsSnapshot | null = null;
   loadingUsers = false;
   usersHasMore = false;
   usersCursor: string | null = null;
@@ -570,6 +598,48 @@ export class SettingsUsersPanelComponent implements OnInit {
       },
       error: (err) => {
         this.creatingUser = false;
+        if (err?.error?.code === 'BILLING_CONFIRMATION_REQUIRED' && err?.error?.quote) {
+          const quote = err.error.quote;
+          this.dialogService
+            .confirm({
+              title: 'Confirmar y agregar',
+              message:
+                `Costo: +${quote.extraUnit} / mes\n` +
+                `Total anterior: ${quote.oldTotal}\n` +
+                `Nuevo total mensual: ${quote.newTotal}\n` +
+                `Se aplica: ${quote.appliedAt || 'próxima renovación'}\n\n` +
+                (quote.policyCopy || 'Se suma a tu próxima renovación.'),
+              confirmLabel: 'Confirmar y agregar',
+            })
+            .subscribe((ok) => {
+              if (!ok) return;
+              this.creatingUser = true;
+              this.userService.createUser({ ...payload, confirmBilling: true }).subscribe({
+                next: () => {
+                  this.creatingUser = false;
+                  this.showCreateUserForm = false;
+                  this.draft = {
+                    nombre: '',
+                    email: '',
+                    loginUsername: '',
+                    password: '',
+                    rol: 'staff',
+                    colaboradorId: null,
+                  };
+                  this.loadBusiness();
+                  this.loadUsers();
+                },
+                error: (retryErr) => {
+                  this.creatingUser = false;
+                  this.dialogService.alert({
+                    title: 'Error',
+                    message: retryErr?.error?.error || 'No se pudo crear el usuario.',
+                  });
+                },
+              });
+            });
+          return;
+        }
         this.dialogService.alert({
           title: 'Error',
           message: err?.error?.error || 'No se pudo crear el usuario.',
@@ -616,6 +686,40 @@ export class SettingsUsersPanelComponent implements OnInit {
       },
       error: (err) => {
         this.savingUserId = null;
+        if (err?.error?.code === 'BILLING_CONFIRMATION_REQUIRED' && err?.error?.quote) {
+          const quote = err.error.quote;
+          this.dialogService
+            .confirm({
+              title: 'Confirmar reactivación',
+              message:
+                `Costo adicional: +${quote.extraUnit} / mes\n` +
+                `Total actual: ${quote.oldTotal}\n` +
+                `Nuevo total mensual: ${quote.newTotal}\n` +
+                `Se aplica: ${quote.appliedAt || 'próxima renovación'}\n\n` +
+                (quote.policyCopy || 'Se suma a tu próxima renovación.'),
+              confirmLabel: 'Confirmar',
+            })
+            .subscribe((ok) => {
+              if (!ok) return;
+              this.savingUserId = user.id;
+              this.userService.updateUser(user.id, { ...payload, confirmBilling: true }).subscribe({
+                next: () => {
+                  this.savingUserId = null;
+                  this.auth.refreshUsers().subscribe();
+                  this.loadBusiness();
+                  this.loadUsers();
+                },
+                error: (retryErr) => {
+                  this.savingUserId = null;
+                  this.dialogService.alert({
+                    title: 'Error',
+                    message: retryErr?.error?.error || 'No se pudo guardar el usuario.',
+                  });
+                },
+              });
+            });
+          return;
+        }
         this.dialogService.alert({
           title: 'Error',
           message: err?.error?.error || 'No se pudo guardar el usuario.',
@@ -631,6 +735,11 @@ export class SettingsUsersPanelComponent implements OnInit {
       },
       error: () => {
         this.business = this.auth.currentBusiness;
+      },
+    });
+    this.addonsApi.getSnapshot().subscribe({
+      next: (row) => {
+        this.addons = row;
       },
     });
   }

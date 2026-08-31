@@ -4,13 +4,10 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
-import {
-  BusinessService,
-  type ClientUsageSummary,
-} from '../../core/services/business.service';
 import { ThemeService } from '../../core/services/theme.service';
 import { FormFooterComponent } from '../../shared/components/form-shell/form-footer.component';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
+import { AccountCommercialHubComponent } from '../../shared/components/account-commercial-hub/account-commercial-hub.component';
 import { riloBotManualLines, whatsappCopyForRubro } from '../../../../../shared/whatsapp-copy.ts';
 import { productLabelForAccess } from '../../../../../shared/platform-access.ts';
 
@@ -19,7 +16,7 @@ type AccountPanel = 'profile' | 'password' | null;
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, FormFooterComponent],
+  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule, FormFooterComponent, AccountCommercialHubComponent],
   template: `
     <div [class]="pageShellClass">
       <div class="w-full max-w-2xl mx-auto min-w-0">
@@ -30,16 +27,49 @@ type AccountPanel = 'profile' | 'password' | null;
           </p>
         </div>
 
+        <app-account-commercial-hub *ngIf="auth.canAccessErpWeb"></app-account-commercial-hub>
+
         <article
-          *ngIf="showBotHelp"
+          *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb"
+          class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:p-6 mb-4">
+          <h2 class="text-sm font-bold text-gray-900 dark:text-gray-100 mb-1">Tu plan y productos</h2>
+          <p class="text-sm text-gray-800 dark:text-gray-200">{{ planProductLabel }}</p>
+          <dl class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <div class="rounded-lg border border-gray-100 dark:border-gray-800 px-3 py-2.5">
+              <dt class="text-xs text-gray-500 dark:text-gray-400">RILO Gestión (ERP web)</dt>
+              <dd class="font-semibold text-gray-900 dark:text-gray-100 mt-0.5 capitalize">{{ erpChannelLabel }}</dd>
+            </div>
+            <div class="rounded-lg border border-gray-100 dark:border-gray-800 px-3 py-2.5">
+              <dt class="text-xs text-gray-500 dark:text-gray-400">RILO Bot (WhatsApp)</dt>
+              <dd class="font-semibold text-gray-900 dark:text-gray-100 mt-0.5 capitalize">{{ rilobotChannelLabel }}</dd>
+            </div>
+          </dl>
+          <p *ngIf="auth.canAccessErpWeb" class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            Entrás directo al panel de RILO Gestión. Acá ves qué tenés contratado y, si corresponde, cómo usar RILO Bot.
+          </p>
+          <p *ngIf="!auth.canAccessErpWeb && auth.canAccessWhatsapp" class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            Operás por WhatsApp. En
+            <a routerLink="/inicio" class="font-semibold text-teal-700 dark:text-teal-400 hover:underline">Inicio</a>
+            ves el cupo y la guía de uso.
+          </p>
+          <a
+            *ngIf="auth.isSupervisor"
+            routerLink="/plan"
+            class="mt-4 inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline">
+            Ver plan, facturación y canales
+          </a>
+        </article>
+
+        <article
+          *ngIf="showBotHelp && !auth.canAccessErpWeb"
           class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:p-6 mb-4">
           <h2 class="text-sm font-bold text-gray-900 dark:text-gray-100 mb-1">Cómo usar RILO Bot</h2>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            {{
-              isWhatsappHome
-                ? 'Operás desde WhatsApp. Escribís como hablás; el bot va aprendiendo tu forma, arma un resumen y SÍ guarda. El detalle de cada cosa te lo explica si se lo pedís.'
-                : 'Además del panel, podés cargar por WhatsApp. Escribís como hablás; el bot resume y SÍ guarda. Pedile el detalle de una opción si lo necesitás.'
-            }}
+            Escribís como hablás; el bot resume y SÍ guarda.
+            <ng-container *ngIf="!auth.canAccessErpWeb">
+              La guía completa está en
+              <a routerLink="/inicio" class="font-semibold text-teal-700 dark:text-teal-400 hover:underline">Inicio</a>.
+            </ng-container>
           </p>
           <p *ngIf="registeredPhone" class="text-sm text-gray-800 dark:text-gray-200 mb-3">
             Número registrado:
@@ -254,70 +284,6 @@ type AccountPanel = 'profile' | 'password' | null;
           </span>
           <i-lucide name="chevron-right" class="w-5 h-5 shrink-0 text-gray-400"></i-lucide>
         </a>
-
-        <section *ngIf="auth.isSupervisor && !auth.isPlatformAdmin" class="mt-6">
-          <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-2 px-0.5">
-            Empresa
-          </h2>
-          <article
-            *ngIf="usage"
-            class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:px-6 sm:py-5 mb-3">
-            <p class="text-sm font-bold text-gray-900 dark:text-gray-100">Este mes</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-3">
-              Lo incluido en tu cuota. Se renueva el mes que viene.
-            </p>
-            <div class="space-y-3">
-              <div *ngIf="usage.ai.max > 0 || usage.ai.used > 0">
-                <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                  <span>Acciones IA</span>
-                  <span class="tabular-nums">{{ usage.ai.used }} / {{ usage.ai.max }}</span>
-                </div>
-                <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div class="h-full bg-teal-600 rounded-full" [style.width.%]="usagePct(usage.ai.used, usage.ai.max)"></div>
-                </div>
-              </div>
-              <div *ngIf="usage.whatsapp.max > 0 || usage.whatsapp.used > 0">
-                <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                  <span>Mensajes WhatsApp</span>
-                  <span class="tabular-nums">{{ usage.whatsapp.used }} / {{ usage.whatsapp.max }}</span>
-                </div>
-                <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    class="h-full bg-teal-600 rounded-full"
-                    [style.width.%]="usagePct(usage.whatsapp.used, usage.whatsapp.max)"></div>
-                </div>
-                <p class="text-[11px] text-gray-400 mt-1 leading-relaxed">
-                  SÍ, NO y elegir un número también cuentan: así el bot sigue claro.
-                </p>
-                <p *ngIf="auth.isSupervisor" class="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                  Si te quedás corto, en
-                  <a routerLink="/plan" class="text-teal-700 dark:text-teal-400 hover:underline">Mi plan</a>
-                  comprás un pack extra para este mes.
-                </p>
-              </div>
-            </div>
-          </article>
-          <a
-            routerLink="/plan"
-            class="flex items-start gap-3 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:px-6 sm:py-5 hover:border-teal-200 hover:bg-teal-50/40 dark:hover:border-teal-800 dark:hover:bg-teal-950/30 transition-colors">
-            <span
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300"
-              aria-hidden="true">
-              <i-lucide name="credit-card" class="w-5 h-5"></i-lucide>
-            </span>
-            <span class="min-w-0 flex-1">
-              <span class="block text-sm font-bold text-gray-900 dark:text-gray-100">Lo que tenés contratado</span>
-              <span class="block text-sm text-gray-800 dark:text-gray-200 mt-0.5">{{ planProductLabel }}</span>
-              <span class="block text-sm text-gray-500 dark:text-gray-400 mt-1">
-                RILO Gestión {{ erpChannelLabel }} · RILO Bot {{ rilobotChannelLabel }}
-              </span>
-              <span class="mt-2 inline-flex text-sm font-semibold text-teal-700 dark:text-teal-400">
-                Ver plan y canales
-              </span>
-            </span>
-            <i-lucide name="chevron-right" class="w-5 h-5 shrink-0 text-gray-400 mt-1"></i-lucide>
-          </a>
-        </section>
       </div>
     </div>
   `,
@@ -325,11 +291,9 @@ type AccountPanel = 'profile' | 'password' | null;
 export class AccountComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly theme = inject(ThemeService);
-  private businessApi = inject(BusinessService);
   readonly pageShellClass = PAGE_SHELL_CLASS;
 
   openPanel: AccountPanel = null;
-  usage: ClientUsageSummary | null = null;
 
   profileNombre = '';
   profileEmail = '';
@@ -349,7 +313,6 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.loadProfileFromSession();
-    this.loadUsage();
   }
 
   ngOnDestroy() {
@@ -360,10 +323,6 @@ export class AccountComponent implements OnInit, OnDestroy {
     return this.auth.currentUser?.hasPassword !== false;
   }
 
-  get isWhatsappHome(): boolean {
-    return !this.auth.isPlatformAdmin && this.auth.canAccessWhatsapp && !this.auth.canAccessErpWeb;
-  }
-
   get showBotHelp(): boolean {
     return (
       !this.auth.isPlatformAdmin &&
@@ -372,12 +331,12 @@ export class AccountComponent implements OnInit, OnDestroy {
   }
 
   get pageTitle(): string {
-    return this.isWhatsappHome ? 'Inicio' : 'Mi cuenta';
+    return 'Mi cuenta';
   }
 
   get pageSubtitle(): string {
-    if (this.isWhatsappHome) {
-      return 'Tu negocio está activo. El trabajo del día a día es por WhatsApp.';
+    if (this.auth.canAccessErpWeb) {
+      return 'Tus datos de acceso y lo que tenés contratado con RILO.';
     }
     return 'Tus datos de acceso. Editá solo lo que necesites.';
   }
@@ -420,21 +379,6 @@ export class AccountComponent implements OnInit, OnDestroy {
     if (this.auth.canAccessWhatsapp) return 'activo';
     if (this.auth.isWhatsappPaused) return 'inactivo';
     return 'no incluido';
-  }
-
-  usagePct(used: number, max: number): number {
-    if (!max) return 0;
-    return Math.min(100, Math.round((Math.max(0, used) / max) * 100));
-  }
-
-  private loadUsage() {
-    const businessId = this.auth.currentBusinessId;
-    if (!businessId || this.auth.isPlatformAdmin || !this.auth.isSupervisor) return;
-    this.businessApi.getUsage(businessId).subscribe({
-      next: (usage) => {
-        this.usage = usage;
-      },
-    });
   }
 
   openProfile() {

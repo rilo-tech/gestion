@@ -1,4 +1,3 @@
-import express from 'express';
 import { db } from '../firebase.ts';
 import { formatOrderNumber } from '../utils/order-number.ts';
 import {
@@ -12,10 +11,7 @@ import {
   validateCashMovementDeletion,
 } from '../utils/deletion-guards.ts';
 import {
-  getDefaultCashAmbitoId,
-  normalizeCajaAmbitos,
   normalizeMovementAmbito,
-  usesCashAmbitoSeparationFromCaja,
 } from '../utils/caja-ambitos.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import { requireBusinessModule } from '../auth/middleware.ts';
@@ -27,15 +23,12 @@ import {
 import { sortCashMovementsByRecency } from '../../shared/cash-movement-sort.ts';
 import { schedulePayablesDataRepair } from '../utils/payables.ts';
 import {
-  applyCashMovementToPeriod,
-  classifyMovementPeriod,
-  createCashPeriodAccumulator,
-  createCashPeriodAccumulatorMap,
-  getCalendarMonthBounds,
-  parseMovementLocalDate,
-  resolveSummaryPeriodMonthYear,
-  toCashPeriodDisplay,
-} from '../utils/cash-period-summary.ts';
+  getCashMovements,
+  getCashSummary,
+  isCashDomainError,
+  loadCajaConfig,
+  registerCashMovement,
+} from '../domain/cash/index.ts';
 
 const router = createCompanyRouter();
 router.use(requireBusinessModule('caja'));
@@ -68,17 +61,6 @@ async function loadCashOrigenes(businessId: string): Promise<CajaOrigen[]> {
     expiresAt: now + ORIGENES_CACHE_TTL_MS,
   });
   return normalized;
-}
-
-async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
-  const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
-  if (!appDoc.exists) return {};
-  return (appDoc.data()?.caja as Record<string, unknown>) ?? {};
-}
-
-async function usesCashAmbitoSeparation(businessId: string): Promise<boolean> {
-  const caja = await loadCajaConfig(businessId);
-  return usesCashAmbitoSeparationFromCaja(caja);
 }
 
 function normalizeAmbito(value: unknown, caja: Record<string, unknown>): string {
@@ -146,33 +128,6 @@ function resolveOrigenLabel(
   return base;
 }
 
-function resolveMovementsMonthBounds(
-  mes: unknown,
-  anio: unknown
-): { startIso: string; endIso: string } | null {
-  const mesNum = Number(mes);
-  const anioNum = Number(anio);
-  if (!Number.isFinite(mesNum) || mesNum < 1 || mesNum > 12) return null;
-  if (!Number.isFinite(anioNum) || anioNum < 2000 || anioNum > 2100) return null;
-  const { start, end } = getCalendarMonthBounds(Math.trunc(mesNum), Math.trunc(anioNum));
-  return { startIso: start.toISOString(), endIso: end.toISOString() };
-}
-
-function mapCashMovementDoc(
-  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
-): Record<string, unknown> {
-  const data = doc.data() ?? {};
-  const createdAt =
-    (typeof data.createdAt === 'string' && data.createdAt) ||
-    doc.createTime?.toDate().toISOString() ||
-    null;
-  return {
-    id: doc.id,
-    ...data,
-    createdAt,
-  };
-}
-
 async function enrichMovements(
   businessId: string,
   movements: Record<string, unknown>[]
@@ -229,93 +184,11 @@ router.get('/:businessId/summary', async (req, res) => {
   try {
     const { businessId } = req.params;
     schedulePayablesDataRepair(businessId);
-    const caja = await loadCajaConfig(businessId);
-    const ambitos = normalizeCajaAmbitos(caja);
-    const ambitoTotals: Record<string, { ingreso: number; egreso: number }> = {};
-    const ambitoIds = ambitos.map((ambito) => ambito.id);
-    for (const ambito of ambitos) {
-      ambitoTotals[ambito.id] = { ingreso: 0, egreso: 0 };
-    }
-
-    const { month, year } = resolveSummaryPeriodMonthYear(
-      req.query.mes,
-      req.query.anio
-    );
-    const { start: periodStart, end: periodEnd } = getCalendarMonthBounds(month, year);
-    const periodGlobal = createCashPeriodAccumulator();
-    const periodByAmbito = createCashPeriodAccumulatorMap(ambitoIds);
-
-    const snapshot = await db
-      .collection(`negocios/${businessId}/movimientos_caja`)
-      .get();
-
-    let ingreso = 0;
-    let egreso = 0;
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const monto = Number(data.monto) || 0;
-      if (monto <= 0) continue;
-      const tipo = data.tipo === 'egreso' ? 'egreso' : 'ingreso';
-      const ambito = normalizeAmbito(data.ambito, caja);
-      const bucket = classifyMovementPeriod(
-        parseMovementLocalDate(String(data.fecha ?? '')),
-        periodStart,
-        periodEnd
-      );
-
-      applyCashMovementToPeriod(periodGlobal, tipo, monto, bucket);
-      if (periodByAmbito[ambito]) {
-        applyCashMovementToPeriod(periodByAmbito[ambito], tipo, monto, bucket);
-      }
-
-      if (tipo === 'egreso') {
-        egreso += monto;
-        if (ambitoTotals[ambito]) ambitoTotals[ambito].egreso += monto;
-      } else {
-        ingreso += monto;
-        if (ambitoTotals[ambito]) ambitoTotals[ambito].ingreso += monto;
-      }
-    }
-
-    const periodoDisplay = toCashPeriodDisplay(periodGlobal);
-    const ambitosSummary: Record<
-      string,
-      {
-        ingreso: number;
-        egreso: number;
-        saldo: number;
-        periodo: { mes: number; anio: number; ingreso: number; egreso: number };
-      }
-    > = {};
-    for (const [ambitoId, totals] of Object.entries(ambitoTotals)) {
-      const ambitoPeriodo = toCashPeriodDisplay(
-        periodByAmbito[ambitoId] ?? createCashPeriodAccumulator()
-      );
-      ambitosSummary[ambitoId] = {
-        ingreso: totals.ingreso,
-        egreso: totals.egreso,
-        saldo: totals.ingreso - totals.egreso,
-        periodo: {
-          mes: month,
-          anio: year,
-          ingreso: ambitoPeriodo.ingreso,
-          egreso: ambitoPeriodo.egreso,
-        },
-      };
-    }
-
-    res.json({
-      ingreso,
-      egreso,
-      saldo: ingreso - egreso,
-      periodo: {
-        mes: month,
-        anio: year,
-        ingreso: periodoDisplay.ingreso,
-        egreso: periodoDisplay.egreso,
-      },
-      ambitos: ambitosSummary,
+    const summary = await getCashSummary(businessId, {
+      month: req.query.mes,
+      year: req.query.anio,
     });
+    res.json(summary);
   } catch (error) {
     console.error('Error fetching cash summary:', error);
     res.status(500).json({ error: 'Error fetching cash summary' });
@@ -328,54 +201,26 @@ router.get('/:businessId', async (req, res) => {
     schedulePayablesDataRepair(businessId);
     const paged = String(req.query.paged ?? '') === '1';
     if (paged) {
-      const requestedLimit = Number(req.query.limit);
-      const limit = Number.isFinite(requestedLimit)
-        ? Math.min(300, Math.max(20, Math.trunc(requestedLimit)))
-        : 120;
-      const cursor = String(req.query.cursor ?? '').trim();
-      const monthBounds = resolveMovementsMonthBounds(req.query.mes, req.query.anio);
-
-      let query: FirebaseFirestore.Query = db
-        .collection(`negocios/${businessId}/movimientos_caja`)
-        .orderBy('fecha', 'desc');
-
-      if (monthBounds) {
-        query = query
-          .where('fecha', '>=', monthBounds.startIso)
-          .where('fecha', '<=', monthBounds.endIso);
+      const page = await getCashMovements(businessId, {
+        paged: true,
+        limit: Number(req.query.limit),
+        cursor: String(req.query.cursor ?? '').trim() || undefined,
+        month: req.query.mes,
+        year: req.query.anio,
+      });
+      if (!page || Array.isArray(page)) {
+        return res.status(500).json({ error: 'Error fetching cash movements' });
       }
-
-      query = query.limit(limit + 1);
-
-      if (cursor) {
-        const cursorSnap = await db
-          .collection(`negocios/${businessId}/movimientos_caja`)
-          .doc(cursor)
-          .get();
-        if (cursorSnap.exists) {
-          query = query.startAfter(cursorSnap);
-        }
-      }
-
-      const snapshot = await query.get();
-      const hasMore = snapshot.docs.length > limit;
-      const pageDocs = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-      const movements = pageDocs.map((doc) => mapCashMovementDoc(doc));
       const enriched = sortCashMovementsByRecency(
-        await enrichMovements(businessId, movements)
+        await enrichMovements(businessId, page.items as Record<string, unknown>[])
       );
-      const nextCursor =
-        hasMore && pageDocs.length > 0 ? pageDocs[pageDocs.length - 1].id : null;
-      return res.json({ items: enriched, nextCursor, hasMore });
+      return res.json({ items: enriched, nextCursor: page.nextCursor, hasMore: page.hasMore });
     }
 
-    const snapshot = await db
-      .collection(`negocios/${businessId}/movimientos_caja`)
-      .orderBy('fecha', 'desc')
-      .get();
-    const movements = snapshot.docs.map((doc) => mapCashMovementDoc(doc));
+    const listed = await getCashMovements(businessId);
+    const movements = Array.isArray(listed) ? listed : listed.items;
     const enriched = sortCashMovementsByRecency(
-      await enrichMovements(businessId, movements)
+      await enrichMovements(businessId, movements as Record<string, unknown>[])
     );
     res.json(enriched);
   } catch (error) {
@@ -391,57 +236,37 @@ function normalizeMovementDescripcion(raw: unknown): string | null {
 router.post('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
-    const tipo = req.body.tipo === 'egreso' ? 'egreso' : 'ingreso';
-    const monto = Number(req.body.monto) || 0;
-    const concepto = String(req.body.concepto ?? '').trim();
-    const medio = String(req.body.medio ?? 'efectivo').trim() || 'efectivo';
-
-    if (monto <= 0) {
-      return res.status(400).json({ error: 'El monto debe ser mayor a cero.' });
-    }
-
-    if (!concepto) {
-      return res.status(400).json({ error: 'Ingresá un concepto.' });
-    }
-
-    const caja = await loadCajaConfig(businessId);
-    const ambito = normalizeAmbito(req.body.ambito, caja);
-
-    const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
-    const descripcion = normalizeMovementDescripcion(req.body.descripcion);
-    const fecha = normalizeTransactionDateTimeToIso(req.body.fecha);
-    const createdAt = new Date().toISOString();
-
-    const docRef = await db.collection(`negocios/${businessId}/movimientos_caja`).add({
-      tipo,
-      monto,
-      medio,
-      concepto,
-      categoriaId,
-      descripcion,
-      ambito,
-      fecha,
-      createdAt,
-      origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
-      origenGrupo: 'manual',
-      origenId: null,
-      pedidoId: null,
-      numeroPedido: null,
-      numeroPedidoLabel: null,
-      clienteId: null,
-      negocioId: businessId,
+    const authReq = req as AuthenticatedRequest;
+    const created = await registerCashMovement({
+      businessId,
+      type: req.body.tipo === 'egreso' ? 'egreso' : 'ingreso',
+      amount: Number(req.body.monto),
+      concept: String(req.body.concepto ?? ''),
+      scope: req.body.ambito,
+      date: req.body.fecha,
+      medio: String(req.body.medio ?? 'efectivo').trim() || 'efectivo',
+      categoriaId: String(req.body.categoriaId ?? '').trim() || null,
+      descripcion: normalizeMovementDescripcion(req.body.descripcion),
+      source: 'web',
+      actor: {
+        type: 'web_user',
+        userId: authReq.auth?.userId,
+      },
     });
 
-    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+    await logActivityFromRequest(authReq, businessId, {
       module: 'cash',
       action: 'create',
       entityType: 'movimiento_caja',
-      entityId: docRef.id,
-      summary: `Registró ${tipo} manual de $${monto}: ${concepto}`,
+      entityId: created.movementId,
+      summary: `Registró ${created.type} manual de $${created.amount}: ${created.concept}`,
     });
 
-    res.status(201).json({ id: docRef.id });
+    res.status(201).json({ id: created.movementId });
   } catch (error) {
+    if (isCashDomainError(error)) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
     console.error('Error creating cash movement:', error);
     res.status(500).json({ error: 'Error creating cash movement' });
   }

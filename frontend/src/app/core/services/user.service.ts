@@ -22,6 +22,7 @@ export interface AppUser {
 
 export interface CreateUserPayload extends AppUser {
   password?: string;
+  confirmBilling?: boolean;
 }
 
 export interface PaginatedUsers {

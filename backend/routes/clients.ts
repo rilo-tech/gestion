@@ -63,6 +63,43 @@ function isCancelledStatus(estado?: string) {
   return value === 'cancelado' || value.includes('cancelad');
 }
 
+function normalizeClientSearch(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+}
+
+function clientMatchesSearch(
+  client: {
+    nombre?: unknown;
+    telefono?: unknown;
+    email?: unknown;
+    direccion?: unknown;
+    etiquetas?: unknown;
+  },
+  needle: string
+): boolean {
+  if (!needle) return true;
+  const tags = Array.isArray(client.etiquetas) ? client.etiquetas.join(' ') : '';
+  const haystack = normalizeClientSearch(
+    `${client.nombre ?? ''} ${client.telefono ?? ''} ${client.email ?? ''} ${client.direccion ?? ''} ${tags}`
+  );
+  return haystack.includes(needle);
+}
+
+function toPickerClientRow(id: string, data: Record<string, unknown>) {
+  const nombre = String(data.nombre ?? '').trim();
+  const telefono = String(data.telefono ?? '').trim();
+  return {
+    id,
+    nombre,
+    activo: data.activo !== false,
+    ...(telefono ? { telefono } : {}),
+  };
+}
+
 function computeTotalFacturado(ventas: Array<{ total?: number }>): number {
   return ventas.reduce((acc, sale) => acc + (Number(sale.total) || 0), 0);
 }
@@ -140,6 +177,46 @@ router.get('/:businessId/cobros-proximos', async (req, res) => {
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
+    const picker = String(req.query.picker ?? '') === '1';
+    const searchQuery = String(req.query.q ?? '').trim();
+    const soloActivos = String(req.query.soloActivos ?? '') === '1';
+
+    if (picker || searchQuery) {
+      const snapshot = await db.collection(`negocios/${businessId}/clientes`).get();
+      const needle = normalizeClientSearch(searchQuery);
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(100, Math.max(10, Math.trunc(requestedLimit)))
+        : 50;
+
+      const matched = snapshot.docs
+        .map((doc) => {
+          const data = (doc.data() ?? {}) as Record<string, unknown>;
+          return {
+            row: toPickerClientRow(doc.id, data),
+            data,
+          };
+        })
+        .filter((entry) => entry.row.nombre)
+        .filter((entry) => !soloActivos || entry.row.activo !== false)
+        .filter((entry) => clientMatchesSearch({ ...entry.data, ...entry.row }, needle))
+        .map((entry) => entry.row)
+        .sort((a, b) => {
+          if (!needle) {
+            return a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' });
+          }
+          const aName = normalizeClientSearch(a.nombre);
+          const bName = normalizeClientSearch(b.nombre);
+          const aStarts = aName.startsWith(needle) ? 0 : 1;
+          const bStarts = bName.startsWith(needle) ? 0 : 1;
+          if (aStarts !== bStarts) return aStarts - bStarts;
+          return a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' });
+        });
+
+      const items = searchQuery ? matched.slice(0, limit) : matched;
+      return res.json({ items, nextCursor: null, hasMore: false });
+    }
+
     const paged = String(req.query.paged ?? '') === '1';
     if (paged) {
       const requestedLimit = Number(req.query.limit);
@@ -171,7 +248,6 @@ router.get('/:businessId', async (req, res) => {
         businessId,
         docs.map((doc) => doc.id)
       );
-      const soloActivos = String(req.query.soloActivos ?? '') === '1';
       const items = docs
         .map((doc) => {
           const saldoPendiente = balanceMap.get(doc.id) ?? 0;
@@ -191,7 +267,6 @@ router.get('/:businessId', async (req, res) => {
     const snapshot = await db.collection(`negocios/${businessId}/clientes`).get();
     const balanceMap = await computeClientBalanceMap(businessId);
 
-    const soloActivos = String(req.query.soloActivos ?? '') === '1';
     const clients = snapshot.docs
       .map((doc) => {
         const saldoPendiente = balanceMap.get(doc.id) ?? 0;

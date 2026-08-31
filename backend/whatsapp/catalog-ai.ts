@@ -155,15 +155,21 @@ function mapProductIds(
 export async function pickProductsWithAi(
   businessId: string,
   spoken: string,
-  utterance?: string
+  utterance?: string,
+  messageContext?: string
 ): Promise<AiProductHit[] | null> {
   const query = String(spoken ?? '').trim();
   if (!query) return [];
   const catalog = await loadProducts(businessId);
   if (!catalog.length) return [];
 
-  const spokenBlock = `Cómo habló (frase entera): ${JSON.stringify(utterance || query)}
-Producto que hay que ubicar: ${JSON.stringify(query)}
+  const itemPhrase = String(utterance || query).trim();
+  const extraContext =
+    messageContext && messageContext.trim() && messageContext.trim() !== itemPhrase
+      ? `Contexto del mensaje (NO es el producto a ubicar): ${JSON.stringify(messageContext.trim().slice(0, 280))}\n`
+      : '';
+  const spokenBlock = `${extraContext}Producto que hay que ubicar: ${JSON.stringify(query)}
+Frase de ESE ítem: ${JSON.stringify(itemPhrase)}
 
 CATÁLOGO (id | nombre | color | talle | etiqueta | precio):
 ${catalog.map(productCatalogLine).join('\n')}`;

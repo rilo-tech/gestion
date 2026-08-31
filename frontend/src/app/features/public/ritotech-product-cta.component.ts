@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 import {
   TRIAL_PRODUCT_LABELS,
   type TrialProductId,
@@ -124,7 +125,7 @@ export class RitotechProductCtaComponent {
   private router = inject(Router);
 
   @Input({ required: true }) product!: TrialProductId;
-  @Input() guestLabel = 'Probar 30 días';
+  @Input() guestLabel = `Probar ${DEFAULT_TRIAL_DAYS} días`;
   @Input() variant: 'primary' | 'secondary' | 'compact' = 'primary';
 
   busy = false;

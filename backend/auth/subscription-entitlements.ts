@@ -30,6 +30,14 @@ export type BusinessSubscriptionRecord = {
   notasComerciales?: string;
   /** Congela plantilla del plan para esta empresa (cambios al plan no aplican). */
   planFrozen?: FrozenPlanSnapshot;
+  includedErpUsersOverride?: number | null;
+  extraErpUserPriceOverride?: number | null;
+  includedWhatsappNumbersOverride?: number | null;
+  extraWhatsappNumberPriceOverride?: number | null;
+  includedAiOverride?: number | null;
+  usageModeOverride?: 'limited' | 'unlimited' | null;
+  maxWhatsappNumbersOverride?: number | null;
+  precioFinalOverride?: number | null;
 };
 
 export type EffectiveSubscriptionLimits = {
@@ -88,6 +96,17 @@ export function parseBusinessSubscription(
     descuentoMensual: numOr(raw.descuentoMensual, 0),
     notasComerciales:
       typeof raw.notasComerciales === 'string' ? raw.notasComerciales.trim() : undefined,
+    includedErpUsersOverride: optionalNum(raw.includedErpUsersOverride),
+    extraErpUserPriceOverride: optionalNum(raw.extraErpUserPriceOverride),
+    includedWhatsappNumbersOverride: optionalNum(raw.includedWhatsappNumbersOverride),
+    extraWhatsappNumberPriceOverride: optionalNum(raw.extraWhatsappNumberPriceOverride),
+    includedAiOverride: optionalNum(raw.includedAiOverride),
+    usageModeOverride:
+      raw.usageModeOverride === 'unlimited' || raw.usageModeOverride === 'limited'
+        ? raw.usageModeOverride
+        : null,
+    maxWhatsappNumbersOverride: optionalNum(raw.maxWhatsappNumbersOverride),
+    precioFinalOverride: optionalNum(raw.precioFinalOverride),
   };
 }
 
@@ -151,16 +170,20 @@ export function resolveBusinessSubscription(
     suscripcion.precioPorAdministradorOverride ??
     frozen?.precioPorAdministrador ??
     plan.precioPorAdministrador;
-  const precioPorOperador =
-    suscripcion.precioPorOperadorOverride ??
-    frozen?.precioPorOperador ??
-    plan.precioPorOperador;
+  const whatsappLines = Math.max(0, Number(suscripcion.limiteWhatsapp) || 0);
+  const includedWhatsapp = suscripcion.includedWhatsappNumbersOverride ?? undefined;
+  const includedAdministradores = suscripcion.includedErpUsersOverride ?? undefined;
   const precioPorWhatsapp =
+    suscripcion.extraWhatsappNumberPriceOverride ??
     suscripcion.precioPorWhatsappOverride ??
     suscripcion.precioPorOperadorOverride ??
     frozen?.precioPorOperador ??
     plan.precioPorOperador;
-  const whatsappLines = Math.max(0, Number(suscripcion.limiteWhatsapp) || 0);
+  const precioPorOperador =
+    suscripcion.extraErpUserPriceOverride ??
+    suscripcion.precioPorOperadorOverride ??
+    frozen?.precioPorOperador ??
+    plan.precioPorOperador;
   const addonPrices = resolveAddonPrices(
     {
       ...plan,
@@ -176,13 +199,20 @@ export function resolveBusinessSubscription(
     precioPorOperador,
     limiteAdministradores: limits.limiteAdministradores,
     limiteOperadores: limits.limiteOperadores,
+    includedAdministradores,
     whatsappLines,
+    includedWhatsapp,
     precioPorWhatsapp,
     planModules,
     effectiveModules: entitlements,
     addonPrices,
     descuentoMensual,
   });
+
+  const montoMensualEsperado =
+    suscripcion.precioFinalOverride != null && suscripcion.precioFinalOverride >= 0
+      ? suscripcion.precioFinalOverride
+      : cuota.total;
 
   return {
     planModules,
@@ -195,7 +225,7 @@ export function resolveBusinessSubscription(
     addonPrices,
     descuentoMensual,
     cuota,
-    montoMensualEsperado: cuota.total,
+    montoMensualEsperado,
     suscripcion,
   };
 }
@@ -255,6 +285,33 @@ export function sanitizeBusinessSubscriptionPayload(
   }
   if (typeof raw.notasComerciales === 'string') {
     next.notasComerciales = raw.notasComerciales.trim();
+  }
+  if (raw.includedErpUsersOverride !== undefined) {
+    next.includedErpUsersOverride = optionalNum(raw.includedErpUsersOverride);
+  }
+  if (raw.extraErpUserPriceOverride !== undefined) {
+    next.extraErpUserPriceOverride = optionalNum(raw.extraErpUserPriceOverride);
+  }
+  if (raw.includedWhatsappNumbersOverride !== undefined) {
+    next.includedWhatsappNumbersOverride = optionalNum(raw.includedWhatsappNumbersOverride);
+  }
+  if (raw.extraWhatsappNumberPriceOverride !== undefined) {
+    next.extraWhatsappNumberPriceOverride = optionalNum(raw.extraWhatsappNumberPriceOverride);
+  }
+  if (raw.includedAiOverride !== undefined) {
+    next.includedAiOverride = optionalNum(raw.includedAiOverride);
+  }
+  if (raw.usageModeOverride !== undefined) {
+    next.usageModeOverride =
+      raw.usageModeOverride === 'unlimited' || raw.usageModeOverride === 'limited'
+        ? raw.usageModeOverride
+        : null;
+  }
+  if (raw.maxWhatsappNumbersOverride !== undefined) {
+    next.maxWhatsappNumbersOverride = optionalNum(raw.maxWhatsappNumbersOverride);
+  }
+  if (raw.precioFinalOverride !== undefined) {
+    next.precioFinalOverride = optionalNum(raw.precioFinalOverride);
   }
 
   return next;

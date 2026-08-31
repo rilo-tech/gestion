@@ -1,6 +1,7 @@
 import type { WhatsappCommandEntities } from './ai-command-parser.ts';
+import { ASK_STOCK_PRODUCT } from './conversation-query.ts';
 import { todayDateOnly } from './lookups.ts';
-import { waBold, waCard } from '../../shared/whatsapp-format.ts';
+import { waCard } from '../../shared/whatsapp-format.ts';
 
 export type RequiredFieldKey = 'clientName' | 'productName' | 'amount' | 'deliveryDate' | 'supplierName';
 
@@ -58,6 +59,18 @@ function specsFor(intent: string): RequiredFieldSpec[] {
   return [];
 }
 
+function hasStockQueryFilter(entities: WhatsappCommandEntities): boolean {
+  const item = Array.isArray(entities.items) ? entities.items[0] : undefined;
+  return Boolean(
+    entities.referToFocusedProduct ||
+      String(entities.productId ?? '').trim() ||
+      String(entities.productName ?? '').trim() ||
+      String(item?.productHint ?? item?.productName ?? item?.rawText ?? '').trim() ||
+      item?.attributes?.color ||
+      item?.attributes?.size
+  );
+}
+
 function hasValue(entities: WhatsappCommandEntities, key: RequiredFieldKey): boolean {
   if (key === 'clientName') {
     return Boolean(entities.clientId || String(entities.clientName ?? '').trim());
@@ -67,9 +80,11 @@ function hasValue(entities: WhatsappCommandEntities, key: RequiredFieldKey): boo
   }
   if (key === 'productName') {
     const lines = Array.isArray(entities.purchaseLines) ? entities.purchaseLines : [];
+    const items = Array.isArray(entities.items) ? entities.items : [];
     return Boolean(
       entities.productId ||
         String(entities.productName ?? '').trim() ||
+        items.some((line) => String(line.productName ?? line.rawText ?? line.productHint ?? '').trim()) ||
         lines.some((line) => String(line.productName ?? '').trim()) ||
         entities.mediaId ||
         String(entities.imageSummary ?? '').trim()
@@ -90,6 +105,15 @@ export function missingRequiredFields(
   intent: string,
   entities: WhatsappCommandEntities
 ): RequiredFieldSpec[] {
+  if (intent === 'query_stock' && !hasStockQueryFilter(entities)) {
+    return [{ key: 'productName', label: 'Producto, color o talle' }];
+  }
+  if (intent === 'how_to' || intent === 'capability_question' || intent === 'help' || intent === 'greeting') {
+    return [];
+  }
+  if (entities.collectingItems && (intent === 'create_order' || intent === 'create_sale')) {
+    return specsFor(intent).filter((field) => field.key !== 'productName' && !hasValue(entities, field));
+  }
   return specsFor(intent).filter((field) => !hasValue(entities, field.key));
 }
 
@@ -105,6 +129,9 @@ export function formatMissingFieldsReply(
   entities: WhatsappCommandEntities,
   _rubro?: string | null
 ): string {
+  if (intent === 'query_stock') {
+    return ASK_STOCK_PRODUCT;
+  }
   const allSpecs = specsFor(intent);
   const noneFilled = allSpecs.length > 0 && missing.length === allSpecs.length;
 
@@ -114,7 +141,7 @@ export function formatMissingFieldsReply(
         ? 'La fecha de carga, si no la decís, queda hoy.'
         : undefined;
     return waCard({
-      title: intentTitle(intent),
+      title: intentTitle(intent, entities),
       lines: [
         'Para anotarlo necesito:',
         ...allSpecs.map((field) => `• ${field.label}`),
@@ -125,35 +152,59 @@ export function formatMissingFieldsReply(
   }
 
   const known: string[] = [];
-  if (entities.supplierName) known.push(`Proveedor: ${entities.supplierName}`);
-  if (entities.clientName) known.push(`Cliente: ${entities.clientName}`);
-  if (entities.productName) known.push(`Producto: ${entities.productName}`);
-  if (Number(entities.amount) > 0) known.push(`Monto: $${entities.amount}`);
+  const product =
+    entities.productName?.trim() ||
+    entities.items?.find((item) => !item.skipped)?.productName ||
+    entities.items?.find((item) => !item.skipped)?.productHint ||
+    entities.items?.find((item) => !item.skipped)?.rawText;
+  if (intent === 'create_order' && product) {
+    known.push(`Tengo el producto: ${product}.`);
+  } else {
+    if (entities.supplierName) known.push(`Proveedor: ${entities.supplierName}`);
+    if (entities.clientName) known.push(`Cliente: ${entities.clientName}`);
+    if (entities.productName) known.push(`Producto: ${entities.productName}`);
+    if (Number(entities.amount) > 0) known.push(`Monto: $${entities.amount}`);
+  }
   const extras = (entities.extraCosts ?? []).filter((item) => Number(item.costo) > 0);
   if (extras.length) {
     known.push(extras.map((item) => `${item.nombre} $${item.costo}`).join(', '));
   }
-  const have = known.map((item) => `• ${item}`);
+  const have = known.map((item) => (item.startsWith('Tengo') ? item : `• ${item}`));
+  const missingLabels = missing.map((field) => shortMissingLabel(field.key));
   if (missing.length === 1) {
     return waCard({
-      title: intentTitle(intent),
+      title: intentTitle(intent, entities),
       lines: have.length ? have : undefined,
-      ask: `Me falta ${missing[0]!.label.toLowerCase()}.\nEscribilo como quieras, o ${waBold('NO')} para cancelar.`,
+      ask: `Me falta ${missingLabels[0]}.\n¿Me lo pasás?`,
     });
   }
+  const jointAsk =
+    missing.length === 2 && missing.every((field) => field.key === 'clientName' || field.key === 'deliveryDate')
+      ? '¿Para quién es y para qué fecha?'
+      : '¿Me los pasás?';
   return waCard({
-    title: intentTitle(intent),
-    lines: [...have, 'Me faltan:', ...missing.map((field) => `• ${field.label}`)],
-    ask: `Mandamelos en una frase. ${waBold('NO')} cancela.`,
+    title: intentTitle(intent, entities),
+    lines: [...have, 'Me faltan:', ...missingLabels.map((label) => `• ${label}`)],
+    ask: jointAsk,
   });
 }
 
-function intentTitle(intent: string): string {
+function shortMissingLabel(key: RequiredFieldKey): string {
+  if (key === 'clientName') return 'cliente';
+  if (key === 'productName') return 'producto';
+  if (key === 'amount') return 'precio';
+  if (key === 'deliveryDate') return 'fecha de entrega';
+  return 'proveedor';
+}
+
+function intentTitle(intent: string, entities?: WhatsappCommandEntities): string {
   if (intent === 'create_purchase') return 'Compra';
   if (intent === 'create_order') return 'Pedido';
   if (intent === 'create_sale') return 'Venta';
   if (intent === 'register_payment') return 'Cobro';
-  if (intent === 'register_cash') return 'Caja';
+  if (intent === 'register_cash') {
+    return entities?.cashType === 'ingreso' ? 'Ingreso a caja' : 'Egreso de caja';
+  }
   if (intent === 'update_product_cost') return 'Costo de catálogo';
   if (intent === 'query_balance') return 'Saldo';
   if (intent === 'create_client') return 'Cliente nuevo';

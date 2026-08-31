@@ -20,6 +20,7 @@ import collaboratorsRoutes from './routes/collaborators.ts';
 import publicTrialRoutes from './routes/public-trial.ts';
 import publicCommercialRoutes from './routes/public-commercial.ts';
 import publicGeoRoutes from './routes/public-geo.ts';
+import addonsRoutes from './routes/addons.ts';
 import billingRoutes from './routes/billing.ts';
 import whatsappWebhookRoutes from './routes/whatsapp-webhook.ts';
 import platformBotRoutes from './routes/platform-bot.ts';
@@ -151,9 +152,15 @@ export function createApiApp(): express.Express {
   });
 
   app.use('/api/public/geo', publicGeoRoutes);
+  /** Login y auth no esperan el bootstrap (evita colgar "Ingresando..." en arranque frío). */
+  app.use('/api/auth', authRoutes);
   /** WhatsApp no espera el bootstrap: Meta corta si tardamos en responder 200. */
   app.use('/api/webhooks/whatsapp', whatsappWebhookRoutes);
   app.use('/webhooks/whatsapp', whatsappWebhookRoutes);
+
+  void runApiBootstrap().catch((err) => {
+    console.error('[api] Bootstrap en segundo plano falló:', err);
+  });
 
   const withBootstrap: express.RequestHandler = async (_req, res, next) => {
     try {
@@ -168,8 +175,8 @@ export function createApiApp(): express.Express {
   };
 
   const api = express.Router();
-  api.use('/auth', authRoutes);
   api.use('/platform', platformRoutes);
+  api.use('/business', addonsRoutes);
   api.use('/business', businessRoutes);
   api.use('/clients', clientRoutes);
   api.use('/suppliers', supplierRoutes);

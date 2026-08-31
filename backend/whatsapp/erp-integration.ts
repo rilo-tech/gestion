@@ -1,3 +1,4 @@
+import { isLlmFirstEngine } from './engine-version.ts';
 import type { ParsedWhatsappCommand, WhatsappCommandEntities } from './ai-command-parser.ts';
 import type { WhatsappTenantContext } from './tenant-resolver.ts';
 import { buildWelcomeMessage } from './onboarding.ts';
@@ -15,13 +16,18 @@ import {
   registerPaymentFromWhatsapp,
   updateProductCostFromWhatsapp,
 } from './erp-writes.ts';
+import { isNoReservedUnitsStockError } from '../utils/order-stock-reservations.ts';
+import { resolveStockDiscountAsk } from '../utils/order-config.ts';
+import { formatStockResolutionAsk } from './stock-resolution.ts';
+import { queryStatusFromWhatsapp, queryStockFromWhatsapp } from './erp-queries.ts';
 import { updateOrderStatusFromWhatsapp } from './order-status.ts';
-import { queryStatusFromWhatsapp } from './erp-queries.ts';
 import { getConversationState } from './conversation-state.ts';
+import { isCashDomainError } from '../domain/cash/index.ts';
 import {
   assertCanRunWhatsappWrite,
   formatThrownUsage,
   incrementWhatsappOps,
+  isUsageLimitError,
 } from '../auth/usage-gates.ts';
 
 export interface ErpIntegrationResult {
@@ -29,6 +35,22 @@ export interface ErpIntegrationResult {
   executed: boolean;
   intent: string;
   data?: Record<string, unknown>;
+}
+
+function userSafeWriteReply(intent: string, error: unknown, usageMessage: string): string {
+  if (isUsageLimitError(error)) return usageMessage;
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const technical =
+    raw === 'ORDER_WRITE_FAILED' ||
+    error instanceof ReferenceError ||
+    error instanceof TypeError ||
+    /undefined|is not defined|FirebaseError|FIRESTORE|Cannot use|items\.\d|ECONN|ETIMEDOUT/i.test(raw);
+  if (technical) {
+    return intent === 'create_order'
+      ? '⚠️ No pude registrar el pedido. No se completó la operación.'
+      : '⚠️ No pude completar la operación.';
+  }
+  return usageMessage;
 }
 
 function entitiesOf(parsed: ParsedWhatsappCommand): WhatsappCommandEntities {
@@ -54,7 +76,7 @@ export async function executeWhatsappCommand(
   parsed: ParsedWhatsappCommand
 ): Promise<ErpIntegrationResult> {
   const intent = parsed.intent;
-  const raw = rawOf(parsed);
+  const raw = isLlmFirstEngine() ? '' : rawOf(parsed);
 
   if (intent === 'greeting') {
     return {
@@ -88,8 +110,9 @@ export async function executeWhatsappCommand(
     };
   }
 
+  const entities = entitiesOf(parsed);
+
   try {
-    const entities = entitiesOf(parsed);
     const isWrite = [
       'create_order',
       'create_sale',
@@ -118,6 +141,8 @@ export async function executeWhatsappCommand(
           kind: 'order',
           label: result.label,
           clientName: result.clientName,
+          clientId: result.clientId,
+          status: result.status,
           amount: result.amount,
         },
       };
@@ -162,6 +187,24 @@ export async function executeWhatsappCommand(
 
     if (intent === 'update_order_status') {
       const result = await updateOrderStatusFromWhatsapp(tenant, entities);
+      if (result.needsStockDecision) {
+        return {
+          executed: false,
+          intent,
+          reply: result.reply,
+          data: {
+            orderId: result.orderId,
+            recordId: result.orderId,
+            kind: 'order',
+            label: result.label,
+            clientName: result.clientName,
+            clientId: result.clientId,
+            status: result.status,
+            amount: result.amount,
+            needsStockDecision: result.needsStockDecision,
+          },
+        };
+      }
       await incrementWhatsappOps(tenant.businessId);
       return {
         executed: true,
@@ -173,6 +216,8 @@ export async function executeWhatsappCommand(
           kind: 'order',
           label: result.label,
           clientName: result.clientName,
+          clientId: result.clientId,
+          status: result.status,
           amount: result.amount,
         },
       };
@@ -207,7 +252,32 @@ export async function executeWhatsappCommand(
     if (intent === 'query_status') {
       const state = await getConversationState(tenant.businessId, tenant.phone);
       const result = await queryStatusFromWhatsapp(tenant, entities, state?.lastOperation);
-      return { executed: true, intent, reply: result.reply };
+      return {
+        executed: true,
+        intent,
+        reply: result.reply,
+        data: {
+          listItems: result.listItems,
+          title: result.title,
+          total: result.total,
+          hasMore: result.hasMore,
+          pageSize: result.pageSize,
+          offset: result.offset,
+        },
+      };
+    }
+
+    if (intent === 'query_stock') {
+      const result = await queryStockFromWhatsapp(tenant, entities);
+      return {
+        executed: true,
+        intent,
+        reply: result.reply,
+        data: {
+          listItems: result.listItems,
+          title: result.title,
+        },
+      };
     }
 
     if (intent === 'register_cash') {
@@ -270,12 +340,53 @@ export async function executeWhatsappCommand(
       reply: 'No pude procesar esa operación.',
     };
   } catch (error) {
-    const message = await formatThrownUsage(error, tenant.businessId);
     console.error('[whatsapp] ERP write error:', error);
+    if (isCashDomainError(error)) {
+      return {
+        executed: false,
+        intent,
+        reply: error.message,
+      };
+    }
+    if (intent === 'update_order_status' && isNoReservedUnitsStockError(error)) {
+      const ask =
+        resolveStockDiscountAsk({
+          willConsume: true,
+          blocked: false,
+          canChooseScope: true,
+          requiresFullStock: false,
+          defaultScope: 'solo_reservado',
+          totalReservado: 0,
+          totalCompleto: 1,
+        }) ?? {
+          reason: 'no_reserved_units' as const,
+          options: ['pedido_completo' as const],
+          defaultScope: 'pedido_completo' as const,
+          totalReservado: 0,
+          totalCompleto: 0,
+        };
+      return {
+        executed: false,
+        intent,
+        reply: formatStockResolutionAsk(ask),
+        data: {
+          kind: 'order',
+          needsStockDecision: ask,
+          orderId: entities.targetOrderId,
+          recordId: entities.targetOrderId,
+          label: entities.targetOrderLabel,
+          clientName: entities.clientName,
+          clientId: entities.clientId,
+          status: entities.orderStatus,
+          amount: entities.amount,
+        },
+      };
+    }
+    const usage = await formatThrownUsage(error, tenant.businessId);
     return {
       executed: false,
       intent,
-      reply: message,
+      reply: userSafeWriteReply(intent, error, usage),
     };
   }
 }

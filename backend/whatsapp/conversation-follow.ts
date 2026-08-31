@@ -3,7 +3,6 @@ import {
   extractAmountFromText,
   extractDeliveryDateFromText,
   formatClientChoices,
-  formatExtraCostsHint,
   formatOperationSummary,
   formatProductChoices,
   formatSupplierChoices,
@@ -15,23 +14,48 @@ import {
   looksLikeIterativeCorrection,
   looksLikeNewOrder,
   looksLikeStatusQuery,
+  looksLikeExistingOrderQuery,
+  formatExtraCostItemAsk,
 } from './lookups.ts';
-import { looksLikePendingQuestion } from './operator-voice.ts';
+import { isTrivialWhatsappTurn, looksLikePendingQuestion } from './operator-voice.ts';
 import { formatCashAmbitoChoices } from '../utils/caja-ambitos.ts';
-import { riloBotHelpMenu } from '../../shared/whatsapp-copy.ts';
+import { isThanksText, riloBotHelpMenu } from '../../shared/whatsapp-copy.ts';
 import { waBold, waCard } from '../../shared/whatsapp-format.ts';
 import { looksLikeCashMovement, looksLikeOrphanPayment, looksLikeOrderStatusUpdate, looksLikeListOrders } from './ai-command-parser.ts';
+import type { ConversationState } from './conversation-state.ts';
+import { presentOrderCollecting, presentTransaction } from './whatsapp-present.ts';
+import { ORDER_EXTRA_COST_ASK } from './order-finance.ts';
 import {
   formatFindOrderGuide,
   formatOpenOrderChoices,
   formatOrderActionAsk,
+  formatOrderStatusAsk,
+  formatPaymentAmountAsk,
   formatSettleAsk,
   type OrderStatusTarget,
 } from './order-status.ts';
+import {
+  STOCK_RESOLUTION_INTENT,
+  formatStockResolutionAsk,
+  interpretStockResolutionFromText,
+} from './stock-resolution.ts';
+import type { StockDiscountAsk } from '../utils/order-config.ts';
+import {
+  COLLECT_ORDER_ITEMS_INTENT,
+  formatCollectOrderItemsAsk,
+  isNonProductUtterance,
+  looksLikeCollectingDone,
+  splitCancelAndRemainder,
+  utteranceIsCapabilityQuestion,
+  utteranceIsHowTo,
+} from './conversation-speech.ts';
 
 const CONFIRM_YES = /^(si|sí|ok|dale|confirmo|confirmar|yes|y)$/i;
 const CONFIRM_NO = /^(no+|n[oó]|nop|cancelar|cancel|n)\s*[.!]*$/i;
 const CONFIRM_PREFIX = 'confirm:';
+const CASH_QUERY_FRESH =
+  /\b(cu[aá]nto\s+(hay\s+)?en\s+caja|caja\s+(de\s+)?hoy|saldo\s+neto|cu[aá]nto\s+vend[ií])\b/i;
+const PURCHASE_FRESH = /\b(compra|remito|factura)\s+(a|de|del)\b/i;
 
 type PendingPayload = Record<string, unknown>;
 
@@ -46,7 +70,245 @@ function missingFieldOf(payload: PendingPayload): string {
   return String(payload.missingField ?? '').trim();
 }
 
+export const RESUME_CONTEXT_INTENT = 'resume_context';
+/** Silencio a partir del cual preguntamos si seguir o empezar de nuevo. */
+export const IDLE_RESUME_MS = 15 * 60 * 1000;
+
+const RESUME_YES = /^(1|si|sí|ok|dale|seguimos|seguir|continuar|continuemos|yes|y)$/i;
+const RESUME_NO =
+  /^(2|no+|n[oó]|nop|cancelar|de\s+nuevo|empezar(\s+de\s+nuevo)?|empezamos|olv[ií]dalo|nuevo)\s*[.!]*$/i;
+
+export function looksLikeResumeYes(text: string): boolean {
+  return RESUME_YES.test(String(text ?? '').trim());
+}
+
+export function looksLikeResumeNo(text: string): boolean {
+  return RESUME_NO.test(String(text ?? '').trim());
+}
+
+function isOnboardingPending(intent?: string | null): boolean {
+  return String(intent ?? '').startsWith('onboarding_');
+}
+
+export function conversationLastActiveMs(state: ConversationState | null | undefined): number {
+  if (!state) return 0;
+  const stamps = [
+    state.updatedAt,
+    state.lastActiveAt,
+    state.focusOrder?.at,
+    ...(state.turns ?? []).map((turn) => turn.at),
+  ];
+  const times = stamps.map((stamp) => Date.parse(String(stamp ?? ''))).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : 0;
+}
+
+export function isConversationIdle(
+  state: ConversationState | null | undefined,
+  now = Date.now()
+): boolean {
+  const last = conversationLastActiveMs(state);
+  if (!last) return false;
+  return now - last >= IDLE_RESUME_MS;
+}
+
+export function hasResumableContext(state: ConversationState | null | undefined): boolean {
+  if (!state) return false;
+  const pending = String(state.pendingIntent ?? '').trim();
+  if (
+    pending &&
+    pending !== RESUME_CONTEXT_INTENT &&
+    pending !== 'help_topic' &&
+    !isOnboardingPending(pending)
+  ) {
+    return true;
+  }
+  return Boolean(state.focusOrder?.id);
+}
+
+export function looksLikeClearNewTask(text: string): boolean {
+  return hasExplicitCompleteIntent(text);
+}
+
+/**
+ * Intención operativa o de uso completa en ESTE mensaje.
+ * Gana a un pending viejo / gate de SÍ-NO de resume_context.
+ */
+export function hasExplicitCompleteIntent(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  if (utteranceIsHowTo(t) || utteranceIsCapabilityQuestion(t)) return true;
+  if (looksLikeOrderStatusUpdate(t)) return true;
+  if (looksLikeStatusQuery(t) || looksLikeExistingOrderQuery(t)) return true;
+  if (looksLikeNewOrder(t)) return true;
+  if (looksLikeCashMovement(t)) return true;
+  if (looksLikeListOrders(t)) return true;
+  if (PURCHASE_FRESH.test(t) && !/\bpedido\b/i.test(t)) return true;
+  if (CASH_QUERY_FRESH.test(t)) return true;
+  if (/\b(cu[aá]nto\s+debe|saldo\s+de)\b/i.test(t)) return true;
+  if (/\b(venta|vend[eé])\b/i.test(t) && /\b(registr|anot|carg|nuev)/i.test(t)) return true;
+  return false;
+}
+
+export type ClassifiedConversationAction =
+  | 'execute_explicit'
+  | 'correct_current'
+  | 'answer_slot'
+  | 'continue_context'
+  | 'how_to'
+  | 'capability_question'
+  | 'new_task'
+  | 'cancel'
+  | 'unknown';
+
+export function classifyConversationSpeechAct(
+  text: string,
+  pendingIntent?: string | null
+): ClassifiedConversationAction {
+  const t = String(text ?? '').trim();
+  if (!t) return 'unknown';
+  if (utteranceIsHowTo(t)) return 'how_to';
+  if (utteranceIsCapabilityQuestion(t)) return 'capability_question';
+  const split = splitCancelAndRemainder(t);
+  if (looksLikeResumeNo(t) || (split.cancel && !split.remainder)) return 'cancel';
+  if (looksLikeOrderStatusUpdate(t) || looksLikeCashMovement(t) || looksLikeNewOrder(t) || looksLikeListOrders(t)) {
+    return 'execute_explicit';
+  }
+  if (looksLikeStatusQuery(t) || looksLikeExistingOrderQuery(t) || CASH_QUERY_FRESH.test(t)) {
+    return 'execute_explicit';
+  }
+  if (/\b(cu[aá]nto\s+debe|saldo\s+de)\b/i.test(t)) return 'execute_explicit';
+  if (looksLikeIterativeCorrection(t) && pendingIntent) return 'correct_current';
+  if (looksLikeResumeYes(t)) return 'continue_context';
+  if (
+    pendingIntent &&
+    pendingIntent !== RESUME_CONTEXT_INTENT &&
+    doesFillCurrentSlot(t, pendingIntent, {})
+  ) {
+    return 'answer_slot';
+  }
+  if (split.cancel && split.remainder) return 'new_task';
+  if (hasExplicitCompleteIntent(t)) return 'new_task';
+  return 'unknown';
+}
+
+export type ResumeRoute =
+  | { kind: 'resume_yes' }
+  | { kind: 'resume_no' }
+  | { kind: 'run_new'; text: string }
+  | { kind: 'help_keep_pending'; intent: 'how_to' | 'capability_question' }
+  | { kind: 'continue_previous'; text: string };
+
+/**
+ * Qué hacer con el mensaje cuando el bot preguntó si seguimos.
+ * Nunca asume que el texto es respuesta al slot anterior.
+ */
+export function routeResumeUtterance(
+  text: string,
+  parsed: { intent: string; confidence?: number }
+): ResumeRoute {
+  const t = String(text ?? '').trim();
+  const split = splitCancelAndRemainder(t);
+  if (looksLikeResumeYes(t)) return { kind: 'resume_yes' };
+  if (looksLikeResumeNo(t)) return { kind: 'resume_no' };
+  if (split.cancel && split.remainder) return { kind: 'run_new', text: split.remainder };
+  if (parsed.intent === 'how_to' || parsed.intent === 'capability_question') {
+    return { kind: 'help_keep_pending', intent: parsed.intent };
+  }
+  if (hasExplicitCompleteIntent(t)) return { kind: 'run_new', text: t };
+  if (
+    parsed.intent !== 'unknown' &&
+    parsed.intent !== 'greeting' &&
+    parsed.intent !== 'help' &&
+    (parsed.confidence ?? 0) >= 0.7
+  ) {
+    return { kind: 'run_new', text: t };
+  }
+  if (isNonProductUtterance(t)) return { kind: 'run_new', text: t };
+  return { kind: 'continue_previous', text: t };
+}
+
+function focusOrderLine(focus?: { id?: string; label?: string; clientName?: string } | null): string {
+  if (!focus) return '';
+  const num = String(focus.label ?? '').trim().replace(/^#/, '');
+  const who = String(focus.clientName ?? '').trim();
+  if (num && who) return `pedido *#${num}* de ${who}`;
+  if (num) return `pedido *#${num}*`;
+  if (who) return `pedido de ${who}`;
+  return '';
+}
+
+export function formatResumeAsk(state: {
+  pendingIntent?: string | null;
+  pendingPayload?: Record<string, unknown> | null;
+  focusOrder?: { id?: string; label?: string; clientName?: string } | null;
+}): string {
+  const pending = String(state.pendingIntent ?? '').trim();
+  const waiting =
+    pending && pending !== RESUME_CONTEXT_INTENT
+      ? waitingLabel(pending, state.pendingPayload ?? {})
+      : '';
+  const order = focusOrderLine(state.focusOrder);
+  const lines = [
+    order ? `Quedó el ${order}.` : waiting ? 'Habíamos dejado algo a medias.' : '',
+    waiting ? `Te pedía ${waiting}.` : '',
+  ].filter(Boolean);
+  return waCard({
+    title: '¿Seguimos?',
+    lines,
+    ask: `Pasó un rato. ¿Seguimos con eso o empezamos de nuevo?\n${waBold('SÍ')} / ${waBold('NO')}`,
+  });
+}
+
+export function parsedIntentSkipsIdleResume(intent?: string | null, confidence = 0): boolean {
+  const value = String(intent ?? '').trim();
+  if (!value || value === 'unknown' || value === 'greeting' || value === 'help') return false;
+  if (confidence >= 0.7) return true;
+  return [
+    'how_to',
+    'capability_question',
+    'query_status',
+    'query_balance',
+    'query_cash',
+    'query_stock',
+    'update_order_status',
+    'create_order',
+    'create_sale',
+    'create_purchase',
+    'register_cash',
+    'register_payment',
+    'create_client',
+  ].includes(value);
+}
+
+/**
+ * Si hay un paso o un pedido a medias y pasó un rato, preguntar antes de
+ * aplicar el mensaje al contexto viejo. Un trabajo claramente nuevo no se
+ * interrumpe. resume_context es fallback: si el mensaje ya es una intención
+ * completa, no preguntar SÍ/NO.
+ */
+export function shouldAskIdleResume(
+  text: string,
+  state: ConversationState | null | undefined,
+  parsed?: { intent?: string | null; confidence?: number } | null
+): boolean {
+  if (!state || !hasResumableContext(state)) return false;
+  const pending = String(state.pendingIntent ?? '').trim();
+  if (pending === RESUME_CONTEXT_INTENT) return false;
+  if (isOnboardingPending(pending) || pending === 'help_topic') return false;
+  const t = String(text ?? '').trim();
+  if (looksLikeClearNewTask(t)) return false;
+  if (utteranceIsHowTo(t) || utteranceIsCapabilityQuestion(t)) return false;
+  if (parsedIntentSkipsIdleResume(parsed?.intent, parsed?.confidence ?? 0)) return false;
+  if (pending) return true;
+  if (!state.focusOrder?.id) return false;
+  if (!t || isTrivialWhatsappTurn(t) || isThanksText(t)) return false;
+  return true;
+}
+
 export function waitingLabel(pendingIntent: string, payload: PendingPayload = {}): string {
+  if (pendingIntent === RESUME_CONTEXT_INTENT) {
+    return 'si seguimos con lo anterior o empezamos de nuevo (SÍ / NO)';
+  }
   if (pendingIntent === 'select_client') return 'que elija el cliente de la lista (un número)';
   if (pendingIntent === 'select_product') return 'que elija el producto de la lista (un número)';
   if (pendingIntent === 'select_purchase_pack') return 'que elija cómo cargar el pack (1 o 2)';
@@ -73,20 +335,32 @@ export function waitingLabel(pendingIntent: string, payload: PendingPayload = {}
     return 'si es cobro de un pedido o un movimiento suelto de caja';
   }
   if (pendingIntent === 'order_action') {
-    return 'qué hacer con el pedido (listo, saldalo o un monto)';
+    return 'qué hacer con el pedido (1 pago, 2 estado)';
   }
   if (pendingIntent === 'settle_order') {
     return 'si cobra el saldo (SÍ, un monto, o NO)';
   }
+  if (pendingIntent === STOCK_RESOLUTION_INTENT) {
+    return 'cómo descontar el stock (todo el pedido, o NO)';
+  }
   if (pendingIntent === 'help_topic') {
     return 'que elija un número del listado, o cómo hacer algo';
+  }
+  if (pendingIntent === COLLECT_ORDER_ITEMS_INTENT) {
+    return 'los productos del pedido (por tandas) y LISTO cuando termine';
   }
   if (pendingIntent === 'confirm_create_client') return 'confirmar si crea el cliente (SÍ / NO)';
   if (pendingIntent === 'confirm_create_product') return 'confirmar si crea el producto (SÍ / NO)';
   if (pendingIntent === 'confirm_create_supplier') return 'confirmar si crea el proveedor (SÍ / NO)';
   if (pendingIntent === 'clarify') {
     const missing = missingFieldOf(payload);
-    if (missing === 'deliveryDate') return 'la fecha de entrega (mañana, viernes, 28/08 o LISTO)';
+    if (missing === 'deliveryDate') return 'la fecha de entrega (mañana, viernes, 28/08)';
+    if (missing === 'extraCosts') {
+      return 'el costo extra y el importe, o NO';
+    }
+    if (missing === 'extraCostsItem') {
+      return 'a qué producto corresponde el costo extra';
+    }
     if (missing === 'notes') return 'la descripción del pedido, o LISTO';
     if (missing === 'client' || missing === 'clientName') return 'el nombre del cliente';
     if (missing === 'productName') return 'el producto';
@@ -106,6 +380,26 @@ export function reconstructPendingPrompt(
   const allowCreate = payload.allowCreate !== false;
   const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
 
+  if (pendingIntent === RESUME_CONTEXT_INTENT) {
+    return formatResumeAsk({
+      pendingIntent: String(payload.previousIntent ?? ''),
+      pendingPayload:
+        payload.previousPayload && typeof payload.previousPayload === 'object'
+          ? (payload.previousPayload as PendingPayload)
+          : {},
+      focusOrder:
+        payload.previousFocus && typeof payload.previousFocus === 'object'
+          ? (payload.previousFocus as { id?: string; label?: string; clientName?: string })
+          : null,
+    });
+  }
+  if (pendingIntent === COLLECT_ORDER_ITEMS_INTENT) {
+    return formatCollectOrderItemsAsk({
+      clientName: entities.clientName,
+      expectedCount: entities.expectedItemCount,
+      itemCount: entities.items?.length,
+    });
+  }
   if (pendingIntent === 'select_client') {
     return formatClientChoices(
       candidates as Array<{ nombre: string }>,
@@ -132,6 +426,8 @@ export function reconstructPendingPrompt(
         unitCostNet: line ? Number(line.unitCostNet) || undefined : undefined,
         quantity: line ? Number(line.quantity) || undefined : undefined,
         packUnits: line ? Number(line.packUnits) || undefined : undefined,
+        hasMore: Array.isArray(payload.hiddenCandidates) && payload.hiddenCandidates.length > 0,
+        morePage: Number(payload.choicePage) > 1,
       }
     );
   }
@@ -172,7 +468,7 @@ export function reconstructPendingPrompt(
     const orders = candidates as OrderStatusTarget[];
     const clientHint = String(entities.clientName ?? payload.query ?? '').trim();
     return orders.length
-      ? formatOpenOrderChoices(orders, '¿Cuál? Número de la lista.\nDespués cobrás, lo asociás o lo marcás *listo*.')
+      ? formatOpenOrderChoices(orders, '¿Cuál? Número de la lista.\nDespués cobrás, lo asociás o le cambiás el *estado*.')
       : formatFindOrderGuide({
           paymentAmount: Number(entities.amount) || undefined,
           triedHint: clientHint || undefined,
@@ -193,13 +489,21 @@ export function reconstructPendingPrompt(
   }
   if (pendingIntent === 'order_action') {
     const picked = payload.picked as OrderStatusTarget | undefined;
+    const step = String(payload.step ?? 'action');
+    if (picked?.id && step === 'status') return formatOrderStatusAsk(picked);
+    if (picked?.id && step === 'amount') return formatPaymentAmountAsk(picked);
     if (picked?.id) return formatOrderActionAsk(picked);
-    return '¿Lo marco listo, lo saldo, o cobro un monto?';
+    return '¿Registro un pago o le cambio el estado?';
   }
   if (pendingIntent === 'settle_order') {
     const label = String(entities.targetOrderLabel ?? '').trim();
     const saldo = Number(entities.targetOrderSaldo) || 0;
     return formatSettleAsk(label, String(entities.clientName ?? ''), saldo);
+  }
+  if (pendingIntent === STOCK_RESOLUTION_INTENT) {
+    const ask = payload.stockAsk as StockDiscountAsk | undefined;
+    if (ask?.options?.length) return formatStockResolutionAsk(ask);
+    return String(payload.pendingPrompt ?? '¿Descuento el stock de todo el pedido? SÍ / NO');
   }
   if (pendingIntent === 'help_topic') {
     return riloBotHelpMenu();
@@ -247,12 +551,13 @@ export function reconstructPendingPrompt(
   if (pendingIntent === 'clarify') {
     const missing = missingFieldOf(payload);
     if (missing === 'deliveryDate') {
-      const extra = formatExtraCostsHint(entities);
-      return waCard({
-        title: 'Fecha de entrega',
-        lines: extra ? [`Tengo ${extra}.`] : undefined,
-        ask: `Ej: mañana, viernes, 28/08.\n${waBold('LISTO')} = la dejo para hoy.`,
-      });
+      return presentOrderCollecting(entities, '📅 ¿Para qué fecha es la entrega?');
+    }
+    if (missing === 'extraCosts') {
+      return presentOrderCollecting(entities, ORDER_EXTRA_COST_ASK);
+    }
+    if (missing === 'extraCostsItem') {
+      return formatExtraCostItemAsk(entities.extraCosts ?? [], entities);
     }
     if (missing === 'notes') {
       return waCard({
@@ -272,7 +577,8 @@ export function reconstructPendingPrompt(
       const pages = formatPurchaseConfirmationMessages(entities);
       return pages[pages.length - 1] ?? formatOperationSummary(intent, entities);
     }
-    return formatOperationSummary(intent, entities);
+    const pages = presentTransaction(intent, entities);
+    return pages[pages.length - 1] ?? formatOperationSummary(intent, entities);
   }
   return 'Seguimos con lo de antes. Pasame el número, SÍ/NO, o lo que te pedí.';
 }
@@ -321,6 +627,9 @@ export function doesFillCurrentSlot(
 ): boolean {
   const t = String(text ?? '').trim();
   if (!t || !pendingIntent) return true;
+  if (pendingIntent === RESUME_CONTEXT_INTENT) {
+    return looksLikeResumeYes(t) || looksLikeResumeNo(t);
+  }
   if (CONFIRM_NO.test(t) || /^cancelar$/i.test(t)) return true;
   if (looksLikePendingQuestion(t)) return false;
   if (looksLikeIterativeCorrection(t)) return true;
@@ -337,8 +646,13 @@ export function doesFillCurrentSlot(
     return Boolean(extractDeliveryDateFromText(t));
   }
 
-  if (pendingIntent === 'clarify' && missing === 'notes') {
-    return true;
+  if (pendingIntent === 'clarify' && (missing === 'extraCosts' || missing === 'extraCostsItem')) {
+    if (/^(si|sí|no|n|ok|dale)$/i.test(t)) return true;
+    return t.length >= 1;
+  }
+
+  if (pendingIntent === 'clarify' && (missing === 'itemColor' || missing === 'itemSize')) {
+    return t.length >= 1;
   }
 
   if (pendingIntent === 'select_client' || pendingIntent === 'select_supplier') {
@@ -375,7 +689,14 @@ export function doesFillCurrentSlot(
   }
 
   if (pendingIntent.startsWith(CONFIRM_PREFIX)) {
-    return CONFIRM_YES.test(t);
+    if (CONFIRM_YES.test(t)) return true;
+    if (looksLikePendingQuestion(t) || looksLikeNewOrder(t) || looksLikeCashMovement(t)) return false;
+    return (
+      looksLikeOrderStatusUpdate(t) ||
+      looksLikeIterativeCorrection(t) ||
+      /(?<![\p{L}])(sald|pag[oó]|cobr|se[nñ]a|estado|entregad|listo)(?![\p{L}])/iu.test(t) ||
+      Boolean(extractAmountFromText(t))
+    );
   }
 
   if (pendingIntent === 'select_payment' || pendingIntent === 'select_card') {
@@ -407,10 +728,26 @@ export function doesFillCurrentSlot(
     return (
       CONFIRM_YES.test(t) ||
       CONFIRM_NO.test(t) ||
-      /(?<![\p{L}])(listo|pronto|termin|sald|pag[oó]|cobr|se[nñ]a|despu[eé]s)(?![\p{L}])/iu.test(t) ||
+      /(?<![\p{L}])(listo|pronto|termin|sald|pag[oó]|cobr|se[nñ]a|estado|despu[eé]s)(?![\p{L}])/iu.test(t) ||
       Boolean(extractAmountFromText(t)) ||
       /^\d/.test(t)
     );
+  }
+
+  if (pendingIntent === STOCK_RESOLUTION_INTENT) {
+    if (looksLikePendingQuestion(t)) return false;
+    if (looksLikeNewOrder(t) || looksLikeCashMovement(t)) return false;
+    const choice = interpretStockResolutionFromText(t);
+    if (choice.action) return true;
+    if (looksLikeStatusQuery(t) && !choice.leftover) return false;
+    return true;
+  }
+
+  if (pendingIntent === COLLECT_ORDER_ITEMS_INTENT) {
+    if (utteranceIsHowTo(t) || utteranceIsCapabilityQuestion(t)) return false;
+    if (looksLikePendingQuestion(t)) return false;
+    if (looksLikeCollectingDone(t)) return true;
+    return t.length >= 2;
   }
 
   if (pendingIntent === 'help_topic') {
@@ -420,10 +757,6 @@ export function doesFillCurrentSlot(
   return true;
 }
 
-const CASH_QUERY_FRESH =
-  /\b(cu[aá]nto\s+(hay\s+)?en\s+caja|caja\s+(de\s+)?hoy|saldo\s+neto|cu[aá]nto\s+vend[ií])\b/i;
-const PURCHASE_FRESH = /\b(compra|remito|factura)\s+(a|de|del)\b/i;
-
 /**
  * El último mensaje es otra operación (egreso, pedido nuevo, compra), no una
  * respuesta al paso pendiente. Hay que soltar el contexto anterior.
@@ -431,12 +764,49 @@ const PURCHASE_FRESH = /\b(compra|remito|factura)\s+(a|de|del)\b/i;
 export function isFreshTaskUtterance(text: string, pendingIntent: string): boolean {
   const t = String(text ?? '').trim();
   if (!t || !pendingIntent) return false;
+  if (pendingIntent === RESUME_CONTEXT_INTENT) return hasExplicitCompleteIntent(t);
+  if (pendingIntent === COLLECT_ORDER_ITEMS_INTENT) {
+    if (utteranceIsHowTo(t) || utteranceIsCapabilityQuestion(t)) return false;
+    if (looksLikeCashMovement(t) || looksLikeOrderStatusUpdate(t) || looksLikeStatusQuery(t)) return true;
+    if (looksLikeNewOrder(t) && !looksLikeCollectingDone(t)) return true;
+    return false;
+  }
   if (/^\d{1,2}$/.test(t)) return false;
   if (/^(si|sí|ok|dale|confirmo|yes|y|no+|nop|cancelar|n)$/i.test(t)) return false;
   if (pendingIntent === 'select_cash_ambito') return false;
+  if (pendingIntent === STOCK_RESOLUTION_INTENT) {
+    if (looksLikeCashMovement(t) || looksLikeNewOrder(t)) return true;
+    if (PURCHASE_FRESH.test(t) && !/\bpedido\b/i.test(t)) return true;
+    return false;
+  }
+  if (pendingIntent === 'clarify') {
+    if (looksLikeCashMovement(t)) return true;
+    if (looksLikeNewOrder(t)) return true;
+    if (PURCHASE_FRESH.test(t) && !/\bpedido\b/i.test(t)) return true;
+    return false;
+  }
+  const confirming = pendingIntent.startsWith(CONFIRM_PREFIX);
+  const onThisOrder =
+    confirming ||
+    pendingIntent === 'select_order' ||
+    pendingIntent === 'order_action' ||
+    pendingIntent === 'settle_order';
+  if (onThisOrder && looksLikeOrderStatusUpdate(t)) return false;
+  if (confirming) {
+    if (looksLikeCashMovement(t)) return true;
+    if (looksLikeNewOrder(t)) return true;
+    if (PURCHASE_FRESH.test(t) && !/\bpedido\b/i.test(t)) return true;
+    return false;
+  }
   if (looksLikeCashMovement(t)) return true;
   if (looksLikeOrderStatusUpdate(t)) return true;
-  if (looksLikeListOrders(t) || looksLikeStatusQuery(t)) return true;
+  if (
+    (looksLikeListOrders(t) || looksLikeStatusQuery(t)) &&
+    pendingIntent !== 'select_order' &&
+    pendingIntent !== 'order_action'
+  ) {
+    return true;
+  }
   if (CASH_QUERY_FRESH.test(t)) return true;
   if (PURCHASE_FRESH.test(t) && !/\bpedido\b/i.test(t)) return true;
   if (

@@ -15,6 +15,7 @@ import {
   ControlValueAccessor,
   NG_VALUE_ACCESSOR,
 } from '@angular/forms';
+import { Observable, Subscription } from 'rxjs';
 import { ListSearchFieldComponent } from '../list-search-field/list-search-field.component';
 import {
   SearchableSelectOption,
@@ -105,6 +106,8 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
   @Input() listHint = '';
   /** Al cambiar (p. ej. medio de pago), reinicia el menú y el texto si no está enfocado. */
   @Input() scopeKey = '';
+  /** Búsqueda remota (p. ej. clientes del servidor) para no depender solo del catálogo en memoria. */
+  @Input() fetchMatches?: (query: string) => Observable<SearchableSelectOption[]>;
 
   @Output() createRequested = new EventEmitter<string>();
   @Output() searchChange = new EventEmitter<string>();
@@ -125,6 +128,9 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
   private menuPointerMoved = false;
   private readonly menuScrollSlopPx = 8;
   private optionsSnapshot = '';
+  private remoteMatches: SearchableSelectOption[] = [];
+  private fetchSub?: Subscription;
+  private fetchTimer?: ReturnType<typeof setTimeout>;
   private onChange: (value: string) => void = () => {};
   private onTouched: () => void = () => {};
 
@@ -153,6 +159,8 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
 
   ngOnDestroy() {
     window.clearTimeout(this.blurTimeout);
+    window.clearTimeout(this.fetchTimer);
+    this.fetchSub?.unsubscribe();
   }
 
   get showCreateOption(): boolean {
@@ -220,10 +228,14 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
     this.activeIndex = -1;
     const trimmed = this.query.trim();
     if (trimmed.length < this.minChars) {
+      this.remoteMatches = [];
+      this.fetchSub?.unsubscribe();
+      window.clearTimeout(this.fetchTimer);
       this.results = [];
       return;
     }
     this.refreshResults();
+    this.scheduleRemoteFetch(trimmed);
     this.activeIndex = this.results.length > 0 ? 0 : -1;
   }
 
@@ -465,13 +477,14 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
 
   private filterOptions(query: string): SearchableSelectOption[] {
     const normalized = this.normalizeForSearch(query);
-    const source = this.labeledOptions ?? [];
+    const source = this.mergeOptionSources();
     if (!normalized) return source;
 
     const matches = source.filter((option) => {
-      const label = this.normalizeForSearch(option.label);
-      const value = this.normalizeForSearch(option.value);
-      return label.includes(normalized) || value.includes(normalized);
+      const haystack = this.normalizeForSearch(
+        `${option.label} ${option.searchText ?? ''} ${option.value}`
+      );
+      return haystack.includes(normalized);
     });
 
     return matches.sort((a, b) => {
@@ -484,10 +497,42 @@ export class TransactionPartySearchComponent implements ControlValueAccessor, On
     });
   }
 
+  private mergeOptionSources(): SearchableSelectOption[] {
+    const byValue = new Map<string, SearchableSelectOption>();
+    for (const option of [...(this.labeledOptions ?? []), ...this.remoteMatches]) {
+      const value = String(option.value ?? '').trim();
+      if (!value) continue;
+      if (!byValue.has(value)) byValue.set(value, option);
+    }
+    return [...byValue.values()];
+  }
+
+  private scheduleRemoteFetch(query: string) {
+    if (!this.fetchMatches) return;
+    window.clearTimeout(this.fetchTimer);
+    this.fetchSub?.unsubscribe();
+    this.fetchTimer = window.setTimeout(() => {
+      this.fetchSub = this.fetchMatches!(query).subscribe({
+        next: (options) => {
+          this.remoteMatches = options ?? [];
+          if (this.menuOpen && this.query.trim().length >= this.minChars) {
+            this.refreshResults();
+            if (this.activeIndex < 0 && this.results.length > 0) {
+              this.activeIndex = 0;
+            }
+          }
+        },
+        error: () => {
+          this.remoteMatches = [];
+        },
+      });
+    }, 160);
+  }
+
   private findExactOption(text: string): SearchableSelectOption | undefined {
     const query = this.normalizeForSearch(text);
     if (!query) return undefined;
-    return (this.labeledOptions ?? []).find((option) => {
+    return this.mergeOptionSources().find((option) => {
       const label = this.normalizeForSearch(option.label);
       const value = this.normalizeForSearch(option.value);
       return value === query || label === query;

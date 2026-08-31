@@ -43,7 +43,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
           *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb && auth.canAccessWhatsapp"
           class="shrink-0 border-b border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-950">
           Tu plan opera por <span class="font-semibold">WhatsApp</span>. Escribí al número de RILO Bot con el WhatsApp que registraste.
-          <a routerLink="/mi-cuenta" class="ml-2 font-semibold text-teal-800 hover:underline">Ver inicio</a>
+          <a routerLink="/inicio" class="ml-2 font-semibold text-teal-800 hover:underline">Ver inicio</a>
         </div>
         <div
           *ngIf="showTrialExpiringBanner"
@@ -110,6 +110,7 @@ export class LayoutComponent implements OnInit {
   private dismissedAtTrialDays: number | null = null;
 
   ngOnInit() {
+    console.info('[layout:init]');
     this.dismissedAtTrialDays = this.readDismissedAtTrialDays();
   }
 

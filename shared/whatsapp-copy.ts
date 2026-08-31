@@ -339,7 +339,6 @@ export function looksLikeCashBalanceQuery(text: string): boolean {
     /\bsaldo\s+neto\b/i.test(t) ||
     /\bcu[aá]nto\s+saldo\b/i.test(t) ||
     /\bsaldo\s+(de\s+)?(la[s]?\s+)?cajas?\b/i.test(t) ||
-    /\bde\s+la[s]?\s+cajas?\b/i.test(t) ||
     /\bcu[aá]nto\s+(tengo|hay|queda)(?:\s+(?:en|de|como))?\b/i.test(t) ||
     /\bqu[eé]\s+saldo\s+(tengo|hay|queda)\b/i.test(t) ||
     /\bcu[aá]nto\s+hay\s+en\s+(la\s+)?caja/i.test(t)

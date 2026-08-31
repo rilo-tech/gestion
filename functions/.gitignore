@@ -1,2 +1,5 @@
 node_modules/
-lib/
+# Ignore compiled output in git, but keep the bundle visible to Firebase deploy.
+lib/*
+!lib/index.js
+!lib/index.js.map

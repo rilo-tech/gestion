@@ -9,7 +9,18 @@ import {
   parsePersonNameAndPhone,
   phoneMatchKey,
 } from './client-identity.ts';
-import { waBold, waAskSiNo } from '../../shared/whatsapp-format.ts';
+import { entityLookupCandidates, extractPartyRawFromUtterance, findSpokenPartySpan } from './entity-name.ts';
+import { formatOrderFinanceLines, formatOrderExtraCostLines, formatSpokenMoney, planRelatedOrderFinance } from './order-finance.ts';
+import { decideCatalogMatch, decideClientMatch, signalsFromItem } from './catalog-rank.ts';
+import {
+  formatChoiceMessage,
+  formatWhatsappMessage,
+  waBold,
+  waAskSiNo,
+  waAskConfirmo,
+  waCard,
+} from '../../shared/whatsapp-format.ts';
+import { isNonProductUtterance, isPlaceholderProductLabel } from './conversation-speech.ts';
 
 function normalizeName(value: string): string {
   return value
@@ -40,7 +51,7 @@ export function isGenericWhatsappNotes(value: string): boolean {
 
 /** Quita fecha/costo/comandos y deja solo un posible detalle de descripción. */
 export function stripOperationalPhrases(text: string): string {
-  return String(text ?? '')
+  return clipForeignOrderFields(String(text ?? ''))
     .replace(/\bfecha de entrega\b[^.,;]*/gi, ' ')
     .replace(/\bregistr[aeá]\s+(el\s+)?costo extra\b[^.,;]*/gi, ' ')
     .replace(/\bcosto extra\b[^.,;]*/gi, ' ')
@@ -54,6 +65,21 @@ export function stripOperationalPhrases(text: string): string {
     .trim();
 }
 
+/** Pago, importe, estado y fecha no pertenecen a la descripción. Familias semánticas, no frases fijas. */
+function clipForeignOrderFields(text: string): string {
+  return String(text ?? '')
+    .replace(
+      /(?<![\p{L}])(?:ya\s+)?(?:est[aá]|qued[oó]|sali[oó])\s+(?:todo\s+)?(?:pag[oa]|pagad[oa]|cobrad[oa]|saldad[oa]|abonad[oa]).*$/giu,
+      ' '
+    )
+    .replace(/(?<![\p{L}])(?:me\s+)?(?:pag[oó]|cobr[oó]|sald[oó]|abon[oó])\b.*$/giu, ' ')
+    .replace(
+      /(?<![\p{L}])(?:pon(?:e[eé])?lo|pasalo|dejalo|marcalo)\s+(?:el\s+pedido\s+)?(?:en\s+|a\s+|como\s+)?(?:estado\s+)?(?:listo|pendiente|entregad[oa]|pronto).*$/giu,
+      ' '
+    )
+    .replace(/\$\s*[\d.][\d.,]*.*$/g, ' ');
+}
+
 export function looksLikeOperationalFollowUp(text: string): boolean {
   const leftover = stripOperationalPhrases(text);
   return leftover.length < 3;
@@ -62,12 +88,23 @@ export function looksLikeOperationalFollowUp(text: string): boolean {
 export function sanitizeOrderNotes(value: string | undefined | null): string | undefined {
   const text = String(value ?? '').trim();
   if (!text || isGenericWhatsappNotes(text)) return undefined;
-  const leftover = stripOperationalPhrases(text);
-  if (!leftover || leftover.length < 3 || isGenericWhatsappNotes(leftover)) return undefined;
+  let leftover = stripOperationalPhrases(text);
+  const design = leftover.match(/^(?:con\s+)?dise[nñ]o(?:\s+(?:que\s+(?:diga|dice)|de|es))?\s*:?\s*(.+)$/i);
+  if (design?.[1]) leftover = design[1].trim();
+  leftover = leftover.replace(/^(?:con\s+)?dise[nñ]o(?:\s+de)?\s+/i, '').trim();
+  leftover = leftover.replace(/^[a-záéíóúüñ]/, (ch) => ch.toUpperCase());
+  if (!leftover || leftover.length < 2 || isGenericWhatsappNotes(leftover)) return undefined;
   return leftover.slice(0, 240);
 }
 
-export type MatchResolveOptions = { preferChoices?: boolean; utterance?: string };
+export type MatchResolveOptions = {
+  preferChoices?: boolean;
+  /** Frase de ESE ítem, no el mensaje entero con varios productos. */
+  utterance?: string;
+  /** Mensaje completo, solo como contexto secundario. */
+  messageContext?: string;
+  attributes?: { type?: string | null; fabric?: string | null; color?: string | null; size?: string | null };
+};
 
 export type MatchedClient = { id: string; nombre: string; score: number };
 export type MatchedStockItem = {
@@ -502,17 +539,25 @@ function isExactCatalogName(query: string, nombre: string): boolean {
 
 async function findExactClientMatches(businessId: string, name: string): Promise<MatchedClient[]> {
   const snap = await db.collection(`negocios/${businessId}/clientes`).get();
-  const matches: MatchedClient[] = [];
+  const queries = entityLookupCandidates(name);
+  const rows: Array<{ id: string; nombre: string }> = [];
   for (const doc of snap.docs) {
     const data = doc.data() as { nombre?: string; activo?: boolean };
     if (data.activo === false) continue;
     const nombre = String(data.nombre ?? '').trim();
     if (!nombre) continue;
-    if (isExactCatalogName(name, nombre)) {
-      matches.push({ id: doc.id, nombre, score: 100 });
-    }
+    rows.push({ id: doc.id, nombre });
   }
-  return matches;
+  for (const query of queries) {
+    const matches: MatchedClient[] = [];
+    for (const row of rows) {
+      if (isExactCatalogName(query, row.nombre)) {
+        matches.push({ id: row.id, nombre: row.nombre, score: 100 });
+      }
+    }
+    if (matches.length) return matches;
+  }
+  return [];
 }
 
 async function findExactProductMatches(businessId: string, name: string): Promise<MatchedStockItem[]> {
@@ -557,14 +602,11 @@ export async function findClientsByName(
   name: string,
   options?: { minScore?: number; limit?: number }
 ): Promise<MatchedClient[]> {
-  const query = normalizeName(name);
-  if (!query || query.length < 2) return [];
-
+  if (!String(name ?? '').trim()) return [];
   const minScore = options?.minScore ?? 50;
   const limit = options?.limit ?? 8;
   const snap = await db.collection(`negocios/${businessId}/clientes`).get();
-  const matches: MatchedClient[] = [];
-
+  const rows: Array<{ id: string; nombre: string; telefono: string; parsedNombre: string }> = [];
   for (const doc of snap.docs) {
     const data = doc.data() as { nombre?: string; telefono?: string; activo?: boolean };
     if (data.activo === false) continue;
@@ -572,23 +614,35 @@ export async function findClientsByName(
     if (!nombre && !data.telefono) continue;
     const parsed = parsePersonNameAndPhone(nombre);
     const telefono = formatLocalPhone(String(data.telefono ?? parsed.telefono ?? ''));
-    const queryParsed = parsePersonNameAndPhone(name);
-    let score = 0;
-    const queryPhone = phoneMatchKey(queryParsed.telefono || (looksLikePhoneQuery(name) ? name : ''));
-    const clientPhone = phoneMatchKey(telefono || parsed.telefono || nombre);
-    if (queryPhone.length >= 8 && queryPhone === clientPhone) {
-      score = 100;
-    }
-    const nameScore = scorePersonNameMatch(
-      normalizeName(queryParsed.nombre || name),
-      normalizeName(parsed.nombre || nombre)
-    );
-    if (nameScore > score) score = nameScore;
-    if (score < minScore) continue;
-    matches.push({ id: doc.id, nombre: nombre || parsed.nombre, score });
+    rows.push({ id: doc.id, nombre: nombre || parsed.nombre, telefono, parsedNombre: parsed.nombre });
   }
 
-  return matches.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre, 'es')).slice(0, limit);
+  const scoreAgainst = (queryRaw: string): MatchedClient[] => {
+    const matches: MatchedClient[] = [];
+    const queryParsed = parsePersonNameAndPhone(queryRaw);
+    for (const row of rows) {
+      let score = 0;
+      const queryPhone = phoneMatchKey(queryParsed.telefono || (looksLikePhoneQuery(queryRaw) ? queryRaw : ''));
+      const clientPhone = phoneMatchKey(row.telefono || row.parsedNombre || row.nombre);
+      if (queryPhone.length >= 8 && queryPhone === clientPhone) {
+        score = 100;
+      }
+      const nameScore = scorePersonNameMatch(
+        normalizeName(queryParsed.nombre || queryRaw),
+        normalizeName(row.parsedNombre || row.nombre)
+      );
+      if (nameScore > score) score = nameScore;
+      if (score < minScore) continue;
+      matches.push({ id: row.id, nombre: row.nombre, score });
+    }
+    return matches.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre, 'es'));
+  };
+
+  for (const candidate of entityLookupCandidates(name)) {
+    const matches = scoreAgainst(candidate);
+    if (matches.length) return matches.slice(0, limit);
+  }
+  return [];
 }
 
 /**
@@ -603,7 +657,7 @@ export async function resolveClientMatch(
   options?: MatchResolveOptions
 ): Promise<
   | { status: 'unique'; client: MatchedClient }
-  | { status: 'ambiguous'; candidates: MatchedClient[]; query: string }
+  | { status: 'ambiguous'; candidates: MatchedClient[]; rest?: MatchedClient[]; query: string }
   | { status: 'none'; query: string }
 > {
   const query = String(name ?? '').trim();
@@ -614,7 +668,10 @@ export async function resolveClientMatch(
     return { status: 'unique', client: exactHits[0]! };
   }
   if (exactHits.length > 1) {
-    return { status: 'ambiguous', candidates: exactHits, query };
+    const decision = decideClientMatch(exactHits);
+    if (decision.status === 'unique') return { status: 'unique', client: decision.item };
+    if (decision.status === 'none') return { status: 'none', query };
+    return { status: 'ambiguous', candidates: decision.options, rest: decision.rest, query };
   }
 
   const aiHits = await pickClientsWithAi(businessId, query, options?.utterance);
@@ -625,12 +682,11 @@ export async function resolveClientMatch(
       nombre: hit.nombre,
       score: 90 - index,
     }));
-    if (options?.preferChoices || candidates.length > 1) {
-      return { status: 'ambiguous', candidates, query };
-    }
-    return { status: 'unique', client: candidates[0]! };
+    const decision = decideClientMatch(candidates);
+    if (decision.status === 'unique') return { status: 'unique', client: decision.item };
+    if (decision.status === 'none') return { status: 'none', query };
+    return { status: 'ambiguous', candidates: decision.options, rest: decision.rest, query };
   }
-  if (options?.preferChoices) return { status: 'none', query };
 
   const aliased = await findClientAlias(businessId, query);
   if (aliased && !options?.preferChoices) {
@@ -658,7 +714,10 @@ export async function resolveClientMatch(
   const listed = close.length ? close : candidates;
 
   if (options?.preferChoices) {
-    return { status: 'ambiguous', candidates: listed.slice(0, 8), query };
+    const decision = decideClientMatch(listed);
+    if (decision.status === 'unique') return { status: 'unique', client: decision.item };
+    if (decision.status === 'none') return { status: 'none', query };
+    return { status: 'ambiguous', candidates: decision.options, rest: decision.rest, query };
   }
 
   if (exact.length === 1) {
@@ -799,18 +858,30 @@ export async function resolveProductMatch(
   options?: MatchResolveOptions
 ): Promise<
   | { status: 'unique'; product: MatchedStockItem }
-  | { status: 'ambiguous'; candidates: MatchedStockItem[]; query: string }
+  | { status: 'ambiguous'; candidates: MatchedStockItem[]; rest?: MatchedStockItem[]; query: string }
   | { status: 'none'; query: string }
 > {
   const query = String(name ?? '').trim();
   if (!query) return { status: 'none', query: '' };
 
+  const signals = signalsFromItem({
+    rawText: options?.utterance || query,
+    productHint: query,
+    attributes: options?.attributes,
+  });
+
   const exactHits = await findExactProductMatches(businessId, query);
-  if (exactHits.length === 1) {
-    return { status: 'unique', product: exactHits[0]! };
-  }
-  if (exactHits.length > 1) {
-    return { status: 'ambiguous', candidates: exactHits, query };
+  if (exactHits.length) {
+    const decision = decideCatalogMatch(exactHits, signals);
+    if (decision.status === 'unique') return { status: 'unique', product: decision.item as MatchedStockItem };
+    if (decision.status === 'ambiguous') {
+      return {
+        status: 'ambiguous',
+        candidates: decision.options as MatchedStockItem[],
+        rest: decision.rest as MatchedStockItem[],
+        query,
+      };
+    }
   }
 
   const aliased = await findProductAlias(businessId, query);
@@ -839,9 +910,9 @@ export async function resolveProductMatch(
     }
   }
 
-  let aiHits = await pickProductsWithAi(businessId, query, options?.utterance);
+  let aiHits = await pickProductsWithAi(businessId, query, options?.utterance, options?.messageContext);
   if (aiHits === null && options?.preferChoices) {
-    aiHits = await pickProductsWithAi(businessId, query, options?.utterance);
+    aiHits = await pickProductsWithAi(businessId, query, options?.utterance, options?.messageContext);
   }
 
   const fuzzy = await findStockItemsByName(businessId, query, {
@@ -884,33 +955,23 @@ export async function resolveProductMatch(
     );
   if (!ranked.length) return { status: 'none', query };
 
-  const top = ranked[0]!;
+  const decision = decideCatalogMatch(ranked, signals);
+  if (decision.status === 'unique') {
+    return { status: 'unique', product: decision.item as MatchedStockItem };
+  }
+  if (decision.status === 'none') return { status: 'none', query };
+
   const exact = ranked.filter(
     (c) => isExactCatalogName(query, c.nombre) || isExactCatalogName(query, c.label)
   );
-
-  if (options?.preferChoices) {
-    if (exact.length === 1) return { status: 'unique', product: exact[0]! };
-    return { status: 'ambiguous', candidates: ranked.slice(0, 6), query };
-  }
-
   if (exact.length === 1) return { status: 'unique', product: exact[0]! };
-  if (top.score >= 95) {
-    const close = ranked.filter((c) => c.score >= 95);
-    if (close.length === 1) return { status: 'unique', product: top };
-  }
 
-  const strong = ranked.filter((c) => c.score >= 70).slice(0, 6);
-  if (strong.length) {
-    return { status: 'ambiguous', candidates: strong, query };
-  }
-
-  const sameTop = ranked.filter((c) => c.score === top.score);
-  if (top.score >= 50 && sameTop.length <= 6) {
-    return { status: 'ambiguous', candidates: sameTop.slice(0, 6), query };
-  }
-
-  return { status: 'none', query };
+  return {
+    status: 'ambiguous',
+    candidates: decision.options as MatchedStockItem[],
+    rest: decision.rest as MatchedStockItem[],
+    query,
+  };
 }
 
 export async function findStockItemByName(
@@ -1297,17 +1358,19 @@ export function formatPurchaseConfirmationMessages(entities: {
   for (let page = 0; page < pageCount; page++) {
     const from = page * PURCHASE_CONFIRM_PAGE_SIZE;
     const slice = itemLines.slice(from, from + PURCHASE_CONFIRM_PAGE_SIZE);
-    const to = from + slice.length;
     const parts: string[] = [];
     if (page === 0) {
-      parts.push(...header, '');
+      const titled = [...header];
+      if (pageCount > 1 && titled[0]) {
+        titled[0] = waBold(`${isDraft ? 'Borrador de compra' : 'Compra'} — 1/${pageCount}`);
+      }
+      parts.push(...titled, '');
     } else {
-      parts.push(waBold(`Ítems ${from + 1}–${to}`), '');
+      parts.push(waBold(`Compra — ${page + 1}/${pageCount}`), '');
     }
     parts.push(...slice);
     if (page < pageCount - 1) {
       parts.push('');
-      parts.push(`${page + 1}/${pageCount} · sigo con el resto…`);
     } else {
       parts.push('');
       parts.push(...footer);
@@ -1442,19 +1505,16 @@ export function formatPurchaseNonCatalogChoices(
     unitCostNet?: number;
   }
 ): string {
-  return [
-    waBold('Esto no parece un producto'),
-    `En la boleta: ${waBold(purchaseLineInvoiceName(line))}`,
-    `• ${formatPurchaseLinePrices(line)}`,
-    '',
-    '1) Descartar (no lo cargo)',
-    '2) Gasto / insumo (entra en la compra, no mueve stock)',
-    '',
-    waBold('Cómo responder'),
-    `• ${waBold('1')} o ${waBold('DESCARTAR')} — lo saco y listo`,
-    `• ${waBold('2')} o ${waBold('INSUMO')} — queda como gasto`,
-    `• ${waBold('NO')} — cancelar todo`,
-  ].join('\n');
+  return formatWhatsappMessage({
+    title: 'Esto no parece un producto',
+    lines: [
+      `En la boleta: ${purchaseLineInvoiceName(line)}`,
+      `• ${formatPurchaseLinePrices(line)}`,
+      '1) Descartar (no lo cargo)',
+      '2) Gasto / insumo (entra en la compra, no mueve stock)',
+    ],
+    ask: '¿Cuál querés?',
+  });
 }
 
 export function formatPurchasePackChoices(
@@ -1473,28 +1533,21 @@ export function formatPurchasePackChoices(
   const gross = Number(line.unitCost) || 0;
   const eachGross = gross > 0 ? Math.round((gross / pack) * 100) / 100 : 0;
   const progress =
-    options?.lineIndex != null && options.lineCount
-      ? waBold(`Ítem ${options.lineIndex + 1} de ${options.lineCount}`)
+    options?.lineIndex != null && Number(options.lineCount) > 1
+      ? `Ítem ${options.lineIndex + 1} de ${options.lineCount}`
       : '';
-  return [
-    progress,
-    `En la boleta: ${waBold(purchaseLineInvoiceName(line))}`,
-    `• ${formatPurchaseLinePrices(line)}`,
-    '',
-    waBold(`Dice x${pack}. ¿Cómo lo cargo?`),
-    `1) ${qty * pack} unidades a ${formatTicketMoney(eachGross)} (pack x${pack})`,
-    `2) ${qty} unidades a ${formatTicketMoney(gross)} (como el renglón)`,
-    '3) Insumo / herramienta (sin stock)',
-    '4) Saltar (no lo cargo)',
-    '',
-    waBold('Cómo responder'),
-    `• Un ${waBold('número')}`,
-    `• ${waBold('INSUMO')} o ${waBold('SALTAR')}`,
-    `• ${waBold('NO')} — cancelar todo`,
-  ]
-    .filter((row, index, all) => row !== '' || all[index - 1] !== '')
-    .join('\n')
-    .replace(/^\n+/, '');
+  return formatWhatsappMessage({
+    title: progress || 'Dice pack',
+    lines: [
+      `En la boleta: ${purchaseLineInvoiceName(line)}`,
+      `• ${formatPurchaseLinePrices(line)}`,
+      `1) ${qty * pack} unidades a ${formatTicketMoney(eachGross)} (pack x${pack})`,
+      `2) ${qty} unidades a ${formatTicketMoney(gross)} (como el renglón)`,
+      '3) Insumo / herramienta (sin stock)',
+      '4) Saltar (no lo cargo)',
+    ],
+    ask: '¿Cómo lo cargo?',
+  });
 }
 
 export type ExtraCostItem = { nombre: string; costo: number };
@@ -1526,6 +1579,8 @@ function cleanCostConcept(raw: string): string {
 }
 
 const COST_MONEY = String.raw`(\d{1,7}(?:[.,]\d{1,2})?)`;
+const EXTRA_COST_CONCEPT =
+  String.raw`(?:estampado|bordado|vinilo|serigraf[ií]a|bolsa|personalizaci[oó]n|dtf|sublimad[oa]|packing|envoltorio|transfer|sticker|logo)`;
 
 /** «costo estampado 200», «estampado 200 de costo», «agregá costo vinilo 150». */
 export function extractExtraCostsFromText(text: string): ExtraCostItem[] {
@@ -1579,6 +1634,42 @@ export function extractExtraCostsFromText(text: string): ExtraCostItem[] {
     ),
     new RegExp(String.raw`\bal\s+costos?\s*\$?\s*` + COST_MONEY, 'gi'),
   ];
+
+  const addSpoken = [
+    ...text.matchAll(
+      new RegExp(
+        String.raw`\b(?:sumale|sumále|agregale|agregále|sum[áa]|agreg[áa]|pon[eé]le)\s+\$?\s*` +
+          COST_MONEY +
+          String.raw`\s+(?:de\s+|en\s+|por\s+)?([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ./-]{1,40})`,
+        'gi'
+      )
+    ),
+  ];
+  for (const match of addSpoken) {
+    const rawName = String(match[2] ?? '').split(/\s+y\s+|\s+ya\s+/i)[0] ?? '';
+    if (/\b(pedido|orden|venta|pago|saldo|total)\b/i.test(rawName)) continue;
+    push(rawName, match[1] ?? '');
+  }
+
+  for (const match of text.matchAll(
+    new RegExp(
+      String.raw`\b(` + EXTRA_COST_CONCEPT + String.raw`)\s+(?:me\s+)?cuesta\s+\$?\s*` + COST_MONEY,
+      'gi'
+    )
+  )) {
+    push(match[1] ?? '', match[2] ?? '');
+  }
+  for (const match of text.matchAll(
+    new RegExp(
+      String.raw`\b(?:me\s+)?cuesta\s+(?:el\s+|la\s+|de\s+)?(` +
+        EXTRA_COST_CONCEPT +
+        String.raw`)\s+\$?\s*` +
+        COST_MONEY,
+      'gi'
+    )
+  )) {
+    push(match[1] ?? '', match[2] ?? '');
+  }
 
   for (const [index, pattern] of patterns.entries()) {
     for (const match of text.matchAll(pattern)) {
@@ -1637,6 +1728,148 @@ export function mergeExtraCostItems(
   return [...byName.values()];
 }
 
+/** Respuesta al slot de costo extra: «estampado 150», «$150 estampado», «estampado 150 y bolsa 30». */
+export function parseSpokenExtraCostAnswer(text: string): ExtraCostItem[] {
+  const raw = String(text ?? '').trim();
+  if (!raw || /^(no+|n[oó]|nop|n|si|sí|ok|dale)$/i.test(raw)) return [];
+  const seen = new Set<string>();
+  const out: ExtraCostItem[] = [];
+  const push = (nombre: string, costo: number) => {
+    if (!(costo > 0)) return;
+    const label = cleanCostConcept(nombre);
+    const key = `${label.toLowerCase()}|${costo}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ nombre: label, costo });
+  };
+  for (const item of extractExtraCostsFromText(raw)) {
+    push(item.nombre, item.costo);
+  }
+  const chunks = raw
+    .split(/\s+y\s+|,\s+(?=[A-Za-zÁÉÍÓÚÜÑáéíóúüñ$]|\d)/i)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  for (const chunk of chunks.length ? chunks : [raw]) {
+    const moneyFirst = chunk.match(
+      /^\$?\s*(\d{1,7}(?:[.,]\d{1,2})?)\s+(?:de\s+|en\s+|por\s+)?([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ./-]{1,40})$/i
+    );
+    if (moneyFirst) {
+      push(moneyFirst[2] ?? '', parseLooseMoney(moneyFirst[1] ?? ''));
+      continue;
+    }
+    const nameFirst = chunk.match(
+      /^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ./-]{1,40}?)\s+\$?\s*(\d{1,7}(?:[.,]\d{1,2})?)\s*$/i
+    );
+    if (nameFirst && !/^(si|sí|no|ok|dale)$/i.test(nameFirst[1] ?? '')) {
+      push(nameFirst[1] ?? '', parseLooseMoney(nameFirst[2] ?? ''));
+    }
+  }
+  return out;
+}
+
+function foldExtraCostLabel(value: string): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export function extraCostItemLabels(entities: {
+  items?: Array<{ productName?: string; productHint?: string; rawText?: string; skipped?: boolean }>;
+  productName?: string;
+}): string[] {
+  const items = (entities.items ?? []).filter((item) => !item.skipped);
+  const labels = items
+    .map((item) => String(item.productName || item.productHint || item.rawText || '').trim())
+    .filter(Boolean);
+  if (labels.length) return labels;
+  const single = String(entities.productName ?? '').trim();
+  return single ? [single] : [];
+}
+
+/** «al canguro agregale 150 de estampado» → canguro. */
+export function extractExtraCostProductHint(text: string): string | undefined {
+  const match = String(text ?? '').match(
+    /(?<![\p{L}])(?:al|a\s+la|a\s+el|del|de\s+la|para\s+el|para\s+la|en\s+el|en\s+la)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9/-]{1,40})(?![\p{L}])/iu
+  );
+  const hint = String(match?.[1] ?? '').trim();
+  if (!hint) return undefined;
+  if (
+    /^(pedido|orden|venta|costo|extra|estampado|bordado|vinilo|bolsa|cliente|pago|saldo)$/i.test(hint)
+  ) {
+    return undefined;
+  }
+  return hint;
+}
+
+export function resolveExtraCostTargetIndex(
+  entities: {
+    items?: Array<{ productName?: string; productHint?: string; rawText?: string; skipped?: boolean }>;
+    productName?: string;
+    extraCostsProductHint?: string;
+    extraCostsTargetItemIndex?: number;
+  },
+  spokenHint?: string
+): number | null {
+  const labels = extraCostItemLabels(entities);
+  if (labels.length <= 1) return 0;
+  const locked = entities.extraCostsTargetItemIndex;
+  if (Number.isInteger(locked) && Number(locked) >= 0 && Number(locked) < labels.length) {
+    return Number(locked);
+  }
+  const hint = foldExtraCostLabel(spokenHint || entities.extraCostsProductHint || '').replace(
+    /^(el|la|los|las|al|del|un|una|a)\s+/,
+    ''
+  );
+  if (!hint) return null;
+  const hits = labels
+    .map((label, index) => ({ index, label: foldExtraCostLabel(label) }))
+    .filter(({ label }) => label.includes(hint) || hint.includes(label));
+  return hits.length === 1 ? hits[0]!.index : null;
+}
+
+export function needsExtraCostItemAsk(entities: {
+  extraCosts?: ExtraCostItem[];
+  items?: Array<{ productName?: string; productHint?: string; rawText?: string; skipped?: boolean }>;
+  productName?: string;
+  extraCostsProductHint?: string;
+  extraCostsTargetItemIndex?: number;
+}): boolean {
+  const extras = (entities.extraCosts ?? []).filter((item) => Number(item.costo) > 0);
+  if (!extras.length) return false;
+  return resolveExtraCostTargetIndex(entities) == null;
+}
+
+export function formatExtraCostItemAsk(
+  extras: ExtraCostItem[],
+  entities: {
+    items?: Array<{ productName?: string; productHint?: string; rawText?: string; skipped?: boolean }>;
+    productName?: string;
+  }
+): string {
+  const extra = extras.find((item) => Number(item.costo) > 0) ?? extras[0];
+  const name = String(extra?.nombre ?? 'costo extra').trim() || 'costo extra';
+  const amount = formatSpokenMoney(Number(extra?.costo) || 0);
+  const labels = extraCostItemLabels(entities);
+  const lines = labels.map((label, index) => `${index + 1}) ${label}`);
+  return [`¿A cuál producto corresponde el ${name.toLowerCase()} de ${amount}?`, ...lines]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function looksLikeClearExtraCosts(text: string): boolean {
+  return /(?<![\p{L}])(?:sacale|quita(?:le)?|sin|borra(?:le)?)\s+(el\s+|los\s+)?costos?\s+extra/iu.test(
+    String(text ?? '')
+  );
+}
+
+export function looksLikePayEverythingNow(text: string): boolean {
+  return /(?<![\p{L}])(?:todo\s+(?:pago|pagado|cobrado|saldado)|est[aá]\s+todo\s+pago|pag[oó]\s+todo|completo)(?![\p{L}])/iu.test(
+    String(text ?? '')
+  );
+}
+
 export function formatExtraCostsHint(entities: { extraCosts?: ExtraCostItem[] }): string {
   const extras = mergeExtraCostItems(entities.extraCosts, null);
   if (!extras.length) return '';
@@ -1669,6 +1902,37 @@ const PERSON_NAME_STOP = new Set([
   'orden',
   'venta',
   'compra',
+  'este',
+  'esta',
+  'esto',
+  'ese',
+  'esa',
+  'eso',
+  'estado',
+  'entregado',
+  'entregada',
+  'listo',
+  'pendiente',
+  'proceso',
+  'produccion',
+  'move',
+  'movelo',
+  'pone',
+  'poné',
+  'ponelo',
+  'pasalo',
+  'marcalo',
+  'dejalo',
+  'cambiale',
+  'cambialo',
+  'ahora',
+  'estos',
+  'estas',
+  'esos',
+  'esas',
+  'cuanto',
+  'saldo',
+  'cero',
   'busca',
   'buscar',
   'buscame',
@@ -1723,7 +1987,7 @@ export function isUnlikelyPersonName(value: string): boolean {
   const tokens = normalizeName(value)
     .split(' ')
     .filter(Boolean)
-    .filter((token) => !['el', 'la', 'los', 'las', 'de', 'del', 'al'].includes(token));
+    .filter((token) => !['el', 'la', 'los', 'las', 'de', 'del', 'al', 'a', 'en', 'como', 'un', 'una'].includes(token));
   if (!tokens.length) return true;
   if (tokens.every((token) => PERSON_NAME_STOP.has(token) || /^\d+$/.test(token))) return true;
   if (tokens.length === 1 && PERSON_NAME_STOP.has(tokens[0]!)) return true;
@@ -1763,12 +2027,19 @@ function takePersonNameBeforeProduct(value: string): string {
     if (SIZE_TOKENS.has(plain)) break;
     if (/^\d+$/.test(token) || token.startsWith('$')) break;
     if (/^(descripci[oó]n|costos?|productos?|pedido|orden|venta)$/i.test(token)) break;
+    if (/^(que|no|con|sin|en|estado|entregad[oa]s?|abiertos?|pendientes?|cerrad[oa]s?)$/i.test(token)) {
+      break;
+    }
     kept.push(token);
   }
   return dropProductishClientTokens(kept.join(' '));
 }
 
 function stripOrderClientPrefix(text: string): string {
+  const span = findSpokenPartySpan(text);
+  if (span) {
+    return `${text.slice(0, span.cueStart)} ${text.slice(span.nameEnd)}`;
+  }
   const re = new RegExp(`\\b(pedido|orden|venta)\\s+(para|a|de)\\s+(${PERSON_NAME_CHUNK})`, 'i');
   return text.replace(re, (_all, _kind: string, _prep: string, name: string) => {
     const kept = takePersonNameBeforeProduct(name);
@@ -1778,6 +2049,13 @@ function stripOrderClientPrefix(text: string): string {
 }
 
 export function extractClientHintFromText(text: string): string | null {
+  const fromSpan = extractPartyRawFromUtterance(text);
+  if (fromSpan && !isUnlikelyPersonName(fromSpan)) {
+    if (/^(este|esta|esto|ese|esa|eso|pedido|orden|venta|compra|precio|monto|talle|producto)\b/i.test(fromSpan)) {
+      return null;
+    }
+    return fromSpan;
+  }
   const raw = String(text ?? '');
   const orderMatch = raw.match(
     new RegExp(
@@ -1792,7 +2070,9 @@ export function extractClientHintFromText(text: string): string | null {
   if (!captured) return null;
   const hint = takePersonNameBeforeProduct(captured.trim().replace(/[.,;:!?]+$/, ''));
   if (!hint || isUnlikelyPersonName(hint)) return null;
-  if (/^(pedido|orden|venta|compra|precio|monto|talle|producto)\b/i.test(hint)) return null;
+  if (/^(este|esta|esto|ese|esa|eso|pedido|orden|venta|compra|precio|monto|talle|producto)\b/i.test(hint)) {
+    return null;
+  }
   return hint;
 }
 
@@ -1800,7 +2080,7 @@ function cleanQueryClientHint(value: string): string | null {
   let hint = dropProductishClientTokens(String(value ?? '').trim().replace(/[.,;:!?¿]+$/, ''));
   hint = hint
     .replace(
-      /\s+(?:tiene|pidi[oó]|compr[oó]|qu[eé]|el|la|los|las|n(?:ro\.?|[uú]mero)|pedido|venta|compra).*$/i,
+      /\s+(?:tiene|pidi[oó]|compr[oó]|qu[eé]|el|la|los|las|n(?:ro\.?|[uú]mero)|pedido|venta|compra|ponelo|pasalo|movelo|marcalo|dejalo|cambialo|move|listo|estado|entregad[oa]).*$/i,
       ''
     )
     .trim();
@@ -1814,6 +2094,15 @@ function cleanQueryClientHint(value: string): string | null {
 export function extractQueryClientFromText(text: string): string | null {
   const raw = String(text ?? '').trim();
   const patterns = [
+    new RegExp(`\\b(?:el|ese|este)\\s+(?:pedido\\s+)?de\\s+(${PERSON_NAME_CHUNK})`, 'i'),
+    new RegExp(
+      `\\b(?:mostr(?:ame|[áa])|list(?:ame|[áa])|busc(?:ame|[áa]|ar))\\s+(?:el\\s+|los\\s+|la\\s+|un\\s+)?(?:pedido|pedidos)\\s+de\\s+(${PERSON_NAME_CHUNK})`,
+      'i'
+    ),
+    new RegExp(
+      `\\b(?:pedido|pedidos)\\s+de\\s+(${PERSON_NAME_CHUNK})(?:\\s+que\\b|\\s+con\\b|\\s+no\\b)`,
+      'i'
+    ),
     new RegExp(
       `\\b(?:pedido|pedidos|venta|ventas|n(?:ro\\.?|[uú]mero))\\s+(?:de\\s+|del\\s+cliente\\s+)?(${PERSON_NAME_CHUNK})\\s*[?¿.]?$`,
       'i'
@@ -1841,7 +2130,10 @@ export function extractQueryClientFromText(text: string): string | null {
     const hint = cleanQueryClientHint(String(match?.[1] ?? ''));
     if (hint) return hint;
   }
-  return extractClientHintFromText(raw);
+  if (/\b(?:el|ese|este)\s+(?:pedido\s+)?de\b/i.test(raw) || /\bcliente\s+/i.test(raw) || /\bpedido\s+de\b/i.test(raw)) {
+    return extractClientHintFromText(raw);
+  }
+  return null;
 }
 
 function stripProductWrappers(value: string): string {
@@ -1861,6 +2153,7 @@ function stripProductWrappers(value: string): string {
 /** Producto en una frase coloquial, sin cliente, precio, fecha ni «descripción». */
 export function extractProductHintFromText(text: string): string | null {
   const raw = String(text ?? '');
+  if (isNonProductUtterance(raw)) return null;
   const labeled = raw.match(
     /\bproducto\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 ./-]{0,60}?)(?:\s+(?:a|@|por)\s*\$)/i
   );
@@ -1879,10 +2172,21 @@ export function extractProductHintFromText(text: string): string | null {
   rest = rest.replace(/\bcostos?\s*(?:extra\s+)?\$?\s*[\d.]+(?:,\d+)?/gi, ' ');
   rest = rest.replace(/\$\s*[\d.]+(?:,\d{2})?/g, ' ');
   rest = rest.replace(/\bdescripci[oó]n\b[:\s]+.+$/i, ' ');
-  rest = rest.replace(/\b(dise[nñ]o\s+(?:adelante|atr[aá]s|espalda|pecho|frente)\b).+$/i, ' ');
+  rest = rest.replace(/\b(?:con\s+)?dise[nñ]o\b.+$/gi, ' ');
+  rest = rest.replace(
+    /\b(?:ya\s+)?(?:est[aá]|qued[oó])\s+(?:todo\s+)?(?:pagad[oa]|pago|cobrad[oa]|saldad[oa]|abonad[oa]).+$/gi,
+    ' '
+  );
   rest = stripProductWrappers(rest);
   if (rest.length < 3 || rest.length > 120) return null;
+  if (isPlaceholderProductLabel(rest)) return null;
   if (isUnlikelyPersonName(rest)) return null;
+  if (
+    /\b(soy el|principe|príncipe|nombre del beb[eé]|observaciones?)\b/i.test(rest) &&
+    !/\b(camiseta|remera|buzo|jean|pantal|taza|campera|producto)\b/i.test(rest)
+  ) {
+    return null;
+  }
   return rest;
 }
 
@@ -1890,10 +2194,24 @@ export function extractNotesHintFromText(text: string): string | null {
   const raw = String(text ?? '');
   const labeled = raw.match(/\bdescripci[oó]n\b[:\s]+(.+)$/i);
   const fromLabel = labeled?.[1]?.trim().replace(/[.,;]+$/, '');
-  if (fromLabel && fromLabel.length >= 2) return fromLabel.slice(0, 240);
-  const design = raw.match(/\b(dise[nñ]o\s+(?:adelante|atr[aá]s|espalda|pecho|frente)\b[^]*)/i);
-  const fromDesign = design?.[1]?.trim().replace(/[.,;]+$/, '');
-  if (fromDesign && fromDesign.length >= 2) return fromDesign.slice(0, 240);
+  if (fromLabel && fromLabel.length >= 2) {
+    return sanitizeOrderNotes(fromLabel) ?? fromLabel.slice(0, 240);
+  }
+
+  const correction = raw.match(
+    /\b(?:(?:cambi(?:ale|[áa]|ar)|el|con|y\s+el)\s+)?dise[nñ]o\s+(?:en\s+realidad\s+)?(?:que\s+)?(?:diga|dice|es|pasa\s+a|por|de)\s+(.+?)(?:\.|$)/i
+  );
+  if (correction?.[1]?.trim()) {
+    return sanitizeOrderNotes(correction[1].trim()) ?? `diseño ${correction[1].trim()}`.slice(0, 240);
+  }
+
+  const design = raw.match(
+    /\b((?:con\s+)?dise[nñ]o(?:\s+(?:adelante|atr[aá]s|espalda|pecho|frente|de))?\s+.+?)(?=\s+ya\s+est|\s+pagad|\s+\$|$)/i
+  );
+  const fromDesign = design?.[1]?.trim().replace(/^(con\s+)/i, '').replace(/[.,;]+$/, '');
+  if (fromDesign && fromDesign.length >= 2) {
+    return sanitizeOrderNotes(fromDesign) ?? fromDesign.slice(0, 240);
+  }
   return null;
 }
 
@@ -1958,6 +2276,8 @@ export function extractSpokenCorrections(
     const value = notes[1].trim().replace(/[.,;]+$/, '');
     if (value.length >= 2) out.notes = value.slice(0, 240);
   }
+  const designNotes = extractNotesHintFromText(raw);
+  if (designNotes && /\bdise[nñ]o\b/i.test(raw)) out.notes = designNotes;
   if (/^(sin descripci[oó]n|sin notas?|listo|nada)$/i.test(raw)) out.clearNotes = true;
 
   const amountMatch =
@@ -1983,6 +2303,18 @@ export function extractSpokenCorrections(
   }
 
   return out;
+}
+
+export function looksLikeClientCorrection(text: string): boolean {
+  return /\b((?:el\s+)?cliente\s+(?:es|est[aá]\s+mal|no\s+era)|otro\s+cliente|no[,.]?\s+(?:es\s+)?(?:ese|este)\s+cliente|cambi(?:[aá]|ar)\s+(?:el\s+)?cliente)\b/i.test(
+    String(text ?? '')
+  );
+}
+
+export function looksLikeProductCorrection(text: string): boolean {
+  return /\b((?:el\s+)?producto\s+(?:es|est[aá]\s+mal|no\s+era)|no[,.]?\s+(?:es\s+)?(?:ese|este)\s+producto|el\s+\w+\s+mejor|cambi(?:[aá]|ar)\s+(?:el\s+)?(?:producto|color|talle|tela))\b/i.test(
+    String(text ?? '')
+  );
 }
 
 export function looksLikeIterativeCorrection(text: string): boolean {
@@ -2209,10 +2541,32 @@ export function looksLikeNewOrder(text: string): boolean {
   const hasProduct =
     /\b(camiseta|remera|buzo|jean|pantal|taza|campera|vestido|talle|producto|algod[oó]n)\b/i.test(raw);
   const hasDesc = /\bdescripci[oó]n\b/i.test(raw);
-  const hasClientPrep = /\b(pedido|orden)\s+(para|a|de)\b/i.test(raw);
+  const hasClientPrep = /\b(pedido|orden)\s+(para|de|a(?!\s+estado))\b/i.test(raw);
   if (hasClientPrep && (hasPrice || hasProduct || hasDesc)) return true;
   if (hasPrice && (hasProduct || hasDesc)) return true;
   return false;
+}
+
+/**
+ * Dijo que cobra / salda TODO el saldo, sin un monto puntual.
+ * Cubre «cobra todo el saldo», «cobra el saldo», «saldalo», «ya pagó».
+ */
+export function looksLikeCollectFullBalance(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  return /(?<![\p{L}])(sald(?:alo|ar)(?!\s+de)|qued[oó]\s+saldado|saldo\s+(?:en\s+)?cero|deja(?:lo)?\s+(?:el\s+)?saldo|pago\s+(?:del\s+)?total(?:\s+del\s+saldo)?|total\s+del\s+saldo|registr[aeá]\s+(?:el\s+)?pago(?:\s+del\s+(?:total|saldo)|(?:\s+total))?|cobra(?:r|me|le|lo)?\s+(?:todo\s+)?(?:el\s+)?(?:saldo|total|resto)|cobra(?:r|me|le|lo)?\s+todo(?!\s*\$?\s*\d)|todo\s+el\s+saldo|todo\s+lo\s+que\s+falta(?:ba)?|el\s+saldo\s+(?:entero|completo)|pag[oó]\s+(todo|el\s+resto|lo\s+que\s+faltaba|completo)|(ya|me)\s+pag[oó](?!\s*\$?\s*\d)|abon[oó]\s+(todo|el\s+resto)|est[aá]\s+(todo\s+)?pago)(?![\p{L}])/iu.test(
+    t
+  );
+}
+
+/** Pregunta por un pedido que ya está en el chat: saldo, estado, «este/ese pedido». */
+export function looksLikeExistingOrderQuery(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t || looksLikeNewOrder(t)) return false;
+  if (looksLikeStatusQuery(t)) return true;
+  return /(?<![\p{L}])((?:el\s+|y\s+el\s+)?saldo\s+(?:de\s+)?(?:este|ese|el)\s+pedido|(?:este|ese)\s+pedido|cu[aá]nto\s+(?:es\s+|queda\s+)?(?:el\s+)?saldo|el\s+saldo\s+(?:de\s+este|de\s+ese|del\s+pedido)|cu[aá]nto\s+(?:es\s+el\s+)?(?:este|ese)\s+pedido)(?![\p{L}])/iu.test(
+    t
+  );
 }
 
 export function looksLikeStatusQuery(text: string): boolean {
@@ -2242,7 +2596,10 @@ export function looksLikeStatusQuery(text: string): boolean {
       raw
     ) ||
     (/\b(estado|resumen|n(?:ro\.?|[uú]mero)|pidi[oó]|compr[oó])/i.test(raw) &&
-      /\b(lo|eso|ese|esa|este|esta|pedido|venta|cliente)\b/i.test(raw))
+      /\b(lo|eso|ese|esa|este|esta|pedido|venta|cliente)\b/i.test(raw)) ||
+    /\b(?:el\s+)?saldo\s+(?:de\s+)?(?:este|ese|el)\s+pedido\b/i.test(raw) ||
+    /\bcu[aá]nto\s+(?:es\s+|queda\s+)?(?:el\s+)?saldo\b/i.test(raw) ||
+    /\b(?:este|ese)\s+pedido\b/i.test(raw)
   );
 }
 
@@ -2264,27 +2621,20 @@ export function coerceDateOnly(value?: string | null): string | undefined {
 }
 
 export function formatClientChoices(
-  candidates: Array<{ nombre: string }>,
+  candidates: Array<{ nombre: string; score?: number }>,
   query?: string,
-  options?: { allowCreate?: boolean }
+  options?: { allowCreate?: boolean; hasMore?: boolean }
 ): string {
-  const lines = candidates.map((c, index) => `${index + 1}) ${c.nombre}`);
-  if (options?.allowCreate !== false && query?.trim()) {
-    lines.push(`${candidates.length + 1}) Registrar nuevo: "${query.trim()}"`);
-  }
-  const header = query
-    ? `${waBold(`Con "${query}" no asumo`)}\n¿Cuál de estos es?`
-    : waBold('Encontré clientes parecidos');
-  return [
-    header,
-    '',
-    ...lines,
-    '',
-    waBold('Cómo responder'),
-    `• Un ${waBold('número')} o el nombre`,
-    '• El último número para registrar uno nuevo',
-    `• ${waBold('NO')} — cancelar`,
-  ].join('\n');
+  const labels = candidates.map((c) => c.nombre);
+  const hasGoodMatch = candidates.some((c) => (Number(c.score) || 0) >= 70);
+  const allowCreate = options?.allowCreate !== false && query?.trim() && !hasGoodMatch && !candidates.length;
+  const extra = allowCreate && query?.trim() ? [`Registrar nuevo: ${query.trim()}`] : [];
+  const title = candidates.length === 1 ? 'Encontré este cliente' : `Encontré ${candidates.length} clientes`;
+  return formatChoiceMessage({
+    title,
+    options: [...labels, ...extra],
+    ask: '¿Cuál es?',
+  });
 }
 
 export function formatSupplierChoices(
@@ -2292,26 +2642,18 @@ export function formatSupplierChoices(
   query?: string,
   options?: { allowCreate?: boolean }
 ): string {
-  const lines = candidates.map((c, index) => `${index + 1}) ${c.nombre}`);
-  if (options?.allowCreate !== false && query?.trim()) {
-    lines.push(`${candidates.length + 1}) Registrar nuevo: "${query.trim()}"`);
-  }
-  const header = query
-    ? waBold(`¿A qué proveedor te referís con "${query}"?`)
-    : waBold('Encontré proveedores parecidos');
-  return [
-    header,
-    '',
-    ...lines,
-    '',
-    waBold('Cómo responder'),
-    `• Un ${waBold('número')} o el nombre`,
-    `• ${waBold('NO')} — cancelar`,
-  ].join('\n');
+  const labels = candidates.map((c) => c.nombre);
+  const allowCreate = options?.allowCreate !== false && Boolean(query?.trim()) && !labels.length;
+  const extra = allowCreate && query?.trim() ? [`Registrar nuevo: ${query.trim()}`] : [];
+  return formatChoiceMessage({
+    title: 'Encontré proveedores',
+    options: [...labels, ...extra],
+    ask: '¿Cuál es?',
+  });
 }
 
 export function formatProductChoices(
-  candidates: Array<{ nombre: string; label?: string; precioVenta?: number }>,
+  candidates: Array<{ nombre: string; label?: string; precioVenta?: number; score?: number }>,
   query?: string,
   options?: {
     allowCreate?: boolean;
@@ -2322,80 +2664,57 @@ export function formatProductChoices(
     quantity?: number;
     packUnits?: number;
     context?: 'order' | 'purchase';
+    hasMore?: boolean;
+    morePage?: boolean;
   }
 ): string {
-  const choiceLines = candidates.map((c, index) => {
+  const isPurchase = options?.context === 'purchase';
+  const names = candidates.map((c) => {
     const name = c.label?.trim() || c.nombre;
     const price = Number(c.precioVenta) || 0;
-    return price > 0 ? `${index + 1}) ${name} ($${price})` : `${index + 1}) ${name}`;
+    return isPurchase && price > 0 ? `${name} ($${price})` : name;
   });
+  const hasGoodMatch = candidates.length > 0;
   const cost = Number(options?.unitCost) || 0;
-  if (options?.allowCreate !== false && query?.trim()) {
-    const createLabel = cost > 0
-      ? `${candidates.length + 1}) Crear nuevo: "${query.trim()}" (costo ${formatTicketMoney(cost)})`
-      : `${candidates.length + 1}) Crear nuevo: "${query.trim()}"`;
-    choiceLines.push(createLabel);
+  const allowCreate = options?.allowCreate !== false && query?.trim() && (isPurchase || !hasGoodMatch);
+  if (allowCreate && query?.trim()) {
+    names.push(
+      cost > 0
+        ? `Crear nuevo: ${query.trim()} (costo ${formatTicketMoney(cost)})`
+        : `Crear nuevo: ${query.trim()}`
+    );
   }
-  const quoted = query?.trim() ? query.trim() : 'ese ítem';
-  const isPurchase = options?.context === 'purchase';
   if (isPurchase) {
-    const extras = purchaseDispositionChoiceIndexes(
-      candidates.length,
-      options?.allowCreate !== false,
-      query
-    );
-    choiceLines.push(`${extras.insumo + 1}) Insumo / herramienta (sin stock)`);
-    choiceLines.push(`${extras.skip + 1}) Descartar (no lo cargo)`);
+    names.push('Insumo / herramienta (sin stock)');
+    names.push('Descartar');
+    return formatWhatsappMessage({
+      title: candidates.length ? '¿Con cuál lo vinculo?' : 'No hay un producto con ese nombre',
+      lines: [
+        query?.trim() ? `En la boleta: ${query.trim()}` : '',
+        ...names.map((name, index) => `${index + 1}. ${name}`),
+      ].filter(Boolean),
+      ask: '¿Cuál querés?',
+    });
   }
-  const header: string[] = [];
-  if (isPurchase) {
-    header.push(waBold('Este ítem'));
-    header.push(`En la boleta: ${waBold(quoted)}`);
-    if (Number(options?.quantity) > 0 || cost > 0 || Number(options?.unitCostNet) > 0) {
-      header.push(
-        `• ${formatPurchaseLinePrices({
-          quantity: options?.quantity,
-          unitCost: options?.unitCost,
-          unitCostNet: options?.unitCostNet,
-        })}`
-      );
-    }
-    header.push('');
-    header.push(
-      waBold(
-        candidates.length
-          ? '¿Con cuál de tu catálogo lo vinculo?'
-          : 'No hay un producto con ese nombre'
-      )
-    );
-  } else {
-    if (options?.lineIndex != null && options.lineCount) {
-      header.push(waBold(`Ítem ${options.lineIndex + 1} de ${options.lineCount}`));
-    }
-    header.push(
-      candidates.length
-        ? waBold(`¿Cuál de estas es "${quoted}"?`) + '\n(mismo color y talle; puede cambiar la tela)'
-        : waBold(`No encontré "${quoted}" en el catálogo`)
-    );
-  }
-  const how = isPurchase
-    ? [
-        '',
-        waBold('Cómo responder'),
-        `• Un ${waBold('número')} o el nombre`,
-        `• ${waBold('CREAR')} — suma stock`,
-        `• ${waBold('INSUMO')} — sin stock`,
-        `• ${waBold('DESCARTAR')} — no lo cargo`,
-        `• ${waBold('NO')} — cancelar todo`,
-      ]
-    : [
-        '',
-        waBold('Cómo responder'),
-        `• Un ${waBold('número')} o el nombre como lo tenés vos`,
-        `• ${waBold('CREAR')} si es nuevo`,
-        `• ${waBold('NO')} — cancelar`,
-      ];
-  return [...header, ...choiceLines, ...how].filter((row, index, all) => row !== '' || all[index - 1] !== '').join('\n');
+  const multi = Number(options?.lineCount) > 1 && options?.lineIndex != null && !options?.morePage;
+  const title = options?.morePage
+    ? 'Otras opciones'
+    : candidates.length
+      ? 'Encontré estas opciones'
+      : 'No lo encontré en el catálogo';
+  return formatChoiceMessage({
+    title: multi ? `Ítem ${(options!.lineIndex ?? 0) + 1} de ${options!.lineCount}` : title,
+    options: names,
+    noneLabel: candidates.length && (options?.hasMore || candidates.length >= 2) ? 'Ninguno de estos' : undefined,
+    ask: candidates.length ? '¿Cuál querés?' : '¿Lo creo o lo escribís de otra forma?',
+  });
+}
+
+function moneyLine(value: number): string {
+  return Number(value || 0).toLocaleString('es-AR', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
 }
 
 export function formatOperationSummary(
@@ -2427,7 +2746,19 @@ export function formatOperationSummary(
       skipped?: boolean;
       tipoLinea?: 'stock' | 'insumo';
     }>;
+    items?: Array<{
+      quantity?: number;
+      rawText?: string;
+      productHint?: string;
+      productName?: string;
+      skipped?: boolean;
+      attributes?: { color?: string | null; size?: string | null };
+    }>;
     extraCosts?: Array<{ nombre?: string; costo?: number }>;
+    collectionAmount?: number;
+    requestedStatus?: string;
+    extraCostsEnabled?: boolean;
+    extraCostsAsked?: boolean;
     targetOrderLabel?: string;
     orderNumber?: string;
     referToLast?: boolean;
@@ -2450,6 +2781,7 @@ export function formatOperationSummary(
     saveAsDraft?: boolean;
     paymentIncompleteReason?: string;
     cashAmbitoLabel?: string;
+    sourceText?: string;
   }
 ): string {
   const titles: Record<string, string> = {
@@ -2463,12 +2795,12 @@ export function formatOperationSummary(
         : 'Estado del pedido',
     query_balance: 'Saldo',
     query_cash: 'Caja de hoy',
-    register_cash: 'Caja',
+    register_cash: entities.cashType === 'ingreso' ? 'Ingreso a caja' : 'Egreso de caja',
     update_product_cost: 'Costo de catálogo',
     create_client: 'Cliente nuevo',
     register_cost: 'Costo extra',
   };
-  const ask = waAskSiNo('Si algo está mal, escribilo y lo cambio.');
+  const ask = intent === 'create_order' ? waAskConfirmo() : waAskSiNo();
   const lines = [waBold(titles[intent] ?? 'Resumen'), ''];
 
   if (intent === 'query_cash') {
@@ -2487,15 +2819,28 @@ export function formatOperationSummary(
   }
 
   if (intent === 'register_cash') {
-    const tipo = entities.cashType === 'egreso' ? 'Egreso / gasto' : 'Ingreso';
-    lines.push(`• Tipo: ${tipo}`);
-    if (entities.cashAmbitoLabel?.trim()) {
-      lines.push(`• Caja: ${entities.cashAmbitoLabel.trim()}`);
-    }
-    lines.push(`• Concepto: ${entities.cashConcept?.trim() || entities.notes?.trim() || '(sin detalle)'}`);
-    lines.push(`• Monto: ${entities.amount != null ? `$${entities.amount}` : '(sin definir)'}`);
-    lines.push('', ask);
-    return lines.join('\n');
+    const egreso = entities.cashType !== 'ingreso';
+    const caja = entities.cashAmbitoLabel?.trim() || '';
+    const motivo = entities.cashConcept?.trim() || entities.notes?.trim() || '';
+    const monto =
+      entities.amount != null
+        ? `$${Number(entities.amount).toLocaleString('es-AR', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+          })}`
+        : '';
+    const lines = [
+      caja ? `• Caja: ${caja}` : '',
+      monto ? `• ${egreso ? 'Sale' : 'Entra'}: ${monto}` : '• Importe: (faltó el monto)',
+      motivo ? `• Motivo: ${motivo}` : '',
+    ].filter(Boolean);
+    const what = egreso ? 'este egreso' : 'este ingreso';
+    const from = caja ? (egreso ? ` de *${caja}*` : ` en *${caja}*`) : '';
+    return waCard({
+      title: egreso ? 'Egreso de caja' : 'Ingreso a caja',
+      lines,
+      ask: `¿Anoto ${what}${monto ? ` de ${monto}` : ''}${from}?\n${waBold('SÍ')} / ${waBold('NO')}`,
+    });
   }
 
   if (intent === 'update_product_cost') {
@@ -2535,105 +2880,199 @@ export function formatOperationSummary(
     const orderRef = entities.targetOrderLabel || entities.orderNumber || '';
     const quien = entities.clientName?.trim();
     const saldo = Number(entities.targetOrderSaldo) || 0;
-    const cobraTodo = entities.paid === true || entities.payFullBalance === true;
+    const cobraTodo =
+      entities.paid === true ||
+      entities.payFullBalance === true ||
+      (!entities.semanticCommand && looksLikeCollectFullBalance(String(entities.sourceText ?? '')));
     const cobraMonto = Number(entities.amount) > 0 ? Number(entities.amount) : 0;
+    const cobraAhora = (cobraTodo && saldo > 0) || cobraMonto > 0;
+    const cobro = cobraTodo && saldo > 0 ? saldo : cobraMonto;
     const sameEstado =
       entities.orderStatusUnchanged === true ||
       String(entities.targetOrderEstadoLabel ?? '').toLowerCase() ===
         String(entities.orderStatusLabel ?? '').toLowerCase();
-    lines.push(`• Pedido: ${orderRef ? `#${orderRef}` : '(el último)'}${quien ? ` · ${quien}` : ''}`);
-    if (sameEstado) {
-      lines.push(`• Estado: ya está ${entities.orderStatusLabel || entities.orderStatus || 'Listo'} (no lo cambio)`);
-    } else {
-      lines.push(
-        `• Estado: ${entities.targetOrderEstadoLabel || 'actual'} → ${entities.orderStatusLabel || entities.orderStatus || 'Listo'}`
-      );
-    }
-    if (cobraTodo && saldo > 0) {
-      lines.push(`• Cobro: $${saldo} entra a caja`);
-      lines.push('• Saldo del pedido: queda $0');
-    } else if (cobraMonto > 0) {
-      lines.push(`• Cobro: $${cobraMonto} entra a caja`);
-      lines.push(`• Saldo del pedido: queda $${Math.max(0, saldo - cobraMonto)}`);
-    } else if (String(entities.orderStatus) === 'entregado' && saldo > 0) {
-      lines.push(`• Saldo: quedan $${saldo} sin cobrar (entrega con saldo)`);
-    } else if (saldo > 0) {
-      lines.push(`• Saldo: $${saldo} (no cobro nada ahora)`);
-    } else {
-      lines.push('• Cobro: ya estaba todo pago');
-    }
-    if (entities.orderStockWillDrop) {
-      lines.push('• Stock: descuento los productos con control (si todavía no se habían dado de baja)');
-    } else if (entities.orderStockAlreadyDropped) {
-      lines.push('• Stock: ya estaba descontado, no lo vuelvo a mover');
-    } else if (entities.orderHasStockLines) {
-      lines.push('• Stock: todavía no corresponde descontar en este estado');
-    } else {
-      lines.push('• Stock: no hay productos con control para descontar');
-    }
-    lines.push('', ask);
-    return lines.join('\n');
+    const estadoLine = sameEstado
+      ? `• Estado: se queda en ${entities.orderStatusLabel || entities.orderStatus || 'Listo'}`
+      : `• Estado: ${entities.targetOrderEstadoLabel || 'actual'} → ${entities.orderStatusLabel || entities.orderStatus || 'Listo'}`;
+    const cobroLines = cobraAhora
+      ? [
+          `• Voy a cobrar: $${moneyLine(cobro)} (entra a caja)`,
+          `• Saldo del pedido: queda $${moneyLine(Math.max(0, saldo - cobro))}`,
+        ]
+      : saldo > 0
+        ? [`• No cobro nada ahora`, `• El pedido sigue con saldo $${moneyLine(saldo)}`]
+        : ['• No hay saldo para cobrar'];
+    const stockLine = entities.orderStockWillDrop
+      ? '• Stock: descuento los productos con control'
+      : entities.orderStockAlreadyDropped
+        ? '• Stock: ya estaba descontado'
+        : entities.orderHasStockLines
+          ? '• Stock: en este estado todavía no se descuenta'
+          : '';
+    const ask = cobraAhora
+      ? `¿Hago el cambio y cobro los $${moneyLine(cobro)}?\n${waBold('SÍ')} / ${waBold('NO')}`
+      : `¿Cambio el estado? El saldo no se cobra.\n${waBold('SÍ')} / ${waBold('NO')}`;
+    return waCard({
+      title: cobraAhora ? 'Estado y cobro' : 'Estado del pedido',
+      lines: [
+        `• Pedido: ${orderRef ? `#${orderRef}` : '(el último)'}${quien ? ` · ${quien}` : ''}`,
+        estadoLine,
+        ...cobroLines,
+        stockLine,
+      ].filter(Boolean),
+      ask,
+    });
   }
 
   if (intent === 'register_payment') {
-    lines.push(`• Cliente: ${entities.clientName?.trim() || '(sin definir)'}`);
     const orderRef =
       entities.targetOrderLabel ||
       (entities.orderNumber ? String(entities.orderNumber).padStart(5, '0') : '');
-    if (orderRef) {
-      lines.push(`• Pedido: #${orderRef}`);
-    } else if (entities.referToLast) {
-      lines.push('• Pedido: el último que cargamos');
-    } else {
-      lines.push('• Pedido: el más viejo con saldo');
-    }
-    lines.push(`• Cobro: ${entities.amount != null ? `$${entities.amount}` : entities.payFullBalance ? 'el saldo entero' : '(sin definir)'} entra a caja`);
+    const cobro =
+      Number(entities.amount) > 0
+        ? `$${moneyLine(Number(entities.amount))}`
+        : entities.payFullBalance
+          ? 'todo el saldo'
+          : '(sin monto)';
+    const pedidoLine = orderRef
+      ? `• Pedido: #${orderRef}`
+      : entities.referToLast
+        ? '• Pedido: el último que cargamos'
+        : '• Pedido: el que tenga saldo';
     const medio = entities.paymentMedioLabel || entities.paymentHint;
-    lines.push(`• Cómo pagó: ${medio?.trim() || 'efectivo'}`);
-    lines.push('• Pedido: se resta del saldo, igual que en el panel');
-    lines.push('', ask);
-    return lines.join('\n');
+    return waCard({
+      title: entities.paymentKind === 'senia' ? 'Seña' : 'Cobro',
+      lines: [
+        `• Cliente: ${entities.clientName?.trim() || '(sin definir)'}`,
+        pedidoLine,
+        `• Voy a cobrar: ${cobro} (entra a caja)`,
+        `• Cómo pagó: ${medio?.trim() || 'efectivo'}`,
+        '• Eso se descuenta del saldo del pedido',
+      ],
+      ask: `¿Registro este cobro?\n${waBold('SÍ')} / ${waBold('NO')}`,
+    });
+  }
+
+  if (intent === 'create_order') {
+    const who = entities.clientName?.trim() || '';
+    const compact: string[] = [];
+    const items = Array.isArray(entities.items) ? entities.items.filter((item) => !item.skipped) : [];
+    if (items.length) {
+      for (const item of items) {
+        const label = item.productName || item.productHint || item.rawText || '(sin detalle)';
+        const qty = Number(item.quantity) || 1;
+        compact.push(qty > 1 ? `• ${qty} ${label}` : `• ${label}`);
+      }
+    } else if (entities.productName?.trim()) {
+      compact.push(`• ${entities.productName.trim()}`);
+    }
+    const notes = sanitizeOrderNotes(entities.notes);
+    if (notes) {
+      const design = notes.match(/dise[nñ]o(?:\s+de)?\s+(.+)/i);
+      compact.push(design?.[1] ? `• Diseño: ${design[1].trim().replace(/^[a-z]/, (ch) => ch.toUpperCase())}` : `• ${notes}`);
+    }
+    const entrega = formatDateOnlyEs(entities.deliveryDate).replace(/\/\d{4}$/, '');
+    if (entrega) compact.push(`• Entrega: ${entrega}`);
+    const extraCosts = (entities.extraCosts ?? []).filter(
+      (item) => item.nombre?.trim() && Number(item.costo) > 0
+    );
+    const requested = String((entities as { requestedStatus?: string }).requestedStatus ?? '').trim();
+    if (requested) {
+      const labels: Record<string, string> = {
+        listo: 'Listo',
+        pendiente: 'Pendiente',
+        entregado: 'Entregado',
+        en_produccion: 'En proceso',
+      };
+      compact.push(`• Estado: ${labels[requested] || requested}`);
+    }
+    const finance = planRelatedOrderFinance({
+      amount: entities.amount,
+      extraCosts: entities.extraCosts,
+      collectionAmount: (entities as { collectionAmount?: number }).collectionAmount,
+      seniaAmount: entities.seniaAmount,
+      paid: entities.paid,
+      payFullBalance: entities.payFullBalance,
+      sourceText: entities.sourceText,
+    });
+    for (const line of formatOrderFinanceLines(finance)) {
+      compact.push(`• ${line}`);
+    }
+    for (const line of formatOrderExtraCostLines(extraCosts)) {
+      compact.push(`• ${line}`);
+    }
+    return waCard({
+      title: who ? `Pedido a ${who}` : 'Pedido',
+      lines: compact,
+      ask: waAskConfirmo(),
+    });
   }
 
   lines.push(`• Cliente: ${entities.clientName?.trim() || '(sin definir)'}`);
 
   if (intent === 'create_order' || intent === 'create_sale') {
-    lines.push(
-      `• Producto/concepto: ${entities.productName?.trim() || entities.imageSummary?.trim() || entities.notes?.trim() || '(sin detalle)'}`
-    );
-    if (entities.quantity != null) lines.push(`• Cantidad: ${entities.quantity}`);
-    const carga = formatDateOnlyEs(entities.orderDate);
-    if (carga) lines.push(`• Fecha de carga: ${carga}`);
-  }
-
-  if (intent === 'create_order') {
-    const entrega = formatDateOnlyEs(entities.deliveryDate);
-    if (entities.deliveryDefaulted) {
-      lines.push(`• Fecha de entrega: ${entrega || 'hoy'} (la dejé de hoy; si era otra, escribila)`);
+    const items = Array.isArray(entities.items) ? entities.items.filter((item) => !item.skipped) : [];
+    if (items.length) {
+      for (const item of items) {
+        const label = item.productName || item.productHint || item.rawText || '(sin detalle)';
+        const qty = Number(item.quantity) || 1;
+        lines.push(qty > 1 ? `• ${qty} ${label}` : `• ${label}`);
+      }
     } else {
-      lines.push(`• Fecha de entrega: ${entrega || '(sin definir)'}`);
+      lines.push(
+        `• ${entities.productName?.trim() || entities.imageSummary?.trim() || entities.notes?.trim() || '(sin detalle)'}`
+      );
     }
   }
 
   const extraCosts = (entities.extraCosts ?? []).filter(
     (item) => item.nombre?.trim() && Number(item.costo) > 0
   );
-  if (extraCosts.length && (intent === 'create_order' || intent === 'create_sale')) {
-    for (const item of extraCosts.slice(0, 8)) {
-      lines.push(`• Costo extra: ${item.nombre} $${item.costo}`);
-    }
-  }
 
-  if (intent !== 'query_balance') {
+  if (intent === 'create_order' || intent === 'create_sale') {
+    const finance = planRelatedOrderFinance({
+      amount: entities.amount,
+      extraCosts: entities.extraCosts,
+      collectionAmount: entities.collectionAmount,
+      seniaAmount: entities.seniaAmount,
+      paid: entities.paid,
+      payFullBalance: entities.payFullBalance,
+      sourceText: entities.sourceText,
+    });
+    for (const line of formatOrderFinanceLines(finance)) {
+      lines.push(`• ${line}`);
+    }
+    if (extraCosts.length && (intent === 'create_order' || intent === 'create_sale')) {
+      for (const line of formatOrderExtraCostLines(extraCosts)) {
+        lines.push(`• ${line}`);
+      }
+    }
+  } else if (intent !== 'query_balance') {
     lines.push(
       `• Monto: ${entities.amount != null ? `$${entities.amount}` : '(sin definir)'}`
     );
+    if (extraCosts.length && (intent === 'create_order' || intent === 'create_sale')) {
+      for (const line of formatOrderExtraCostLines(extraCosts)) {
+        lines.push(`• ${line}`);
+      }
+    }
   }
 
   const senia = Number(entities.seniaAmount) || 0;
   if (senia > 0 && (intent === 'create_order' || intent === 'create_sale')) {
-    const saldo = (Number(entities.amount) || 0) - senia;
-    lines.push(`• Seña: $${senia}${saldo > 0 ? ` (queda $${saldo})` : ' (queda saldado)'}`);
+    const finance = planRelatedOrderFinance({
+      amount: entities.amount,
+      extraCosts: entities.extraCosts,
+      collectionAmount: entities.collectionAmount,
+      seniaAmount: entities.seniaAmount,
+      paid: entities.paid,
+      payFullBalance: entities.payFullBalance,
+      sourceText: entities.sourceText,
+    });
+    if (finance.kind === 'none') {
+      const saldo = (Number(entities.amount) || 0) - senia;
+      lines.push(`• Seña: $${senia}${saldo > 0 ? ` (queda $${saldo})` : ' (queda saldado)'}`);
+    }
   }
 
   if (intent === 'create_sale' && entities.paid != null) {
@@ -2644,9 +3083,9 @@ export function formatOperationSummary(
     lines.push(`• Foto: sí${entities.imageSummary ? ` (${entities.imageSummary})` : ''}`);
   }
 
-  if (entities.notes?.trim() && entities.notes.trim() !== entities.productName?.trim()) {
+  if (intent !== 'create_order' && entities.notes?.trim() && entities.notes.trim() !== entities.productName?.trim()) {
     const notes = sanitizeOrderNotes(entities.notes);
-    if (notes) lines.push(`• Descripción: ${notes.slice(0, 120)}`);
+    if (notes) lines.push(`• ${notes.slice(0, 120)}`);
   }
 
   lines.push('', ask);

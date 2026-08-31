@@ -22,6 +22,7 @@ import { FORM_COMPACT_FIELD_CLASS } from '../form-shell/form-field.constants';
 export interface SearchableSelectOption {
   value: string;
   label: string;
+  searchText?: string;
 }
 
 @Component({
@@ -367,9 +368,10 @@ export class SearchableSelectComponent implements ControlValueAccessor, OnChange
     if (!normalized) return source;
 
     const matches = source.filter((option) => {
-      const label = this.normalizeForSearch(option.label);
-      const value = this.normalizeForSearch(option.value);
-      return label.includes(normalized) || value.includes(normalized);
+      const haystack = this.normalizeForSearch(
+        `${option.label} ${option.searchText ?? ''} ${option.value}`
+      );
+      return haystack.includes(normalized);
     });
 
     return matches.sort((a, b) => {

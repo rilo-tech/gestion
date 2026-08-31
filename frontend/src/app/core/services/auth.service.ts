@@ -12,7 +12,7 @@ import {
 import { AppUser } from './user.service';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, from, of, throwError, NEVER } from 'rxjs';
-import { catchError, map, shareReplay, switchMap, tap, timeout } from 'rxjs/operators';
+import { catchError, finalize, map, shareReplay, switchMap, tap, timeout } from 'rxjs/operators';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -36,8 +36,21 @@ import {
   AUTH_TOKEN_STORAGE_KEY,
   DEFAULT_BUSINESS_ID,
 } from '../constants/auth-storage';
+import { resolveHomeRoute } from '../utils/auth-home-route';
 
 export type AuthScope = 'company' | 'platform';
+
+const LOGIN_HTTP_TIMEOUT_MS = 20_000;
+const SESSION_PROBE_TIMEOUT_MS = 15_000;
+const INIT_SESSION_TIMEOUT_MS = 12_000;
+
+function loginTrace(step: string, detail?: Record<string, unknown>) {
+  if (detail) {
+    console.info(`[login:${step}]`, detail);
+    return;
+  }
+  console.info(`[login:${step}]`);
+}
 
 export interface AuthSession {
   token: string;
@@ -77,6 +90,10 @@ export class AuthService {
   readonly currentUser$ = this.currentUserSubject.asObservable();
   readonly business$ = this.businessSubject.asObservable();
   readonly isAuthenticated$ = this.currentUser$.pipe(map((user) => !!user));
+
+  get isAuthenticated(): boolean {
+    return !!this.currentUserSubject.value;
+  }
 
   get currentUser(): SessionUser | null {
     return this.currentUserSubject.value;
@@ -132,9 +149,12 @@ export class AuthService {
   }
 
   get homeRoute(): string {
-    if (this.isPlatformAdmin) return '/platform';
-    if (!this.canAccessErpWeb) return '/mi-cuenta';
-    return '/dashboard';
+    return resolveHomeRoute({
+      isPlatformAdmin: this.isPlatformAdmin,
+      canAccessErpWeb: this.canAccessErpWeb,
+      canAccessWhatsapp: this.canAccessWhatsapp,
+      billingMode: this.currentBusiness?.billingMode ?? null,
+    });
   }
 
   get platformAccess(): ClientPlatformAccess {
@@ -353,25 +373,27 @@ export class AuthService {
     this.initInFlight$ = this.http.get<{ user: SessionUser; business?: PublicBusinessInfo; businessId?: string; scope?: AuthScope }>(
       '/api/auth/me'
     ).pipe(
-      timeout({ first: 10000 }),
+      timeout({ first: INIT_SESSION_TIMEOUT_MS }),
       tap(({ user, business, businessId, scope }) => {
         if (this.sessionEpoch !== epoch) return;
         this.scope = scope ?? 'company';
         this.setSession(this.token!, user, businessId, business);
       }),
       map(() => true),
-      catchError(() => {
+      catchError((err) => {
+        loginTrace('auth-state', {
+          ok: false,
+          reason: err instanceof Error ? err.name : 'unknown',
+        });
         if (this.sessionEpoch === epoch && this.token === tokenAtStart) {
           this.clearSession();
         }
         return of(false);
       }),
-      tap({
-        complete: () => {
-          this.initInFlight$ = null;
-        },
+      finalize(() => {
+        this.initInFlight$ = null;
       }),
-      shareReplay({ bufferSize: 1, refCount: false })
+      shareReplay({ bufferSize: 1, refCount: true })
     );
     return this.initInFlight$;
   }
@@ -381,6 +403,12 @@ export class AuthService {
     password: string,
     options?: { businessId?: string; scope?: AuthScope }
   ): Observable<AuthSession> {
+    loginTrace('http:start', {
+      scope: options?.scope ?? 'company',
+      businessId: options?.businessId ?? null,
+      login,
+    });
+
     return this.http
       .post<AuthSession>('/api/auth/login', {
         login,
@@ -389,8 +417,52 @@ export class AuthService {
         scope: options?.scope ?? 'company',
       })
       .pipe(
-      timeout({ first: 15000 }),
-      tap((session) => this.applySession(session))
+        timeout({ first: LOGIN_HTTP_TIMEOUT_MS }),
+        tap((session) => {
+          loginTrace('http:response', {
+            scope: session.scope ?? 'company',
+            businessId: session.businessId ?? null,
+            hasBusiness: !!session.business,
+            userId: session.user?.id ?? null,
+          });
+          this.applySession(session);
+          loginTrace('auth-state', {
+            ok: true,
+            scope: this.scope,
+            businessId: this.businessId,
+            hasBusiness: !!this.currentBusiness,
+          });
+        }),
+        switchMap((session) => {
+          if (session.scope === 'company' && !session.business && session.businessId) {
+            loginTrace('http:start', { probe: '/api/auth/me', reason: 'missing-business' });
+            return this.reloadSession().pipe(
+              timeout({ first: SESSION_PROBE_TIMEOUT_MS }),
+              map(() => session),
+              catchError((err) => {
+                loginTrace('error', {
+                  stage: 'reloadSession',
+                  reason: err instanceof Error ? err.name : 'unknown',
+                });
+                return of(session);
+              })
+            );
+          }
+          return of(session);
+        }),
+        tap(() => {
+          loginTrace('home-route', { route: this.homeRoute });
+        }),
+        catchError((err) => {
+          loginTrace('error', {
+            stage: 'login',
+            reason: err instanceof Error ? err.name : 'unknown',
+          });
+          return throwError(() => err);
+        }),
+        finalize(() => {
+          loginTrace('finally');
+        })
       );
   }
 
@@ -506,12 +578,19 @@ export class AuthService {
         scope?: AuthScope;
       }>('/api/auth/me')
       .pipe(
+        timeout({ first: SESSION_PROBE_TIMEOUT_MS }),
         tap(({ user, business, businessId, scope }) => {
           this.scope = scope ?? 'company';
           this.setSession(this.token!, user, businessId, business);
         }),
         map(() => true),
-        catchError(() => of(false))
+        catchError((err) => {
+          loginTrace('error', {
+            stage: 'reloadSession',
+            reason: err instanceof Error ? err.name : 'unknown',
+          });
+          return of(false);
+        })
       );
   }
 

@@ -13,6 +13,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
+import { map, tap } from 'rxjs/operators';
 import { ClientService, Client } from '../../core/services/client.service';
 import { StockService, StockItem, itemControlsStock, getStockDisponible } from '../../core/services/stock.service';
 import {
@@ -82,6 +83,8 @@ import {
   saveOrderFormDraft,
   readOrderFormDraft,
   clearOrderFormDraft,
+  orderFormDraftMatchesRoute,
+  orderFormDraftIsFresh,
 } from '../../core/utils/form-return-context';
 import {
   buildCashReopenQueryParams,
@@ -244,6 +247,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                     [fallbackLabel]="selectedClientLabel"
                     [disabled]="isReadOnlyOrder"
                     [creatable]="!isReadOnlyOrder"
+                    [fetchMatches]="fetchClientMatches"
                     createLabelPrefix="Crear cliente"
                     (partySelected)="onOrderPartySelected($event)"
                     (createRequested)="quickCreateClient($event)"
@@ -1101,6 +1105,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   clientModalPrefillNombre = '';
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   editingOrderId: string | null = null;
+  private appliedRouteStateKey = '';
   orderPageReady = true;
   orderDetailLoading = false;
   private loadedOrderSnapshot: Order | null = null;
@@ -1354,6 +1359,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   goBack() {
+    clearOrderFormDraft();
     if (this.orderReturnTo === 'cash' && this.orderCashReturnContext) {
       void this.router.navigate(['/cash'], {
         queryParams: buildCashReopenQueryParams(this.orderCashReturnContext),
@@ -1548,6 +1554,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       .map((client) => ({
         value: client.id!,
         label: client.nombre,
+        searchText: [client.nombre, client.telefono].filter(Boolean).join(' '),
       }));
     return this.clientOptionsCache;
   }
@@ -1883,12 +1890,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const stockItemId = String(line.stockItemId ?? '').trim();
     if (!stockItemId) return;
     this.saveOrderFormDraftForReturn();
-    this.router.navigate(['/stock', stockItemId, 'edit'], {
-      queryParams: {
-        returnTo: 'orders',
-        ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
-      },
-    });
+    void this.router
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: { restoreDraft: '1' },
+        queryParamsHandling: 'merge',
+        replaceUrl: true,
+      })
+      .then(() =>
+        this.router.navigate(['/stock', stockItemId, 'edit'], {
+          queryParams: {
+            returnTo: 'orders',
+            ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
+          },
+        })
+      );
   }
 
   get addedOrderProductIds(): string[] {
@@ -1952,8 +1968,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.syncRouteState();
     });
-
-    this.syncRouteState();
+    if (!this.appliedRouteStateKey) {
+      this.syncRouteState();
+    }
   }
 
   private syncRouteState(): void {
@@ -1963,11 +1980,18 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const orderId = this.route.snapshot.paramMap.get('id');
     const restoreDraft = this.route.snapshot.queryParamMap.get('restoreDraft') === '1';
     const clienteId = this.route.snapshot.queryParamMap.get('clienteId');
+    const routeKey = `${orderId ?? ''}|${duplicateId ?? ''}|${restoreDraft ? '1' : '0'}|${clienteId ?? ''}`;
+    if (routeKey === this.appliedRouteStateKey) return;
 
-    if (restoreDraft && this.tryRestoreOrderFormDraft(orderId, clienteId)) {
-      this.clearRestoreQueryParams();
+    if (!duplicateId && this.tryRestoreOrderFormDraft(orderId, clienteId)) {
+      this.appliedRouteStateKey = routeKey;
+      if (restoreDraft || clienteId) {
+        this.clearRestoreQueryParams();
+      }
       return;
     }
+
+    this.appliedRouteStateKey = routeKey;
 
     if (orderId) {
       this.startEditingOrder(orderId);
@@ -2081,11 +2105,31 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private refreshClients() {
-    this.clientService.getActiveClientsForPicker().subscribe((clients) => {
+    this.clientService.getActiveClientsForPicker({ force: true }).subscribe((clients) => {
       this.clients = clients;
       this.ensureSelectedClient(this.order.clienteId, this.selectedClientLabel);
     });
   }
+
+  fetchClientMatches = (query: string) =>
+    this.clientService.searchActiveClientsForPicker(query).pipe(
+      tap((clients) => {
+        for (const client of clients) {
+          if (client.id && client.nombre) {
+            this.mergeClientOption(client.id, client.nombre, client.telefono);
+          }
+        }
+      }),
+      map((clients) =>
+        clients
+          .filter((client): client is Client & { id: string } => !!client.id)
+          .map((client) => ({
+            value: client.id,
+            label: client.nombre,
+            searchText: [client.nombre, client.telefono].filter(Boolean).join(' '),
+          }))
+      )
+    );
 
   private ensureSelectedClient(clienteId?: string, clienteNombre?: string) {
     const id = String(clienteId ?? '').trim();
@@ -2120,9 +2164,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     });
   }
 
-  private mergeClientOption(id: string, nombre: string) {
-    if (this.clients.some((client) => client.id === id)) return;
-    this.clients = [{ id, nombre }, ...this.clients];
+  private mergeClientOption(id: string, nombre: string, telefono?: string) {
+    const existing = this.clients.find((client) => client.id === id);
+    if (existing) {
+      if (telefono && !existing.telefono) existing.telefono = telefono;
+      return;
+    }
+    this.clients = [{ id, nombre, ...(telefono ? { telefono } : {}) }, ...this.clients];
   }
 
   onOrderPartySelected(option: SearchableSelectOption) {
@@ -2162,24 +2210,38 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
     this.saveOrderFormDraftForReturn();
     const nombre = this.pendingClientName.trim();
-    this.router.navigate(['/clients/new'], {
-      queryParams: {
-        ...(nombre ? { nombre } : {}),
-        returnTo: 'orders',
-        ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
-      },
-    });
+    const clientQuery: Record<string, string> = {
+      returnTo: 'orders',
+      ...(nombre ? { nombre } : {}),
+      ...(this.editingOrderId ? { orderId: this.editingOrderId } : {}),
+    };
+
+    void this.router
+      .navigate([], {
+        relativeTo: this.route,
+        queryParams: { restoreDraft: '1' },
+        queryParamsHandling: 'merge',
+        replaceUrl: true,
+      })
+      .then(() => this.router.navigate(['/clients/new'], { queryParams: clientQuery }));
+  }
+
+  private cloneForDraft<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
   }
 
   private saveOrderFormDraftForReturn() {
     saveOrderFormDraft({
-      order: { ...this.order },
-      orderLines: structuredClone(this.orderLines),
+      order: this.cloneForDraft(this.order),
+      orderLines: this.cloneForDraft(this.orderLines),
+      orderPhotos: this.cloneForDraft(this.orderPhotos),
       pendingClientName: this.pendingClientName,
+      selectedClientLabel: this.selectedClientLabel,
       editingOrderId: this.editingOrderId,
       isDraftOrder: this.isDraftOrder,
       savedOrderEstado: this.savedOrderEstado,
       orderFormLocked: this.orderFormLocked,
+      savedAt: Date.now(),
     });
   }
 
@@ -2188,31 +2250,34 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     clienteId: string | null
   ): boolean {
     const draft = readOrderFormDraft();
-    if (!draft) return false;
-
-    const draftOrderId = draft.editingOrderId ?? null;
-    if (draftOrderId !== routeOrderId) return false;
+    if (!draft || !orderFormDraftIsFresh(draft) || !orderFormDraftMatchesRoute(draft, routeOrderId)) {
+      return false;
+    }
 
     this.editingOrderId = draft.editingOrderId;
     this.order = { ...draft.order };
-    this.orderLines = draft.orderLines.map((line) => this.normalizeOrderLine(line));
+    this.orderLines = (draft.orderLines ?? []).map((line) => this.normalizeOrderLine(line));
+    this.orderPhotos = Array.isArray(draft.orderPhotos) ? [...draft.orderPhotos] : [];
     this.pendingClientName = draft.pendingClientName;
+    this.selectedClientLabel = String(draft.selectedClientLabel ?? '').trim();
     this.isDraftOrder = draft.isDraftOrder;
     this.savedOrderEstado = draft.savedOrderEstado;
     this.orderFormLocked = draft.orderFormLocked;
     this.loadedOrderSnapshot = null;
     this.orderPageReady = true;
+    this.orderDetailLoading = false;
 
     if (clienteId) {
       this.order.clienteId = clienteId;
       this.pendingClientName = '';
       this.ensureSelectedClient(clienteId);
+    } else if (this.order.clienteId) {
+      this.ensureSelectedClient(this.order.clienteId, this.selectedClientLabel);
     }
 
     this.calculateTotals();
     this.enrichOrderLinesWithStock({ debounceMs: 0 });
     this.markOrderFormSynced();
-    clearOrderFormDraft();
     this.refreshClients();
     return true;
   }
@@ -2930,6 +2995,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    if (this.isOrderFormDirty() && !this.isReadOnlyOrder) {
+      this.saveOrderFormDraftForReturn();
+    }
     window.clearTimeout(this.orderSaveFeedbackTimeout);
     window.clearTimeout(this.stockEnrichTimer);
   }
@@ -3267,6 +3335,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   private finishOrderSaveSuccess() {
+    clearOrderFormDraft();
     this.orderSaveState = 'success';
     this.orderSaveBannerText = this.resolveOrderSaveBannerText();
     window.clearTimeout(this.orderSaveFeedbackTimeout);

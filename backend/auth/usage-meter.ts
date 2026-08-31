@@ -4,6 +4,7 @@ import {
   emptyUsageMeter,
   estimateUsageUsd,
   roundUsd,
+  type PhoneUsageTotals,
   type UsageMeterSnapshot,
   type UsageToolId,
   type UsageToolTotals,
@@ -39,6 +40,16 @@ export function parseUsageMeter(period: string, data: Record<string, unknown> | 
   for (const [name, row] of Object.entries(modelsRaw)) {
     models[name] = asTotals(row);
   }
+  const phonesRaw = (data.phones ?? {}) as Record<string, unknown>;
+  const phones: Record<string, PhoneUsageTotals> = {};
+  for (const [key, row] of Object.entries(phonesRaw)) {
+    const item = (row ?? {}) as Record<string, unknown>;
+    phones[key] = {
+      aiActions: Math.max(0, Number(item.aiActions) || 0),
+      waInbound: Math.max(0, Number(item.waInbound) || 0),
+      waOutbound: Math.max(0, Number(item.waOutbound) || 0),
+    };
+  }
   return {
     period: String(data.period ?? period),
     aiActions: Math.max(0, Number(data.aiActions) || 0),
@@ -51,8 +62,20 @@ export function parseUsageMeter(period: string, data: Record<string, unknown> | 
     waQuotaWarned80: data.waQuotaWarned80 === true,
     tools,
     models,
+    phones,
+    dailyAi: parseDailyMap(data.dailyAi),
     updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : undefined,
   };
+}
+
+function parseDailyMap(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    out[key] = Math.max(0, Number(value) || 0);
+  }
+  return out;
 }
 
 async function legacyCount(businessId: string, prefix: 'ai_usage' | 'wa_ops'): Promise<number> {
@@ -111,21 +134,33 @@ export async function clearWhatsappQuotaNotices(businessId: string): Promise<voi
   );
 }
 
+export function phoneMeterKey(phone: string): string {
+  const digits = String(phone ?? '').replace(/[^\d]/g, '');
+  return digits || 'unknown';
+}
+
 export async function incrementUsageField(
   businessId: string,
   field: 'aiActions' | 'waOutbound' | 'waInbound' | 'waOps' | 'purchasedWhatsapp' | 'purchasedAi',
-  amount = 1
+  amount = 1,
+  phone?: string | null
 ): Promise<void> {
   if (!businessId || amount <= 0) return;
   const period = usagePeriod();
-  await usageRef(businessId, period).set(
-    {
-      period,
-      [field]: FieldValue.increment(amount),
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+  const payload: Record<string, unknown> = {
+    period,
+    [field]: FieldValue.increment(amount),
+    updatedAt: new Date().toISOString(),
+  };
+  if (field === 'aiActions') {
+    const day = new Date().toISOString().slice(0, 10);
+    payload[`dailyAi.${day}`] = FieldValue.increment(amount);
+  }
+  const key = phone ? phoneMeterKey(phone) : '';
+  if (key && (field === 'aiActions' || field === 'waInbound' || field === 'waOutbound')) {
+    payload[`phones.${key}.${field}`] = FieldValue.increment(amount);
+  }
+  await usageRef(businessId, period).set(payload, { merge: true });
 }
 
 export async function recordGeminiUsage(input: {
@@ -162,6 +197,28 @@ export async function recordGeminiUsage(input: {
     },
     { merge: true }
   );
+}
+
+export async function loadDailyAiSeries(
+  businessId: string,
+  days = 30,
+  at = new Date()
+): Promise<{ date: string; actions: number }[]> {
+  const dates: string[] = [];
+  const periods = new Set<string>();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(at);
+    day.setUTCDate(day.getUTCDate() - i);
+    const iso = day.toISOString().slice(0, 10);
+    dates.push(iso);
+    periods.add(iso.slice(0, 7));
+  }
+  const meters = await Promise.all([...periods].map((period) => loadUsageMeter(businessId, period)));
+  const merged: Record<string, number> = {};
+  for (const meter of meters) {
+    Object.assign(merged, meter.dailyAi ?? {});
+  }
+  return dates.map((date) => ({ date, actions: merged[date] || 0 }));
 }
 
 export function decorateUsageForApi(meter: UsageMeterSnapshot, at = new Date()) {

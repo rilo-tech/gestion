@@ -68,6 +68,7 @@ import { comprobanteLabel } from '../../../../../shared/comprobantes-config.ts';
 import { LucideAngularModule } from 'lucide-angular';
 import { AuthService } from '../../core/services/auth.service';
 import { Subscription, finalize, take } from 'rxjs';
+import { map, tap } from 'rxjs/operators';
 import {
   readSalesFormDraft,
   saveSalesFormDraft,
@@ -191,6 +192,7 @@ interface SaleDraftLine {
               [labeledOptions]="clientOptions"
               [fallbackLabel]="selectedSaleClientLabel"
               [creatable]="true"
+              [fetchMatches]="fetchClientMatches"
               createLabelPrefix="Crear cliente"
               (partySelected)="onSalePartySelected($event)"
               (createRequested)="quickCreateClient($event)"
@@ -659,7 +661,11 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   private rebuildClientOptions(): void {
     this.clientOptionsCache = this.clients
       .filter((client) => client.id)
-      .map((client) => ({ value: client.id!, label: client.nombre }));
+      .map((client) => ({
+        value: client.id!,
+        label: client.nombre,
+        searchText: [client.nombre, client.telefono].filter(Boolean).join(' '),
+      }));
   }
 
   private setClients(items: Client[]): void {
@@ -821,7 +827,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     if (this.clientsLoading || this.clientsLoaded) return;
 
     this.clientsLoading = true;
-    this.clientService.getActiveClientsForPicker().subscribe({
+    this.clientService.getActiveClientsForPicker({ force: true }).subscribe({
       next: (clients) => {
         this.setClients(clients);
         this.clientsLoaded = true;
@@ -1016,6 +1022,26 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       orderFilterClienteId: '',
     });
   }
+
+  fetchClientMatches = (query: string) =>
+    this.clientService.searchActiveClientsForPicker(query).pipe(
+      tap((clients) => {
+        for (const client of clients) {
+          if (client.id && client.nombre) {
+            this.mergeClientOption(client.id, client.nombre, client.telefono);
+          }
+        }
+      }),
+      map((clients) =>
+        clients
+          .filter((client): client is Client & { id: string } => !!client.id)
+          .map((client) => ({
+            value: client.id,
+            label: client.nombre,
+            searchText: [client.nombre, client.telefono].filter(Boolean).join(' '),
+          }))
+      )
+    );
 
   onSalePartySelected(option: SearchableSelectOption) {
     this.saleClienteId = option.value;
@@ -1810,9 +1836,14 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     });
   }
 
-  private mergeClientOption(id: string, nombre: string) {
-    if (this.clients.some((client) => client.id === id)) return;
-    this.clients = [{ id, nombre }, ...this.clients];
+  private mergeClientOption(id: string, nombre: string, telefono?: string) {
+    const existing = this.clients.find((client) => client.id === id);
+    if (existing) {
+      if (telefono && !existing.telefono) existing.telefono = telefono;
+      this.rebuildClientOptions();
+      return;
+    }
+    this.clients = [{ id, nombre, ...(telefono ? { telefono } : {}) }, ...this.clients];
     this.rebuildClientOptions();
   }
 

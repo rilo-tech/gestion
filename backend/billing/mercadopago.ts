@@ -107,6 +107,11 @@ export async function fetchMercadoPagoPayment(
   statusDetail?: string;
   transactionAmount: number;
   currencyId: string;
+  feeAmount?: number;
+  netAmount?: number;
+  dateApproved?: string;
+  dateCreated?: string;
+  preapprovalId?: string;
   externalReference?: string;
   metadata?: Record<string, unknown>;
 } | null> {
@@ -123,14 +128,36 @@ export async function fetchMercadoPagoPayment(
   }
 
   const data = (await response.json()) as Record<string, unknown>;
+  const feeDetails = Array.isArray(data.fee_details) ? data.fee_details : [];
+  const feeAmount = feeDetails.reduce((sum, row) => {
+    const item = row as { amount?: unknown };
+    return sum + (Number(item.amount) || 0);
+  }, 0);
+  const details = (data.transaction_details ?? {}) as Record<string, unknown>;
+  const netFromDetails = Number(details.net_received_amount);
+  const metadata = (data.metadata as Record<string, unknown>) ?? undefined;
+  const preapprovalId =
+    (metadata?.preapproval_id ? String(metadata.preapproval_id) : '') ||
+    (data.preapproval_id ? String(data.preapproval_id) : '') ||
+    undefined;
+
   return {
     id: String(data.id ?? paymentId),
     status: String(data.status ?? ''),
     statusDetail: data.status_detail ? String(data.status_detail) : undefined,
     transactionAmount: Number(data.transaction_amount) || 0,
     currencyId: String(data.currency_id ?? ''),
+    feeAmount: feeAmount > 0 ? feeAmount : undefined,
+    netAmount: Number.isFinite(netFromDetails)
+      ? netFromDetails
+      : feeAmount > 0
+        ? (Number(data.transaction_amount) || 0) - feeAmount
+        : undefined,
+    dateApproved: data.date_approved ? String(data.date_approved) : undefined,
+    dateCreated: data.date_created ? String(data.date_created) : undefined,
+    preapprovalId,
     externalReference: data.external_reference ? String(data.external_reference) : undefined,
-    metadata: (data.metadata as Record<string, unknown>) ?? undefined,
+    metadata,
   };
 }
 

@@ -1,6 +1,5 @@
 import { assertCanUseAi, incrementAiUsage } from '../auth/usage-gates.ts';
 import { generateGeminiText } from './gemini.ts';
-import { whatsappCopyForRubro } from './copy.ts';
 import type { LastWhatsappOperation } from './conversation-state.ts';
 import { waCard } from '../../shared/whatsapp-format.ts';
 
@@ -18,15 +17,12 @@ const CAPABILITIES = [
   'consultar saldo, caja o el estado de un pedido',
 ];
 
-function fallbackQuestion(text: string, rubro?: string | null): string {
+export function fallbackQuestion(text: string, _rubro?: string | null): string {
   const corto = text.trim().slice(0, 60);
-  const ejemplo = whatsappCopyForRubro(rubro).exampleSale;
   return waCard({
     title: 'No te seguí',
     lines: corto ? [`Con «${corto}» no me queda claro.`] : undefined,
-    ask:
-      `¿Es un pedido nuevo, un cobro, o algo ya anotado?\n` +
-      `Ej: «${ejemplo}»`,
+    ask: '¿Qué querés hacer? Pedido, consulta, caja, cobro, stock u otra cosa.',
   });
 }
 
@@ -68,10 +64,11 @@ Escribí la respuesta en español rioplatense, tuteando.
 Reglas:
 - Título en negrita de WhatsApp en la primera línea: *No te seguí* (o similar corto).
 - Después viñetas • con 2 o 3 lecturas concretas de SU mensaje (nombres, montos, productos que sí dijo).
-- Última línea: cómo escribirlo para que salga de una.
+- Última línea: una pregunta específica por el dato que falta (no un menú genérico de pedido/cobro).
 - Máximo 8 renglones cortos. Nada de paredes de texto.
 - Nunca digas «no te seguí del todo» ni pegues un menú genérico.
-- No saludes. No pidas perdón. Nunca afirmes que guardaste algo.`;
+- No saludes. No pidas perdón. Nunca afirmes que guardaste algo.
+- Nunca preguntes si es «un pedido nuevo, un cobro, o algo ya anotado» como trío fijo.`;
 
   const reply = await generateGeminiText({
     parts: [{ text: prompt }],

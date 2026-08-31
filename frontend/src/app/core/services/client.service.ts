@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, Subject, of, throwError, EMPTY } from 'rxjs';
-import { catchError, expand, map, reduce, shareReplay, tap } from 'rxjs/operators';
+import { Observable, Subject, of, throwError } from 'rxjs';
+import { catchError, map, shareReplay, tap } from 'rxjs/operators';
 import { TenantService } from './tenant.service';
 
 export interface ClientReferenceSummary {
@@ -177,14 +177,33 @@ export interface PaginatedClients {
   hasMore: boolean;
 }
 
-const PICKER_PAGE_SIZE = 300;
-
 function toPickerClient(client: Client): Client | null {
   const id = String(client.id ?? '').trim();
   const nombre = String(client.nombre ?? '').trim();
   if (!id || !nombre) return null;
   if (client.activo === false) return null;
-  return { id, nombre, activo: true };
+  const telefono = String(client.telefono ?? '').trim();
+  return { id, nombre, activo: true, ...(telefono ? { telefono } : {}) };
+}
+
+function pickerItemsFromResponse(payload: PaginatedClients | Client[] | null | undefined): Client[] {
+  const raw = Array.isArray(payload) ? payload : payload?.items ?? [];
+  const byId = new Map<string, Client>();
+  for (const item of raw) {
+    const slim = toPickerClient(item);
+    if (slim?.id) byId.set(slim.id, slim);
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(a.nombre).localeCompare(String(b.nombre), 'es', { sensitivity: 'base' })
+  );
+}
+
+function normalizeClientQuery(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 @Injectable({
@@ -225,9 +244,13 @@ export class ClientService {
 
   /**
    * Clientes activos para buscadores de pedidos/ventas/cobros.
-   * Carga el catálogo completo (paginado) y lo cachea hasta el próximo cambio.
+   * Carga el catálogo completo (sin saldos) y lo cachea hasta el próximo cambio.
    */
-  getActiveClientsForPicker(): Observable<Client[]> {
+  getActiveClientsForPicker(options?: { force?: boolean }): Observable<Client[]> {
+    if (options?.force) {
+      this.invalidatePickerCache();
+    }
+
     if (
       this.pickerCache &&
       this.pickerCacheComplete &&
@@ -323,30 +346,31 @@ export class ClientService {
   }
 
   private loadAllActiveClientsForPicker(): Observable<Client[]> {
-    const loadPage = (cursor?: string): Observable<PaginatedClients> =>
-      this.getClientsPage(PICKER_PAGE_SIZE, cursor, { soloActivos: true });
-
-    return loadPage().pipe(
-      expand((page) =>
-        page.hasMore && page.nextCursor ? loadPage(page.nextCursor) : EMPTY
-      ),
-      reduce((acc: Client[], page) => {
-        for (const item of page.items ?? []) {
-          const slim = toPickerClient(item);
-          if (slim) acc.push(slim);
-        }
-        return acc;
-      }, []),
-      map((clients) => {
-        const byId = new Map<string, Client>();
-        for (const client of clients) {
-          if (client.id) byId.set(client.id, client);
-        }
-        return [...byId.values()].sort((a, b) =>
-          String(a.nombre).localeCompare(String(b.nombre), 'es', { sensitivity: 'base' })
-        );
+    return this.http
+      .get<PaginatedClients | Client[]>(`/api/clients/${this.businessId}`, {
+        params: { picker: '1', soloActivos: '1' },
       })
-    );
+      .pipe(map((payload) => pickerItemsFromResponse(payload)));
+  }
+
+  searchActiveClientsForPicker(query: string): Observable<Client[]> {
+    const q = query.trim();
+    if (q.length < 2) return of([]);
+    const needle = normalizeClientQuery(q);
+    return this.http
+      .get<PaginatedClients | Client[]>(`/api/clients/${this.businessId}`, {
+        params: { picker: '1', soloActivos: '1', q, limit: '50' },
+      })
+      .pipe(
+        map((payload) =>
+          pickerItemsFromResponse(payload).filter((client) => {
+            const haystack = normalizeClientQuery(
+              `${client.nombre ?? ''} ${client.telefono ?? ''}`
+            );
+            return haystack.includes(needle);
+          })
+        )
+      );
   }
 
   getClients(options?: { soloActivos?: boolean }): Observable<Client[]> {

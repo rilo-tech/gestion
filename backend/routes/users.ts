@@ -22,6 +22,15 @@ import {
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
 import { createCompanyRouter } from './create-company-router.ts';
+import {
+  expandErpSeatsForAdd,
+  loadCommercialContext,
+  quoteBusinessAddErpUser,
+  shrinkErpSeatsToActive,
+} from '../auth/commercial-pricing.ts';
+import { extraSeatCount } from '../../shared/commercial-pricing.ts';
+import { recordCommercialEvent } from '../auth/commercial-events.ts';
+import { safeSyncRecurringAmount } from '../billing/recurring.ts';
 
 const router = createCompanyRouter();
 
@@ -178,6 +187,31 @@ router.post('/:businessId', requireCompanyUserManager, async (req: Authenticated
     }
 
     const normalized = normalizeUserPayload({ ...raw, rol });
+    const ctx = await loadCommercialContext(businessId);
+    const extraBefore = extraSeatCount(ctx.activeErpUsers, ctx.rates.includedErpUsers);
+    const extraAfter = extraSeatCount(ctx.activeErpUsers + 1, ctx.rates.includedErpUsers);
+    if (extraAfter > extraBefore) {
+      if (req.body?.confirmBilling !== true) {
+        const quote = await quoteBusinessAddErpUser(businessId);
+        return res.status(409).json({
+          code: 'BILLING_CONFIRMATION_REQUIRED',
+          error: 'Este usuario adicional cambia tu cuota mensual. Confirmá el costo para continuar.',
+          quote: {
+            ...quote,
+            appliedAt: ctx.paidUntil || ctx.business.billing?.nextPaymentDate || 'próxima renovación',
+          },
+        });
+      }
+      const actor =
+        req.auth?.scope === 'platform'
+          ? `platform:${req.auth.userId}`
+          : `company:${req.auth?.userId ?? 'unknown'}`;
+      await expandErpSeatsForAdd({
+        businessId,
+        rol: normalized.rol === 'admin' ? 'admin' : 'staff',
+        actor,
+      });
+    }
     await assertCanAddUser(businessId, normalized.rol);
     normalized.colaboradorId = await assertColaboradorLinkPayload(
       businessId,
@@ -194,12 +228,37 @@ router.post('/:businessId', requireCompanyUserManager, async (req: Authenticated
       nextPasswordHash = await hashPassword(plainPassword);
     }
 
+    const actor =
+      req.auth?.scope === 'platform'
+        ? `platform:${req.auth.userId}`
+        : `company:${req.auth?.userId ?? 'unknown'}`;
+    const now = new Date().toISOString();
     const docRef = await db.collection(`negocios/${businessId}/usuarios`).add({
       ...normalized,
       passwordHash: nextPasswordHash ?? null,
       googleId: googleId ? String(googleId) : null,
-      createdAt: new Date().toISOString(),
+      addedAt: now,
+      addedBy: actor,
+      createdAt: now,
     });
+    if (extraAfter > extraBefore) {
+      const after = await loadCommercialContext(businessId);
+      const preapprovalSync = await safeSyncRecurringAmount(businessId);
+      await recordCommercialEvent({
+        businessId,
+        type: 'user_added',
+        actor,
+        oldValue: { active: ctx.activeErpUsers },
+        newValue: { userId: docRef.id, active: ctx.activeErpUsers + 1 },
+        billingImpact: {
+          oldTotal: ctx.quote.total,
+          newTotal: after.quote.total,
+          delta: after.quote.total - ctx.quote.total,
+          effectiveAt: after.quote.effectiveAt,
+        },
+        note: 'Usuario ERP adicional',
+      });
+    }
     res.status(201).json({ id: docRef.id });
   } catch (error) {
     const mapped = mapUserMutationError(error);
@@ -236,16 +295,56 @@ router.patch('/:businessId/:userId', requireCompanyUserManager, async (req: Auth
       userId
     );
     const activating = existingData.activo === false && merged.activo === true;
+    const deactivating = existingData.activo !== false && merged.activo === false;
     const roleChanged = existingData.rol !== nextRol;
 
     if (activating || roleChanged) {
+      const ctx = await loadCommercialContext(businessId);
+      const extraBefore = extraSeatCount(ctx.activeErpUsers, ctx.rates.includedErpUsers);
+      const extraAfter = extraSeatCount(ctx.activeErpUsers + 1, ctx.rates.includedErpUsers);
+      if (activating && extraAfter > extraBefore) {
+        if (req.body?.confirmBilling !== true) {
+          const quote = await quoteBusinessAddErpUser(businessId);
+          return res.status(409).json({
+            code: 'BILLING_CONFIRMATION_REQUIRED',
+            error: 'Reactivar este usuario cambia tu cuota mensual. Confirmá el costo para continuar.',
+            quote: {
+              ...quote,
+              appliedAt: ctx.paidUntil || ctx.business.billing?.nextPaymentDate || 'próxima renovación',
+            },
+          });
+        }
+        await expandErpSeatsForAdd({
+          businessId,
+          rol: nextRol === 'admin' ? 'admin' : 'staff',
+          actor:
+            req.auth?.scope === 'platform'
+              ? `platform:${req.auth.userId}`
+              : `company:${req.auth?.userId ?? 'unknown'}`,
+        });
+      }
       await assertCanActivateUser(businessId, nextRol, userId);
     }
 
+    const actor =
+      req.auth?.scope === 'platform'
+        ? `platform:${req.auth.userId}`
+        : `company:${req.auth?.userId ?? 'unknown'}`;
+    const now = new Date().toISOString();
     const updatePayload: Record<string, unknown> = {
       ...merged,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
+    if (deactivating) {
+      updatePayload.removedAt = now;
+      updatePayload.removedBy = actor;
+    }
+    if (activating) {
+      updatePayload.removedAt = null;
+      updatePayload.removedBy = null;
+    }
+
+    const beforeDeactivate = deactivating ? await loadCommercialContext(businessId) : null;
 
     const plainPassword = String(password ?? '').trim();
     if (plainPassword) {
@@ -259,6 +358,28 @@ router.patch('/:businessId/:userId', requireCompanyUserManager, async (req: Auth
     }
 
     await docRef.update(updatePayload);
+    if (activating) {
+      await safeSyncRecurringAmount(businessId);
+    }
+    if (deactivating) {
+      await shrinkErpSeatsToActive({ businessId, actor });
+      const after = await loadCommercialContext(businessId);
+      await safeSyncRecurringAmount(businessId);
+      await recordCommercialEvent({
+        businessId,
+        type: 'user_removed',
+        actor,
+        oldValue: { userId, active: true },
+        newValue: { userId, active: false },
+        billingImpact: {
+          oldTotal: beforeDeactivate?.quote.total ?? after.quote.total,
+          newTotal: after.quote.total,
+          delta: after.quote.total - (beforeDeactivate?.quote.total ?? after.quote.total),
+          effectiveAt: after.quote.effectiveAt,
+        },
+        note: 'Usuario ERP desactivado',
+      });
+    }
     res.json({ id: userId, rol: nextRol });
   } catch (error) {
     const mapped = mapUserMutationError(error);
@@ -288,8 +409,39 @@ router.delete('/:businessId/:userId', requireCompanyUserManager, async (req: Aut
       }
     }
 
-    await docRef.delete();
-    res.json({ id: userId });
+    const actor =
+      req.auth?.scope === 'platform'
+        ? `platform:${req.auth.userId}`
+        : `company:${req.auth?.userId ?? 'unknown'}`;
+    const before = await loadCommercialContext(businessId);
+    const now = new Date().toISOString();
+    await docRef.set(
+      {
+        activo: false,
+        removedAt: now,
+        removedBy: actor,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    await shrinkErpSeatsToActive({ businessId, actor });
+    const after = await loadCommercialContext(businessId);
+    await safeSyncRecurringAmount(businessId);
+    await recordCommercialEvent({
+      businessId,
+      type: 'user_removed',
+      actor,
+      oldValue: { userId, active: true },
+      newValue: { userId, active: false },
+      billingImpact: {
+        oldTotal: before.quote.total,
+        newTotal: after.quote.total,
+        delta: after.quote.total - before.quote.total,
+        effectiveAt: after.quote.effectiveAt,
+      },
+      note: 'Usuario ERP desactivado',
+    });
+    res.json({ id: userId, deactivated: true });
   } catch (error) {
     res.status(500).json({ error: 'Error deleting user' });
   }

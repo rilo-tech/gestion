@@ -1,0 +1,342 @@
+import { incrementWhatsappOps } from '../../auth/usage-gates.ts';
+import { createClient, updateClient } from '../../domain/client/index.ts';
+import { adjustStock, createProduct, setStock, updateProduct } from '../../domain/stock/index.ts';
+import { createSupplier } from '../../domain/supplier/index.ts';
+import {
+  addOrderCostFromWhatsapp,
+  createOrderFromWhatsapp,
+  createPurchaseFromWhatsapp,
+  createSaleFromWhatsapp,
+  executeRegisterCashMovement,
+  registerPaymentFromWhatsapp,
+  updateProductCostFromWhatsapp,
+} from '../erp-writes.ts';
+import { updateOrderStatusFromWhatsapp } from '../order-status.ts';
+import type { WhatsappCommandEntities } from '../ai-command-parser.ts';
+import { AgentError } from './agent-errors.ts';
+import { getToolByName } from './tool-registry.ts';
+import type {
+  AgentOperationPlan,
+  AgentPlannedWrite,
+  ToolCallRequest,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  ToolRegistryEntry,
+} from './tool-types.ts';
+import { buildAgentOperationPlan } from './tools/write-tools.ts';
+import { normalizeStrictToolArgs } from './strict-tool-schema.ts';
+
+const MAX_TOOL_ROUNDS = 6;
+
+export function getMaxToolRounds(): number {
+  return MAX_TOOL_ROUNDS;
+}
+
+function safeArgs(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return {};
+  return normalizeStrictToolArgs(args as Record<string, unknown>);
+}
+
+export async function executeReadToolCall(
+  call: ToolCallRequest,
+  ctx: ToolExecutionContext,
+  registry: ToolRegistryEntry[]
+): Promise<ToolExecutionResult> {
+  const tool = getToolByName(call.name, registry);
+  if (!tool || tool.mode !== 'read' || !tool.execute) {
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: false,
+      output: { errorCode: 'CAPABILITY_NOT_ENABLED', message: `Tool ${call.name} no disponible.` },
+      errorCode: 'CAPABILITY_NOT_ENABLED',
+    };
+  }
+  try {
+    const output = await tool.execute(safeArgs(call.arguments), ctx);
+    return { toolCallId: call.id, name: call.name, ok: true, output };
+  } catch (error) {
+    return {
+      toolCallId: call.id,
+      name: call.name,
+      ok: false,
+      output: {
+        errorCode: error instanceof AgentError ? error.code : 'DOMAIN_VALIDATION_ERROR',
+        message: error instanceof Error ? error.message : 'Error de tool',
+      },
+      errorCode: error instanceof AgentError ? error.code : 'DOMAIN_VALIDATION_ERROR',
+    };
+  }
+}
+
+export async function prepareWriteToolCalls(
+  calls: ToolCallRequest[],
+  ctx: ToolExecutionContext,
+  registry: ToolRegistryEntry[]
+): Promise<AgentOperationPlan> {
+  const writes: AgentPlannedWrite[] = [];
+  for (const call of calls) {
+    const tool = getToolByName(call.name, registry);
+    if (!tool || tool.mode !== 'write') {
+      throw new AgentError('CAPABILITY_NOT_ENABLED', `La tool ${call.name} no está habilitada.`);
+    }
+    if (!tool.prepare) {
+      throw new AgentError('CAPABILITY_NOT_ENABLED', `La tool ${call.name} requiere adaptador de dominio.`);
+    }
+    writes.push(await tool.prepare(safeArgs(call.arguments), ctx));
+  }
+  return buildAgentOperationPlan(
+    writes,
+    ctx.rawUserMessage,
+    ctx.messageId ? `wa:${ctx.messageId}:${writes.map((row) => row.tool).join('+')}` : undefined
+  );
+}
+
+async function executePlannedWrite(
+  tenant: ToolExecutionContext['tenant'],
+  write: AgentPlannedWrite
+): Promise<{ reply: string; data?: Record<string, unknown> }> {
+  const args = write.args;
+  switch (write.tool) {
+    case 'create_client': {
+      const created = await createClient({
+        businessId: tenant.businessId,
+        name: String(args.name ?? ''),
+        telefono: String(args.telefono ?? '') || undefined,
+        source: 'whatsapp',
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: `Listo. Cliente *${created.name}* creado.`,
+        data: { clientId: created.id, clientName: created.name, kind: 'client' },
+      };
+    }
+    case 'update_client': {
+      const updated = await updateClient({
+        businessId: tenant.businessId,
+        clientId: String(args.clientId ?? ''),
+        name: args.name != null ? String(args.name) : undefined,
+        telefono: args.telefono != null ? String(args.telefono) : undefined,
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: `Listo. Actualicé a *${updated.name}*.`,
+        data: { clientId: updated.id, clientName: updated.name, kind: 'client' },
+      };
+    }
+    case 'create_product': {
+      const created = await createProduct({
+        businessId: tenant.businessId,
+        name: String(args.name ?? ''),
+        salePrice: args.salePrice != null ? Number(args.salePrice) : undefined,
+        cost: args.cost != null ? Number(args.cost) : undefined,
+        initialStock: args.initialStock != null ? Number(args.initialStock) : undefined,
+        controlsStock: args.controlsStock === true,
+        source: 'whatsapp',
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: `Listo. Producto *${created.name}* creado.`,
+        data: { productId: created.id, productName: created.name, kind: 'product' },
+      };
+    }
+    case 'update_product_price': {
+      const updated = await updateProduct({
+        businessId: tenant.businessId,
+        productId: String(args.productId ?? ''),
+        salePrice: Number(args.salePrice) || 0,
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: `Listo. Precio de *${updated.name}* actualizado.` };
+    }
+    case 'update_product_cost': {
+      const result = await updateProductCostFromWhatsapp(tenant, {
+        productId: String(args.productId ?? ''),
+        amount: Number(args.cost) || 0,
+      } as WhatsappCommandEntities);
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: result.reply, data: { productId: result.productId, productName: result.productName } };
+    }
+    case 'adjust_stock': {
+      const result = await adjustStock({
+        businessId: tenant.businessId,
+        productId: String(args.productId ?? ''),
+        quantity: Number(args.quantity) || 0,
+        reason: String(args.reason ?? 'Ajuste WhatsApp'),
+        actorId: 'whatsapp',
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: `Listo. Stock actual: *${result.stock}*.`, data: { productId: result.productId, stock: result.stock } };
+    }
+    case 'set_stock': {
+      const result = await setStock({
+        businessId: tenant.businessId,
+        productId: String(args.productId ?? ''),
+        stock: Number(args.stock) || 0,
+        reason: String(args.reason ?? 'Ajuste WhatsApp'),
+        actorId: 'whatsapp',
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: `Listo. Stock actual: *${result.stock}*.`, data: { productId: result.productId, stock: result.stock } };
+    }
+    case 'register_order_payment':
+    case 'register_order_deposit':
+    case 'collect_order_full_balance': {
+      const entities: WhatsappCommandEntities = {
+        targetOrderId: String(args.orderId ?? ''),
+        clientName: String(args.clientName ?? ''),
+        amount: args.amount != null ? Number(args.amount) : undefined,
+        payFullBalance: write.tool === 'collect_order_full_balance' || args.payFullBalance === true,
+        paid: true,
+        paymentKind: write.tool === 'register_order_deposit' ? 'senia' : undefined,
+        idempotencyKey: String(args.idempotencyKey ?? ''),
+      };
+      const result = await registerPaymentFromWhatsapp(tenant, entities);
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: result.reply,
+        data: { clientId: result.clientId, clientName: result.clientName, amount: result.amount, kind: 'payment' },
+      };
+    }
+    case 'update_order_status': {
+      if (!tenant?.businessId) {
+        throw new AgentError('ERP_WRITE_FAILED', 'Falta businessId para ejecutar el plan congelado.');
+      }
+      const entities: WhatsappCommandEntities = {
+        targetOrderId: String(args.orderId ?? ''),
+        orderNumber: String(args.orderNumber ?? ''),
+        clientName: String(args.clientName ?? ''),
+        orderStatus: String(args.status ?? args.requestedStatus ?? '') as WhatsappCommandEntities['orderStatus'],
+        idempotencyKey: String(args.idempotencyKey ?? ''),
+      };
+      const result = await updateOrderStatusFromWhatsapp(tenant, entities);
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: result.reply,
+        data: {
+          orderId: result.orderId,
+          label: result.label,
+          clientName: result.clientName,
+          clientId: result.clientId,
+          status: result.status,
+          kind: 'order',
+        },
+      };
+    }
+    case 'register_cash_movement': {
+      const result = await executeRegisterCashMovement(tenant, {
+        businessId: tenant.businessId,
+        type: String(args.type ?? 'ingreso') === 'egreso' ? 'egreso' : 'ingreso',
+        amount: Number(args.amount) || 0,
+        concept: String(args.concept ?? ''),
+        scope: String(args.ambitoId ?? '') || undefined,
+        source: 'whatsapp',
+        actor: { type: 'whatsapp_user', phone: tenant.phone },
+        idempotencyKey: String(args.idempotencyKey ?? ''),
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: result.reply, data: { kind: 'cash', amount: Number(args.amount) || 0 } };
+    }
+    case 'create_supplier': {
+      const created = await createSupplier({
+        businessId: tenant.businessId,
+        name: String(args.name ?? ''),
+        source: 'whatsapp',
+      });
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: `Listo. Proveedor *${created.name}* creado.`, data: { supplierId: created.id } };
+    }
+    case 'create_order': {
+      const result = await createOrderFromWhatsapp(
+        tenant,
+        {
+          clientId: String(args.clientId ?? ''),
+          clientName: String(args.clientName ?? ''),
+          notes: String(args.notes ?? '') || undefined,
+          deliveryDate: String(args.deliveryDate ?? '') || undefined,
+        } as WhatsappCommandEntities,
+        ''
+      );
+      await incrementWhatsappOps(tenant.businessId);
+      return {
+        reply: result.reply,
+        data: {
+          orderId: result.orderId,
+          label: result.label,
+          clientName: result.clientName,
+          clientId: result.clientId,
+          status: result.status,
+          kind: 'order',
+        },
+      };
+    }
+    case 'create_sale': {
+      const result = await createSaleFromWhatsapp(
+        tenant,
+        {
+          clientId: String(args.clientId ?? ''),
+          amount: Number(args.amount) || 0,
+        } as WhatsappCommandEntities,
+        ''
+      );
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: result.reply, data: { ventaId: result.ventaId, kind: 'sale' } };
+    }
+    case 'create_purchase': {
+      const result = await createPurchaseFromWhatsapp(
+        tenant,
+        {
+          supplierName: String(args.supplierQuery ?? ''),
+          amount: Number(args.amount) || 0,
+        } as WhatsappCommandEntities,
+        ''
+      );
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: result.reply, data: { compraId: result.compraId, kind: 'purchase' } };
+    }
+    case 'add_order_extra_cost': {
+      const result = await addOrderCostFromWhatsapp(tenant, {
+        targetOrderId: String(args.orderId ?? ''),
+        amount: Number(args.amount) || 0,
+        notes: String(args.concept ?? ''),
+      } as WhatsappCommandEntities);
+      await incrementWhatsappOps(tenant.businessId);
+      return { reply: result.reply, data: { orderId: result.orderId, kind: 'order' } };
+    }
+    default:
+      throw new AgentError('CAPABILITY_NOT_ENABLED', `Write ${write.tool} no implementado.`);
+  }
+}
+
+export async function executeAgentOperationPlan(
+  tenant: ToolExecutionContext['tenant'],
+  plan: AgentOperationPlan
+): Promise<{ reply: string; data?: Record<string, unknown> }> {
+  const replies: string[] = [];
+  let lastData: Record<string, unknown> | undefined;
+  for (const write of plan.writes) {
+    const result = await executePlannedWrite(tenant, {
+      ...write,
+      args: {
+        ...write.args,
+        idempotencyKey: plan.idempotencyKey ? `${plan.idempotencyKey}:${write.tool}` : undefined,
+      },
+    });
+    replies.push(result.reply);
+    lastData = result.data ?? lastData;
+  }
+  return { reply: replies.join('\n\n'), data: lastData };
+}
+
+export function summarizeToolOutput(output: Record<string, unknown>): Record<string, unknown> {
+  const clone: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(output)) {
+    if (key === 'items' && Array.isArray(value)) {
+      clone[key] = value.slice(0, 10);
+      clone.itemsTruncated = value.length > 10;
+      continue;
+    }
+    clone[key] = value;
+  }
+  return clone;
+}

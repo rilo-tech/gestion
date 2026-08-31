@@ -4,6 +4,10 @@ import {
   resolveTrialState,
   type TrialStatus,
 } from '../../shared/trial-state.ts';
+import {
+  lifecycleToErpStatus,
+  resolveSubscriptionLifecycle,
+} from '../../shared/subscription-lifecycle.ts';
 import type { BusinessRecord } from './business.ts';
 
 function businessRef(businessId: string) {
@@ -80,6 +84,7 @@ export async function syncExpiredTrialStatus(
   business: BusinessRecord
 ): Promise<BusinessRecord> {
   const trial = resolveTrialState(business);
+  let next: BusinessRecord = business;
   if (
     business.enPrueba &&
     trial.trialStatus === 'expired' &&
@@ -89,9 +94,68 @@ export async function syncExpiredTrialStatus(
       trialStatus: 'expired',
       updatedAt: new Date().toISOString(),
     });
-    return { ...business, trialStatus: 'expired' };
+    next = { ...business, trialStatus: 'expired' };
   }
-  return business;
+
+  const lifecycle = resolveSubscriptionLifecycle({
+    estadoSuscripcion: next.estadoSuscripcion,
+    enPrueba: next.enPrueba,
+    trialStatus: next.trialStatus,
+    trialEndDate: next.trialEndDate,
+    trialStartDate: next.trialStartDate,
+    paidUntil: next.billing?.paidUntil,
+    autoRenew: next.billing?.autoRenew,
+    mpPreapprovalStatus: next.billing?.mpPreapprovalStatus,
+    lastPaymentStatus: next.billing?.lastPaymentStatus,
+  });
+  const cameFromTrial =
+    next.enPrueba === true ||
+    next.trialStatus === 'expired' ||
+    next.trialStatus === 'converted' ||
+    next.source === 'self_service_trial';
+  const resolvedLifecycle =
+    !cameFromTrial && next.estadoSuscripcion === 'activa' && lifecycle === 'inactive'
+      ? 'active'
+      : lifecycle;
+  const erpStatus = lifecycleToErpStatus(resolvedLifecycle);
+  const shouldMarkInactive =
+    resolvedLifecycle === 'inactive' && cameFromTrial && next.estadoSuscripcion === 'activa';
+  const shouldMarkPastDue = resolvedLifecycle === 'past_due' && next.estadoSuscripcion !== 'vencida';
+  const shouldStoreLifecycle = next.billing?.lifecycleStatus !== resolvedLifecycle;
+
+  if (!shouldMarkInactive && !shouldMarkPastDue && !shouldStoreLifecycle) {
+    return next;
+  }
+
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    billing: {
+      ...(next.billing ?? {}),
+      lifecycleStatus: resolvedLifecycle,
+      updatedAt: now,
+    },
+    updatedAt: now,
+  };
+  if (shouldMarkInactive) {
+    patch.estadoSuscripcion = erpStatus;
+    patch.enPrueba = false;
+    patch.trialStatus = 'expired';
+  } else if (shouldMarkPastDue) {
+    patch.estadoSuscripcion = erpStatus;
+  }
+  await businessRef(next.id).set(patch, { merge: true });
+  return {
+    ...next,
+    estadoSuscripcion: shouldMarkInactive || shouldMarkPastDue ? erpStatus : next.estadoSuscripcion,
+    enPrueba: shouldMarkInactive ? false : next.enPrueba,
+    trialStatus: shouldMarkInactive ? 'expired' : next.trialStatus,
+    billing: {
+      ...(next.billing ?? {}),
+      lifecycleStatus: resolvedLifecycle,
+      updatedAt: now,
+    },
+    updatedAt: now,
+  };
 }
 
 export function isTrialActiveForBilling(business: BusinessRecord): boolean {

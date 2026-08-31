@@ -28,6 +28,13 @@ export type BusinessSubscriptionDraft = {
   precioPorAdministradorOverride: number | null;
   precioPorOperadorOverride: number | null;
   precioPorWhatsappOverride: number | null;
+  includedErpUsersOverride: number | null;
+  extraErpUserPriceOverride: number | null;
+  includedWhatsappNumbersOverride: number | null;
+  extraWhatsappNumberPriceOverride: number | null;
+  includedAiOverride: number | null;
+  usageModeOverride: 'limited' | 'unlimited' | null;
+  precioFinalOverride: number | null;
   descuentoMensual: number;
   notasComerciales: string;
   modulosOverride: Partial<Record<SubscriptionModuleId, ModuleOverrideState>>;
@@ -111,6 +118,42 @@ export type BusinessSubscriptionDraft = {
               1 WhatsApp incluido; las líneas extra (números autorizados) se cobran con este monto.
             </p>
           </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 rounded-lg border border-amber-100 bg-amber-50/40 p-3">
+        <div>
+          <h4 class="text-sm font-semibold text-gray-900">Override comercial (esta empresa)</h4>
+          <p class="text-xs text-gray-500 mt-0.5">
+            Vacío = default del plan. Completo = override del cliente.
+          </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="text-xs font-medium text-gray-500">Usuarios ERP incluidos
+            <input type="number" min="0" [(ngModel)]="pricingDraft.includedErpUsersOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'incErp'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm" placeholder="default del plan">
+          </label>
+          <label class="text-xs font-medium text-gray-500">$/usuario extra
+            <input type="number" min="0" [(ngModel)]="pricingDraft.extraErpUserPriceOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'extraErp'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </label>
+          <label class="text-xs font-medium text-gray-500">Números WhatsApp incluidos
+            <input type="number" min="0" [(ngModel)]="pricingDraft.includedWhatsappNumbersOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'incWa'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </label>
+          <label class="text-xs font-medium text-gray-500">$/número extra
+            <input type="number" min="0" [(ngModel)]="pricingDraft.extraWhatsappNumberPriceOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'extraWaN'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </label>
+          <label class="text-xs font-medium text-gray-500">Límite acciones / mes
+            <input type="number" min="0" [(ngModel)]="pricingDraft.includedAiOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'aiOver'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+          </label>
+          <label class="text-xs font-medium text-gray-500">Tope RILO Bot
+            <select [(ngModel)]="pricingDraft.usageModeOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'usageMode'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+              <option [ngValue]="null">Default del plan</option>
+              <option value="limited">Limitado</option>
+              <option value="unlimited">Libre</option>
+            </select>
+          </label>
+          <label class="text-xs font-medium text-gray-500">Precio final personalizado
+            <input type="number" min="0" [(ngModel)]="pricingDraft.precioFinalOverride" (ngModelChange)="emitChange()" [name]="namePrefix + 'final'" class="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm" placeholder="vacío = calculado">
+          </label>
         </div>
       </section>
 
@@ -304,6 +347,13 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
     precioPorAdministradorOverride: null as number | null,
     precioPorOperadorOverride: null as number | null,
     precioPorWhatsappOverride: null as number | null,
+    includedErpUsersOverride: null as number | null,
+    extraErpUserPriceOverride: null as number | null,
+    includedWhatsappNumbersOverride: null as number | null,
+    extraWhatsappNumberPriceOverride: null as number | null,
+    includedAiOverride: null as number | null,
+    usageModeOverride: null as 'limited' | 'unlimited' | null,
+    precioFinalOverride: null as number | null,
     descuentoMensual: 0,
     notasComerciales: '',
   };
@@ -441,6 +491,13 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
       precioPorAdministradorOverride: this.pricingDraft.precioPorAdministradorOverride,
       precioPorOperadorOverride: this.pricingDraft.precioPorOperadorOverride,
       precioPorWhatsappOverride: this.pricingDraft.precioPorWhatsappOverride,
+      includedErpUsersOverride: this.pricingDraft.includedErpUsersOverride,
+      extraErpUserPriceOverride: this.pricingDraft.extraErpUserPriceOverride,
+      includedWhatsappNumbersOverride: this.pricingDraft.includedWhatsappNumbersOverride,
+      extraWhatsappNumberPriceOverride: this.pricingDraft.extraWhatsappNumberPriceOverride,
+      includedAiOverride: this.pricingDraft.includedAiOverride,
+      usageModeOverride: this.pricingDraft.usageModeOverride,
+      precioFinalOverride: this.pricingDraft.precioFinalOverride,
       descuentoMensual: this.pricingDraft.descuentoMensual,
       notasComerciales: this.pricingDraft.notasComerciales,
       modulosOverride: { ...this.moduleOverrideState },
@@ -472,6 +529,13 @@ export class PlatformSubscriptionEditorComponent implements OnInit, OnChanges {
       precioPorAdministradorOverride: this.optionalAmount(d.precioPorAdministradorOverride),
       precioPorOperadorOverride: this.optionalAmount(d.precioPorOperadorOverride),
       precioPorWhatsappOverride: this.optionalAmount(d.precioPorWhatsappOverride),
+      includedErpUsersOverride: this.optionalAmount(d.includedErpUsersOverride),
+      extraErpUserPriceOverride: this.optionalAmount(d.extraErpUserPriceOverride),
+      includedWhatsappNumbersOverride: this.optionalAmount(d.includedWhatsappNumbersOverride),
+      extraWhatsappNumberPriceOverride: this.optionalAmount(d.extraWhatsappNumberPriceOverride),
+      includedAiOverride: this.optionalAmount(d.includedAiOverride),
+      usageModeOverride: d.usageModeOverride ?? null,
+      precioFinalOverride: this.optionalAmount(d.precioFinalOverride),
       descuentoMensual: Math.max(0, Number(d.descuentoMensual) || 0),
       notasComerciales: d.notasComerciales ?? '',
     };
@@ -552,6 +616,13 @@ export function emptyBusinessSubscriptionDraft(): BusinessSubscriptionDraft {
     precioPorAdministradorOverride: null,
     precioPorOperadorOverride: null,
     precioPorWhatsappOverride: null,
+    includedErpUsersOverride: null,
+    extraErpUserPriceOverride: null,
+    includedWhatsappNumbersOverride: null,
+    extraWhatsappNumberPriceOverride: null,
+    includedAiOverride: null,
+    usageModeOverride: null,
+    precioFinalOverride: null,
     descuentoMensual: 0,
     notasComerciales: '',
     modulosOverride: {},
@@ -593,6 +664,13 @@ export function businessSubscriptionDraftFromPublic(business: {
     precioPorAdministradorOverride: sub.precioPorAdministradorOverride ?? null,
     precioPorOperadorOverride: sub.precioPorOperadorOverride ?? null,
     precioPorWhatsappOverride: sub.precioPorWhatsappOverride ?? null,
+    includedErpUsersOverride: sub.includedErpUsersOverride ?? null,
+    extraErpUserPriceOverride: sub.extraErpUserPriceOverride ?? null,
+    includedWhatsappNumbersOverride: sub.includedWhatsappNumbersOverride ?? null,
+    extraWhatsappNumberPriceOverride: sub.extraWhatsappNumberPriceOverride ?? null,
+    includedAiOverride: sub.includedAiOverride ?? null,
+    usageModeOverride: sub.usageModeOverride ?? null,
+    precioFinalOverride: sub.precioFinalOverride ?? null,
     descuentoMensual: sub.descuentoMensual ?? 0,
     notasComerciales: sub.notasComerciales ?? '',
     modulosOverride: business.modulosOverride ?? sub.modulosOverride ?? {},
@@ -612,6 +690,13 @@ export function subscriptionDraftToPayload(draft: BusinessSubscriptionDraft) {
       precioPorAdministradorOverride: draft.precioPorAdministradorOverride,
       precioPorOperadorOverride: draft.precioPorOperadorOverride,
       precioPorWhatsappOverride: draft.precioPorWhatsappOverride,
+      includedErpUsersOverride: draft.includedErpUsersOverride,
+      extraErpUserPriceOverride: draft.extraErpUserPriceOverride,
+      includedWhatsappNumbersOverride: draft.includedWhatsappNumbersOverride,
+      extraWhatsappNumberPriceOverride: draft.extraWhatsappNumberPriceOverride,
+      includedAiOverride: draft.includedAiOverride,
+      usageModeOverride: draft.usageModeOverride,
+      precioFinalOverride: draft.precioFinalOverride,
       descuentoMensual: draft.descuentoMensual,
       notasComerciales: draft.notasComerciales,
       modulosOverride: draft.modulosOverride,

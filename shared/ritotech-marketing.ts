@@ -10,10 +10,14 @@ import type { CommercialCatalog } from './commercial-catalog.ts';
 import {
   amountMonthlyFor,
   DEFAULT_COMMERCIAL_CATALOG,
+  extraErpUserPriceFor,
+  extraWhatsappNumberPriceFor,
   formatCatalogPriceLabel,
   litePitch,
   overlayUsagePacksForCountry,
+  parseUsageMode,
   usagePackPriceLabel,
+  whatsappActionsLabel,
 } from './commercial-catalog.ts';
 
 export interface RitotechUseCase {
@@ -52,7 +56,7 @@ export const RILOTECH_HERO = {
   subtitle:
     'Controlá tu negocio sin planillas ni anotaciones sueltas. Registrá pedidos, ventas, cobros y caja desde WhatsApp o desde la web.',
   tagline: 'Todo en un solo lugar, simple y rápido.',
-  ctaPrimary: 'Probar 30 días gratis',
+  ctaPrimary: `Probar ${RILOBOT_TRIAL_DAYS} días gratis`,
   ctaSecondary: 'Ver cómo funciona',
   microcopy: 'Sin tarjeta · Configuración guiada · Cancelás cuando quieras',
 };
@@ -108,7 +112,7 @@ export const RILOTECH_HOW_IT_WORKS = [
   },
   {
     step: '2',
-    title: 'Probá 30 días gratis',
+    title: `Probá ${RILOBOT_TRIAL_DAYS} días gratis`,
     description: 'Sin tarjeta. Cargá tu negocio real. Al vencer, tus datos siguen guardados.',
   },
   {
@@ -123,14 +127,13 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
   {
     id: 'whatsapp',
     label: TRIAL_PRODUCT_LABELS.whatsapp,
-    headline: 'Gestión rápida desde WhatsApp.',
+    headline: 'Escribile como hablás. Tu agente con IA trabaja sobre tu negocio.',
     trialIncludes: `${RILOBOT_TRIAL_DAYS} días gratis, sin tarjeta`,
     afterTrial: 'Al vencer, contratá el plan mensual para seguir operando. Tus datos no se borran.',
     trialDays: trialDaysForProduct('whatsapp'),
     whatsapp: true,
     panelWeb: false,
     includes: [
-      '1 administrador incluido',
       'Pedidos, ventas, compras, cobros y caja',
       'Confirmación SÍ/NO antes de guardar',
       'Consulta de saldos y caja del día',
@@ -140,7 +143,7 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
   {
     id: 'completo',
     label: TRIAL_PRODUCT_LABELS.completo,
-    headline: 'Bot + Gestión: WhatsApp y panel web juntos.',
+    headline: 'Usalo por WhatsApp. Controlalo en RILO Gestión.',
     trialIncludes: `${PANEL_TRIAL_DAYS} días gratis, sin tarjeta`,
     afterTrial: 'Al vencer, contratá RILO Completo. Tus datos no se borran.',
     trialDays: trialDaysForProduct('completo'),
@@ -150,7 +153,6 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     badgeLabel: 'Más elegido',
     includes: [
       'Todo RILO Bot + RILO Gestión',
-      '1 WhatsApp + 1 administrador incluidos',
       'Misma empresa, misma información',
     ],
   },
@@ -164,7 +166,6 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     whatsapp: false,
     panelWeb: true,
     includes: [
-      '1 administrador incluido',
       'Clientes, productos, proveedores',
       'Pedidos, ventas, compras y caja',
       'Inicio y configuración básica',
@@ -196,7 +197,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'solo-whatsapp',
     question: '¿Puedo usar solo RILO Bot sin RILO Gestión?',
     answer:
-      'Sí. RILO Bot cubre pedidos, ventas, compras, cobros y caja por WhatsApp. RILO Gestión se suma después en Planes, con la misma cuenta. Email o WhatsApp ya usados no crean otra empresa.',
+      'Sí. RILO Bot cubre pedidos, ventas, compras, cobros y caja por WhatsApp. En Inicio ves tu cupo y cómo usarlo. RILO Gestión se suma después en Planes, con la misma cuenta. Email o WhatsApp ya usados no crean otra empresa.',
   },
   {
     id: 'solo-erp',
@@ -230,13 +231,19 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'precio',
     question: '¿Cuánto cuesta después?',
     answer:
-      'Los precios de lista se ven en Planes y los publica Superadmin. Primero 30 días gratis; después contratás el plan mensual. Completo sale menos que Bot + Gestión por separado. Si ya pagás, te avisamos antes de cambiar tu cuota.',
+      `Los precios de lista se ven en Planes y los publica Superadmin. Primero ${RILOBOT_TRIAL_DAYS} días gratis; después contratás el plan mensual. Completo sale menos que Bot + Gestión por separado. Si ya pagás, te avisamos antes de cambiar tu cuota.`,
   },
   {
     id: 'cupos',
-    question: '¿Qué pasa si me quedo corto de mensajes o de IA?',
+    question: '¿Qué pasa si me quedo corto de mensajes o de acciones por WhatsApp?',
     answer:
       'Cada plan incluye un cupo mensual. SÍ, NO y elegir un número también cuentan. Si operás más, en Mi plan comprás un pack extra para ese mes, al mismo precio que ves en Planes.',
+  },
+  {
+    id: 'extras',
+    question: '¿Puedo agregar usuarios o números de WhatsApp?',
+    answer:
+      'Sí, en los tres planes. RILO Bot y Completo incluyen 1 número; Gestión incluye 1 usuario de panel. Extra usuarios y extra números se suman al mismo total mensual. Lo confirmás antes de agregar; se cobra en la próxima renovación.',
   },
   {
     id: 'instalacion',
@@ -274,26 +281,58 @@ export function priceLabelFromCatalog(
 
 export function quotaLinesForProduct(
   catalog: CommercialCatalog,
-  productId: TrialProductId
+  productId: TrialProductId,
+  country: BillingCountryCode = 'UY'
 ): string[] {
   const quote = catalog.products[productId];
   const lines: string[] = [];
-  if (quote?.includedWhatsapp > 0) {
+  const hasBot = productId === 'whatsapp' || productId === 'completo';
+  const actionsLine = whatsappActionsLabel(quote?.includedAi ?? 0, parseUsageMode(quote?.usageMode));
+  if (hasBot && actionsLine) lines.push(actionsLine);
+  if (hasBot && (quote?.includedWhatsapp ?? 0) > 0) {
     lines.push(`${quote.includedWhatsapp.toLocaleString('es-UY')} mensajes de WhatsApp al mes`);
   }
-  if (quote?.includedAi > 0) {
-    lines.push(`${quote.includedAi.toLocaleString('es-UY')} acciones IA al mes`);
+  if (hasBot) {
+    const numbers = quote?.includedWhatsappNumbers ?? 1;
+    if (numbers > 0) {
+      lines.push(
+        numbers === 1 ? '1 número de WhatsApp incluido' : `${numbers} números de WhatsApp incluidos`
+      );
+    }
+    const extraWa = extraWhatsappNumberPriceFor(catalog, productId, country);
+    if (extraWa > 0) {
+      lines.push(`Número adicional: ${formatCatalogPriceLabel(country, extraWa)}`);
+    }
+  }
+  const users = quote?.includedErpUsers ?? 1;
+  if (users > 0) {
+    lines.push(
+      productId === 'whatsapp'
+        ? users === 1
+          ? '1 usuario incluido'
+          : `${users} usuarios incluidos`
+        : users === 1
+          ? '1 usuario de RILO Gestión incluido'
+          : `${users} usuarios de RILO Gestión incluidos`
+    );
+    const extraUser = extraErpUserPriceFor(catalog, productId, country);
+    if (extraUser > 0) {
+      lines.push(`Usuario adicional: ${formatCatalogPriceLabel(country, extraUser)}`);
+    }
   }
   return lines;
 }
 
-export function pricingTiersFromCatalog(catalog: CommercialCatalog): RitotechPricingTier[] {
+export function pricingTiersFromCatalog(
+  catalog: CommercialCatalog,
+  country: BillingCountryCode = 'UY'
+): RitotechPricingTier[] {
   return RILOTECH_PRICING_TIERS.map((tier) => ({
     ...tier,
     trialDays: catalog.trialDays,
     trialIncludes: `${catalog.trialDays} días gratis, sin tarjeta`,
     afterTrial: litePitch(catalog),
-    includes: [...quotaLinesForProduct(catalog, tier.id), ...tier.includes],
+    includes: [...quotaLinesForProduct(catalog, tier.id, country), ...tier.includes],
   }));
 }
 
@@ -343,7 +382,7 @@ export function faqFromCatalog(
         answer:
           `Cada plan incluye un cupo mensual. SÍ, NO y elegir un número también cuentan: así el bot sigue claro. ` +
           `Si te quedás corto, en Mi plan comprás un pack de ${wa.quantity.toLocaleString('es-UY')} mensajes ` +
-          `(${usagePackPriceLabel(packed, 'whatsapp', country)}) o ${ai.quantity.toLocaleString('es-UY')} acciones IA ` +
+          `(${usagePackPriceLabel(packed, 'whatsapp', country)}) o ${ai.quantity.toLocaleString('es-UY')} acciones por WhatsApp ` +
           `(${usagePackPriceLabel(packed, 'ai', country)}). El plan se cobra aparte y se renueva solo.`,
       };
     }

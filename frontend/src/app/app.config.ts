@@ -1,16 +1,14 @@
-import { APP_INITIALIZER, ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
-import { firstValueFrom, of } from 'rxjs';
-import { catchError, timeout } from 'rxjs/operators';
-import { AuthService } from './core/services/auth.service';
+import { ApplicationConfig, provideZoneChangeDetection, importProvidersFrom } from '@angular/core';
 import { provideRouter, Routes, withInMemoryScrolling } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
-import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, supervisorGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
+import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, botOnlyHomeGuard, supervisorGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone, Lock } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Home, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone, Lock } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
+import { ClientHomeComponent, HomeRedirectComponent } from './features/home/client-home.component';
 import { ClientFormComponent } from './features/clients/client-form.component';
 import { ClientHistorialComponent } from './features/clients/client-historial.component';
 import { ClientsComponent } from './features/clients/clients.component';
@@ -53,8 +51,13 @@ import { RitotechProductPageComponent } from './features/public/ritotech-product
 const companyRoutes: Routes = [
   {
     path: '',
-    redirectTo: 'dashboard',
     pathMatch: 'full',
+    component: HomeRedirectComponent,
+  },
+  {
+    path: 'inicio',
+    component: ClientHomeComponent,
+    canActivate: [botOnlyHomeGuard, trialActiveGuard],
   },
   {
     path: 'dashboard',
@@ -233,7 +236,7 @@ const companyRoutes: Routes = [
 function withCompanyPanelGuards(routes: Routes): Routes {
   return routes.map((route) => {
     const path = route.path ?? '';
-    if (route.redirectTo || path === 'mi-cuenta' || path === 'apariencia' || path === 'plan' || path === '**') {
+    if (route.redirectTo || path === '' || path === 'inicio' || path === 'mi-cuenta' || path === 'apariencia' || path === 'plan' || path === '**') {
       return route;
     }
     return {
@@ -362,6 +365,7 @@ export const appConfig: ApplicationConfig = {
     importProvidersFrom(
       LucideAngularModule.pick({
         LayoutDashboard,
+        Home,
         Users,
         Package,
         ShoppingCart,
@@ -418,19 +422,6 @@ export const appConfig: ApplicationConfig = {
         Lock,
       })
     ),
-    {
-      provide: APP_INITIALIZER,
-      multi: true,
-      useFactory: (auth: AuthService) => () => {
-        void firstValueFrom(
-          auth.initialize().pipe(
-            timeout(12000),
-            catchError(() => of(false))
-          )
-        );
-      },
-      deps: [AuthService],
-    },
   ],
 };
 

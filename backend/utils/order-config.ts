@@ -27,6 +27,13 @@ export type OrderExtraCostPreset = {
   costo: number;
 };
 
+/** Flag real del ERP: «Costos detallados por producto» en config.pedidos. Default true. */
+export function businessAllowsOrderExtraCosts(
+  pedidos?: { costosPersonalizacionDetallados?: unknown } | null
+): boolean {
+  return pedidos?.costosPersonalizacionDetallados !== false;
+}
+
 export type OrderPedidosConfig = {
   costosPersonalizacionDetallados: boolean;
   impresionDosVias: boolean;
@@ -245,7 +252,7 @@ export function normalizeOrderPedidosConfig(pedidos: Record<string, unknown> = {
   }
 
   return {
-    costosPersonalizacionDetallados: pedidos.costosPersonalizacionDetallados !== false,
+    costosPersonalizacionDetallados: businessAllowsOrderExtraCosts(pedidos),
     impresionDosVias: pedidos.impresionDosVias === true,
     impresionDosViasHorizontal: pedidos.impresionDosViasHorizontal === true,
     impresionCasillasProductos: pedidos.impresionCasillasProductos === true,
@@ -314,6 +321,63 @@ export function orderEstadoRequiresFullStock(
 
 export function orderUsesReservedStock(config: Pick<OrderPedidosConfig, 'modoStock'>): boolean {
   return config.modoStock !== 'directo';
+}
+
+export type StockDiscountAskReason = 'no_reserved_units' | 'choose_scope';
+
+/** Decisión de alcance que el ERP ya ofrece (panel / WhatsApp). */
+export type StockDiscountAsk = {
+  reason: StockDiscountAskReason;
+  options: OrderPhysicalStockScope[];
+  defaultScope: OrderPhysicalStockScope;
+  totalReservado: number;
+  totalCompleto: number;
+};
+
+/**
+ * A partir del preview del ERP: cuándo hay que preguntar alcance y qué opciones son válidas.
+ * No inventa políticas: si el default se puede aplicar, no pregunta.
+ */
+export function resolveStockDiscountAsk(preview: {
+  willConsume: boolean;
+  blocked: boolean;
+  canChooseScope: boolean;
+  requiresFullStock: boolean;
+  defaultScope: OrderPhysicalStockScope;
+  totalReservado: number;
+  totalCompleto: number;
+}): StockDiscountAsk | null {
+  if (preview.blocked || !preview.willConsume) return null;
+
+  const canReserved = preview.totalReservado > 0;
+  const canFull = preview.totalCompleto > 0;
+  const defaultFails =
+    preview.defaultScope === 'solo_reservado' && !canReserved && canFull;
+
+  if (defaultFails) {
+    return {
+      reason: 'no_reserved_units',
+      options: ['pedido_completo'],
+      defaultScope: 'pedido_completo',
+      totalReservado: preview.totalReservado,
+      totalCompleto: preview.totalCompleto,
+    };
+  }
+
+  if (!preview.canChooseScope) return null;
+
+  const options: OrderPhysicalStockScope[] = [];
+  if (canReserved) options.push('solo_reservado');
+  if (canFull) options.push('pedido_completo');
+  if (options.length <= 1) return null;
+
+  return {
+    reason: 'choose_scope',
+    options,
+    defaultScope: preview.defaultScope,
+    totalReservado: preview.totalReservado,
+    totalCompleto: preview.totalCompleto,
+  };
 }
 
 export function getOrderEstadoLabel(

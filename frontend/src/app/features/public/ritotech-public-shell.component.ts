@@ -2,6 +2,7 @@ import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 
 @Component({
   selector: 'app-ritotech-public-shell',
@@ -108,17 +109,18 @@ import { AuthService } from '../../core/services/auth.service';
               </button>
             </ng-container>
             <ng-container *ngIf="!auth.currentUser">
-              <a
-                routerLink="/login"
-                routerLinkActive="text-white"
+              <button
+                *ngIf="!isLoginPage"
+                type="button"
+                (click)="goToLogin()"
                 class="inline-flex px-3 py-1.5 text-sm text-gray-300 hover:text-white">
                 Ingresar
-              </a>
+              </button>
               <a
                 routerLink="/registro"
                 [queryParams]="{ producto: 'completo' }"
                 class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
-                Probar 30 días
+                Probar {{ trialDays }} días
               </a>
             </ng-container>
           </div>
@@ -153,11 +155,20 @@ import { AuthService } from '../../core/services/auth.service';
 export class RitotechPublicShellComponent {
   private router = inject(Router);
   readonly auth = inject(AuthService);
+  readonly trialDays = DEFAULT_TRIAL_DAYS;
 
   get homeCtaLabel(): string {
     if (this.auth.canAccessErpWeb) return 'Ir al panel';
-    if (this.auth.canAccessWhatsapp) return 'Mi cuenta';
+    if (this.auth.canAccessWhatsapp) return 'Inicio';
     return 'Mi cuenta';
+  }
+
+  get isLoginPage(): boolean {
+    return this.router.url.split('?')[0] === '/login';
+  }
+
+  goToLogin(): void {
+    void this.router.navigateByUrl('/login?manual=1');
   }
 
   logout() {

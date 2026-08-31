@@ -8,7 +8,7 @@ import { RitotechProductCtaComponent } from './ritotech-product-cta.component';
 import { RILOBOT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 import { SHOW_ARGENTINA_BILLING, type BillingCountryCode } from '../../../../../shared/billing-catalog.ts';
 import type { CommercialCatalog } from '../../../../../shared/commercial-catalog.ts';
-import { DEFAULT_COMMERCIAL_CATALOG, commercialFunnelSteps, completeVsSeparate, formatCatalogPriceLabel, stayFreePitch as buildStayFreePitch, trialCtaForProduct } from '../../../../../shared/commercial-catalog.ts';
+import { DEFAULT_COMMERCIAL_CATALOG, commercialFunnelSteps, completeVsSeparate, extraErpUserPriceFor, extraWhatsappNumberPriceFor, formatCatalogPriceLabel, parseUsageMode, stayFreePitch as buildStayFreePitch, trialCtaForProduct, type CommercialProductQuote } from '../../../../../shared/commercial-catalog.ts';
 import {
   RILOTECH_AUDIENCE_PITCH,
   faqFromCatalog,
@@ -55,7 +55,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
             {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}</a>.
         </p>
         <div *ngIf="sumarProduct" class="mt-4 max-w-xl mx-auto">
-          <app-ritotech-product-cta [product]="sumarProduct" [guestLabel]="'Probar 30 días'"></app-ritotech-product-cta>
+          <app-ritotech-product-cta [product]="sumarProduct" [guestLabel]="'Probar ' + trialDays + ' días'"></app-ritotech-product-cta>
         </div>
         <div class="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div
@@ -223,7 +223,7 @@ const COUNTRY_STORAGE_KEY = 'rilo_billing_country';
                 </div>
                 <app-ritotech-product-cta
                   [product]="plan.id"
-                  guestLabel="Probar 30 días"
+                  [guestLabel]="'Probar ' + trialDays + ' días'"
                   variant="compact">
                 </app-ritotech-product-cta>
               </div>
@@ -313,7 +313,22 @@ export class RitotechPlansComponent implements OnInit {
   }
 
   get plans() {
-    return pricingTiersFromCatalog(this.catalog);
+    return pricingTiersFromCatalog(this.catalog, this.country);
+  }
+
+  formatWhatsappActions(quote: CommercialProductQuote): string {
+    if (parseUsageMode(quote.usageMode) === 'unlimited') return 'Libre';
+    return quote.includedAi > 0 ? quote.includedAi.toLocaleString('es-UY') : '—';
+  }
+
+  extraUserLabel(productId: TrialProductId): string {
+    const amount = extraErpUserPriceFor(this.catalog, productId, this.country);
+    return amount > 0 ? formatCatalogPriceLabel(this.country, amount) : '—';
+  }
+
+  extraNumberLabel(productId: TrialProductId): string {
+    const amount = extraWhatsappNumberPriceFor(this.catalog, productId, this.country);
+    return amount > 0 ? formatCatalogPriceLabel(this.country, amount) : '—';
   }
 
   get matrix() {
@@ -327,7 +342,11 @@ export class RitotechPlansComponent implements OnInit {
       { label: 'Cargar desde el celular', bot: '✓', panel: '—', both: '✓' },
       { label: 'Listados y ficha en la web', bot: '—', panel: '✓', both: '✓' },
       { label: 'Mensajes WhatsApp / mes', bot: fmt(wa.whatsapp.includedWhatsapp), panel: '—', both: fmt(wa.completo.includedWhatsapp) },
-      { label: 'Acciones IA / mes', bot: fmt(wa.whatsapp.includedAi), panel: fmt(wa.erp.includedAi), both: fmt(wa.completo.includedAi) },
+      { label: 'Acciones por WhatsApp / mes', bot: this.formatWhatsappActions(wa.whatsapp), panel: this.formatWhatsappActions(wa.erp), both: this.formatWhatsappActions(wa.completo) },
+      { label: 'Números de WhatsApp incluidos', bot: fmt(wa.whatsapp.includedWhatsappNumbers ?? 1), panel: '—', both: fmt(wa.completo.includedWhatsappNumbers ?? 1) },
+      { label: 'Usuarios incluidos', bot: fmt(wa.whatsapp.includedErpUsers ?? 1), panel: fmt(wa.erp.includedErpUsers ?? 1), both: fmt(wa.completo.includedErpUsers ?? 1) },
+      { label: 'Usuario adicional / mes', bot: this.extraUserLabel('whatsapp'), panel: this.extraUserLabel('erp'), both: this.extraUserLabel('completo') },
+      { label: 'Número WhatsApp adicional / mes', bot: this.extraNumberLabel('whatsapp'), panel: '—', both: this.extraNumberLabel('completo') },
     ];
   }
 

@@ -77,6 +77,32 @@ function isValidLoginUsername(login: string): boolean {
   return /^[a-z0-9._-]{2,40}$/.test(login);
 }
 
+const LOGIN_BUSINESS_INFO_TIMEOUT_MS = 12_000;
+const ME_BUSINESS_INFO_TIMEOUT_MS = 12_000;
+
+async function loadLoginBusinessInfo(
+  businessId: string,
+  businessRecord: Awaited<ReturnType<typeof assertBusinessActive>>
+) {
+  try {
+    return await Promise.race([
+      toSessionBusinessInfo(businessId, businessRecord),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('BUSINESS_INFO_TIMEOUT')),
+          LOGIN_BUSINESS_INFO_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } catch (error) {
+    console.warn('[auth] login: datos de empresa lentos o fallidos', {
+      businessId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
 function mapProfileUpdateError(error: unknown): { status: number; message: string } | null {
   const code = error instanceof Error ? error.message : '';
   if (code === 'NAME_REQUIRED') {
@@ -144,12 +170,12 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const business = await toSessionBusinessInfo(businessId, businessRecord);
+    const business = await loadLoginBusinessInfo(businessId, businessRecord);
     const { touchBusinessLogin } = await import('../auth/platform-trials.ts');
     void touchBusinessLogin(businessId);
     res.json({
       ...companySessionResponse(toPublicUser(user), businessId),
-      business,
+      ...(business ? { business } : {}),
     });
   } catch (error) {
     const mapped = mapAuthError(error);
@@ -254,12 +280,27 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
     });
   }
 
-  const business = await toSessionBusinessInfo(req.auth!.businessId);
+  let business: Awaited<ReturnType<typeof toSessionBusinessInfo>> | undefined;
+  try {
+    business = await Promise.race([
+      toSessionBusinessInfo(req.auth!.businessId),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('ME_BUSINESS_TIMEOUT')), ME_BUSINESS_INFO_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn('[auth] /me: datos de empresa lentos o fallidos', {
+      businessId: req.auth!.businessId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    business = undefined;
+  }
+
   res.json({
     scope: 'company',
     businessId: req.auth!.businessId,
     user: req.auth!.user,
-    business,
+    ...(business ? { business } : {}),
   });
 });
 

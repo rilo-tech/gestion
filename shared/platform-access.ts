@@ -11,17 +11,17 @@ export const TRIAL_PRODUCT_LABELS: Record<TrialProductId, string> = {
 
 /** Frase corta bajo el nombre del producto (landing / planes). */
 export const TRIAL_PRODUCT_TAGLINES: Record<TrialProductId, string> = {
-  whatsapp: 'Gestión rápida desde WhatsApp',
+  whatsapp: 'Tu agente con IA por WhatsApp',
   erp: 'Panel web',
   completo: 'Bot + Gestión',
 };
 
 export const TRIAL_PRODUCT_DESCRIPTIONS: Record<TrialProductId, string> = {
   whatsapp:
-    'Gestión rápida desde WhatsApp. Escribís lo que pasó, RILO Bot lo entiende y antes de guardar te muestra un resumen para que confirmes.',
+    'Escribile como hablás. Tu agente con IA entiende lo que necesitás y trabaja sobre tu negocio. Antes de guardar te muestra un resumen para que confirmes.',
   erp: 'Panel web para controlar tu negocio en la computadora. Revisá clientes, productos, pedidos, ventas, compras y caja desde un solo lugar.',
   completo:
-    'Bot + Gestión: cargá rápido desde WhatsApp y controlá todo desde la web. Una sola información, dos formas de trabajar.',
+    'Usalo por WhatsApp cuando estás trabajando. Controlalo desde RILO Gestión cuando querés ver todo. Una sola información, dos formas de trabajar.',
 };
 
 export interface ClientPlatformAccess {
