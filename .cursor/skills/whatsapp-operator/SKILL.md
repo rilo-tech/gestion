@@ -4,13 +4,52 @@ description: >-
   Guides changes to the RILO WhatsApp operator (backend/whatsapp). Use when
   editing WhatsApp parsing, catalog matching, conversation state, delivery
   dates, client/product confirmation, or when the bot loses chat context.
+  For RILO Bot V4 follow docs/rilobot-v4-conversation-contract.md — never
+  add phrase-regex rules; use Agent + tools + ERP.
 ---
 
 # WhatsApp operator
 
 The bot is a stateful operator in Firebase, not a Cursor MCP agent. Do not add MCP servers to “remember” WhatsApp chats.
 
-## Conversation contract
+## RILO Bot V4 (contrato definitivo)
+
+**Canonical spec:** `docs/rilobot-v4-conversation-contract.md`  
+**Cursor rule:** `.cursor/rules/rilobot-v4-conversation.mdc`
+
+```
+Natural message → OpenAI Agent → structured tool call → validate/resolve → ERP → natural reply
+```
+
+### Non‑negotiables
+
+- **IA interprets Spanish. Backend does NOT.** After the LLM, never re-parse `rawMessage` for intent/entities.
+- **No new phrase regex** (`includes`, semantic regex, synonym lists, test phrases as prod rules).
+- **Current turn > context > defaults** — explicit entity in this message wins over `focusEntities`.
+- **Filter preservation** — unresolved filter → `ENTITY_NOT_FOUND` / `ENTITY_AMBIGUOUS`, never open global query.
+- **Deterministic UI only** when state is explicit:
+  - `operationPlan` + exact sí/no → `v4-confirm.ts`
+  - `awaiting:candidate_selection` + exact number → `v4-candidate-selection.ts`
+  - number + extra text → pick then send remainder to Agent
+
+### V4 files
+
+| File | Role |
+|------|------|
+| `handle-v4-turn.ts` | Turn router (confirm → candidate pick → agent) |
+| `v4-confirm.ts` | Frozen plan sí/no |
+| `v4-candidate-selection.ts` | Numbered disambiguation state |
+| `v4-resume-blocked-tool.ts` | Continue blocked read tool after pick |
+| `agent/openai-agent.ts` | LLM + tool loop |
+| `agent/agent-context.ts` | System + developer context |
+| `agent/tools/read-tools.ts` | ERP reads + filter_blocked |
+| `agent/tools/write-tools.ts` | Write → frozen OperationPlan |
+
+Tests: `npm run test:v4` — test **capabilities**, not literal user strings.
+
+Legacy engines (`llm_first`, `parseWithRules`) remain for non-V4 tenants; do not extend them when fixing V4 behavior.
+
+## Conversation contract (legacy / shared state)
 
 1. Persist the current step: `pendingIntent`, `activeTask`, `queuedTasks`, `lastQuery`, `listContext`. Multi-item orders use `entities.items[]`; each product is resolved independently. All ERP actions (not only pedidos) share this ConversationState.
 2. On each inbound text, `isFreshTaskUtterance` first: a complete **other** operation (cash in/out, purchase, new order) drops pending. A status/payment tweak while confirming the **same** order (`confirm:…`, `order_action`) is not fresh: keep `targetOrderId` and re-ask SÍ/NO. Never jump to `lastOperation` of another client. A focused order (`resolved` + `active` via `applyOrderLock`) stays locked unless the owner names another # or another client.

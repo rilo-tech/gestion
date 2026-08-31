@@ -599,7 +599,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     let list = this.visibleOrders;
 
     if (this.listFilter === 'pendientes-entrega') {
-      list = list.filter((order) => isOrderPendingDelivery(order));
+      list = list.filter((order) => isOrderPendingDelivery(order, this.appConfig.pedidos));
     }
 
     if (this.statusCardFilter) {

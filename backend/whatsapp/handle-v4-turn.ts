@@ -25,12 +25,19 @@ import {
   shouldExecuteFrozenPlan,
   shouldReinterpretPendingConfirm,
 } from './v4-confirm.ts';
+import {
+  getCandidateSelectionAwaiting,
+  resolveCandidateSelectionTurn,
+  focusPatchFromCandidate,
+} from './v4-candidate-selection.ts';
+import { resumeBlockedToolAfterSelection } from './v4-resume-blocked-tool.ts';
 
 const AI_QUOTA_REPLY = 'Llegaste al límite de acciones de tu plan.';
 
 export type HandleV4Deps = {
   executePlan?: typeof executeAgentOperationPlan;
   createAgent?: () => ConversationAgent;
+  resumeAfterSelection?: typeof resumeBlockedToolAfterSelection;
   rememberOp?: typeof rememberLastOperation;
   clearState?: typeof clearConversationState;
   saveState?: typeof saveConversationState;
@@ -150,6 +157,85 @@ export async function handleV4WhatsappTurn(
       { role: 'bot', text: reply },
     ]);
     return { reply, intent: 'v4_cancel', executed: false, businessId: tenant.businessId };
+  }
+
+  const candidateAwaiting = getCandidateSelectionAwaiting(state);
+  if (candidateAwaiting) {
+    const resolution = resolveCandidateSelectionTurn(text, candidateAwaiting);
+    if (resolution.kind === 'invalid') {
+      const reply = `Esa opción no está en la lista. Elegí del 1 al ${resolution.max}.`;
+      await appendTurns(tenant.businessId, phone, [
+        { role: 'user', text },
+        { role: 'bot', text: reply },
+      ]);
+      return {
+        reply,
+        intent: 'v4_candidate_invalid',
+        executed: false,
+        businessId: tenant.businessId,
+      };
+    }
+    if (resolution.kind === 'selected') {
+      if (resolution.remainder) {
+        await appendTurns(tenant.businessId, phone, [{ role: 'user', text }]);
+        const focusPatch = {
+          focusEntities: focusPatchFromCandidate(
+            candidateAwaiting.entityType,
+            resolution.option,
+            state?.focusEntities
+          ),
+        };
+        state = await saveState(tenant.businessId, phone, {
+          ...focusPatch,
+          pendingIntent: null,
+          pendingPayload: null,
+          pendingPrompt: null,
+          activeTask: null,
+        });
+        const agent = (deps.createAgent ?? createConversationAgent)();
+        const result = await agent.runTurn({
+          tenant,
+          state,
+          text: resolution.remainder,
+          messageId: message.messageId,
+          transcript: resolution.remainder,
+        });
+        const patch = {
+          ...(result.statePatch ?? {}),
+          operationPlan: result.operationPlan
+            ? (result.operationPlan as unknown as Record<string, unknown>)
+            : result.statePatch?.operationPlan,
+        };
+        if (Object.keys(patch).length) {
+          state = await saveState(tenant.businessId, phone, patch);
+        }
+        await appendTurns(tenant.businessId, phone, [{ role: 'bot', text: result.reply }]);
+        return {
+          reply: result.reply,
+          intent: result.intent,
+          executed: result.executed,
+          businessId: tenant.businessId,
+        };
+      }
+
+      const resumed = await (deps.resumeAfterSelection ?? resumeBlockedToolAfterSelection)({
+        tenant,
+        state,
+        awaiting: candidateAwaiting,
+        option: resolution.option,
+      });
+      state = await saveState(tenant.businessId, phone, resumed.statePatch);
+      await appendTurns(tenant.businessId, phone, [
+        { role: 'user', text },
+        { role: 'bot', text: resumed.reply },
+      ]);
+      return {
+        reply: resumed.reply,
+        intent: 'v4_candidate_selected',
+        executed: false,
+        businessId: tenant.businessId,
+      };
+    }
   }
 
   if (shouldExecuteFrozenPlan(state?.pendingIntent, text)) {

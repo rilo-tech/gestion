@@ -1,5 +1,10 @@
 import { formatWhatsappMessage, waBold } from '../../../shared/whatsapp-format.ts';
 import { presentEntityList, presentOrderListItem } from '../conversation-query.ts';
+import {
+  CANDIDATE_SELECTION_PROMPT,
+  normalizeCandidateRows,
+  type CandidateSelectionEntityType,
+} from '../v4-candidate-selection.ts';
 import type { AgentOperationPlan } from './tool-types.ts';
 
 function money(value: number): string {
@@ -89,14 +94,27 @@ export function presentClientList(output: Record<string, unknown>): string {
 }
 
 export function presentAmbiguousEntity(message: string, candidates: unknown[]): string {
-  const lines = candidates.slice(0, 5).map((row) => {
-    const item = row as { name?: string; nombre?: string };
-    return `• ${item.name ?? item.nombre ?? 'Opción'}`;
-  });
+  return presentNumberedCandidateSelection('client', candidates, message);
+}
+
+const ENTITY_HEADINGS: Record<string, string> = {
+  client: 'Encontré más de un cliente',
+  product: 'Encontré más de un producto',
+  supplier: 'Encontré más de un proveedor',
+  order: 'Encontré más de un pedido',
+};
+
+export function presentNumberedCandidateSelection(
+  entityType: CandidateSelectionEntityType,
+  candidates: unknown[],
+  title?: string
+): string {
+  const options = normalizeCandidateRows(entityType, candidates);
+  const lines = options.map((row) => `${row.index}. ${row.label}`);
   return formatWhatsappMessage({
-    title: message,
+    title: title ?? ENTITY_HEADINGS[entityType] ?? 'Encontré más de una opción',
     lines,
-    ask: 'Decime cuál.',
+    ask: CANDIDATE_SELECTION_PROMPT,
   });
 }
 

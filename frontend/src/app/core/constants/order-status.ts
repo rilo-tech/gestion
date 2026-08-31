@@ -44,11 +44,7 @@ export function normalizeOrderStatus(
   const value = (estado ?? '').toLowerCase().trim();
 
   if (value === 'borrador' || value.includes('borrador')) return 'borrador';
-  if (value === 'pendiente' || value.includes('pendiente')) return 'pendiente';
-  if (value === 'en_produccion' || value.includes('produccion') || value.includes('producción')) {
-    return 'en_produccion';
-  }
-  if (value === 'listo' || value.includes('listo')) return 'listo';
+  if (value === 'cancelado' || value.includes('cancelad')) return 'cancelado';
   if (
     value === 'entregado_con_saldo' ||
     value.includes('entregado_con_saldo') ||
@@ -56,13 +52,18 @@ export function normalizeOrderStatus(
   ) {
     return 'entregado_con_saldo';
   }
-  if (value === 'entregado' || value.includes('entregado total')) {
+  if (
+    value === 'entregado' ||
+    value.includes('entregado total') ||
+    (value.includes('entregad') && !value.includes('saldo'))
+  ) {
     return 'entregado';
   }
-  if (value.includes('entregad') && !value.includes('saldo')) {
-    return 'entregado';
+  if (value === 'pendiente' || value.includes('pendiente')) return 'pendiente';
+  if (value === 'en_produccion' || value.includes('produccion') || value.includes('producción')) {
+    return 'en_produccion';
   }
-  if (value === 'cancelado' || value.includes('cancelad')) return 'cancelado';
+  if (value === 'listo' || value.includes('listo')) return 'listo';
 
   return 'otro';
 }
@@ -186,8 +187,83 @@ export function isOrderDeliveryEstado(estado?: string): boolean {
   return status === 'entregado' || status === 'entregado_con_saldo';
 }
 
+export type PendingOrderStatusCounts = {
+  pendiente: number;
+  en_produccion: number;
+  listo: number;
+};
+
+export const EMPTY_PENDING_ORDER_STATUS_COUNTS: PendingOrderStatusCounts = {
+  pendiente: 0,
+  en_produccion: 0,
+  listo: 0,
+};
+
 /** Pedidos confirmados (en curso) que aún no fueron entregados. */
-export function isOrderPendingDelivery(order: { estado?: string }): boolean {
-  const status = normalizeOrderStatus(order.estado);
+export function isOrderPendingDelivery(
+  order: { estado?: string },
+  pedidos?: OrderPedidosConfigShape
+): boolean {
+  const status = normalizeOrderStatus(order.estado, pedidos);
   return status === 'pendiente' || status === 'en_produccion' || status === 'listo';
+}
+
+export function countPendingOrdersByStatus(
+  orders: Array<{ estado?: string }>,
+  pedidos?: OrderPedidosConfigShape
+): PendingOrderStatusCounts {
+  const counts = { ...EMPTY_PENDING_ORDER_STATUS_COUNTS };
+
+  for (const order of orders) {
+    if (!isOrderPendingDelivery(order, pedidos)) continue;
+    const status = normalizeOrderStatus(order.estado, pedidos);
+    if (status === 'pendiente') counts.pendiente += 1;
+    else if (status === 'en_produccion') counts.en_produccion += 1;
+    else if (status === 'listo') counts.listo += 1;
+  }
+
+  return counts;
+}
+
+export function getPendingOrdersTotal(counts: PendingOrderStatusCounts): number {
+  return counts.pendiente + counts.en_produccion + counts.listo;
+}
+
+export function formatPendingOrderStatusSummary(
+  counts: PendingOrderStatusCounts,
+  pedidos?: OrderPedidosConfigShape
+): string {
+  const parts: Array<keyof PendingOrderStatusCounts> = ['pendiente', 'en_produccion', 'listo'];
+  return parts
+    .filter((key) => counts[key] > 0)
+    .map((key) => {
+      const label = getOrderStatusLabelFromConfig(key, pedidos).toLowerCase();
+      return `${counts[key]} ${label}`;
+    })
+    .join(' · ');
+}
+
+export function getOrderStatusDotClass(
+  estado?: string,
+  pedidos?: OrderPedidosConfigShape
+): string {
+  const status = normalizeOrderStatus(estado, pedidos);
+  switch (status) {
+    case 'borrador':
+      return 'bg-gray-400';
+    case 'pendiente':
+      return 'bg-blue-500';
+    case 'en_produccion':
+      return 'bg-purple-500';
+    case 'listo':
+      return 'bg-green-500';
+    case 'entregado':
+      return 'bg-teal-500';
+    case 'entregado_con_saldo':
+      return 'bg-orange-500';
+    case 'cancelado':
+      return 'bg-red-500';
+    default:
+      return 'bg-yellow-400';
+  }
 }

@@ -107683,19 +107683,162 @@ function buildAgentDeveloperContext(tenant, state) {
   return lines.join("\n");
 }
 var RILOBOT_V4_SYSTEM_INSTRUCTION = [
-  "Eres RiloBot, agente operativo del ERP RILO Gesti\xF3n.",
-  "Entiendes al usuario en espa\xF1ol natural.",
-  "Usa las herramientas para obtener o modificar datos reales.",
-  "Nunca inventes datos ERP: totales, saldos, stock, n\xFAmeros de pedido ni estados.",
-  "Un dato expl\xEDcito del mensaje actual reemplaza contexto anterior.",
-  "El contexto solo completa lo que el usuario omiti\xF3.",
-  "Para informaci\xF3n del ERP, usa tools.",
-  "No afirmes que una escritura ocurri\xF3 hasta recibir resultado exitoso de una tool.",
-  "Si una entidad expl\xEDcita no se resuelve, no quites el filtro ni consultes todo.",
-  "Pregunta solo lo m\xEDnimo necesario.",
-  "Para nombres humanos de clientes, productos o proveedores, pasa hints en query; nunca inventes IDs.",
-  'Si el usuario dice "no" y hay confirmaci\xF3n pendiente, cancela. Si no hay pending, responde naturalmente.'
+  "Eres RiloBot V4, agente operativo del ERP RILO Gesti\xF3n.",
+  "Interpret\xE1s espa\xF1ol natural. El backend NO interpreta espa\xF1ol: solo valida, resuelve IDs, aplica reglas ERP y ejecuta Domain Services.",
+  "Us\xE1 herramientas para leer o preparar cambios reales. Nunca inventes IDs, precios, saldos, stock, estados ni totales.",
+  "MENSAJE ACTUAL > CONTEXTO > DEFAULTS: un dato expl\xEDcito del turno actual reemplaza focusEntities/lastQuery anteriores.",
+  "Si el usuario dio un filtro (cliente, producto, estado, fecha), conservalo. Si no se resuelve la entidad, NO consultes todo el ERP.",
+  "Para hints humanos us\xE1 clientQuery/productQuery/orderNumber; los resolvers devuelven IDs reales.",
+  'Listas sin cantidad: limit=10, m\xE1s recientes primero. "m\xE1s" contin\xFAa la misma queryContext.',
+  "Writes sensibles: prepar\xE1 tool call \u2192 backend congela OperationPlan \u2192 ped\xED confirmaci\xF3n. No afirmes ejecuci\xF3n antes del resultado.",
+  'Pago \u2260 estado. "ya est\xE1 pago" es cobro; "ponelo listo" es estado. Pod\xE9s combinar varias tools en un plan.',
+  "Si una tool devuelve ambiguous/not_found/filter_blocked, no inventes ni abras la query global.",
+  "Respond\xE9 compacto. Listados numerados cuando el backend lo pida para desambiguaci\xF3n."
 ].join("\n");
+
+// backend/whatsapp/v4-candidate-selection.ts
+var CANDIDATE_SELECTION_PROMPT = "Respondeme con el n\xFAmero de la opci\xF3n.";
+var V4_CANDIDATE_SELECTION_INTENT = "awaiting:candidate_selection";
+function parseNumericSelectionTurn(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return {};
+  const commaMatch = raw.match(/^(\d{1,2})\s*[,;]\s*(.+)$/);
+  if (commaMatch) {
+    return { index: Number(commaMatch[1]), remainder: commaMatch[2].trim() };
+  }
+  const spaceMatch = raw.match(/^(\d{1,2})\s+(.+)$/);
+  if (spaceMatch) {
+    return { index: Number(spaceMatch[1]), remainder: spaceMatch[2].trim() };
+  }
+  if (/^\d{1,2}$/.test(raw)) {
+    return { index: Number(raw) };
+  }
+  return {};
+}
+function getCandidateSelectionAwaiting(state) {
+  if (state?.pendingIntent !== V4_CANDIDATE_SELECTION_INTENT) return null;
+  const payload = state.pendingPayload?.candidateSelection;
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload;
+  if (row.type !== "candidate_selection" || !Array.isArray(row.options) || !row.options.length) {
+    return null;
+  }
+  return row;
+}
+function normalizeCandidateRows(entityType, rows, max = 5) {
+  const options = [];
+  for (const [idx, row] of rows.slice(0, max).entries()) {
+    const item = row;
+    const entityId = String(item.id ?? item.entityId ?? item.clientId ?? item.productId ?? "").trim();
+    if (!entityId) continue;
+    const label = formatCandidateLabel(entityType, item);
+    options.push({ index: idx + 1, entityId, label, meta: item });
+  }
+  return options;
+}
+function formatCandidateLabel(entityType, item) {
+  if (entityType === "order") {
+    const bits = [
+      `#${String(item.number ?? item.label ?? item.id ?? "")}`,
+      String(item.deliveryDate ?? item.createdAt ?? "").slice(0, 10) || void 0,
+      String(item.statusLabel ?? item.status ?? "").trim() || void 0,
+      item.total != null ? `$${Number(item.total).toLocaleString("es-AR")}` : void 0
+    ].filter(Boolean);
+    return bits.join(" \xB7 ");
+  }
+  if (entityType === "product") {
+    const bits = [
+      String(item.name ?? item.nombre ?? "Producto"),
+      String(item.color ?? item.variant ?? "").trim() || void 0,
+      String(item.size ?? item.talle ?? "").trim() || void 0
+    ].filter(Boolean);
+    return bits.join(" \xB7 ");
+  }
+  const name = String(item.name ?? item.nombre ?? "Opci\xF3n").trim();
+  const phone = String(item.telefono ?? item.phone ?? "").trim();
+  const hint = String(item.local ?? item.ciudad ?? item.empresa ?? item.rubro ?? "").trim();
+  const extras = [phone, hint].filter(Boolean);
+  return extras.length ? `${name} \xB7 ${extras.join(" \xB7 ")}` : name;
+}
+function buildCandidateSelectionState(input) {
+  const awaiting = {
+    type: "candidate_selection",
+    entityType: input.entityType,
+    options: input.options,
+    resume: input.resume
+  };
+  return {
+    pendingIntent: V4_CANDIDATE_SELECTION_INTENT,
+    pendingPayload: { candidateSelection: awaiting },
+    pendingPrompt: CANDIDATE_SELECTION_PROMPT,
+    activeTask: {
+      intent: V4_CANDIDATE_SELECTION_INTENT,
+      awaiting: { field: "selection", type: "candidate_selection", reason: input.entityType }
+    }
+  };
+}
+function resolveCandidateSelectionTurn(text, awaiting) {
+  const parsed = parseNumericSelectionTurn(text);
+  if (parsed.index == null) return { kind: "not_applicable" };
+  const option = awaiting.options.find((row) => row.index === parsed.index);
+  if (!option) {
+    return { kind: "invalid", max: awaiting.options.length };
+  }
+  return { kind: "selected", option, remainder: parsed.remainder };
+}
+function focusPatchFromCandidate(entityType, option, previous) {
+  const base = { ...previous ?? {} };
+  if (entityType === "client") {
+    base.client = { id: option.entityId, name: option.label.split(" \xB7 ")[0], locked: true };
+  } else if (entityType === "product") {
+    base.product = { id: option.entityId, name: option.label.split(" \xB7 ")[0], locked: true };
+  } else if (entityType === "supplier") {
+    base.supplier = { id: option.entityId, name: option.label.split(" \xB7 ")[0], locked: true };
+  } else if (entityType === "order") {
+    const meta = option.meta ?? {};
+    base.order = {
+      id: option.entityId,
+      label: String(meta.number ?? option.label.replace(/^#/, "").split(" \xB7 ")[0] ?? ""),
+      clientName: String(meta.clientName ?? ""),
+      status: String(meta.status ?? ""),
+      locked: true
+    };
+  }
+  return base;
+}
+function inferEntityTypeFromTool(toolName) {
+  if (toolName.includes("client")) return "client";
+  if (toolName.includes("product") || toolName.includes("stock")) return "product";
+  if (toolName.includes("supplier")) return "supplier";
+  if (toolName.includes("order")) return "order";
+  return "client";
+}
+function ambiguousPayloadFromToolOutput(toolName, output, ctx) {
+  const candidates = Array.isArray(output.candidates) ? output.candidates : [];
+  if (!candidates.length) return null;
+  const entityType = inferEntityTypeFromToolOutput(toolName, output);
+  const options = normalizeCandidateRows(entityType, candidates);
+  if (!options.length) return null;
+  return {
+    type: "candidate_selection",
+    entityType,
+    options,
+    resume: {
+      originalUserText: ctx.originalUserText,
+      blockedTool: toolName,
+      blockedArgs: ctx.blockedArgs,
+      sourceTool: toolName
+    }
+  };
+}
+function inferEntityTypeFromToolOutput(toolName, output) {
+  const filter = output.filter ?? {};
+  if (filter.clientQuery || toolName.includes("client")) return "client";
+  if (filter.productQuery || toolName.includes("product")) return "product";
+  if (filter.supplierQuery || toolName.includes("supplier")) return "supplier";
+  if (toolName.includes("order")) return "order";
+  return inferEntityTypeFromTool(toolName);
+}
 
 // backend/whatsapp/agent/agent-presenter.ts
 function money2(value) {
@@ -107771,6 +107914,21 @@ function presentClientList(output) {
     total: Number(output.total) || items.length,
     hasMore: output.hasMore === true,
     emptyText: "No encontr\xE9 clientes."
+  });
+}
+var ENTITY_HEADINGS = {
+  client: "Encontr\xE9 m\xE1s de un cliente",
+  product: "Encontr\xE9 m\xE1s de un producto",
+  supplier: "Encontr\xE9 m\xE1s de un proveedor",
+  order: "Encontr\xE9 m\xE1s de un pedido"
+};
+function presentNumberedCandidateSelection(entityType, candidates, title) {
+  const options = normalizeCandidateRows(entityType, candidates);
+  const lines = options.map((row) => `${row.index}. ${row.label}`);
+  return formatWhatsappMessage({
+    title: title ?? ENTITY_HEADINGS[entityType] ?? "Encontr\xE9 m\xE1s de una opci\xF3n",
+    lines,
+    ask: CANDIDATE_SELECTION_PROMPT
   });
 }
 function presentOrderBalance(output) {
@@ -108695,6 +108853,17 @@ async function updateOrderStatusFromWhatsapp(tenant, entities) {
   const previousEstado = resolveOrderEstado(order.estado);
   const nextEstado = resolveOrderEstado(nextEstadoValue);
   if (isDeliveredEstado(previousEstado)) {
+    if (isDeliveredEstado(nextEstado)) {
+      return {
+        orderId: target.id,
+        label: target.label,
+        clientName: target.clientName,
+        clientId: target.clientId,
+        amount: target.total,
+        status: nextEstadoValue,
+        reply: `El pedido #${target.label} ya estaba entregado.`
+      };
+    }
     throw new Error(`El pedido #${target.label} ya estaba entregado y cerrado.`);
   }
   const config = await loadOrderPedidosConfig(tenant.businessId);
@@ -110043,6 +110212,14 @@ init_order_number();
 function money6(value) {
   return Number(value || 0).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
+function normalizeRequestedOrderStatus(raw) {
+  const value = String(raw ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (value.includes("entreg")) return "entregado";
+  if (value.includes("pend")) return "pendiente";
+  if (value.includes("produc")) return "en_produccion";
+  if (value.includes("list")) return "listo";
+  return String(raw ?? "").trim();
+}
 async function resolveOrderId(ctx, args) {
   const direct = String(args.orderId ?? "").trim();
   if (direct) {
@@ -110055,7 +110232,8 @@ async function resolveOrderId(ctx, args) {
         numeroPedido: Number(data.numeroPedido) || void 0,
         numeroPedidoLabel: String(data.numeroPedidoLabel ?? "")
       }),
-      clientName: String(data.clienteNombre ?? "").trim() || void 0
+      clientName: String(data.clienteNombre ?? "").trim() || void 0,
+      fromStatus: String(data.estado ?? "").trim() || void 0
     };
   }
   const entities = {
@@ -110071,7 +110249,8 @@ async function resolveOrderId(ctx, args) {
   return {
     orderId: resolution.order.id,
     label: resolution.order.label,
-    clientName: resolution.order.clientName
+    clientName: resolution.order.clientName,
+    fromStatus: resolution.order.estado
   };
 }
 function baseWriteTool(name, description, capability, properties) {
@@ -110339,12 +110518,20 @@ var WRITE_TOOL_HANDLERS = {
     prepare: async (args, ctx) => {
       await ensureWritePermission(ctx);
       const order = await resolveOrderId(ctx, args);
-      const status = String(args.status ?? "").trim();
+      const status = normalizeRequestedOrderStatus(String(args.status ?? ""));
       if (!status) throw new Error("Indic\xE1 el estado.");
       return {
         tool: "update_order_status",
         label: `Estado #${order.label} \u2192 ${status}`,
-        args: { orderId: order.orderId, status, clientName: order.clientName }
+        args: {
+          businessId: ctx.tenant.businessId,
+          orderId: order.orderId,
+          orderNumber: order.label,
+          fromStatus: order.fromStatus,
+          status,
+          requestedStatus: status,
+          clientName: order.clientName
+        }
       };
     }
   },
@@ -111994,10 +112181,15 @@ async function executePlannedWrite(tenant, write) {
       };
     }
     case "update_order_status": {
+      if (!tenant?.businessId) {
+        throw new AgentError("ERP_WRITE_FAILED", "Falta businessId para ejecutar el plan congelado.");
+      }
       const entities = {
         targetOrderId: String(args.orderId ?? ""),
+        orderNumber: String(args.orderNumber ?? ""),
         clientName: String(args.clientName ?? ""),
-        orderStatus: String(args.status ?? "")
+        orderStatus: String(args.status ?? args.requestedStatus ?? ""),
+        idempotencyKey: String(args.idempotencyKey ?? "")
       };
       const result = await updateOrderStatusFromWhatsapp(tenant, entities);
       await incrementWhatsappOps(tenant.businessId);
@@ -112219,13 +112411,27 @@ function deterministicReplyFromTools(results) {
   if (last.output.status === "not_found" && last.output.query) {
     return `No encontr\xE9 ${String(last.output.query)}.`;
   }
-  if (last.output.status === "ambiguous" && Array.isArray(last.output.candidates)) {
-    const names = last.output.candidates.slice(0, 5).map((row) => `\u2022 ${String(row.name ?? "")}`).join("\n");
-    return `Encontr\xE9 m\xE1s de una opci\xF3n:
-${names}
-Decime cu\xE1l.`;
+  if ((last.output.status === "ambiguous" || last.output.errorCode === "ENTITY_AMBIGUOUS") && Array.isArray(last.output.candidates)) {
+    const entityType = inferEntityTypeFromTool(last.name);
+    const title = last.output.errorCode === "ENTITY_AMBIGUOUS" ? String(last.output.message ?? "").replace(/\.$/, "") : void 0;
+    return presentNumberedCandidateSelection(entityType, last.output.candidates, title);
   }
   return null;
+}
+function candidateSelectionPatchFromToolResult(result, call, input) {
+  const output = result.output ?? {};
+  if (!Array.isArray(output.candidates) || !output.candidates.length) return null;
+  if (output.status !== "ambiguous" && output.errorCode !== "ENTITY_AMBIGUOUS") return null;
+  const payload = ambiguousPayloadFromToolOutput(result.name, output, {
+    originalUserText: input.text,
+    blockedArgs: call.arguments
+  });
+  if (!payload) return null;
+  return buildCandidateSelectionState({
+    entityType: payload.entityType,
+    options: payload.options,
+    resume: payload.resume
+  });
 }
 async function callOpenAiResponses(input) {
   logOpenAiV4ConfigOnce();
@@ -112405,6 +112611,22 @@ ${buildAgentDeveloperContext(input.tenant, input.state)}`;
         }
         const result = await executeReadToolCall(call, ctx, registry);
         allToolResults.push(result);
+        const selectionPatch = candidateSelectionPatchFromToolResult(result, call, input);
+        if (selectionPatch) {
+          const reply = deterministicReplyFromTools(allToolResults) ?? "Eleg\xED una opci\xF3n.";
+          return {
+            reply,
+            executed: false,
+            intent: "candidate_selection_v4",
+            toolCalls: allToolCalls,
+            toolResults: allToolResults,
+            provider: "openai",
+            model,
+            latencyMs: Date.now() - started,
+            usage,
+            statePatch: selectionPatch
+          };
+        }
         conversationInput.push({
           type: "function_call_output",
           call_id: call.id,
@@ -112507,18 +112729,153 @@ function createConversationAgent() {
   return new OpenAIConversationAgent();
 }
 
-// backend/whatsapp/handle-v4-turn.ts
-var CONFIRM_INTENT = "confirm:v4_write";
-var AI_QUOTA_REPLY = "Llegaste al l\xEDmite de acciones de tu plan.";
-function isExactConfirm(text) {
+// backend/whatsapp/v4-confirm.ts
+var V4_CONFIRM_INTENT = "confirm:v4_write";
+function isDeterministicYes(text) {
   return classifyConfirmReply(text) === "confirm";
 }
-function isExactCancel(text) {
+function isDeterministicNo(text) {
   return classifyConfirmReply(text) === "cancel";
 }
-function isSemanticCorrection(text) {
+function isConfirmCorrection(text) {
   return classifyConfirmReply(text) === "correct";
 }
+function shouldExecuteFrozenPlan(pendingIntent, text) {
+  return pendingIntent === V4_CONFIRM_INTENT && isDeterministicYes(text);
+}
+function shouldCancelFrozenPlan(pendingIntent, text) {
+  return pendingIntent === V4_CONFIRM_INTENT && isDeterministicNo(text);
+}
+function shouldReinterpretPendingConfirm(pendingIntent, text) {
+  return pendingIntent === V4_CONFIRM_INTENT && isConfirmCorrection(text);
+}
+function mapFrozenWriteError(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const lower2 = message.toLowerCase();
+  if (lower2.includes("no encontr\xE9 ese pedido") || lower2.includes("no encontr\xE9 el pedido")) {
+    return { code: "ORDER_NOT_FOUND", reply: message };
+  }
+  if (lower2.includes("no puedo hacer ese cambio") || lower2.includes("transici\xF3n")) {
+    return { code: "INVALID_STATUS_TRANSITION", reply: message };
+  }
+  if (lower2.includes("permiso")) {
+    return { code: "PERMISSION_DENIED", reply: "No ten\xE9s permiso para esa acci\xF3n en WhatsApp." };
+  }
+  if (message) {
+    return { code: "DOMAIN_VALIDATION_ERROR", reply: message };
+  }
+  return {
+    code: "ERP_WRITE_FAILED",
+    reply: "No pude completar esa operaci\xF3n. Escribime de nuevo en un momento."
+  };
+}
+
+// backend/whatsapp/v4-resume-blocked-tool.ts
+function presenterForToolResult(name, output) {
+  if (name === "list_orders") return presentOrderListFromToolOutput(output);
+  if (output.status === "not_found") {
+    return String(output.message ?? "No encontr\xE9 resultados.");
+  }
+  if (output.status === "filter_blocked") {
+    return String(output.message ?? "No pude aplicar ese filtro.");
+  }
+  return "Listo.";
+}
+function buildStatePatchFromResume(toolName, output, option, awaiting, previous) {
+  const patch = {
+    pendingIntent: null,
+    pendingPayload: null,
+    pendingPrompt: null,
+    activeTask: null,
+    focusEntities: focusPatchFromCandidate(awaiting.entityType, option, previous?.focusEntities)
+  };
+  if (toolName === "list_orders" && Array.isArray(output.items)) {
+    const filter = output.filter ?? {};
+    patch.lastQuery = {
+      intent: "query_orders",
+      slots: {
+        clientName: String(filter.clientName ?? option.label.split(" \xB7 ")[0] ?? ""),
+        entity: "orders",
+        metric: "list",
+        status: filter.status ? String(filter.status) : void 0,
+        limit: output.items.length,
+        offset: Number(output.nextOffset) || 0
+      }
+    };
+    patch.listContext = {
+      type: "orders",
+      items: output.items.map((row) => String(row.number ?? "")),
+      currentPage: 1,
+      pageSize: output.items.length,
+      totalResults: Number(output.total) || output.items.length,
+      hasMore: output.hasMore === true,
+      offset: Number(output.nextOffset) || 0,
+      clientId: option.entityId,
+      filters: patch.lastQuery.slots,
+      title: filter.clientName ? `Pedidos de ${filter.clientName}` : "Pedidos"
+    };
+  }
+  return patch;
+}
+function buildNestedCandidatePatch(entityType, candidates, resume) {
+  const options = normalizeCandidateRows(entityType, candidates);
+  return buildCandidateSelectionState({ entityType, options, resume });
+}
+async function resumeBlockedToolAfterSelection(input) {
+  const { tenant, state, awaiting, option } = input;
+  const registry = buildToolRegistry();
+  const blockedTool = String(awaiting.resume.blockedTool ?? "list_orders");
+  const blockedArgs = { ...awaiting.resume.blockedArgs ?? {} };
+  if (awaiting.entityType === "client") {
+    blockedArgs.clientId = option.entityId;
+    delete blockedArgs.clientQuery;
+  } else if (awaiting.entityType === "product") {
+    blockedArgs.productId = option.entityId;
+    delete blockedArgs.productQuery;
+  } else if (awaiting.entityType === "supplier") {
+    blockedArgs.supplierId = option.entityId;
+    delete blockedArgs.supplierQuery;
+  } else if (awaiting.entityType === "order") {
+    blockedArgs.orderId = option.entityId;
+    delete blockedArgs.orderNumber;
+    delete blockedArgs.query;
+  }
+  const result = await executeReadToolCall(
+    {
+      id: `resume:${blockedTool}`,
+      name: blockedTool,
+      arguments: blockedArgs
+    },
+    {
+      tenant,
+      state,
+      messageId: void 0,
+      rawUserMessage: awaiting.resume.originalUserText
+    },
+    registry
+  );
+  const output = result.output ?? {};
+  if ((output.status === "ambiguous" || output.errorCode === "ENTITY_AMBIGUOUS") && Array.isArray(output.candidates)) {
+    const reply = presentNumberedCandidateSelection(awaiting.entityType, output.candidates);
+    return {
+      reply,
+      statePatch: buildNestedCandidatePatch(awaiting.entityType, output.candidates, {
+        originalUserText: awaiting.resume.originalUserText,
+        blockedTool,
+        blockedArgs,
+        sourceTool: blockedTool
+      })
+    };
+  }
+  return {
+    reply: presenterForToolResult(blockedTool, output),
+    statePatch: buildStatePatchFromResume(blockedTool, output, option, awaiting, state),
+    toolResult: result
+  };
+}
+
+// backend/whatsapp/handle-v4-turn.ts
+var AI_QUOTA_REPLY = "Llegaste al l\xEDmite de acciones de tu plan.";
 function planFromState(state) {
   if (!state) return null;
   const direct = parseAgentOperationPlan(state.operationPlan);
@@ -112526,11 +112883,25 @@ function planFromState(state) {
   const pending = state.pendingPayload;
   return pending?.plan ? parseAgentOperationPlan(pending.plan) : null;
 }
-async function executeFrozenV4Plan(tenant, phone, plan, state) {
-  const result = await executeAgentOperationPlan(
-    { tenant, state, rawUserMessage: plan.rawUserMessage },
-    plan
+async function executeFrozenV4Plan(tenant, phone, plan, deps) {
+  const executePlan = deps.executePlan ?? executeAgentOperationPlan;
+  const rememberOp = deps.rememberOp ?? rememberLastOperation;
+  const saveState = deps.saveState ?? saveConversationState;
+  const appendTurns = deps.appendTurns ?? appendConversationTurns;
+  console.info(
+    "[v4:plan:execute:start]",
+    JSON.stringify({
+      businessId: tenant.businessId,
+      idempotencyKey: plan.idempotencyKey ?? null,
+      writes: plan.writes.map((row) => ({
+        tool: row.tool,
+        orderId: row.args.orderId ?? null,
+        orderNumber: row.args.orderNumber ?? null,
+        status: row.args.status ?? row.args.requestedStatus ?? null
+      }))
+    })
   );
+  const result = await executePlan(tenant, plan);
   const data = result.data ?? {};
   const operation = {
     kind: data.kind === "cash" ? "cash" : data.kind === "payment" ? "payment" : data.kind === "client" ? "client" : data.kind === "sale" ? "sale" : data.kind === "purchase" ? "purchase" : "order",
@@ -112544,18 +112915,28 @@ async function executeFrozenV4Plan(tenant, phone, plan, state) {
     productName: data.productName ? String(data.productName) : void 0,
     at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  if (operation.id) {
-    await rememberLastOperation(tenant.businessId, phone, operation);
-  } else {
-    await saveConversationState(tenant.businessId, phone, {
-      pendingIntent: null,
-      pendingPayload: null,
-      pendingPrompt: null,
-      activeTask: null,
-      operationPlan: null
-    });
+  try {
+    if (operation.id) {
+      await rememberOp(tenant.businessId, phone, operation);
+    } else {
+      await saveState(tenant.businessId, phone, {
+        pendingIntent: null,
+        pendingPayload: null,
+        pendingPrompt: null,
+        activeTask: null,
+        operationPlan: null
+      });
+    }
+    await appendTurns(tenant.businessId, phone, [{ role: "bot", text: result.reply }]);
+  } catch (error) {
+    console.error("[v4:plan:execute] WRITE_EXECUTED_BUT_RESPONSE_FAILED", error);
+    return {
+      reply: result.reply,
+      intent: "v4_execute_persist_failed",
+      executed: true,
+      businessId: tenant.businessId
+    };
   }
-  await appendConversationTurns(tenant.businessId, phone, [{ role: "bot", text: result.reply }]);
   return {
     reply: result.reply,
     intent: "v4_execute",
@@ -112563,35 +112944,147 @@ async function executeFrozenV4Plan(tenant, phone, plan, state) {
     businessId: tenant.businessId
   };
 }
-async function handleV4WhatsappTurn(input) {
+async function handleV4WhatsappTurn(input, deps = {}) {
   const { tenant, phone, message, text } = input;
+  const clearState = deps.clearState ?? clearConversationState;
+  const appendTurns = deps.appendTurns ?? appendConversationTurns;
+  const saveState = deps.saveState ?? saveConversationState;
   let state = input.state ?? await getConversationState(tenant.businessId, phone);
-  if (state?.pendingIntent === CONFIRM_INTENT && text) {
-    if (isExactCancel(text)) {
-      await clearConversationState(tenant.businessId, phone);
-      const reply = "Listo, cancelado.";
-      await appendConversationTurns(tenant.businessId, phone, [
+  if (shouldCancelFrozenPlan(state?.pendingIntent, text)) {
+    await clearState(tenant.businessId, phone);
+    const reply = "Listo, cancelado.";
+    await appendTurns(tenant.businessId, phone, [
+      { role: "user", text },
+      { role: "bot", text: reply }
+    ]);
+    return { reply, intent: "v4_cancel", executed: false, businessId: tenant.businessId };
+  }
+  const candidateAwaiting = getCandidateSelectionAwaiting(state);
+  if (candidateAwaiting) {
+    const resolution = resolveCandidateSelectionTurn(text, candidateAwaiting);
+    if (resolution.kind === "invalid") {
+      const reply = `Esa opci\xF3n no est\xE1 en la lista. Eleg\xED del 1 al ${resolution.max}.`;
+      await appendTurns(tenant.businessId, phone, [
         { role: "user", text },
         { role: "bot", text: reply }
       ]);
-      return { reply, intent: "v4_cancel", executed: false, businessId: tenant.businessId };
+      return {
+        reply,
+        intent: "v4_candidate_invalid",
+        executed: false,
+        businessId: tenant.businessId
+      };
     }
-    if (isExactConfirm(text) && !isSemanticCorrection(text)) {
-      const plan = planFromState(state);
-      if (!plan) {
-        await clearConversationState(tenant.businessId, phone);
+    if (resolution.kind === "selected") {
+      if (resolution.remainder) {
+        await appendTurns(tenant.businessId, phone, [{ role: "user", text }]);
+        const focusPatch = {
+          focusEntities: focusPatchFromCandidate(
+            candidateAwaiting.entityType,
+            resolution.option,
+            state?.focusEntities
+          )
+        };
+        state = await saveState(tenant.businessId, phone, {
+          ...focusPatch,
+          pendingIntent: null,
+          pendingPayload: null,
+          pendingPrompt: null,
+          activeTask: null
+        });
+        const agent = (deps.createAgent ?? createConversationAgent)();
+        const result = await agent.runTurn({
+          tenant,
+          state,
+          text: resolution.remainder,
+          messageId: message.messageId,
+          transcript: resolution.remainder
+        });
+        const patch = {
+          ...result.statePatch ?? {},
+          operationPlan: result.operationPlan ? result.operationPlan : result.statePatch?.operationPlan
+        };
+        if (Object.keys(patch).length) {
+          state = await saveState(tenant.businessId, phone, patch);
+        }
+        await appendTurns(tenant.businessId, phone, [{ role: "bot", text: result.reply }]);
         return {
-          reply: "No ten\xEDa una confirmaci\xF3n pendiente.",
-          intent: "v4_confirm_missing",
-          executed: false,
+          reply: result.reply,
+          intent: result.intent,
+          executed: result.executed,
           businessId: tenant.businessId
         };
       }
-      return executeFrozenV4Plan(tenant, phone, plan, state);
+      const resumed = await (deps.resumeAfterSelection ?? resumeBlockedToolAfterSelection)({
+        tenant,
+        state,
+        awaiting: candidateAwaiting,
+        option: resolution.option
+      });
+      state = await saveState(tenant.businessId, phone, resumed.statePatch);
+      await appendTurns(tenant.businessId, phone, [
+        { role: "user", text },
+        { role: "bot", text: resumed.reply }
+      ]);
+      return {
+        reply: resumed.reply,
+        intent: "v4_candidate_selected",
+        executed: false,
+        businessId: tenant.businessId
+      };
     }
   }
+  if (shouldExecuteFrozenPlan(state?.pendingIntent, text)) {
+    const plan = planFromState(state);
+    console.info(
+      "[v4:confirmation] accepted",
+      JSON.stringify({
+        businessId: tenant.businessId,
+        pendingIntent: state?.pendingIntent ?? null,
+        hasPlan: Boolean(plan),
+        writes: plan?.writes.map((row) => row.tool) ?? []
+      })
+    );
+    if (!plan) {
+      await clearState(tenant.businessId, phone);
+      return {
+        reply: "No ten\xEDa una confirmaci\xF3n pendiente.",
+        intent: "v4_confirm_missing",
+        executed: false,
+        businessId: tenant.businessId
+      };
+    }
+    try {
+      return await executeFrozenV4Plan(tenant, phone, plan, deps);
+    } catch (error) {
+      const mapped = mapFrozenWriteError(error);
+      if (error instanceof AgentError) {
+        mapped.code = error.code;
+        mapped.reply = agentErrorReply(error);
+      }
+      console.error("[v4:plan:execute:error]", mapped.code, error);
+      const reply = mapped.reply;
+      await appendTurns(tenant.businessId, phone, [{ role: "bot", text: reply }]);
+      logWhatsappTurn({
+        rawMessage: text,
+        engine: "v4",
+        intent: "v4_execute_error",
+        executed: false,
+        whyFallbackWasUsed: mapped.code
+      });
+      return {
+        reply,
+        intent: "v4_execute_error",
+        executed: false,
+        businessId: tenant.businessId
+      };
+    }
+  }
+  if (shouldReinterpretPendingConfirm(state?.pendingIntent, text)) {
+    console.info("[v4:confirmation] correction \u2192 agent", { text: text.slice(0, 80) });
+  }
   try {
-    await assertCanUseAi(tenant.businessId, 2);
+    await (deps.assertAi ?? assertCanUseAi)(tenant.businessId, 2);
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     const reply = code === "AI_QUOTA_EXCEEDED" ? AI_QUOTA_REPLY : await formatThrownUsage(error, tenant.businessId);
@@ -112603,10 +113096,10 @@ async function handleV4WhatsappTurn(input) {
     };
   }
   if (text) {
-    await appendConversationTurns(tenant.businessId, phone, [{ role: "user", text }]);
+    await appendTurns(tenant.businessId, phone, [{ role: "user", text }]);
   }
   try {
-    const agent = createConversationAgent();
+    const agent = (deps.createAgent ?? createConversationAgent)();
     const result = await agent.runTurn({
       tenant,
       state,
@@ -112619,9 +113112,9 @@ async function handleV4WhatsappTurn(input) {
       operationPlan: result.operationPlan ? result.operationPlan : result.statePatch?.operationPlan
     };
     if (Object.keys(patch).length) {
-      state = await saveConversationState(tenant.businessId, phone, patch);
+      state = await saveState(tenant.businessId, phone, patch);
     }
-    await appendConversationTurns(tenant.businessId, phone, [{ role: "bot", text: result.reply }]);
+    await appendTurns(tenant.businessId, phone, [{ role: "bot", text: result.reply }]);
     logWhatsappTurn({
       rawMessage: text,
       engine: "v4",
@@ -112650,7 +113143,7 @@ async function handleV4WhatsappTurn(input) {
     };
   } catch (error) {
     const reply = agentErrorReply(error);
-    await appendConversationTurns(tenant.businessId, phone, [{ role: "bot", text: reply }]);
+    await appendTurns(tenant.businessId, phone, [{ role: "bot", text: reply }]);
     logWhatsappTurn({
       rawMessage: text,
       engine: "v4",

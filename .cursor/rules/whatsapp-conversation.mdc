@@ -6,6 +6,8 @@ alwaysApply: false
 
 # Conversación WhatsApp (RILO)
 
+> **RILO Bot V4:** ver contrato definitivo en `.cursor/rules/rilobot-v4-conversation.mdc` y `docs/rilobot-v4-conversation-contract.md`. V4 usa `handle-v4-turn.ts` + Agent/tools; **no extender** regex de `ai-command-parser.ts` / `lookups.ts` para V4.
+
 El operador corre en Cloud Functions (`backend/whatsapp/`), no en Cursor. MCP y skills de Cursor no recuerdan el chat del dueño.
 
 ## Regla de oro

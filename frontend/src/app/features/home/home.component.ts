@@ -4,7 +4,20 @@ import { OrderService, Order } from '../../core/services/order.service';
 import { StockService } from '../../core/services/stock.service';
 import { SalesService } from '../../core/services/sales.service';
 import { AuthService } from '../../core/services/auth.service';
-import { isOrderPendingDelivery } from '../../core/constants/order-status';
+import {
+  countPendingOrdersByStatus,
+  formatPendingOrderStatusSummary,
+  getOrderStatusDotClass,
+  getOrderStatusLabel,
+  getPendingOrdersTotal,
+  type PendingOrderStatusCounts,
+  EMPTY_PENDING_ORDER_STATUS_COUNTS,
+} from '../../core/constants/order-status';
+import {
+  CatalogConfigService,
+  DEFAULT_APP_CONFIG,
+  type AppConfig,
+} from '../../core/services/catalog-config.service';
 import { getCalendarMonthRange, monthYearQueryParams, formatMonthYearLabel } from '../../core/utils/calendar-range';
 import { PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, PROGRESSIVE_LIST_FIRST_PAGE_SIZE, ProgressiveListSession } from '../../core/utils/progressive-list-load';
 import { LucideAngularModule } from 'lucide-angular';
@@ -169,8 +182,10 @@ import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.co
           </div>
           <div class="min-w-0">
             <p class="text-xs font-bold text-gray-400 uppercase">Pedidos Pend.</p>
-            <p class="text-xl font-bold text-gray-900">{{ pendingOrders }}</p>
-            <p class="text-[11px] text-gray-400 mt-0.5 truncate">Confirmados sin entregar</p>
+            <p class="text-xl font-bold text-gray-900">{{ pendingOrdersTotal }}</p>
+            <p class="text-[11px] text-gray-400 mt-0.5 truncate">
+              {{ pendingOrdersSummary || 'Confirmados sin entregar' }}
+            </p>
           </div>
         </a>
 
@@ -245,7 +260,10 @@ import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.co
               [class.cursor-default]="!order.id"
               [class.cursor-pointer]="!!order.id">
               <div class="flex items-center gap-3 min-w-0">
-                <div class="w-2 h-2 rounded-full bg-yellow-400 shrink-0"></div>
+                <div
+                  class="w-2 h-2 rounded-full shrink-0"
+                  [ngClass]="getOrderStatusDotClass(order.estado, appConfig.pedidos)">
+                </div>
                 <div class="min-w-0">
                   <p class="text-sm font-medium text-gray-900 truncate">{{ order.descripcion || 'Pedido sin descripción' }}</p>
                   <p class="text-xs text-gray-400 truncate">
@@ -253,7 +271,7 @@ import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.co
                       order.numeroPedidoLabel
                         ? ('#' + order.numeroPedidoLabel + ' · ')
                         : ''
-                    }}Entrega:
+                    }}{{ getOrderStatusLabel(order.estado, appConfig.pedidos) }} · Entrega:
                     {{
                       order.fechaEntrega
                         ? (order.fechaEntrega | date:'d/M/yy')
@@ -299,13 +317,17 @@ export class HomeComponent implements OnInit {
   private orderService = inject(OrderService);
   private stockService = inject(StockService);
   private salesService = inject(SalesService);
+  private catalogConfigService = inject(CatalogConfigService);
   private router = inject(Router);
   private readonly ordersLoadSession = new ProgressiveListSession();
   private ordersForPendingCount: Order[] = [];
 
   readonly recentActivityLimit = 4;
+  readonly getOrderStatusDotClass = getOrderStatusDotClass;
+  readonly getOrderStatusLabel = getOrderStatusLabel;
 
-  pendingOrders = 0;
+  appConfig: AppConfig = DEFAULT_APP_CONFIG;
+  pendingStatusCounts: PendingOrderStatusCounts = { ...EMPTY_PENDING_ORDER_STATUS_COUNTS };
   lowStockItems = 0;
   monthlySalesIncome = 0;
   monthlyProfit = 0;
@@ -320,20 +342,34 @@ export class HomeComponent implements OnInit {
     return this.totalRecentOrders > this.recentActivityLimit;
   }
 
+  get pendingOrdersTotal(): number {
+    return getPendingOrdersTotal(this.pendingStatusCounts);
+  }
+
+  get pendingOrdersSummary(): string {
+    return formatPendingOrderStatusSummary(this.pendingStatusCounts, this.appConfig.pedidos);
+  }
+
   ngOnInit() {
+    this.catalogConfigService.getAppConfig().subscribe((config) => {
+      this.appConfig = config;
+      this.refreshPendingOrderCounts();
+    });
+
     const token = this.ordersLoadSession.next();
     this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
         if (!this.ordersLoadSession.isActive(token)) return;
         this.applyRecentOrdersSnapshot(page.items);
         this.ordersForPendingCount = page.items;
-        this.pendingOrders = this.countPendingOrders(this.ordersForPendingCount);
+        this.refreshPendingOrderCounts();
         this.loadRemainingOrdersForPendingCount(token, page.hasMore, page.nextCursor);
       },
       error: () => {
         if (!this.ordersLoadSession.isActive(token)) return;
         this.applyRecentOrdersSnapshot([]);
-        this.pendingOrders = 0;
+        this.ordersForPendingCount = [];
+        this.refreshPendingOrderCounts();
       },
     });
 
@@ -368,10 +404,24 @@ export class HomeComponent implements OnInit {
     this.recentOrders = visible.slice(0, this.recentActivityLimit);
   }
 
-  private countPendingOrders(items: Order[]): number {
-    return items
-      .filter((order) => this.auth.canViewOrder(order.estado))
-      .filter((order) => isOrderPendingDelivery(order)).length;
+  private refreshPendingOrderCounts() {
+    const visibleOrders = this.dedupeOrdersById(this.ordersForPendingCount).filter((order) =>
+      this.auth.canViewOrder(order.estado)
+    );
+    this.pendingStatusCounts = countPendingOrdersByStatus(
+      visibleOrders,
+      this.appConfig.pedidos
+    );
+  }
+
+  private dedupeOrdersById(items: Order[]): Order[] {
+    const seen = new Set<string>();
+    return items.filter((order) => {
+      if (!order.id) return true;
+      if (seen.has(order.id)) return false;
+      seen.add(order.id);
+      return true;
+    });
   }
 
   private loadRemainingOrdersForPendingCount(
@@ -385,7 +435,7 @@ export class HomeComponent implements OnInit {
       next: (page) => {
         if (!this.ordersLoadSession.isActive(token)) return;
         this.ordersForPendingCount = [...this.ordersForPendingCount, ...page.items];
-        this.pendingOrders = this.countPendingOrders(this.ordersForPendingCount);
+        this.refreshPendingOrderCounts();
         this.loadRemainingOrdersForPendingCount(token, page.hasMore, page.nextCursor);
       },
       error: () => {

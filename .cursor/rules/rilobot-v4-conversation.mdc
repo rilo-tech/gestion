@@ -1,0 +1,90 @@
+---
+description: Contrato definitivo RILO Bot V4 — IA interpreta, backend valida, ERP ejecuta. Prohibido hardcodear frases.
+globs: backend/whatsapp/**/*.ts
+alwaysApply: false
+---
+
+# RILO Bot V4 — Contrato conversacional definitivo
+
+Documento canónico: `docs/rilobot-v4-conversation-contract.md`
+
+Motor V4: `handle-v4-turn.ts` → `agent/` → tools → Domain/Query ERP.
+
+Legacy (`llm_first`, `parseWithRules`, regex semánticas en `ai-command-parser.ts` / `lookups.ts`) **no se extiende**. Cambios nuevos van solo a V4 salvo migración explícita.
+
+## Pipeline obligatorio
+
+```
+Mensaje natural → Conversation Agent (LLM) → tool call estructurada
+→ backend valida/resuelve → Domain/Query Service ERP → resultado real → respuesta natural
+```
+
+## La IA interpreta. El backend NO interpreta español.
+
+Después del LLM, el backend solo puede: **VALIDAR · RESOLVER · NORMALIZAR · EJECUTAR**.
+
+**Prohibido** post-LLM releer `rawMessage` para decidir intent, cliente, producto, monto, estado, filtros o segunda operación.
+
+## Prohibido (criterio de aprobación = 0 nuevos)
+
+- `if (text.includes(...))`, `startsWith`, regex semánticas para descubrir intent
+- Listas de frases, sinónimos manuales, nombres de clientes/productos de prueba como reglas
+- Fallback a regex cuando falla el modelo
+- Query global cuando un filtro explícito no se resolvió (`ENTITY_NOT_FOUND` / `ENTITY_AMBIGUOUS`, nunca `list_*({})` abierto)
+- Inventar `clientId`, `productId`, precios, saldos, stock, estados
+
+Los tests con frases literales son **regresión**, no especificación de producción.
+
+## Reglas de contexto
+
+1. **Current turn > context > defaults** — entidad explícita del mensaje actual pisa `focusEntities`/`lastQuery`.
+2. **Filter preservation** — filtros explícitos no desaparecen si la entidad falla.
+3. **ConversationState** — solo estado estructurado: `focusEntities`, `lastQuery`, `listContext`, `operationPlan`, `activeTask.awaiting`, `lastCompletedOperation`. No es un segundo parser.
+4. **focusEntities** se actualiza tras resolución correcta, nunca pisa dato explícito del turno actual.
+
+## Atajos determinísticos permitidos (protocolo UI, no negocio)
+
+Solo cuando hay contexto explícito en estado:
+
+| Condición | Entrada | Acción |
+|-----------|---------|--------|
+| `pendingIntent=confirm:v4_write` + `operationPlan` | `sí`/`si`/`s` exacto | Ejecutar plan congelado, **sin LLM** |
+| Idem | `no` exacto | Cancelar plan, **sin LLM** |
+| Idem | `sí, pero...` | Volver al Agent |
+| `pendingIntent=awaiting:candidate_selection` | `1`–`N` exacto | Seleccionar opción, continuar operación, **sin LLM** |
+| Idem | número inválido | Error determinístico, **sin LLM** |
+| Idem | `2, solo pendientes` | Seleccionar #2 + mandar resto al Agent |
+| Sin `awaiting` | `2` solo | **No** asumir elección → Agent |
+
+Implementación: `v4-confirm.ts`, `v4-candidate-selection.ts`, `handle-v4-turn.ts`.
+
+## Writes
+
+```
+Agent → tool write → resolve → validate → OperationPlan congelado → confirm → Domain Service ERP
+```
+
+Idempotencia: `messageId`, `operationPlan.id`, `idempotencyKey`.
+
+## Tools
+
+- Hints: `clientQuery`, `productQuery`, `orderNumber`, etc.
+- Resultado tipado: `{ status: resolved|ambiguous|not_found, entity?, candidates? }`
+- `ambiguous` → opciones numeradas (3–5) + `awaiting:candidate_selection`
+- Errores reales: `CAPABILITY_NOT_ENABLED`, `PERMISSION_DENIED`, `ENTITY_NOT_FOUND` — no `unknown` genérico
+
+## Tests
+
+Probar **capacidades y estado estructurado**, no strings literales del usuario.
+
+Ejemplos válidos: `focusedClient=A` + turn `{ clientHint: B }` → esperado B; `awaiting` + `"2"` → LLM calls=0.
+
+## Archivos V4
+
+- `handle-v4-turn.ts` — routing de turno
+- `v4-confirm.ts` — sí/no congelado
+- `v4-candidate-selection.ts` — selección numérica
+- `v4-resume-blocked-tool.ts` — continuar tool bloqueada
+- `agent/openai-agent.ts` — loop LLM + tools
+- `agent/agent-context.ts` — system instruction + developer context
+- `agent/tools/read-tools.ts` / `write-tools.ts` — contratos ERP

@@ -4,6 +4,7 @@ import {
   presentCashBalance,
   presentClientList,
   presentConfirmationPlan,
+  presentNumberedCandidateSelection,
   presentOrderBalance,
   presentOrderListFromToolOutput,
   presentStock,
@@ -22,6 +23,11 @@ import type {
   ToolCallRequest,
   ToolExecutionResult,
 } from './tool-types.ts';
+import {
+  ambiguousPayloadFromToolOutput,
+  buildCandidateSelectionState,
+  inferEntityTypeFromTool,
+} from '../v4-candidate-selection.ts';
 
 type OpenAiResponsePayload = {
   id?: string;
@@ -154,14 +160,39 @@ function deterministicReplyFromTools(results: ToolExecutionResult[]): string | n
   if (last.output.status === 'not_found' && last.output.query) {
     return `No encontré ${String(last.output.query)}.`;
   }
-  if (last.output.status === 'ambiguous' && Array.isArray(last.output.candidates)) {
-    const names = last.output.candidates
-      .slice(0, 5)
-      .map((row) => `• ${String((row as { name?: string }).name ?? '')}`)
-      .join('\n');
-    return `Encontré más de una opción:\n${names}\nDecime cuál.`;
+  if (
+    (last.output.status === 'ambiguous' || last.output.errorCode === 'ENTITY_AMBIGUOUS') &&
+    Array.isArray(last.output.candidates)
+  ) {
+    const entityType = inferEntityTypeFromTool(last.name);
+    const title =
+      last.output.errorCode === 'ENTITY_AMBIGUOUS'
+        ? String(last.output.message ?? '').replace(/\.$/, '')
+        : undefined;
+    return presentNumberedCandidateSelection(entityType, last.output.candidates as unknown[], title);
   }
   return null;
+}
+
+function candidateSelectionPatchFromToolResult(
+  result: ToolExecutionResult,
+  call: ToolCallRequest,
+  input: AgentTurnInput
+): Partial<import('../conversation-state.ts').ConversationState> | null {
+  const output = result.output ?? {};
+  if (!Array.isArray(output.candidates) || !output.candidates.length) return null;
+  if (output.status !== 'ambiguous' && output.errorCode !== 'ENTITY_AMBIGUOUS') return null;
+
+  const payload = ambiguousPayloadFromToolOutput(result.name, output, {
+    originalUserText: input.text,
+    blockedArgs: call.arguments,
+  });
+  if (!payload) return null;
+  return buildCandidateSelectionState({
+    entityType: payload.entityType,
+    options: payload.options,
+    resume: payload.resume,
+  });
 }
 
 async function callOpenAiResponses(input: {
@@ -441,6 +472,22 @@ export class OpenAIConversationAgent implements ConversationAgent {
         }
         const result = await executeReadToolCall(call, ctx, registry);
         allToolResults.push(result);
+        const selectionPatch = candidateSelectionPatchFromToolResult(result, call, input);
+        if (selectionPatch) {
+          const reply = deterministicReplyFromTools(allToolResults) ?? 'Elegí una opción.';
+          return {
+            reply,
+            executed: false,
+            intent: 'candidate_selection_v4',
+            toolCalls: allToolCalls,
+            toolResults: allToolResults,
+            provider: 'openai',
+            model,
+            latencyMs: Date.now() - started,
+            usage,
+            statePatch: selectionPatch,
+          };
+        }
         conversationInput.push({
           type: 'function_call_output',
           call_id: call.id,
