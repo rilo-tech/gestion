@@ -74,7 +74,7 @@ import { FormBackButtonComponent } from '../form-shell/form-back-button.componen
       <div
         *ngIf="layout === 'dialog'"
         class="relative w-full mx-0 sm:mx-auto flex flex-col min-h-0"
-        [ngClass]="maxWidthClass + ' max-h-[min(92dvh,100%)] sm:max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-100 bg-white shadow-2xl ' + (compact ? 'p-4 sm:p-5' : 'p-5 sm:p-6')">
+        [ngClass]="maxWidthClass + ' max-h-[min(92dvh,100%)] sm:max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl ' + (compact ? 'p-4 sm:p-5' : 'p-5 sm:p-6')">
         <div
           class="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-gray-300 sm:hidden"
           aria-hidden="true">

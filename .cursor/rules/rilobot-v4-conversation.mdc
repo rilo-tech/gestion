@@ -1,90 +1,78 @@
 ---
-description: Contrato definitivo RILO Bot V4 — IA interpreta, backend valida, ERP ejecuta. Prohibido hardcodear frases.
+description: Regla maestra RILO Bot V4 — agente conversacional, no parser de frases. Checklist obligatorio en cada entrega.
 globs: backend/whatsapp/**/*.ts
 alwaysApply: false
 ---
 
-# RILO Bot V4 — Contrato conversacional definitivo
+# RILO Bot V4 — Regla maestra conversacional
 
-Documento canónico: `docs/rilobot-v4-conversation-contract.md`
+**Documento canónico:** `docs/rilobot-v4-conversation-contract.md`
 
-Motor V4: `handle-v4-turn.ts` → `agent/` → tools → Domain/Query ERP.
+RILOBot es un **agente conversacional**, no un bot de comandos ni un formulario con keywords.
 
-Legacy (`llm_first`, `parseWithRules`, regex semánticas en `ai-command-parser.ts` / `lookups.ts`) **no se extiende**. Cambios nuevos van solo a V4 salvo migración explícita.
-
-## Pipeline obligatorio
+## Pipeline
 
 ```
-Mensaje natural → Conversation Agent (LLM) → tool call estructurada
-→ backend valida/resuelve → Domain/Query Service ERP → resultado real → respuesta natural
+Lenguaje natural → Conversation Agent → tool call estructurada
+→ backend valida/resuelve IDs → ERP → OperationPlan → confirm → execute
 ```
 
-## La IA interpreta. El backend NO interpreta español.
+**La IA interpreta. El backend NO interpreta español post-LLM.**
 
-Después del LLM, el backend solo puede: **VALIDAR · RESOLVER · NORMALIZAR · EJECUTAR**.
+## Prohibido (0 nuevos en cada PR)
 
-**Prohibido** post-LLM releer `rawMessage` para decidir intent, cliente, producto, monto, estado, filtros o segunda operación.
+- `text.includes`, `startsWith`, `endsWith`, regex semánticas, listas de frases/sinónimos
+- Raw message business parsing después del LLM
+- Fallback a V2/V3/regex legacy en tenants V4
+- Inventar IDs del ERP
 
-## Prohibido (criterio de aprobación = 0 nuevos)
+Los ejemplos en prompts/tests (`"ninguno"`, `"crealo"`, `"era otro"`) son **casos de prueba**, no reglas de código.
 
-- `if (text.includes(...))`, `startsWith`, regex semánticas para descubrir intent
-- Listas de frases, sinónimos manuales, nombres de clientes/productos de prueba como reglas
-- Fallback a regex cuando falla el modelo
-- Query global cuando un filtro explícito no se resolvió (`ENTITY_NOT_FOUND` / `ENTITY_AMBIGUOUS`, nunca `list_*({})` abierto)
-- Inventar `clientId`, `productId`, precios, saldos, stock, estados
+## Atajos determinísticos permitidos (solo protocolo UX)
 
-Los tests con frases literales son **regresión**, no especificación de producción.
+| Estado | Entrada exacta | Acción |
+|--------|----------------|--------|
+| `confirm:v4_write` + plan | `sí`/`si`/`s` | Ejecutar plan, LLM=0 |
+| Idem | `no` | Cancelar plan, LLM=0 |
+| Idem | `sí, pero…` / `no, era…` | Agent |
+| `awaiting:candidate_selection` | `1`–`N` | Seleccionar, LLM=0 |
+| Idem | texto libre | Agent (menús no son jaula) |
+| Menú con `0` = cancelar | `0` exacto | Acción determinística |
 
-## Reglas de contexto
+## Principios obligatorios
 
-1. **Current turn > context > defaults** — entidad explícita del mensaje actual pisa `focusEntities`/`lastQuery`.
-2. **Filter preservation** — filtros explícitos no desaparecen si la entidad falla.
-3. **ConversationState** — solo estado estructurado: `focusEntities`, `lastQuery`, `listContext`, `operationPlan`, `activeTask.awaiting`, `lastCompletedOperation`. No es un segundo parser.
-4. **focusEntities** se actualiza tras resolución correcta, nunca pisa dato explícito del turno actual.
-
-## Atajos determinísticos permitidos (protocolo UI, no negocio)
-
-Solo cuando hay contexto explícito en estado:
-
-| Condición | Entrada | Acción |
-|-----------|---------|--------|
-| `pendingIntent=confirm:v4_write` + `operationPlan` | `sí`/`si`/`s` exacto | Ejecutar plan congelado, **sin LLM** |
-| Idem | `no` exacto | Cancelar plan, **sin LLM** |
-| Idem | `sí, pero...` | Volver al Agent |
-| `pendingIntent=awaiting:candidate_selection` | `1`–`N` exacto | Seleccionar opción, continuar operación, **sin LLM** |
-| Idem | número inválido | Error determinístico, **sin LLM** |
-| Idem | `2, solo pendientes` | Seleccionar #2 + mandar resto al Agent |
-| Sin `awaiting` | `2` solo | **No** asumir elección → Agent |
-
-Implementación: `v4-confirm.ts`, `v4-candidate-selection.ts`, `handle-v4-turn.ts`.
-
-## Writes
-
-```
-Agent → tool write → resolve → validate → OperationPlan congelado → confirm → Domain Service ERP
-```
-
-Idempotencia: `messageId`, `operationPlan.id`, `idempotencyKey`.
-
-## Tools
-
-- Hints: `clientQuery`, `productQuery`, `orderNumber`, etc.
-- Resultado tipado: `{ status: resolved|ambiguous|not_found, entity?, candidates? }`
-- `ambiguous` → opciones numeradas (3–5) + `awaiting:candidate_selection`
-- Errores reales: `CAPABILITY_NOT_ENABLED`, `PERMISSION_DENIED`, `ENTITY_NOT_FOUND` — no `unknown` genérico
-
-## Tests
-
-Probar **capacidades y estado estructurado**, no strings literales del usuario.
-
-Ejemplos válidos: `focusedClient=A` + turn `{ clientHint: B }` → esperado B; `awaiting` + `"2"` → LLM calls=0.
+- **Current turn > correction > workflow > last presented > focus > defaults**
+- **Resolución contextual** — toda búsqueda de entidad considera la operación pedida; backend filtra/prioriza con reglas ERP; 0 → explicar, 1 → auto-resolve, 2+ → solo relevantes (ver contrato §Resolución contextual)
+- **Filter preservation** — filtro no resuelto → NOT_FOUND/AMBIGUOUS, nunca query global
+- **Ask only when required** — defaults, único candidato, config ERP antes de preguntar
+- **Corrección** → replanificar (`supersede` plan viejo), conservar lo no corregido
+- **Workflow suspendido** — consulta paralela no secuestra el draft activo
+- **Operaciones compuestas** — `continuation.pendingWrites` tras ambigüedad intermedia
+- **Presenter ≠ interpretación** — copy UX estático OK; no usarlo para parsear mensajes
 
 ## Archivos V4
 
-- `handle-v4-turn.ts` — routing de turno
-- `v4-confirm.ts` — sí/no congelado
-- `v4-candidate-selection.ts` — selección numérica
-- `v4-resume-blocked-tool.ts` — continuar tool bloqueada
-- `agent/openai-agent.ts` — loop LLM + tools
-- `agent/agent-context.ts` — system instruction + developer context
-- `agent/tools/read-tools.ts` / `write-tools.ts` — contratos ERP
+`handle-v4-turn.ts` · `v4-confirm.ts` · `v4-candidate-selection.ts` · `v4-resume-blocked-tool.ts` · `v4-visual-draft.ts` · `v4-workflow-manager.ts` · `v4-order-operation.ts` · `v4-compound-order-continuation.ts` · `resolve-order-reference.ts` · `agent/*`
+
+## Checklist obligatorio al cerrar cada entrega
+
+```
+AI INTERPRETS USER LANGUAGE:          OK / FAIL
+STATIC INTENT ROUTING ADDED:          NO
+SEMANTIC REGEX ADDED:                 0
+HARDCODED USER PHRASES ADDED:         0
+RAW MESSAGE BUSINESS PARSING POST-LLM: 0
+FREE TEXT DURING MENUS:               OK / FAIL
+USER CAN CORRECT:                     OK / FAIL
+USER CAN SAY NONE/OTHER NATURALLY:    OK / FAIL
+AGENT CAN ASK CLARIFICATION:         OK / FAIL
+CURRENT TURN OVERRIDES STALE CONTEXT: OK / FAIL
+CONTEXTUAL ENTITY RESOLUTION:              OK / FAIL
+IRRELEVANT CANDIDATES HIDDEN WHEN SAFE:    OK / FAIL
+SINGLE APPLICABLE CANDIDATE AUTO-RESOLVED: OK / FAIL
+USER CORRECTION RE-RESOLVES WITHOUT RESET: OK / FAIL
+V4 LEGACY SEMANTIC FALLTHROUGH:            0
+TESTS:                                X passed / X failed
+```
+
+Tests: `npm run test:v4` — capacidades y estado estructurado, no frases literales como spec.

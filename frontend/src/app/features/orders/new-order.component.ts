@@ -46,6 +46,7 @@ import {
   usesDetailedOrderExtraCosts,
   usesOrderReferencePhotos,
   usesOrderReferencePhotosPrint,
+  getMediosPagoActivos,
 } from '../../core/services/catalog-config.service';
 import {
   shouldConsumeStockOnStatusChange,
@@ -91,6 +92,10 @@ import {
   parseCashReturnContext,
   type CashReturnContext,
 } from '../../core/utils/cash-return-context';
+import {
+  clientHistorialRoute,
+  parseClientHistorialReturnContext,
+} from '../../core/utils/client-historial-return-context';
 import { LucideAngularModule } from 'lucide-angular';
 import { TransactionLinesSectionComponent } from '../../shared/components/transaction-lines-section/transaction-lines-section.component';
 import { TransactionProductSearchComponent } from '../../shared/components/transaction-product-search/transaction-product-search.component';
@@ -133,12 +138,18 @@ import {
 } from '../../core/utils/transaction-date';
 import { FormFooterComponent } from '../../shared/components/form-shell';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
+import { IconToolbarButtonComponent } from '../../shared/components/icon-toolbar/icon-toolbar-button.component';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
+import {
+  bindUnsavedChangesHost,
+  UnsavedChangesRegistry,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-new-order',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, OrderPhotoAttachmentsComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
+  imports: [CommonModule, FormsModule, LucideAngularModule, TransactionPartySearchComponent, RouterLink, HasPermissionDirective, TransactionModalComponent, ClientFormPanelComponent, OrderStockPreparationPanelComponent, OrderPhotoAttachmentsComponent, TransactionLinesSectionComponent, TransactionProductSearchComponent, TransactionLinesTableComponent, TransactionExtraCostsFormComponent, TransactionPartyFieldComponent, TransactionDateFieldComponent, TransactionSummaryPanelComponent, RecordActionToolbarComponent, IconToolbarButtonComponent, TransactionFormPageComponent, FormFooterComponent, TransactionSaveBannerComponent],
   template: `
     <app-transaction-form-page
       asideLayout="narrow"
@@ -169,6 +180,14 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           [showDelete]="isEditing && !isReadOnlyOrder && auth.canEditRecords && !isCancelledOrder && !isLockedOrder"
           deleteLabel="Cancelar pedido"
           (deleteClick)="confirmCancelCurrentOrder()">
+          <app-icon-toolbar-button
+            *ngIf="canFinalizeOrder"
+            icon="circle-check"
+            label="Finalizar pedido"
+            variant="orange-outline"
+            [disabled]="finalizeSubmitting"
+            (clicked)="openFinalizeModal()">
+          </app-icon-toolbar-button>
         </app-record-action-toolbar>
       </div>
 
@@ -231,7 +250,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       </div>
 
       <div class="space-y-4">
-          <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+          <section class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
             <div
               class="relative z-50 overflow-visible grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_10.5rem_10.5rem] items-start mb-4">
               <div class="min-w-0 overflow-visible col-span-2 lg:col-span-1">
@@ -323,27 +342,28 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                     class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-950/60 disabled:opacity-60 disabled:cursor-not-allowed shrink-0 whitespace-nowrap">
                     {{ consumingPendingStock ? 'Descontando…' : ('Descontar (' + pendingReservedToConsumeUnits + ' u.)') }}
                   </button>
-                  <span *ngIf="lastStockOperationLabel" class="text-[10px] text-gray-500 dark:text-gray-400 hidden sm:inline shrink-0">
+                  <span *ngIf="lastStockOperationLabel" class="text-xs text-gray-500 dark:text-gray-400 hidden sm:inline shrink-0">
                     {{ lastStockOperationLabel }}
                   </span>
                 </div>
               </div>
               <p
                 *ngIf="orderPhysicalDiscountHint"
-                class="mt-1.5 text-xs text-gray-600 rounded-lg bg-gray-50 border border-gray-100 px-2 py-1.5">
+                class="mt-1.5 text-xs text-gray-600 dark:text-gray-300 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 px-2 py-1.5">
                 {{ orderPhysicalDiscountHint }}
               </p>
             </div>
 
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">Descripción del trabajo</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Descripción del trabajo</label>
               <textarea
                 [(ngModel)]="order.descripcion"
                 name="descripcion"
                 rows="3"
                 [disabled]="!canEditOrderDescription"
+                (ngModelChange)="onOrderDescriptionChange()"
                 placeholder="Ej. 13 canguros — seña recibida, faltan talles y diseños"
-                class="w-full px-4 py-2 rounded-lg border border-gray-200 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-500 max-lg:min-h-[5.5rem]">
+                class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-500 max-lg:min-h-[5.5rem]">
               </textarea>
             </div>
 
@@ -358,7 +378,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 
           <div
             *ngIf="orderDetailLoading && orderLines.length === 0"
-            class="py-6 text-center text-sm text-gray-400 border border-dashed border-gray-200 rounded-xl bg-white">
+            class="py-6 text-center text-sm text-gray-400 dark:text-gray-500 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900">
             Cargando productos del pedido...
           </div>
 
@@ -380,6 +400,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               addedLabel="En el pedido"
               [itemMeta]="orderSearchResultSubtitle"
               inputName="orderProductSearch"
+              createProductReturnTo="/orders/new"
               (focused)="onProductSearchFocused()"
               (productSelected)="onOrderProductSelected($event)"
               (productQuantitySelected)="onOrderProductQuantitySelected($event)">
@@ -400,7 +421,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               <ng-template #metaRow let-line let-index="index">
                 <div
                   *ngIf="hasOrderLineMeta(orderLines[index])"
-                  class="mt-0.5 sm:mt-1 text-[9px] sm:text-xs leading-snug flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-0.5"
+                  class="mt-0.5 sm:mt-1 text-xs sm:text-xs leading-snug flex flex-wrap items-center gap-x-1.5 sm:gap-x-2 gap-y-0.5"
                   [class.text-green-700]="orderLines[index].stockItemId && lineControlsStock(orderLines[index]) && isOrderLineStockComplete(orderLines[index])"
                   [class.text-orange-700]="orderLines[index].stockItemId && lineControlsStock(orderLines[index]) && order.stockPreparado && !isOrderLineStockComplete(orderLines[index])">
                   <span *ngIf="orderLines[index].stockItemId && lineControlsStock(orderLines[index])" class="tabular-nums">
@@ -427,7 +448,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                       type="button"
                       [disabled]="isReadOnlyOrder"
                       (click)="openExtraCostsModal(index)"
-                      class="text-[10px] sm:text-xs text-teal-600 font-medium hover:text-teal-800 disabled:opacity-40">
+                      class="text-xs sm:text-xs text-teal-600 font-medium hover:text-teal-800 disabled:opacity-40">
                       {{ getExtraCostsActionLabel(orderLines[index]) }}
                     </button>
                   </ng-container>
@@ -486,34 +507,34 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               *ngIf="auth.canViewAccountBalance || auth.canViewOrderSalePrice"
               class="mb-2 sm:hidden space-y-1 text-xs">
               <div *ngIf="auth.canViewOrderSalePrice" class="flex items-baseline justify-between gap-3">
-                <span class="text-[10px] uppercase text-gray-500 shrink-0">Venta</span>
+                <span class="text-xs uppercase text-gray-500 shrink-0">Venta</span>
                 <span class="font-bold text-teal-600 tabular-nums text-right">{{ formatMoney(order.total || 0) }}</span>
               </div>
               <div class="flex items-baseline justify-between gap-3">
-                <span class="text-[10px] uppercase text-gray-500 shrink-0">Ganancia</span>
+                <span class="text-xs uppercase text-gray-500 shrink-0">Ganancia</span>
                 <span
                   class="font-semibold tabular-nums text-right"
                   [class.text-green-600]="displayOrderGanancia >= 0"
                   [class.text-red-600]="displayOrderGanancia < 0">
                   {{ formatMoney(displayOrderGanancia) }}
-                  <span *ngIf="donationProfitPending" class="text-[9px] text-amber-600 font-normal"> (al entregar)</span>
+                  <span *ngIf="donationProfitPending" class="text-xs text-amber-600 font-normal"> (al entregar)</span>
                 </span>
               </div>
               <div class="flex items-baseline justify-between gap-3">
-                <span class="text-[10px] uppercase text-gray-500 shrink-0">Costo</span>
+                <span class="text-xs uppercase text-gray-500 shrink-0">Costo</span>
                 <span class="font-semibold text-gray-900 dark:text-gray-100 tabular-nums text-right">{{ formatMoney(totalCost) }}</span>
               </div>
               <div class="flex items-baseline justify-between gap-3">
-                <span class="text-[10px] uppercase text-gray-500 shrink-0">Margen</span>
+                <span class="text-xs uppercase text-gray-500 shrink-0">Margen</span>
                 <span class="font-semibold text-teal-700 tabular-nums text-right">{{ ((order.margen || 0) * 100).toFixed(1) }}%</span>
               </div>
               <div *ngIf="auth.canViewOrderBalance" class="flex items-baseline justify-between gap-3 pt-1 border-t border-gray-100 dark:border-gray-800">
-                <span class="text-[10px] uppercase text-gray-500 shrink-0">Saldo</span>
+                <span class="text-xs uppercase text-gray-500 shrink-0">Saldo</span>
                 <span class="font-bold text-orange-600 tabular-nums text-right">{{ formatMoney(order.saldo || 0) }}</span>
               </div>
             </div>
 
-            <div class="hidden sm:block text-[11px] lg:text-xs">
+            <div class="hidden sm:block text-xs lg:text-xs">
               <div class="space-y-1.5 pb-3 border-b border-gray-100 dark:border-gray-800">
                 <div class="flex justify-between gap-2">
                   <span class="text-gray-500 dark:text-gray-400">Costo base</span>
@@ -532,7 +553,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               <div
                 *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE"
                 class="py-3 border-b border-gray-100 dark:border-gray-800">
-                <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">
+                <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">
                   Precio venta
                 </p>
                 <p class="text-xl font-bold text-teal-600 dark:text-teal-400 tabular-nums leading-none">
@@ -545,29 +566,29 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               *ngIf="auth.canViewOrderBalance"
               class="mb-3 sm:mb-4 rounded-xl border border-gray-100 dark:border-gray-700/80 bg-gray-50/90 dark:bg-gray-800/35 p-2.5 sm:p-3">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
-                <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seña recibida</label>
+                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
                   [(ngModel)]="order.senia"
                   name="senia"
                   [disabled]="isReadOnlyOrder"
-                  (ngModelChange)="calculateTotals()"
+                  (ngModelChange)="onOrderSeniaChange()"
                   min="0"
-                  class="w-full h-8 sm:h-auto min-h-8 sm:min-h-0 box-border px-3 py-1 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-xs sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-                <p class="mt-1 text-[10px] text-gray-500 dark:text-gray-400 hidden sm:block leading-snug">
+                  class="w-full min-h-10 box-border px-3 py-2 rounded-lg sm:rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden sm:block leading-snug">
                   Al guardar el pedido, se registra en caja con la fecha de hoy y queda bloqueada.
                 </p>
               </ng-container>
 
               <ng-container *ngIf="seniaBloqueada || isEditing">
                 <div class="flex items-center justify-between gap-2 mb-2">
-                  <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Pagos</span>
+                  <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Pagos</span>
                   <button
                     type="button"
                     (click)="openPaymentModal()"
                     *ngIf="auth.canRegisterOrderPayments"
                     [disabled]="!canRegisterOrderPayment"
-                    class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:text-teal-600 dark:hover:text-teal-300 disabled:opacity-40 disabled:cursor-not-allowed">
+                    class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:text-teal-600 dark:hover:text-teal-300 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Pago
                   </button>
                 </div>
@@ -587,17 +608,17 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 <div class="space-y-1.5 mb-2">
                   <div
                     *ngFor="let pago of order.pagos"
-                    class="flex items-center gap-1.5 text-[10px] sm:text-[11px] leading-tight text-gray-700 dark:text-gray-300">
+                    class="flex items-center gap-1.5 text-xs sm:text-xs leading-tight text-gray-700 dark:text-gray-300">
                     <div class="min-w-0 flex-1">
                       <div class="flex items-baseline justify-between gap-2">
                         <span class="truncate min-w-0 font-medium text-gray-800 dark:text-gray-200">
                           {{ getPaymentLineLabel(pago) }}
                         </span>
-                        <span class="text-[10px] sm:text-xs font-semibold text-gray-900 dark:text-gray-100 tabular-nums shrink-0">
+                        <span class="text-xs sm:text-xs font-semibold text-gray-900 dark:text-gray-100 tabular-nums shrink-0">
                           {{ formatMoney(pago.monto) }}
                         </span>
                       </div>
-                      <p class="text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                      <p class="text-xs sm:text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                         {{ formatPaymentDate(pago.fecha) }}
                         <span *ngIf="shouldShowPaymentNotas(pago)"> · {{ pago.notas }}</span>
                       </p>
@@ -607,33 +628,33 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                       type="button"
                       (click)="confirmRemovePayment(pago)"
                       [disabled]="paymentRemovingId === pago.id"
-                      class="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40"
+                      class="shrink-0 inline-flex items-center justify-center min-h-[36px] min-w-[36px] rounded-md text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-40 touch-manipulation"
                       title="Anular pago"
                       aria-label="Anular pago">
-                      <span class="text-sm leading-none">×</span>
+                      <span class="text-base leading-none">×</span>
                     </button>
                   </div>
                 </div>
                 <p
                   *ngIf="auth.canRegisterOrderPayments && (seniaBloqueada || isEditing) && order.pagos?.length"
-                  class="mb-2 text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                  class="mb-2 text-xs sm:text-xs text-gray-400 dark:text-gray-500 leading-snug">
                   Para corregir un monto, anulá el pago y registrá uno nuevo con + Pago.
                 </p>
-                <div class="flex justify-between text-[10px] text-gray-600 dark:text-gray-400">
+                <div class="flex justify-between text-xs text-gray-600 dark:text-gray-400">
                   <span>Pagado</span>
                   <span class="tabular-nums font-medium text-gray-900 dark:text-gray-100">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
               </ng-container>
 
               <div class="flex justify-between items-baseline gap-2 mt-2 pt-2 border-t border-gray-200/80 dark:border-gray-700/80">
-                <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Saldo pendiente</span>
+                <span class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Saldo pendiente</span>
                 <span class="text-sm font-bold text-orange-600 dark:text-orange-400 tabular-nums">{{ formatMoney(pendingOrderSaldo) }}</span>
               </div>
             </div>
 
-            <div class="hidden sm:grid grid-cols-2 gap-2 mb-4 text-[11px]">
+            <div class="hidden sm:grid grid-cols-2 gap-2 mb-4 text-xs">
               <div class="rounded-lg border border-green-100 dark:border-green-900/50 bg-green-50/80 dark:bg-green-950/25 px-2.5 py-2">
-                <p class="text-[9px] font-semibold uppercase tracking-wide text-green-700/80 dark:text-green-400/80 mb-0.5">
+                <p class="text-xs font-semibold uppercase tracking-wide text-green-700/80 dark:text-green-400/80 mb-0.5">
                   Ganancia est.
                   <span *ngIf="donationProfitPending" class="normal-case text-amber-600 dark:text-amber-400"> (al entregar)</span>
                 </p>
@@ -646,7 +667,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 </p>
               </div>
               <div class="rounded-lg border border-teal-100 dark:border-teal-900/50 bg-teal-50/80 dark:bg-teal-950/25 px-2.5 py-2">
-                <p class="text-[9px] font-semibold uppercase tracking-wide text-teal-700/80 dark:text-teal-400/80 mb-0.5">Margen</p>
+                <p class="text-xs font-semibold uppercase tracking-wide text-teal-700/80 dark:text-teal-400/80 mb-0.5">Margen</p>
                 <p class="text-sm font-bold text-teal-700 dark:text-teal-400 tabular-nums leading-tight">
                   {{ ((order.margen || 0) * 100).toFixed(1) }}%
                 </p>
@@ -657,7 +678,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               *ngIf="isEditing && order.ventaId"
               [routerLink]="['/sales']"
               [queryParams]="{ ventaId: order.ventaId }"
-              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+              class="mb-2 sm:mb-3 inline-block text-xs sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
             <div *ngIf="showReadOnlyOrderFooterActions" class="space-y-2 sm:space-y-3">
@@ -679,33 +700,33 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
             variant="light"
             class="sm:sticky sm:top-8 [&>div]:lg:p-4 [&>div_h2]:lg:text-base [&>div_h2]:lg:mb-3">
             <div *appHasPermission="permissions.ORDERS_VIEW_SALE_PRICE" class="mb-2 sm:mb-4">
-              <p class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase mb-0.5">Precio venta</p>
+              <p class="text-xs sm:text-xs font-bold text-gray-500 uppercase mb-0.5">Precio venta</p>
               <p class="text-lg sm:text-2xl font-bold text-teal-700 tabular-nums">{{ formatMoney(order.total || 0) }}</p>
             </div>
-            <div *ngIf="auth.canViewOrderBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 bg-gray-50 space-y-1 sm:space-y-2">
+            <div *ngIf="auth.canViewOrderBalance" class="mb-2 sm:mb-4 p-2 sm:p-3 rounded-lg sm:rounded-xl border border-gray-100 dark:border-gray-700/80 bg-gray-50 dark:bg-gray-800/35 space-y-1 sm:space-y-2">
               <ng-container *ngIf="!isEditing && !seniaBloqueada">
-                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Seña recibida</label>
+                <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Seña recibida</label>
                 <input
                   type="number"
                   [(ngModel)]="order.senia"
                   name="seniaStaffSummary"
                   [disabled]="isReadOnlyOrder"
-                  (ngModelChange)="calculateTotals()"
+                  (ngModelChange)="onOrderSeniaChange()"
                   min="0"
-                  class="w-full h-8 sm:h-auto min-h-8 sm:min-h-0 box-border px-3 py-1 sm:py-2 rounded-lg sm:rounded-xl border border-gray-200 bg-white dark:bg-gray-900 text-xs sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                  class="w-full min-h-10 box-border px-3 py-2 rounded-lg sm:rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100 tabular-nums outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
                 <p class="text-xs text-gray-500 hidden sm:block">
                   Al guardar el pedido, la seña queda registrada y bloqueada.
                 </p>
               </ng-container>
               <ng-container *ngIf="seniaBloqueada || isEditing">
                 <div class="flex items-center justify-between gap-2 mb-1 sm:mb-2">
-                  <span class="text-[10px] sm:text-xs font-bold text-gray-500 uppercase">Pagos</span>
+                  <span class="text-xs sm:text-xs font-bold text-gray-500 uppercase">Pagos</span>
                   <button
                     type="button"
                     (click)="openPaymentModal()"
                     *ngIf="auth.canRegisterOrderPayments"
                     [disabled]="!canRegisterOrderPayment"
-                    class="text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 disabled:opacity-40 disabled:cursor-not-allowed">
+                    class="text-xs sm:text-xs font-semibold text-teal-700 hover:text-teal-900 disabled:opacity-40 disabled:cursor-not-allowed">
                     + Pago
                   </button>
                 </div>
@@ -723,13 +744,13 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 <div *ngIf="order.pagos?.length" class="space-y-1.5 mb-2">
                   <div
                     *ngFor="let pago of order.pagos"
-                    class="flex items-start gap-1.5 text-[10px] sm:text-xs leading-tight text-gray-700">
+                    class="flex items-start gap-1.5 text-xs leading-tight text-gray-700 dark:text-gray-300">
                     <div class="min-w-0 flex-1">
                       <div class="flex items-baseline justify-between gap-2">
                         <span class="truncate font-medium">{{ getPaymentLineLabel(pago) }}</span>
                         <span class="font-semibold tabular-nums shrink-0">{{ formatMoney(pago.monto) }}</span>
                       </div>
-                      <p class="text-[9px] sm:text-[10px] text-gray-400 mt-0.5">
+                      <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                         {{ formatPaymentDate(pago.fecha) }}
                         <span *ngIf="shouldShowPaymentNotas(pago)"> · {{ pago.notas }}</span>
                       </p>
@@ -737,20 +758,20 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                   </div>
                 </div>
                 <div class="flex justify-between text-xs sm:text-sm">
-                  <span class="text-gray-600">Pagado</span>
-                  <span class="font-semibold tabular-nums text-gray-900">{{ formatMoney(getTotalPagado()) }}</span>
+                  <span class="text-gray-600 dark:text-gray-400">Pagado</span>
+                  <span class="font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ formatMoney(getTotalPagado()) }}</span>
                 </div>
               </ng-container>
-              <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200">
-                <span class="text-gray-600 font-medium">Saldo pendiente</span>
-                <span class="font-semibold tabular-nums text-orange-600">{{ formatMoney(pendingOrderSaldo) }}</span>
+              <div class="flex justify-between text-xs sm:text-sm pt-1 sm:pt-2 border-t border-gray-200 dark:border-gray-700">
+                <span class="text-gray-600 dark:text-gray-400 font-medium">Saldo pendiente</span>
+                <span class="font-semibold tabular-nums text-orange-600 dark:text-orange-400">{{ formatMoney(pendingOrderSaldo) }}</span>
               </div>
             </div>
             <a
               *ngIf="isEditing && order.ventaId"
               [routerLink]="['/sales']"
               [queryParams]="{ ventaId: order.ventaId }"
-              class="mb-2 sm:mb-3 inline-block text-[10px] sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
+              class="mb-2 sm:mb-3 inline-block text-xs sm:text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline">
               Ver venta
             </a>
             <div *ngIf="showReadOnlyOrderFooterActions" class="space-y-2 sm:space-y-3">
@@ -787,14 +808,14 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
           aria-label="Cerrar"
           (click)="closePaymentModal()">
         </button>
-        <div class="relative w-full max-w-sm rounded-2xl border border-gray-100 bg-white shadow-2xl p-5">
+        <div class="relative w-full max-w-sm rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl p-5">
           <div class="flex items-start justify-between gap-3 mb-4">
             <div class="min-w-0">
               <h2 class="text-base font-bold text-gray-900">Registrar pago</h2>
               <p class="text-xs text-gray-500 mt-0.5">Se imputa como cuota del pedido y se registra en caja hoy.</p>
             </div>
             <div class="shrink-0 text-right leading-tight">
-              <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Saldo</p>
+              <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Saldo</p>
               <p class="text-lg font-bold text-orange-600 tabular-nums">{{ formatMoney(paymentSaldoSnapshot) }}</p>
             </div>
           </div>
@@ -814,14 +835,14 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
                 [max]="paymentSaldoSnapshot"
                 placeholder="0"
                 aria-label="Monto a cobrar"
-                class="w-full h-11 pl-7 pr-3 rounded-xl border border-gray-200 bg-white text-gray-900 text-lg font-semibold tabular-nums outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+                class="w-full h-11 pl-7 pr-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-lg font-semibold tabular-nums outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
             </div>
-            <p class="text-[11px] text-gray-400 mt-1.5">
+            <p class="text-xs text-gray-400 mt-1.5">
               Hasta {{ formatMoney(paymentSaldoSnapshot) }}. El monto completo descuenta del saldo pendiente.
             </p>
           </div>
 
-          <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">
+          <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100 dark:border-gray-800">
             <button
               type="button"
               (click)="closePaymentModal()"
@@ -835,6 +856,148 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
               [disabled]="paymentSubmitting"
               class="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
               {{ paymentSubmitting ? 'Registrando…' : 'Registrar' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+    <div
+        *ngIf="finalizeModalOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="finalize-order-title">
+        <button
+          type="button"
+          class="absolute inset-0 bg-gray-900/50 backdrop-blur-[2px]"
+          aria-label="Cerrar"
+          (click)="closeFinalizeModal()">
+        </button>
+        <div class="relative w-full max-w-md rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl p-5">
+          <div class="flex items-start justify-between gap-3 mb-4">
+            <div class="min-w-0">
+              <h2 id="finalize-order-title" class="text-base font-bold text-gray-900">Finalizar pedido</h2>
+              <p class="text-xs text-gray-500 mt-0.5">
+                Entregás el pedido y registrás cómo quedó el cobro.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="text-gray-400 hover:text-gray-600"
+              aria-label="Cerrar"
+              (click)="closeFinalizeModal()">
+              <i-lucide name="x" class="h-4 w-4"></i-lucide>
+            </button>
+          </div>
+
+          <div class="mb-4 rounded-xl border border-gray-100 bg-gray-50 px-3 py-3 space-y-1.5 text-sm">
+            <div class="flex justify-between gap-3">
+              <span class="text-gray-500">Total</span>
+              <span class="font-semibold tabular-nums text-gray-900">{{ formatMoney(finalizeTotal) }}</span>
+            </div>
+            <div class="flex justify-between gap-3">
+              <span class="text-gray-500">Ya cobrado</span>
+              <span class="font-semibold tabular-nums text-teal-700">{{ formatMoney(finalizePagado) }}</span>
+            </div>
+            <div class="flex justify-between gap-3 pt-1 border-t border-gray-200">
+              <span class="text-gray-600 font-medium">Pendiente</span>
+              <span class="font-bold tabular-nums text-orange-600">{{ formatMoney(finalizeSaldo) }}</span>
+            </div>
+          </div>
+
+          <div class="space-y-2 mb-4">
+            <label class="flex items-start gap-2 cursor-pointer rounded-lg border border-gray-100 px-3 py-2.5 hover:bg-gray-50"
+              [class.border-teal-300]="finalizeMode === 'full'"
+              [class.bg-teal-50/60]="finalizeMode === 'full'">
+              <input
+                type="radio"
+                name="finalizeMode"
+                value="full"
+                [(ngModel)]="finalizeMode"
+                [ngModelOptions]="{ standalone: true }"
+                class="mt-0.5 h-4 w-4 border-gray-300 text-teal-600 focus:ring-teal-500">
+              <span class="text-sm">
+                <span class="font-semibold text-gray-900">Cobrado completo</span>
+                <span class="block text-xs text-gray-500 mt-0.5">
+                  Cobra el saldo pendiente y cierra el pedido.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer rounded-lg border border-gray-100 px-3 py-2.5 hover:bg-gray-50"
+              [class.border-teal-300]="finalizeMode === 'partial'"
+              [class.bg-teal-50/60]="finalizeMode === 'partial'">
+              <input
+                type="radio"
+                name="finalizeMode"
+                value="partial"
+                [(ngModel)]="finalizeMode"
+                [ngModelOptions]="{ standalone: true }"
+                class="mt-0.5 h-4 w-4 border-gray-300 text-teal-600 focus:ring-teal-500">
+              <span class="text-sm">
+                <span class="font-semibold text-gray-900">Cobro parcial</span>
+                <span class="block text-xs text-gray-500 mt-0.5">
+                  Cobra una parte ahora; el resto queda debiendo.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer rounded-lg border border-gray-100 px-3 py-2.5 hover:bg-gray-50"
+              [class.border-teal-300]="finalizeMode === 'pending'"
+              [class.bg-teal-50/60]="finalizeMode === 'pending'">
+              <input
+                type="radio"
+                name="finalizeMode"
+                value="pending"
+                [(ngModel)]="finalizeMode"
+                [ngModelOptions]="{ standalone: true }"
+                class="mt-0.5 h-4 w-4 border-gray-300 text-teal-600 focus:ring-teal-500">
+              <span class="text-sm">
+                <span class="font-semibold text-gray-900">Queda pendiente</span>
+                <span class="block text-xs text-gray-500 mt-0.5">
+                  Entregá sin cobrar más ahora.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div *ngIf="finalizeMode === 'partial'" class="mb-4">
+            <label class="block text-xs font-medium text-gray-500 mb-1.5">Monto a cobrar ahora</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-medium text-gray-400">$</span>
+              <input
+                type="number"
+                [(ngModel)]="finalizeAmountPaid"
+                [ngModelOptions]="{ standalone: true }"
+                min="1"
+                [max]="finalizeSaldo"
+                placeholder="0"
+                class="w-full h-11 pl-7 pr-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 text-lg font-semibold tabular-nums outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+            </div>
+          </div>
+
+          <div *ngIf="finalizeMode === 'full' || finalizeMode === 'partial'" class="mb-4">
+            <label class="block text-xs font-medium text-gray-500 mb-1.5">Medio de pago</label>
+            <select
+              [(ngModel)]="finalizePaymentMethod"
+              [ngModelOptions]="{ standalone: true }"
+              class="w-full h-11 px-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20">
+              <option *ngFor="let medio of finalizeMediosPago" [ngValue]="medio.id">{{ medio.label }}</option>
+            </select>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-4 border-t border-gray-100 dark:border-gray-800">
+            <button
+              type="button"
+              (click)="closeFinalizeModal()"
+              [disabled]="finalizeSubmitting"
+              class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              (click)="submitFinalizeOrder()"
+              [disabled]="finalizeSubmitting"
+              class="rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+              {{ finalizeSubmitting ? 'Finalizando…' : 'Finalizar' }}
             </button>
           </div>
         </div>
@@ -877,7 +1040,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       role="dialog"
       aria-modal="true"
       aria-labelledby="stock-discount-title">
-      <div class="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200 max-h-[90vh] flex flex-col">
+      <div class="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 shadow-xl border border-gray-200 dark:border-gray-700 max-h-[90vh] flex flex-col">
         <header class="px-4 py-3 border-b border-gray-200">
           <h2 id="stock-discount-title" class="text-base font-bold text-gray-900">Descuento de depósito</h2>
           <p class="text-sm text-gray-600 mt-1">
@@ -972,7 +1135,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
       role="dialog"
       aria-modal="true"
       aria-labelledby="consume-pending-title">
-      <div class="w-full max-w-lg rounded-xl bg-white shadow-xl border border-gray-200 max-h-[90vh] flex flex-col">
+      <div class="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 shadow-xl border border-gray-200 dark:border-gray-700 max-h-[90vh] flex flex-col">
         <header class="px-4 py-3 border-b border-gray-200">
           <h2 id="consume-pending-title" class="text-base font-bold text-gray-900">Descontar stock del depósito</h2>
           <p class="text-sm text-gray-600 mt-1">
@@ -1046,7 +1209,7 @@ import { formatMoneyValue } from '../../shared/pipes/money.pipe';
     </app-order-stock-preparation-panel>
   `,
 })
-export class NewOrderComponent implements OnInit, OnDestroy {
+export class NewOrderComponent implements OnInit, OnDestroy, UnsavedChangesHost {
   private static readonly MAX_ORDER_LINES = 400;
   private static readonly MAX_EXTRA_COSTS_PER_LINE = 24;
 
@@ -1097,7 +1260,8 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private orderStatusOptionsKey = '';
   selectedClientLabel = '';
   pendingClientName = '';
-  private orderReturnTo: 'orders' | 'stock' | 'cash' = 'orders';
+  private orderReturnTo: 'orders' | 'stock' | 'cash' | 'client-historial' = 'orders';
+  private orderReturnClientId: string | null = null;
   private orderReturnStockTab: 'productos' | 'movimientos' | 'reservas' = 'movimientos';
   private orderCashReturnContext: CashReturnContext | null = null;
   creatingClient = false;
@@ -1109,6 +1273,12 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   orderPageReady = true;
   orderDetailLoading = false;
   private loadedOrderSnapshot: Order | null = null;
+  private syncedOrderFingerprint = '';
+  private leaveSaveResolve: ((ok: boolean) => void) | null = null;
+  private leavingAfterSave = false;
+  private discardingUnsavedChanges = false;
+  private readonly unsavedChanges = inject(UnsavedChangesRegistry);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
   isDraftOrder = false;
   orderLines: OrderLineItem[] = [];
   private addedOrderProductIdsCache: string[] = [];
@@ -1129,6 +1299,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   paymentSaldoSnapshot = 0;
   paymentSubmitting = false;
   paymentRemovingId: string | null = null;
+  finalizeModalOpen = false;
+  finalizeMode: 'full' | 'partial' | 'pending' = 'full';
+  finalizeAmountPaid: number | null = null;
+  finalizePaymentMethod = 'efectivo';
+  finalizeSubmitting = false;
   orderSaveState: 'idle' | 'saving' | 'success' = 'idle';
   orderSaveAction: 'draft' | 'submit' | null = null;
   orderSaveBannerText = '';
@@ -1321,6 +1496,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   get orderBackLabel(): string {
     if (this.orderReturnTo === 'stock') return 'Volver a stock';
     if (this.orderReturnTo === 'cash') return 'Volver a caja';
+    if (this.orderReturnTo === 'client-historial') return 'Volver al historial';
     return 'Volver a pedidos';
   }
 
@@ -1359,7 +1535,6 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   goBack() {
-    clearOrderFormDraft();
     if (this.orderReturnTo === 'cash' && this.orderCashReturnContext) {
       void this.router.navigate(['/cash'], {
         queryParams: buildCashReopenQueryParams(this.orderCashReturnContext),
@@ -1373,6 +1548,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             this.orderReturnStockTab !== 'productos' ? this.orderReturnStockTab : null,
         },
       });
+      return;
+    }
+    if (this.orderReturnTo === 'client-historial' && this.orderReturnClientId) {
+      void this.router.navigate(clientHistorialRoute(this.orderReturnClientId));
       return;
     }
     this.navigationBack.back(['/orders']);
@@ -1515,8 +1694,34 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       this.canSaveOrder ||
       this.canSaveLockedDescription ||
       this.canDuplicateOrder ||
+      this.canFinalizeOrder ||
       (this.isEditing && this.auth.canPrintOrders)
     );
+  }
+
+  get canFinalizeOrder(): boolean {
+    if (!this.editingOrderId || this.isCancelledOrder || this.isLockedOrder) return false;
+    if (this.isDeliveryPendingSave) return false;
+    if (!this.auth.canRegisterOrderPayments && !this.auth.canChangeOrderStatus) return false;
+    const estado = normalizeOrderStatus(this.savedOrderEstado || this.order.estado);
+    if (estado === 'borrador') return false;
+    return true;
+  }
+
+  get finalizeTotal(): number {
+    return this.resolveCurrentOrderBalance().total;
+  }
+
+  get finalizePagado(): number {
+    return this.resolveCurrentOrderBalance().pagado;
+  }
+
+  get finalizeSaldo(): number {
+    return this.resolveCurrentOrderBalance().saldo;
+  }
+
+  get finalizeMediosPago() {
+    return getMediosPagoActivos(this.appConfig);
   }
 
   get pendingOrderSaldo(): number {
@@ -1685,6 +1890,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.pendingSaveEstado = null;
     this.order.estado = this.savedOrderEstado || this.order.estado;
     this.resetOrderSaveState();
+    this.finishLeaveSave(false);
   }
 
   private closeStockDiscountDialog() {
@@ -1890,6 +2096,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     const stockItemId = String(line.stockItemId ?? '').trim();
     if (!stockItemId) return;
     this.saveOrderFormDraftForReturn();
+    this.unsavedChanges.allowNextNavigation();
     void this.router
       .navigate([], {
         relativeTo: this.route,
@@ -2018,6 +2225,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.orderReturnTo = 'cash';
         this.orderCashReturnContext = ctx;
         this.orderReturnStockTab = 'movimientos';
+        this.orderReturnClientId = null;
         return;
       }
     }
@@ -2029,11 +2237,21 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           ? tab
           : 'movimientos';
       this.orderCashReturnContext = null;
+      this.orderReturnClientId = null;
+      return;
+    }
+    const historialCtx = parseClientHistorialReturnContext(this.route.snapshot.queryParamMap);
+    if (historialCtx) {
+      this.orderReturnTo = 'client-historial';
+      this.orderReturnClientId = historialCtx.clientId;
+      this.orderCashReturnContext = null;
+      this.orderReturnStockTab = 'movimientos';
       return;
     }
     this.orderReturnTo = 'orders';
     this.orderReturnStockTab = 'movimientos';
     this.orderCashReturnContext = null;
+    this.orderReturnClientId = null;
   }
 
   private readOrderPreview(orderId: string): Order | null {
@@ -2194,6 +2412,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.order.clienteId = response.id;
         this.selectedClientLabel = trimmed;
         this.pendingClientName = trimmed;
+        this.markOrderFormDirty();
       },
       error: () => {
         this.creatingClient = false;
@@ -2209,6 +2428,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (this.isReadOnlyOrder) return;
 
     this.saveOrderFormDraftForReturn();
+    this.unsavedChanges.allowNextNavigation();
     const nombre = this.pendingClientName.trim();
     const clientQuery: Record<string, string> = {
       returnTo: 'orders',
@@ -2277,12 +2497,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
     this.calculateTotals();
     this.enrichOrderLinesWithStock({ debounceMs: 0 });
-    this.markOrderFormSynced();
+    this.markOrderFormDirty();
     this.refreshClients();
     return true;
   }
 
   private clearRestoreQueryParams() {
+    this.unsavedChanges.allowNextNavigation();
     this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { restoreDraft: null, clienteId: null },
@@ -2300,6 +2521,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.isDraftOrder = false;
     this.savedOrderEstado = 'pendiente';
     this.orderFormLocked = false;
+    this.markOrderFormSynced();
   }
 
   closeClientModal() {
@@ -2314,6 +2536,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.mergeClientOption(event.id, event.client.nombre ?? '');
     this.refreshClients();
     this.closeClientModal();
+    this.markOrderFormDirty();
   }
 
   duplicateOrder() {
@@ -2349,7 +2572,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         if (!confirmed) return;
 
         this.orderService.deleteOrder(this.editingOrderId!).subscribe({
-          next: () => this.router.navigate(['/orders']),
+          next: () => {
+            this.discardingUnsavedChanges = true;
+            this.unsavedChanges.allowNextNavigation();
+            this.router.navigate(['/orders']);
+          },
           error: (err) =>
             this.dialogService.alert({
               title: 'No se puede cancelar',
@@ -2497,6 +2724,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!this.auth.canViewOrderSalePrice || !price) return;
     line.precioVenta = price;
     this.calculateTotals();
+    this.markOrderFormDirty();
   }
 
   getExtraCostsActionLabel(line: OrderLineItem): string {
@@ -2523,6 +2751,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }));
     this.cancelExtraCostsModal();
     this.calculateTotals();
+    this.markOrderFormDirty();
   }
 
   getLineCustomizationTotal(line: OrderLineItem): number {
@@ -2889,6 +3118,81 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.paymentSubmitting = false;
   }
 
+  openFinalizeModal() {
+    if (!this.canFinalizeOrder || !this.editingOrderId) return;
+    const saldo = this.resolveCurrentOrderBalance().saldo;
+    this.finalizeMode = saldo > 0.009 ? 'full' : 'pending';
+    this.finalizeAmountPaid = saldo > 0 ? Math.round(saldo * 100) / 100 : null;
+    const medios = this.finalizeMediosPago;
+    this.finalizePaymentMethod =
+      medios.find((m) => m.id === 'efectivo')?.id ?? medios[0]?.id ?? 'efectivo';
+    this.finalizeSubmitting = false;
+    this.finalizeModalOpen = true;
+  }
+
+  closeFinalizeModal() {
+    if (this.finalizeSubmitting) return;
+    this.finalizeModalOpen = false;
+  }
+
+  submitFinalizeOrder() {
+    if (!this.editingOrderId || this.finalizeSubmitting || !this.canFinalizeOrder) return;
+    const saldo = this.resolveCurrentOrderBalance().saldo;
+    const mode = this.finalizeMode;
+    let amountPaid: number | undefined;
+
+    if (mode === 'partial') {
+      amountPaid = Math.round((Number(this.finalizeAmountPaid) || 0) * 100) / 100;
+      if (amountPaid <= 0) {
+        this.dialogService.alert({
+          title: 'Campo requerido',
+          message: 'Indicá el monto cobrado.',
+        });
+        return;
+      }
+      if (amountPaid > saldo + 0.009) {
+        this.dialogService.alert({
+          title: 'Monto demasiado alto',
+          message: `El monto no puede superar el saldo pendiente (${this.formatMoney(saldo)}).`,
+        });
+        return;
+      }
+    }
+
+    const paymentMethod =
+      mode === 'full' || mode === 'partial' ? String(this.finalizePaymentMethod || '').trim() : undefined;
+
+    this.finalizeSubmitting = true;
+    this.orderService
+      .finalizeOrder(this.editingOrderId, {
+        mode,
+        amountPaid,
+        paymentMethod: paymentMethod || undefined,
+      })
+      .subscribe({
+        next: (result) => {
+          this.finalizeSubmitting = false;
+          this.finalizeModalOpen = false;
+          this.dialogService.alert({
+            title: result.alreadyFinalized ? 'Pedido ya finalizado' : 'Pedido finalizado',
+            message: result.alreadyFinalized
+              ? 'Este pedido ya estaba entregado.'
+              : mode === 'pending' || (mode === 'partial' && result.saldo > 0.009)
+                ? `Quedó entregado con saldo pendiente de ${this.formatMoney(result.saldo)}.`
+                : 'El pedido quedó entregado y cerrado.',
+          });
+          if (this.editingOrderId) this.loadOrder(this.editingOrderId);
+        },
+        error: (err) => {
+          this.finalizeSubmitting = false;
+          this.dialogService.alert({
+            title: 'No se pudo finalizar',
+            message: err?.error?.error || 'Intentá de nuevo.',
+          });
+        },
+      });
+  }
+
   submitPayment() {
     void this.submitPaymentAsync();
   }
@@ -2995,11 +3299,66 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    if (this.isOrderFormDirty() && !this.isReadOnlyOrder) {
+    if (this.discardingUnsavedChanges) {
+      clearOrderFormDraft();
+    } else if (this.hasUnsavedChanges() && !this.isReadOnlyOrder) {
       this.saveOrderFormDraftForReturn();
+    } else {
+      clearOrderFormDraft();
     }
     window.clearTimeout(this.orderSaveFeedbackTimeout);
     window.clearTimeout(this.stockEnrichTimer);
+  }
+
+  hasUnsavedChanges(): boolean {
+    if (this.isReadOnlyOrder && !this.hasPendingDescriptionChange) return false;
+    if (this.hasPendingDescriptionChange) return true;
+    if (this.isOrderFormDirty()) return true;
+    return this.orderDirtyFingerprint() !== this.syncedOrderFingerprint;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    if (this.orderSaveState === 'saving') return Promise.resolve(false);
+
+    if (this.canSaveLockedDescription) {
+      return this.persistLockedDescriptionForLeave();
+    }
+
+    if (!this.canSaveOrder) {
+      this.dialogService.alert({
+        title: 'Sin permiso',
+        message: 'No tenés permiso para guardar cambios en este pedido.',
+      });
+      return Promise.resolve(false);
+    }
+    if (this.canEditOrderContent && !this.validateClient()) return Promise.resolve(false);
+    if (this.canEditOrderContent && !this.validateProducts()) return Promise.resolve(false);
+
+    this.leavingAfterSave = true;
+    return new Promise((resolve) => {
+      this.leaveSaveResolve = resolve;
+      this.confirmBeforeOrderSubmit(
+        () => this.finalizeOrderSubmit(),
+        () => this.finishLeaveSave(false)
+      );
+    });
+  }
+
+  acknowledgeUnsavedLeave(action: 'save' | 'discard'): void {
+    if (action === 'discard') {
+      this.discardingUnsavedChanges = true;
+      clearOrderFormDraft();
+    }
+  }
+
+  onOrderDescriptionChange() {
+    this.markOrderFormDirty();
+  }
+
+  onOrderSeniaChange() {
+    this.calculateTotals();
+    this.markOrderFormDirty();
   }
 
   saveDraft() {
@@ -3034,10 +3393,14 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     return this.order.estado?.trim() || 'pendiente';
   }
 
-  private confirmBeforeOrderSubmit(onConfirm: () => void): void {
+  private confirmBeforeOrderSubmit(onConfirm: () => void, onCancel?: () => void): void {
     const donation = this.shouldConfirmDonationOnSave;
     const delivery = this.isEditing && this.isDeliveryPendingSave;
     const estado = this.resolveSubmitEstado();
+    const handle = (confirmed: boolean) => {
+      if (confirmed) onConfirm();
+      else onCancel?.();
+    };
 
     if (donation && delivery) {
       const label = getOrderStatusLabelFromConfig(estado, this.appConfig.pedidos);
@@ -3054,9 +3417,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           confirmLabel: 'Sí, guardar',
           cancelLabel: 'Volver',
         })
-        .subscribe((confirmed) => {
-          if (confirmed) onConfirm();
-        });
+        .subscribe(handle);
       return;
     }
 
@@ -3070,9 +3431,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           confirmLabel: 'Sí, es donación',
           cancelLabel: 'Volver',
         })
-        .subscribe((confirmed) => {
-          if (confirmed) onConfirm();
-        });
+        .subscribe(handle);
       return;
     }
 
@@ -3090,9 +3449,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             confirmLabel: 'Sí, entregar',
             cancelLabel: 'Cancelar',
           })
-          .subscribe((confirmed) => {
-            if (confirmed) onConfirm();
-          });
+          .subscribe(handle);
         return;
       }
 
@@ -3107,15 +3464,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             confirmLabel: saldo > 0 ? 'Entregar y cobrar' : 'Entregar',
             cancelLabel: 'Cancelar',
           })
-          .subscribe((confirmed) => {
-            if (confirmed) onConfirm();
-          });
+          .subscribe(handle);
         return;
       }
 
       this.promptEntregaModo(
         () => onConfirm(),
-        () => undefined
+        () => onCancel?.()
       );
       return;
     }
@@ -3130,8 +3485,9 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       if (this.orderSaveState === 'saving') return;
       this.dialogService.alert({
         title: 'Guardar pedido',
-        message: 'Esperá a que termine el guardado anterior o recargá la página.',
+        message: 'No se pudo iniciar el guardado. Probá de nuevo.',
       });
+      this.finishLeaveSave(false);
       return;
     }
     this.persistOrder(estado);
@@ -3226,10 +3582,53 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
   private markOrderFormSynced(): void {
     this.syncedOrderFormRevision = this.orderFormRevision;
+    this.syncedOrderFingerprint = this.orderDirtyFingerprint();
   }
 
   private isOrderFormDirty(): boolean {
+    if (this.hasPendingDescriptionChange) return true;
     return this.orderFormRevision !== this.syncedOrderFormRevision;
+  }
+
+  private orderDirtyFingerprint(): string {
+    return JSON.stringify({
+      clienteId: String(this.order.clienteId ?? ''),
+      descripcion: String(this.order.descripcion ?? ''),
+      estado: String(this.order.estado ?? ''),
+      fecha: toDateInputValue(this.order.createdAt),
+      fechaEntrega: toDateInputValue(this.order.fechaEntrega),
+      senia: Number(this.order.senia) || 0,
+      lines: this.orderLines.map((line) => ({
+        stockItemId: String(line.stockItemId ?? ''),
+        cantidad: Number(line.cantidad) || 0,
+        precioVenta: line.precioVenta,
+        costosExtra: (line.costosExtra ?? []).map((extra) => ({
+          nombre: extra.nombre ?? '',
+          costo: Number(extra.costo) || 0,
+        })),
+      })),
+    });
+  }
+
+  private finishLeaveSave(ok: boolean): void {
+    if (!ok) this.leavingAfterSave = false;
+    const resolve = this.leaveSaveResolve;
+    this.leaveSaveResolve = null;
+    resolve?.(ok);
+  }
+
+  private persistLockedDescriptionForLeave(): Promise<boolean> {
+    if (!this.editingOrderId || !this.canSaveLockedDescription) {
+      return Promise.resolve(false);
+    }
+    this.leavingAfterSave = true;
+    return new Promise((resolve) => {
+      this.leaveSaveResolve = resolve;
+      this.saveLockedOrderDescription();
+      if (this.orderSaveState !== 'saving') {
+        this.finishLeaveSave(false);
+      }
+    });
   }
 
   /** Cancela GETs de detalle que podrían pisar cambios locales o un guardado reciente. */
@@ -3321,9 +3720,11 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           this.markOrderFormSynced();
           this.syncLoadedOrderSnapshotFromForm();
           this.finishOrderSaveSuccess();
+          this.finishLeaveSave(true);
         },
         error: (err: HttpErrorResponse) => {
           this.resetOrderSaveState();
+          this.finishLeaveSave(false);
           const serverMessage =
             typeof err.error?.error === 'string' ? err.error.error : '';
           this.dialogService.alert({
@@ -3412,6 +3813,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
   private persistOrder(estado: string) {
     if (!this.ensureEditable('guardar el pedido')) {
       this.resetOrderSaveState();
+      this.finishLeaveSave(false);
       return;
     }
 
@@ -3447,6 +3849,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         title: 'Estado del pedido',
         message: transition.error ?? 'No podés retroceder el estado del pedido.',
       });
+      this.finishLeaveSave(false);
       return;
     }
 
@@ -3465,6 +3868,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             this.order.estado = this.savedOrderEstado || this.order.estado;
             this.resetOrderSaveState();
             this.pendingSaveEstado = null;
+            this.finishLeaveSave(false);
             return;
           }
           this.continuePreSaveStockDiscountCheck(targetEstado, onReady);
@@ -3528,6 +3932,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             title: 'Stock insuficiente',
             message: preview.blockReason ?? 'No podés guardar con este estado todavía.',
           });
+          this.finishLeaveSave(false);
           return;
         }
 
@@ -3590,13 +3995,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
       saldo: Number(this.order.saldo) || 0,
       items: this.orderLines.map((line) => {
         const customizationTotal = this.getLinePersTotal(line);
-        return {
-          stockItemId: line.stockItemId,
-          nombre: line.nombre,
+        const row: Record<string, unknown> = {
+          stockItemId: String(line.stockItemId ?? '').trim(),
+          nombre: String(line.nombre ?? '').trim() || 'Concepto',
           cantidad: Number(line.cantidad) || 1,
           costoUnitario: Number(line.costoUnitario) || 0,
           costoPersonalizacion: customizationTotal,
-          controlaStock: line.controlaStock,
+          controlaStock: line.controlaStock !== false,
           costosExtra: (line.costosExtra ?? [])
             .filter((extra) => extra.nombre?.trim() || extra.costo)
             .map((extra) => ({
@@ -3605,10 +4010,13 @@ export class NewOrderComponent implements OnInit, OnDestroy {
             })),
           precioVenta: Number(line.precioVenta) || 0,
         };
+        return row;
       }),
-      stockItemId: firstLine?.stockItemId,
-      cantidad: firstLine ? Number(firstLine.cantidad) || 1 : undefined,
     };
+    if (firstLine?.stockItemId) {
+      payload.stockItemId = firstLine.stockItemId;
+      payload.cantidad = Number(firstLine.cantidad) || 1;
+    }
 
     if (!this.editingOrderId) {
       payload.senia = Number(this.order.senia) || 0;
@@ -3659,6 +4067,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     if (!this.ensureEditable('guardar el pedido')) {
       this.resetOrderSaveState();
       this.pendingSaveEstado = null;
+      this.finishLeaveSave(false);
       return;
     }
     this.orderLinesTable?.commitPendingNumericEdits();
@@ -3678,7 +4087,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         const wasNew = !this.editingOrderId;
         if (createdId && wasNew) {
           this.editingOrderId = createdId;
-          this.router.navigate(['/orders', createdId, 'edit'], { replaceUrl: true });
+          if (!this.leavingAfterSave) {
+            this.unsavedChanges.allowNextNavigation();
+            this.router.navigate(['/orders', createdId, 'edit'], { replaceUrl: true });
+          }
         }
         this.applyOrderUpdateResult(result as OrderUpdateResult);
         this.isDraftOrder = estado === 'borrador';
@@ -3709,6 +4121,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
 
         this.finishOrderSaveSuccess();
         this.flushPendingOrderPhotosInBackground();
+        this.finishLeaveSave(true);
 
         if (shouldAutoReserve) {
           this.autoReserveStockForOrder(this.editingOrderId!);
@@ -3718,6 +4131,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
         this.pendingSaveEstado = null;
         this.pendingEntregaModo = null;
         this.resetOrderSaveState();
+        this.finishLeaveSave(false);
         const serverMessage =
           typeof err.error?.error === 'string' ? err.error.error : '';
         this.dialogService.alert({
@@ -3918,10 +4332,10 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     this.orderPhotos = order.fotos ?? [];
     this.savedOrderEstado = this.order.estado ?? 'pendiente';
     this.orderFormLocked = orderIsLockedForEdit(order.estado, order);
-    this.markOrderFormSynced();
 
     if (!includeLines) {
       this.calculateTotals();
+      this.markOrderFormSynced();
       return;
     }
 
@@ -3955,6 +4369,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
           this.orderLines[0].permitirStockNegativo = stockItem.permitirStockNegativo !== false;
           this.orderLines[0].stockDisponible = getStockDisponible(stockItem);
           this.calculateTotals();
+          if (!this.isOrderFormDirty()) this.markOrderFormSynced();
         },
       });
     } else {
@@ -3962,6 +4377,7 @@ export class NewOrderComponent implements OnInit, OnDestroy {
     }
 
     this.calculateTotals();
+    this.markOrderFormSynced();
   }
 
   private normalizeOrderLine(line: OrderLineItem): OrderLineItem {

@@ -6,7 +6,8 @@ export type TrialRegistrationRecord = {
   businessName: string;
   rubro: TrialRubroId | string;
   pais: string;
-  ciudad: string;
+  /** Vacío/null = pendiente de completar (nunca placeholder ficticio). */
+  ciudad: string | null;
   ownerName: string;
   email: string;
   phone: string;
@@ -20,8 +21,14 @@ export type TrialRegistrationRecord = {
   privacyAcceptedAt: string;
   consentIp?: string;
   utmSource?: string | null;
+  utmMedium?: string | null;
   utmCampaign?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
+  fbclid?: string | null;
+  gclid?: string | null;
   campaignSource?: string | null;
+  landingPath?: string | null;
   trialProduct?: string | null;
   /** Si el email/teléfono ya pertenece a una empresa, se suma el módulo ahí. */
   existingBusinessId?: string | null;

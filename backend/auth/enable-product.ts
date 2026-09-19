@@ -2,6 +2,7 @@ import { getBusiness, updateBusiness, type BusinessRecord } from './business.ts'
 import { resolveBillingMode } from './usage-gates.ts';
 import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
 import { getBillingProduct } from '../../shared/billing-catalog.ts';
+import { buildPriceSnapshotForBusiness } from './subscription-price-snapshot.ts';
 import { platformAccessPayload } from './platform-access.ts';
 import {
   mergePlatformAccessWithProduct,
@@ -36,11 +37,19 @@ function checkoutProductFor(
   currentErp: boolean,
   incoming: TrialProductId
 ): TrialProductId {
-  const whatsapp = currentWhatsapp || incoming === 'whatsapp' || incoming === 'completo';
-  const erp = currentErp || incoming === 'erp' || incoming === 'completo';
+  if (incoming === 'cash' && !currentWhatsapp && !currentErp) return 'cash';
+  const whatsapp =
+    currentWhatsapp ||
+    incoming === 'whatsapp' ||
+    incoming === 'completo' ||
+    incoming === 'cash';
+  const erp = currentErp || incoming === 'erp' || incoming === 'completo' || incoming === 'cash';
+  if (incoming === 'cash' && !currentErp) return 'cash';
+  if (whatsapp && erp && incoming !== 'cash') return 'completo';
+  if (whatsapp && !erp) return incoming === 'cash' ? 'cash' : 'whatsapp';
+  if (erp && !whatsapp) return 'erp';
   if (whatsapp && erp) return 'completo';
-  if (whatsapp) return 'whatsapp';
-  return 'erp';
+  return incoming;
 }
 
 async function seedWhatsappLine(business: BusinessRecord, trialProduct?: TrialProductId | null) {
@@ -59,17 +68,27 @@ async function persistAccess(
   business: BusinessRecord,
   nextAccess: ReturnType<typeof normalizePlatformAccess>,
   historyNote: string,
-  options?: { syncPlanId?: boolean; product?: TrialProductId }
+  options?: { syncPlanId?: boolean; product?: TrialProductId; refreshSnapshot?: boolean }
 ): Promise<BusinessRecord> {
-  const patch: { platformAccess: ReturnType<typeof platformAccessPayload>; planId?: string } = {
+  const patch: {
+    platformAccess: ReturnType<typeof platformAccessPayload>;
+    planId?: string;
+    suscripcion?: BusinessRecord['suscripcion'];
+  } = {
     platformAccess: platformAccessPayload(nextAccess),
   };
   if (options?.syncPlanId) {
     const catalog = getBillingProduct(nextAccess.trialProduct ?? options.product ?? '');
     if (catalog?.erpPlanId) patch.planId = catalog.erpPlanId;
   }
+  if (options?.refreshSnapshot && options.product) {
+    const priceSnapshot = await buildPriceSnapshotForBusiness(business, options.product);
+    patch.suscripcion = { ...(business.suscripcion ?? {}), priceSnapshot };
+  }
   return updateBusiness(business.id, patch, {
-    allowSubscriptionFields: Boolean(patch.planId && patch.planId !== business.planId),
+    allowSubscriptionFields: Boolean(
+      (patch.planId && patch.planId !== business.planId) || patch.suscripcion
+    ),
     changedBy: 'system',
     historyNote,
   });
@@ -84,8 +103,11 @@ export async function enableProductOnBusiness(params: {
   if (!business) throw new Error('BUSINESS_NOT_FOUND');
 
   const currentAccess = normalizePlatformAccess(business.platformAccess);
-  const wantsWhatsapp = params.product === 'whatsapp' || params.product === 'completo';
-  const wantsErp = params.product === 'erp' || params.product === 'completo';
+  const wantsWhatsapp =
+    params.product === 'whatsapp' ||
+    params.product === 'completo' ||
+    params.product === 'cash';
+  const wantsErp = params.product === 'erp' || params.product === 'completo' || params.product === 'cash';
 
   if (productAlreadyEnabled(currentAccess, params.product)) {
     let nextAccess = currentAccess;
@@ -136,7 +158,7 @@ export async function enableProductOnBusiness(params: {
     business,
     nextAccess,
     `Se sumó ${params.product} a la prueba (misma empresa)`,
-    { syncPlanId: true, product: params.product }
+    { syncPlanId: true, product: params.product, refreshSnapshot: true }
   );
 
   if (nextAccess.whatsappEnabled) {

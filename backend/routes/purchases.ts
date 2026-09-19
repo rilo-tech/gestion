@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../firebase.ts';
 import { createCompanyRouter } from './create-company-router.ts';
-import { requirePermission, type AuthenticatedRequest } from '../auth/middleware.ts';
+import { requirePermission, requireBusinessFeature, type AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   parsePurchaseInput,
@@ -21,6 +21,7 @@ import { scheduleStockMetricsRefresh } from '../utils/stock-metrics.ts';
 import { syncPendingOrdersAfterStockChange } from '../utils/order-stock-reservations.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('purchases'));
 
 function mapPurchaseDoc(doc: { id: string; data: () => Record<string, unknown> | undefined }) {
   const data = doc.data() ?? {};

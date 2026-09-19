@@ -19,11 +19,24 @@ import { LucideAngularModule } from 'lucide-angular';
 import {
   Html5Qrcode,
   Html5QrcodeSupportedFormats,
+  type CameraDevice,
   type Html5QrcodeCameraScanConfig,
 } from 'html5-qrcode';
 import { normalizeBarcodeKey, sanitizeScannedBarcode } from '../../../core/utils/barcode-key';
+import {
+  observeContinuousScan,
+  releaseContinuousScanIfAbsent,
+  createContinuousScanLock,
+  type ContinuousScanLockState,
+  BARCODE_LOCK_ABSENCE_MS,
+} from './barcode-scan-lock';
+
+export type BarcodeScanMode = 'single' | 'continuous';
 
 type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
+
+/** @deprecated use BARCODE_LOCK_ABSENCE_MS */
+const LOCK_ABSENCE_MS = BARCODE_LOCK_ABSENCE_MS;
 
 @Component({
   selector: 'app-barcode-scanner-modal',
@@ -49,6 +62,9 @@ type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
           <div class="min-w-0">
             <h2 class="text-lg font-bold text-gray-900 truncate">{{ title }}</h2>
             <p *ngIf="hint" class="text-xs text-gray-500 mt-0.5">{{ hint }}</p>
+            <p *ngIf="mode === 'continuous'" class="text-[11px] text-teal-700 mt-0.5 font-medium">
+              Modo continuo · apuntá, alejalo y volvé a escanear
+            </p>
           </div>
           <button
             type="button"
@@ -85,6 +101,30 @@ type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
             </div>
 
             <div
+              class="absolute top-2 right-2 z-30 flex flex-col gap-1.5"
+              *ngIf="status === 'scanning' || status === 'detected'">
+              <button
+                *ngIf="torchAvailable"
+                type="button"
+                (click)="toggleTorch()"
+                class="inline-flex items-center gap-1 rounded-lg bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-black/85"
+                [attr.aria-pressed]="torchOn"
+                [title]="torchOn ? 'Apagar linterna' : 'Linterna'">
+                <i-lucide name="flashlight" class="w-3.5 h-3.5"></i-lucide>
+                {{ torchOn ? 'On' : 'Off' }}
+              </button>
+              <button
+                *ngIf="cameras.length > 1"
+                type="button"
+                (click)="cycleCamera()"
+                class="inline-flex items-center gap-1 rounded-lg bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-black/85"
+                title="Cambiar cámara">
+                <i-lucide name="switch-camera" class="w-3.5 h-3.5"></i-lucide>
+                Cámara
+              </button>
+            </div>
+
+            <div
               class="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 py-2 text-center text-xs font-medium text-white"
               [class.bg-black/75]="status !== 'detected'"
               [class.bg-teal-700/90]="status === 'detected'">
@@ -93,16 +133,30 @@ type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
                 <span class="inline-block w-1.5 h-1.5 rounded-full bg-teal-300 animate-pulse"></span>
                 {{ scanningHint }}
               </span>
-              <span *ngIf="status === 'detected'">
+              <span *ngIf="status === 'detected' && mode === 'single'">
                 Código leído: {{ detectedCode }}
                 <span *ngIf="autoApplySecondsLeft > 0"> · usando en {{ autoApplySecondsLeft }}s</span>
+              </span>
+              <span *ngIf="status === 'detected' && mode === 'continuous'">
+                ✓ {{ detectedCode }}
               </span>
               <span *ngIf="status === 'error'">Usá el campo de abajo</span>
             </div>
           </div>
 
+          <div
+            *ngIf="lastContinuousFeedback"
+            class="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-900">
+            ✓ {{ lastContinuousFeedback }}
+          </div>
+
           <p class="text-xs text-gray-500 leading-relaxed">
-            Centrá el código en el recuadro. Al detectarlo se copia abajo; tocá <span class="font-semibold">Usar</span> si no se aplica solo.
+            <ng-container *ngIf="mode === 'single'">
+              Centrá el código. Al detectarlo se copia abajo; tocá <span class="font-semibold">Usar</span> si no se aplica solo.
+            </ng-container>
+            <ng-container *ngIf="mode === 'continuous'">
+              Cada lectura deliberada suma una unidad. Alejá el código del cuadro antes de volver a escanear el mismo.
+            </ng-container>
           </p>
 
           <div
@@ -110,10 +164,6 @@ type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
             [class.border-gray-200]="status !== 'detected'"
             [class.border-teal-300]="status === 'detected'"
             [class.bg-teal-50/40]="status === 'detected'">
-            <div *ngIf="status === 'detected'" class="flex items-center gap-2 text-sm font-semibold text-teal-800">
-              <i-lucide name="circle-check" class="w-4 h-4 shrink-0"></i-lucide>
-              <span>Código copiado en el campo</span>
-            </div>
             <div class="flex gap-2">
               <input
                 #manualInput
@@ -123,8 +173,10 @@ type ScanStatus = 'idle' | 'starting' | 'scanning' | 'detected' | 'error';
                 name="manualBarcode"
                 placeholder="Código de barras"
                 autocomplete="off"
-                inputmode="numeric"
-                class="form-control flex-1 min-w-0 text-sm tabular-nums"
+                inputmode="text"
+                autocapitalize="off"
+                spellcheck="false"
+                class="form-control flex-1 min-w-0 text-sm"
                 (keydown.enter)="submitManual($event)">
               <button
                 type="button"
@@ -155,6 +207,9 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
   @Input() open = false;
   @Input() title = 'Escanear código';
   @Input() hint = '';
+  @Input() mode: BarcodeScanMode = 'single';
+  /** Texto de feedback tras un escaneo continuo exitoso (lo setea el padre). */
+  @Input() continuousFeedback = '';
 
   @Output() closed = new EventEmitter<void>();
   @Output() scanned = new EventEmitter<string>();
@@ -167,6 +222,10 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
   detectedCode = '';
   autoApplySecondsLeft = 0;
   scanningHint = 'Leyendo… apuntá al código';
+  lastContinuousFeedback = '';
+  torchAvailable = false;
+  torchOn = false;
+  cameras: CameraDevice[] = [];
 
   private scanner: Html5Qrcode | null = null;
   private startToken = 0;
@@ -174,10 +233,19 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
   private viewReadyAttempts = 0;
   private autoApplyTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private autoApplyIntervalId: ReturnType<typeof setInterval> | null = null;
-  private lastDetectedAt = 0;
+  private absenceCheckId: ReturnType<typeof setInterval> | null = null;
   private manualEditedAfterDetect = false;
+  private lockedCode: string | null = null;
+  private lockedLastSeenAt = 0;
+  private continuousLock: ContinuousScanLockState = createContinuousScanLock();
+  private selectedCameraId: string | null = null;
+  private videoTrack: MediaStreamTrack | null = null;
 
   ngOnChanges(changes: SimpleChanges) {
+    if (changes['continuousFeedback'] && this.continuousFeedback) {
+      this.lastContinuousFeedback = this.continuousFeedback;
+      this.cdr.markForCheck();
+    }
     if (changes['open']) {
       if (this.open) {
         this.resetScanState();
@@ -207,6 +275,12 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     event?.preventDefault();
     const code = normalizeBarcodeKey(this.manualCode);
     if (!code) return;
+    if (this.mode === 'continuous') {
+      this.emitContinuous(code);
+      this.manualCode = '';
+      this.cdr.markForCheck();
+      return;
+    }
     void this.stopScanner().finally(() => this.scanned.emit(code));
   }
 
@@ -221,6 +295,31 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     }
   }
 
+  async toggleTorch() {
+    if (!this.torchAvailable || !this.videoTrack) return;
+    try {
+      await this.videoTrack.applyConstraints({
+        // @ts-expect-error torch is a non-standard constraint
+        advanced: [{ torch: !this.torchOn }],
+      });
+      this.torchOn = !this.torchOn;
+      this.cdr.markForCheck();
+    } catch {
+      this.torchAvailable = false;
+      this.torchOn = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  async cycleCamera() {
+    if (this.cameras.length < 2) return;
+    const ids = this.cameras.map((c) => c.id);
+    const currentIdx = Math.max(0, ids.indexOf(this.selectedCameraId ?? ''));
+    const next = ids[(currentIdx + 1) % ids.length];
+    this.selectedCameraId = next;
+    await this.startScanner();
+  }
+
   private resetScanState() {
     this.manualCode = '';
     this.detectedCode = '';
@@ -228,9 +327,18 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     this.status = 'starting';
     this.autoApplySecondsLeft = 0;
     this.manualEditedAfterDetect = false;
-    this.lastDetectedAt = 0;
-    this.scanningHint = 'Leyendo… apuntá al código';
+    this.lockedCode = null;
+    this.lockedLastSeenAt = 0;
+    this.continuousLock = createContinuousScanLock();
+    this.lastContinuousFeedback = '';
+    this.torchOn = false;
+    this.torchAvailable = false;
+    this.scanningHint =
+      this.mode === 'continuous'
+        ? 'Continuo · apuntá al código'
+        : 'Leyendo… apuntá al código';
     this.clearAutoApply();
+    this.clearAbsenceCheck();
     this.cdr.markForCheck();
   }
 
@@ -255,8 +363,13 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
   private async startScanner() {
     if (!this.open) return;
 
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      this.setError('Este navegador no soporta cámara. Ingresá el código manualmente.');
+      return;
+    }
+
     if (!window.isSecureContext) {
-      this.setError('La cámara necesita HTTPS. Ingresá el código a mano abajo.');
+      this.setError('La cámara necesita HTTPS (o localhost). Ingresá el código a mano abajo.');
       return;
     }
 
@@ -269,6 +382,7 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     this.cdr.markForCheck();
 
     try {
+      this.cameras = await Html5Qrcode.getCameras().catch(() => [] as CameraDevice[]);
       this.scanner = new Html5Qrcode(this.scannerHostId, {
         verbose: false,
         formatsToSupport: [
@@ -302,7 +416,10 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
           if (token !== this.startToken || !this.open) return;
           this.ngZone.run(() => this.handleScanCandidate(decodedText));
         },
-        () => undefined
+        () => {
+          if (token !== this.startToken || !this.open) return;
+          // Frame sin detección: el absence check libera el lock.
+        }
       );
 
       if (token !== this.startToken || !this.open) {
@@ -310,25 +427,76 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
         return;
       }
 
+      this.bindVideoTrack();
+      this.ensureAbsenceCheck();
       this.status = 'scanning';
-      this.scanningHint = 'Leyendo… centrá el código en el recuadro';
+      this.scanningHint =
+        this.mode === 'continuous'
+          ? 'Continuo · centrá el código'
+          : 'Leyendo… centrá el código en el recuadro';
       this.cdr.markForCheck();
-    } catch {
+    } catch (err) {
       if (token !== this.startToken) return;
-      this.setError(
-        'No se pudo usar la cámara. Revisá permisos del navegador o ingresá el código a mano.'
-      );
+      this.setError(this.mapCameraError(err));
       await this.stopScanner(false);
+    }
+  }
+
+  private mapCameraError(err: unknown): string {
+    const name = err && typeof err === 'object' && 'name' in err ? String((err as { name: string }).name) : '';
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    const combined = `${name} ${message}`.toLowerCase();
+    if (combined.includes('notallowed') || combined.includes('permission')) {
+      return 'Permiso de cámara rechazado. Habilitalo en el navegador o ingresá el código a mano.';
+    }
+    if (combined.includes('notfound') || combined.includes('devices not found')) {
+      return 'No hay cámara disponible. Ingresá el código manualmente.';
+    }
+    if (combined.includes('notreadable') || combined.includes('trackstart') || combined.includes('in use')) {
+      return 'La cámara está ocupada por otra app. Cerrala e intentá de nuevo, o ingresá el código a mano.';
+    }
+    if (combined.includes('secure') || combined.includes('https')) {
+      return 'La cámara necesita HTTPS. Ingresá el código a mano abajo.';
+    }
+    return 'No se pudo usar la cámara. Revisá permisos o ingresá el código a mano.';
+  }
+
+  private bindVideoTrack() {
+    this.videoTrack = null;
+    this.torchAvailable = false;
+    this.torchOn = false;
+    try {
+      const video = document.querySelector(
+        `#${this.scannerHostId} video`
+      ) as HTMLVideoElement | null;
+      const track = video?.srcObject instanceof MediaStream
+        ? video.srcObject.getVideoTracks()[0] ?? null
+        : null;
+      this.videoTrack = track;
+      if (track) {
+        const caps = track.getCapabilities?.() as { torch?: boolean } | undefined;
+        this.torchAvailable = caps?.torch === true;
+      }
+    } catch {
+      this.torchAvailable = false;
     }
   }
 
   private async resolveCameraConfig(): Promise<string | MediaTrackConstraints> {
     try {
-      const cameras = await Html5Qrcode.getCameras();
+      if (!this.cameras.length) {
+        this.cameras = await Html5Qrcode.getCameras();
+      }
+      if (this.selectedCameraId && this.cameras.some((c) => c.id === this.selectedCameraId)) {
+        return this.selectedCameraId;
+      }
       const preferred =
-        cameras.find((camera) => /back|rear|environment|trás|trasera/i.test(camera.label)) ??
-        cameras[cameras.length - 1];
-      if (preferred?.id) return preferred.id;
+        this.cameras.find((camera) => /back|rear|environment|trás|trasera/i.test(camera.label)) ??
+        this.cameras[this.cameras.length - 1];
+      if (preferred?.id) {
+        this.selectedCameraId = preferred.id;
+        return preferred.id;
+      }
     } catch {
       // fallback below
     }
@@ -340,11 +508,28 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     if (!code || code.length < 3) return;
 
     const now = Date.now();
-    if (code === this.detectedCode && now - this.lastDetectedAt < 350) {
+
+    if (this.mode === 'continuous') {
+      const shouldEmit = observeContinuousScan(this.continuousLock, code, now, LOCK_ABSENCE_MS);
+      this.lockedCode = this.continuousLock.lockedCode;
+      this.lockedLastSeenAt = this.continuousLock.lockedLastSeenAt;
+      if (!shouldEmit) return;
+
+      this.detectedCode = code;
+      this.manualCode = code;
+      this.status = 'detected';
+      this.emitContinuous(code);
+      this.cdr.markForCheck();
       return;
     }
 
-    this.lastDetectedAt = now;
+    // SINGLE: same short debounce for frame spam before auto-apply
+    if (code === this.detectedCode && now - this.lockedLastSeenAt < 350) {
+      this.lockedLastSeenAt = now;
+      return;
+    }
+
+    this.lockedLastSeenAt = now;
     this.detectedCode = code;
     this.manualCode = code;
     this.manualEditedAfterDetect = false;
@@ -361,6 +546,27 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
 
     this.scheduleAutoApply(code);
     this.cdr.markForCheck();
+  }
+
+  private emitContinuous(code: string) {
+    if (typeof navigator.vibrate === 'function') {
+      navigator.vibrate(30);
+    }
+    this.scanned.emit(code);
+  }
+
+  private ensureAbsenceCheck() {
+    this.clearAbsenceCheck();
+    if (this.mode !== 'continuous') return;
+    this.absenceCheckId = window.setInterval(() => {
+      if (releaseContinuousScanIfAbsent(this.continuousLock, Date.now(), LOCK_ABSENCE_MS)) {
+        this.lockedCode = null;
+        if (this.status === 'detected') {
+          this.status = 'scanning';
+          this.cdr.markForCheck();
+        }
+      }
+    }, 120);
   }
 
   private scheduleAutoApply(code: string) {
@@ -398,10 +604,20 @@ export class BarcodeScannerModalComponent implements OnChanges, OnDestroy, After
     }
   }
 
+  private clearAbsenceCheck() {
+    if (this.absenceCheckId != null) {
+      window.clearInterval(this.absenceCheckId);
+      this.absenceCheckId = null;
+    }
+  }
+
   private async stopScanner(resetStatus = true) {
     this.startToken += 1;
     this.pendingStart = false;
     this.clearAutoApply();
+    this.clearAbsenceCheck();
+    this.videoTrack = null;
+    this.torchOn = false;
 
     const scanner = this.scanner;
     this.scanner = null;

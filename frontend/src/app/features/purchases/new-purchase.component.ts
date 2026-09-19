@@ -21,6 +21,10 @@ import {
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   purchaseFormDraftMatchesRoute,
@@ -135,7 +139,7 @@ function parsePayablesViewTab(value: string | null | undefined): PayablesViewTab
     </app-transaction-form-page>
   `,
 })
-export class NewPurchaseComponent implements OnInit, AfterViewInit {
+export class NewPurchaseComponent implements OnInit, AfterViewInit, UnsavedChangesHost {
   @ViewChild('purchaseForm') purchaseForm!: PurchaseFormPanelComponent;
 
   private route = inject(ActivatedRoute);
@@ -144,6 +148,8 @@ export class NewPurchaseComponent implements OnInit, AfterViewInit {
   private purchaseService = inject(PurchaseService);
   private dialogService = inject(DialogService);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
   proveedorId = '';
@@ -593,7 +599,19 @@ export class NewPurchaseComponent implements OnInit, AfterViewInit {
     });
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.purchaseForm?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.purchaseForm?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event?: TransactionFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
     if (event?.draft) {
       this.purchaseSaving = false;
       if (event.id) {

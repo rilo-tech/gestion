@@ -209,6 +209,13 @@ export interface PlatformBusinessUsage {
   geminiUsd?: number;
   phones?: Record<string, { aiActions: number; waInbound: number; waOutbound: number }>;
   toolLabels?: Record<UsageToolId, string>;
+  automations?: {
+    active: number;
+    runsThisMonth: number;
+    messagesSentThisMonth: number;
+    conditionChecksThisMonth: number;
+    errorsThisMonth: number;
+  };
   profitability?: {
     income: {
       currency: string;
@@ -278,6 +285,16 @@ export class PlatformService {
 
   getBusinessUsage(businessId: string): Observable<PlatformBusinessUsage> {
     return this.http.get<PlatformBusinessUsage>(`/api/platform/businesses/${businessId}/usage`);
+  }
+
+  getBusinessCapabilityAudit(businessId: string): Observable<{
+    ok: boolean;
+    issues: Array<{ code: string; severity: string; message: string }>;
+    standardConfigVersion: string | null;
+    productId: string | null;
+    webExperience: string | null;
+  }> {
+    return this.http.get(`/api/platform/businesses/${businessId}/capability-audit`);
   }
 
   saveBusinessUsageQuota(

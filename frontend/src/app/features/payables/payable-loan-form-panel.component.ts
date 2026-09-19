@@ -32,6 +32,7 @@ import {
 } from '../../shared/components/transaction-form';
 import { SegmentedControlComponent } from '../../shared/components/segmented-control/segmented-control.component';
 import { Subscription, finalize } from 'rxjs';
+import { FormDirtyTracker, PersistWaiter } from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-payable-loan-form-panel',
@@ -144,6 +145,8 @@ export class PayableLoanFormPanelComponent implements OnInit, OnDestroy {
   private cdr = inject(ChangeDetectorRef);
 
   readonly saveFeedback = new TransactionSaveFeedback();
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   formAmbito = '';
@@ -183,11 +186,27 @@ export class PayableLoanFormPanelComponent implements OnInit, OnDestroy {
       this.cdr.markForCheck();
     });
     this.catalogConfig.getAppConfig().subscribe();
+    this.dirty.capture(this.loanDirtySnapshot());
   }
 
   ngOnDestroy(): void {
     this.configSub?.unsubscribe();
     this.saveFeedback.destroy();
+  }
+
+  hasUnsavedChanges(): boolean {
+    return this.dirty.isDirty(this.loanDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.submit();
+    return result;
+  }
+
+  private loanDirtySnapshot() {
+    return { form: this.form, formAmbito: this.formAmbito };
   }
 
   submit(): void {
@@ -196,9 +215,13 @@ export class PayableLoanFormPanelComponent implements OnInit, OnDestroy {
       this.dialog.alert({
         message: 'Completá prestamista, monto por cuota, cantidad de cuotas y primer vencimiento.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
-    if (!this.saveFeedback.tryBeginSave()) return;
+    if (!this.saveFeedback.tryBeginSave()) {
+      this.persistWaiter.finish(false);
+      return;
+    }
 
     this.payables
       .createLoan(payload)
@@ -206,12 +229,15 @@ export class PayableLoanFormPanelComponent implements OnInit, OnDestroy {
       .subscribe({
         next: () => {
           this.saveFeedback.showSuccess('Préstamo creado');
+          this.dirty.capture(this.loanDirtySnapshot());
+          this.persistWaiter.finish(true);
+          this.saved.emit();
           window.setTimeout(() => {
             this.saveFeedback.clearSuccess();
-            this.saved.emit();
           }, 900);
         },
         error: () => {
+          this.persistWaiter.finish(false);
           this.dialog.alert({ message: 'No se pudo crear el préstamo.' });
         },
       });

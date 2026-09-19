@@ -169,6 +169,13 @@ export type WhatsappCommandEntities = {
   paymentCuotas?: number;
   paymentDueDate?: string;
   paymentHint?: string;
+  documentNetTotal?: number;
+  documentTaxTotal?: number;
+  documentGrossTotal?: number;
+  priceTaxMode?: 'net' | 'gross' | 'unknown';
+  documentTaxRate?: number;
+  /** Caja / ámbito de egreso inmediato (efectivo/transferencia). */
+  cashAccountId?: string;
   /** Seña (primer pago de un pedido) o cobro suelto. */
   paymentKind?: 'senia' | 'pago';
   /** Seña que dejó junto con el pedido, para cobrarla al guardarlo. */

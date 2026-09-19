@@ -15,6 +15,10 @@ import { resolvePurchaseLabel } from '../backend/utils/purchase-number.ts';
 import { loadFinanzasConfig } from '../backend/utils/finance-config.ts';
 import { parsePurchaseInput } from '../backend/utils/purchase-finance.ts';
 import {
+  payablesTotalsByAmbito,
+  purchaseFinancialGrossTotal,
+} from '../backend/utils/purchase-document-totals.ts';
+import {
   buildInstallmentMontos,
   syncPurchasePayablesForCompra,
 } from '../backend/utils/card-statements.ts';
@@ -63,7 +67,8 @@ async function repairPurchase(compraId: string, data: Record<string, unknown>): 
     : undefined;
 
   const items = parsed.input.items;
-  const totals = totalsByAmbito(items);
+  const financialGross = purchaseFinancialGrossTotal(parsed.input);
+  const totals = payablesTotalsByAmbito(items, financialGross);
   const cuotas = parsed.input.pago.cuotas;
 
   for (const [ambito, montoTotal] of totals) {

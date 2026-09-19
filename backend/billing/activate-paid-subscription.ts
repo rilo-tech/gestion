@@ -4,6 +4,7 @@ import { registerSubscriptionCoverage } from '../auth/subscription-payments.ts';
 import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
 import { getCommercialCatalog } from '../auth/commercial-catalog.ts';
 import { amountMonthlyFor } from '../../shared/commercial-catalog.ts';
+import { buildPriceSnapshotForBusiness } from '../auth/subscription-price-snapshot.ts';
 import {
   getBillingProduct,
   type BillingCountryCode,
@@ -83,6 +84,7 @@ export async function activatePaidSubscription(params: {
   // es solo lo cobrado en este pago, no el precio permanente.
   const catalog = await getCommercialCatalog();
   const precioBaseMensual = amountMonthlyFor(catalog, productId, params.country);
+  const priceSnapshot = await buildPriceSnapshotForBusiness(business, productId, params.country);
 
   await updateBusiness(
     params.businessId,
@@ -95,6 +97,7 @@ export async function activatePaidSubscription(params: {
       suscripcion: {
         precioBaseOverride: precioBaseMensual,
         precioPorAdministradorOverride: 0,
+        priceSnapshot,
       },
     },
     {

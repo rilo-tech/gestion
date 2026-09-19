@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable, tap } from 'rxjs';
+import { Observable, map, tap } from 'rxjs';
 import { TenantService } from './tenant.service';
 
 export interface OrderExtraCost {
@@ -353,6 +353,15 @@ export class OrderService {
       .pipe(tap((page) => this.cacheOrders(page?.items ?? [])));
   }
 
+  /** Estados de todos los pedidos (solo id + estado) para KPIs globales. */
+  getOrderStatusCounts(): Observable<Array<{ id: string; estado?: string }>> {
+    return this.http
+      .get<{ items: Array<{ id: string; estado?: string }> }>(
+        `/api/orders/${this.businessId}/status-counts`
+      )
+      .pipe(map((response) => response.items ?? []));
+  }
+
   getOrder(orderId: string, options?: { includePhotoUrls?: boolean }): Observable<Order> {
     let params = new HttpParams();
     if (options?.includePhotoUrls) {
@@ -419,6 +428,37 @@ export class OrderService {
       totalPagado: number;
       saldo: number;
     }>(`/api/orders/${this.businessId}/${orderId}/pagos`, payment);
+  }
+
+  finalizeOrder(
+    orderId: string,
+    body: {
+      mode: 'full' | 'partial' | 'pending';
+      amountPaid?: number;
+      paymentMethod?: string;
+    }
+  ): Observable<{
+    orderId: string;
+    estado: string;
+    total: number;
+    totalPagado: number;
+    saldo: number;
+    ventaId: string | null;
+    ventaLabel: string | null;
+    alreadyFinalized: boolean;
+  }> {
+    return this.http
+      .post<{
+        orderId: string;
+        estado: string;
+        total: number;
+        totalPagado: number;
+        saldo: number;
+        ventaId: string | null;
+        ventaLabel: string | null;
+        alreadyFinalized: boolean;
+      }>(`/api/orders/${this.businessId}/${orderId}/finalize`, body)
+      .pipe(tap(() => this.orderCache.delete(this.cacheKey(orderId))));
   }
 
   removeOrderPayment(

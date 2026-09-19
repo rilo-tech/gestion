@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import { formatWhatsappOutbound } from '../../shared/whatsapp-format.ts';
+
 export interface WhatsappMetaConfig {
   accessToken: string;
   phoneNumberId: string;
@@ -80,7 +82,17 @@ export async function sendWhatsappText(
     return { ok: false, error: 'Destinatario inválido' };
   }
 
+  const { isStagingEnvironment, isStagingWhatsappRecipientAllowed } = await import(
+    '../../shared/rilo-environment.ts'
+  );
+  if (isStagingEnvironment() && !isStagingWhatsappRecipientAllowed(toE164OrDigits)) {
+    console.warn('[whatsapp] STAGING_RECIPIENT_NOT_ALLOWED', to.slice(0, 6) + '…');
+    return { ok: false, error: 'STAGING_RECIPIENT_NOT_ALLOWED' };
+  }
+
   const url = `https://graph.facebook.com/${config.apiVersion}/${config.phoneNumberId}/messages`;
+
+  const bodyForMeta = formatWhatsappOutbound(body).slice(0, 4096);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -95,7 +107,7 @@ export async function sendWhatsappText(
       type: 'text',
       text: {
         preview_url: false,
-        body: body.slice(0, 4096),
+        body: bodyForMeta,
       },
     }),
   });

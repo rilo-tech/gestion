@@ -65,8 +65,14 @@ import { getCommercialCatalog, saveCommercialCatalog } from '../auth/commercial-
 import { overlayProductsForCountry } from '../../shared/commercial-catalog.ts';
 import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
+import { initialProfileForTrialProduct } from '../../shared/business-profile.ts';
+import {
+  buildCommercialPriceSnapshot,
+  quoteCommercialMonthly,
+} from '../../shared/commercial-pricing.ts';
 import { USAGE_TOOL_LABELS, parseBusinessUsageQuota } from '../../shared/usage-cost.ts';
 import { buildUsageReport } from '../auth/usage-gates.ts';
+import { getAutomationUsageMetrics, listAutomations } from '../automation/automation-service.ts';
 import { quoteBusinessMonthly, syncBillableWhatsappSeats } from '../auth/commercial-pricing.ts';
 import { attachProfitability } from '../billing/platform-profitability.ts';
 import { clearWhatsappQuotaNotices } from '../auth/usage-meter.ts';
@@ -221,6 +227,10 @@ router.get('/businesses/:businessId/usage', async (req, res) => {
     if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
     const usage = await buildUsageReport(businessId);
     const quote = await quoteBusinessMonthly(businessId).catch(() => null);
+    const [automationMetrics, activeAutomations] = await Promise.all([
+      getAutomationUsageMetrics(businessId).catch(() => null),
+      listAutomations(businessId, { status: 'active' }).catch(() => []),
+    ]);
     res.json({
       businessId,
       nombre: business.nombre,
@@ -229,10 +239,31 @@ router.get('/businesses/:businessId/usage', async (req, res) => {
       extraErpCost: quote?.extraErpCost ?? 0,
       extraWhatsappCost: quote?.extraWhatsappCost ?? 0,
       ...usage,
+      automations: {
+        active: activeAutomations.length,
+        runsThisMonth: automationMetrics?.runsThisMonth ?? 0,
+        messagesSentThisMonth: automationMetrics?.messagesSentThisMonth ?? 0,
+        conditionChecksThisMonth: automationMetrics?.conditionChecksThisMonth ?? 0,
+        errorsThisMonth: automationMetrics?.errorsThisMonth ?? 0,
+      },
     });
   } catch (error) {
     console.error('Error loading business usage:', error);
     res.status(500).json({ error: 'No se pudo cargar el uso de la empresa.' });
+  }
+});
+
+router.get('/businesses/:businessId/capability-audit', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const business = await getBusiness(businessId);
+    if (!business) return res.status(404).json({ error: 'Empresa no encontrada.' });
+    const { auditBusinessCapabilities } = await import('../auth/audit-business-capabilities.ts');
+    const result = await auditBusinessCapabilities(businessId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error auditing business capabilities:', error);
+    res.status(500).json({ error: 'No se pudo auditar las capacidades.' });
   }
 });
 
@@ -512,7 +543,9 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
 
     const productForAccess: TrialProductId | null =
       trialProduct ??
-      (planId === 'plan_basico'
+      (planId === 'plan_caja'
+        ? 'cash'
+        : planId === 'plan_basico'
         ? 'whatsapp'
         : planId === 'plan_profesional'
           ? 'completo'
@@ -524,15 +557,42 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       : undefined;
 
     if (
-      (productForAccess === 'whatsapp' || productForAccess === 'completo') &&
+      (productForAccess === 'cash' ||
+        productForAccess === 'whatsapp' ||
+        productForAccess === 'completo') &&
       !supervisorPhone
     ) {
       return res.status(400).json({
-        error: 'Con producto RILO Bot o Completo necesitás el WhatsApp del responsable (+598…).',
+        error: 'Con RILO Caja, Bot o Completo necesitás el WhatsApp del responsable (+598…).',
       });
     }
 
     const commercial = await getCommercialCatalog();
+    const billingCountry = resolveBillingCountry(
+      typeof req.body.pais === 'string' ? req.body.pais.trim() : null
+    );
+    const initialProfile = productForAccess
+      ? initialProfileForTrialProduct(productForAccess)
+      : undefined;
+    const priceSnapshot =
+      productForAccess &&
+      buildCommercialPriceSnapshot({
+        catalog: commercial,
+        productId: productForAccess,
+        quote: quoteCommercialMonthly({
+          catalog: commercial,
+          productId: productForAccess,
+          country: billingCountry,
+          activeErpUsers: 1,
+          billableWhatsappNumbers:
+            productForAccess === 'cash' ||
+            productForAccess === 'whatsapp' ||
+            productForAccess === 'completo'
+              ? 1
+              : 0,
+        }),
+      });
+
     const business = await createBusiness(businessId, {
       nombre,
       planId,
@@ -553,6 +613,10 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       creadoPor: req.auth?.userId,
       source: 'manual_platform',
       platformAccess,
+      ...(initialProfile ? { businessProfile: initialProfile } : {}),
+      ...(priceSnapshot
+        ? { suscripcion: { priceSnapshot, limiteAdministradores: 1, limiteUsuariosTotal: 1 } }
+        : {}),
       contactVerification: {
         email: supervisorEmail,
         emailVerified: false,
@@ -623,7 +687,7 @@ router.post('/businesses', async (req: AuthenticatedRequest, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    if (supervisorPhone && (productForAccess === 'whatsapp' || productForAccess === 'completo')) {
+    if (supervisorPhone && productForAccess && platformAccess?.whatsappEnabled) {
       const { seedBusinessWhatsappAccess } = await import('../whatsapp/seed-access.ts');
       await seedBusinessWhatsappAccess({
         businessId,

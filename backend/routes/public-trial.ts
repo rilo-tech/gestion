@@ -143,8 +143,11 @@ router.post('/send-phone-code', async (req, res) => {
     logDevOtp('send-email', registration.email, code);
 
     const delivery = await sendTrialSignupCodeEmail(registration.email, code);
+    const { allowDevOtpExposure } = await import('../../shared/rilo-environment.ts');
     const devExpose =
-      process.env.TRIAL_OTP_DEV_MODE !== 'false' && (delivery.devOnly || !delivery.sent);
+      allowDevOtpExposure() &&
+      process.env.TRIAL_OTP_DEV_MODE !== 'false' &&
+      (delivery.devOnly || !delivery.sent);
 
     res.json({
       ok: true,

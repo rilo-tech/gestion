@@ -17,6 +17,11 @@ import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Router } from '@angular/router';
 import {
+  FormDirtyTracker,
+  PersistWaiter,
+  UnsavedChangesRegistry,
+} from '../../core/utils/unsaved-changes';
+import {
   CreateSalePayload,
   SalesService,
   UpdateSalePayload,
@@ -174,7 +179,7 @@ interface SaleDraftLine {
         </button>
         <p
           *ngIf="comprobanteHintExpanded"
-          class="m-0 border-t border-amber-200/80 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:border-amber-800/80 dark:text-amber-100/90">
+          class="m-0 border-t border-amber-200/80 px-3 py-2 text-xs leading-snug text-amber-700 dark:border-amber-800/80 dark:text-amber-100/90">
           {{ comprobanteTipoHintText }}
         </p>
       </div>
@@ -258,7 +263,7 @@ interface SaleDraftLine {
               class="p-2 bg-white dark:bg-gray-900/40">
               <div class="flex items-start justify-between gap-1.5">
                 <label class="min-w-0 flex-1 block">
-                  <span class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                     Descripción
                   </span>
                   <input
@@ -270,7 +275,7 @@ interface SaleDraftLine {
                   *ngIf="canRemoveConceptLine"
                   type="button"
                   (click)="removeConceptLine(i)"
-                  class="shrink-0 inline-flex items-center justify-center w-6 h-6 -mr-0.5 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded touch-manipulation"
+                  class="shrink-0 inline-flex items-center justify-center w-9 h-9 -mr-0.5 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded touch-manipulation"
                   title="Quitar línea"
                   aria-label="Quitar línea">
                   ×
@@ -278,7 +283,7 @@ interface SaleDraftLine {
               </div>
               <div class="mt-2 grid grid-cols-2 gap-1.5">
                 <label class="min-w-0 block">
-                  <span class="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 block text-center">
+                  <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 block text-center">
                     Cant.
                   </span>
                   <input
@@ -290,7 +295,7 @@ interface SaleDraftLine {
                     [class]="conceptLineNumericInputClass + ' mt-1'">
                 </label>
                 <label class="min-w-0 block">
-                  <span class="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 block text-center">
+                  <span class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 block text-center">
                     Precio
                   </span>
                   <input
@@ -373,6 +378,7 @@ interface SaleDraftLine {
           addedLabel="En la venta"
           [itemMeta]="saleSearchResultSubtitle"
           inputName="saleProductSearch"
+          createProductReturnTo="/sales/new"
           (productSelected)="onSaleProductSelected($event)"
           (productQuantitySelected)="onSaleProductQuantitySelected($event)">
         </app-transaction-product-search>
@@ -415,7 +421,7 @@ interface SaleDraftLine {
         [methodDisabled]="isEditing && editHasExtraCobros"
         [hasAmountFooter]="true">
         <div amountFooter>
-          <p *ngIf="montoCobradoError" class="text-[10px] sm:text-xs text-red-600 mt-1">
+          <p *ngIf="montoCobradoError" class="text-xs sm:text-xs text-red-600 mt-1">
             {{ montoCobradoError }}
             <button
               *ngIf="montoCobradoExceedsMax"
@@ -512,6 +518,9 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   private router = inject(Router);
   private catalogConfig = inject(CatalogConfigService);
   private destroyRef = inject(DestroyRef);
+  private unsavedChanges = inject(UnsavedChangesRegistry);
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   private configSub?: Subscription;
@@ -869,6 +878,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.activeDraftId = null;
     this.saveFeedback.showSuccessWithDetail(message, label);
     this.saved.emit({ id, label, freshSave: true });
+    this.completePersistSuccess();
   }
 
   ngOnChanges(changes: SimpleChanges) {
@@ -940,6 +950,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     if (!this.auth.canCreateSales) return;
 
     this.saveSalesFormDraftForReturn();
+    this.unsavedChanges.allowNextNavigation();
 
     const nombre = this.pendingClientName.trim();
     this.router.navigate(['/clients/new'], {
@@ -995,12 +1006,42 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     const stockItemId = String(line.stockItemId ?? '').trim();
     if (!stockItemId) return;
     this.saveSalesFormDraftForReturn();
+    this.unsavedChanges.allowNextNavigation();
     this.router.navigate(['/stock', stockItemId, 'edit'], {
       queryParams: {
         returnTo: 'sales',
         ...(this.editingSaleId ? { saleId: this.editingSaleId } : {}),
       },
     });
+  }
+
+  hasUnsavedChanges(): boolean {
+    return this.dirty.isDirty(this.saleDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.submitSale();
+    return result;
+  }
+
+  private completePersistSuccess(): void {
+    this.dirty.capture(this.saleDirtySnapshot());
+    this.persistWaiter.finish(true);
+  }
+
+  private saleDirtySnapshot() {
+    return {
+      saleClienteId: this.saleClienteId,
+      draftLines: this.draftLines,
+      montoCobrado: this.montoCobrado,
+      medioPago: this.medioPago,
+      saleNotas: this.saleNotas,
+      saleFecha: this.saleFecha,
+      tipoComprobante: this.tipoComprobante,
+      conceptLines: this.conceptLines,
+    };
   }
 
   private saveSalesFormDraftForReturn(): void {
@@ -1235,7 +1276,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         kind: 'button',
         text: this.getExtraCostsActionLabel(line),
         action: 'extraCosts',
-        buttonClass: 'text-[10px] sm:text-xs text-teal-600 font-medium hover:text-teal-800',
+        buttonClass: 'text-xs sm:text-xs text-teal-600 font-medium hover:text-teal-800',
       });
     }
     return items;
@@ -1290,7 +1331,10 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
   }
 
   submitSale() {
-    if (this.savingSale || this.savingDraft) return;
+    if (this.savingSale || this.savingDraft) {
+      this.persistWaiter.finish(false);
+      return;
+    }
 
     this.saveFeedback.clearSuccess();
 
@@ -1329,6 +1373,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
       })
       .subscribe((confirmed) => {
         if (confirmed) onConfirm();
+        else this.persistWaiter.finish(false);
       });
   }
 
@@ -1355,6 +1400,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         this.activeDraftId = result.id;
         this.saveFeedback.showSuccess('Borrador guardado');
         this.saved.emit({ id: result.id, label: 'Borrador', draft: true });
+        this.completePersistSuccess();
       },
       error: (err: HttpErrorResponse) => {
         this.savingDraft = false;
@@ -1366,6 +1412,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
               ? err.error.error
               : 'No se pudo guardar el borrador.',
         });
+        this.persistWaiter.finish(false);
       },
     });
   }
@@ -1397,6 +1444,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
                   ? err.error.error
                   : 'No se pudo confirmar la venta.';
               this.dialogService.alert({ title: 'Error', message });
+              this.persistWaiter.finish(false);
             },
           });
       },
@@ -1409,6 +1457,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
               ? err.error.error
               : 'No se pudo actualizar el borrador antes de confirmar.',
         });
+        this.persistWaiter.finish(false);
       },
     });
   }
@@ -1422,6 +1471,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Monto inválido',
         message: 'Ingresá un monto a cobrar válido.',
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1431,12 +1481,14 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Cliente requerido',
         message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
     const notaError = this.validateNotaFields(strict);
     if (notaError) {
       this.dialogService.alert({ title: 'Nota incompleta', message: notaError });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1451,6 +1503,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Líneas requeridas',
         message,
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1461,6 +1514,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
           ? 'El monto devuelto no puede superar el total de la nota.'
           : 'El monto cobrado no puede superar el total de la venta.',
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1500,6 +1554,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
               ? err.error.error
               : 'No se pudo registrar la venta.';
           this.dialogService.alert({ title: 'Error', message });
+          this.persistWaiter.finish(false);
         },
       });
   }
@@ -1513,6 +1568,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Monto inválido',
         message: 'Ingresá un monto a cobrar válido.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -1522,6 +1578,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Cliente requerido',
         message: 'Seleccioná un cliente de la lista o usá «+ Nuevo cliente».',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -1531,6 +1588,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Productos requeridos',
         message: 'Agregá al menos un producto con cantidad.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -1544,6 +1602,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         title: 'Monto excedido',
         message: 'El monto cobrado no puede superar el total de la venta.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -1570,6 +1629,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
           this.editingSaleLabel = label;
           this.saveFeedback.showSuccessWithDetail('Cambios guardados', label);
           this.saved.emit({ id: result.id, label });
+          this.completePersistSuccess();
         },
         error: (err: HttpErrorResponse) => {
           this.dialogService.alert({
@@ -1579,6 +1639,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
                 ? err.error.error
                 : 'No se pudo actualizar la venta.',
           });
+          this.persistWaiter.finish(false);
         },
       });
   }
@@ -1758,6 +1819,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
         this.syncAddedSaleProductIds();
         this.rebuildSaleTableLines();
         this.editingSaleLoading = false;
+        this.dirty.capture(this.saleDirtySnapshot());
       },
       error: () => {
         this.editingSaleLoading = false;
@@ -1790,6 +1852,7 @@ export class SaleCounterFormPanelComponent implements OnInit, OnChanges, OnDestr
     this.conceptLines = [{ descripcion: '', cantidad: 1, precioUnitario: null }];
     this.montoCobrado = null;
     this.onDraftLineChange();
+    this.dirty.capture(this.saleDirtySnapshot());
   }
 
   private saleHasExtraCobros(sale: { cobros?: Array<{ monto?: number }> }): boolean {

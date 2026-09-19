@@ -31,6 +31,12 @@ import {
   type CashReturnContext,
 } from '../../core/utils/cash-return-context';
 import {
+  buildClientHistorialReturnQueryParams,
+  clientHistorialRoute,
+  parseClientHistorialReturnContext,
+  type ClientHistorialReturnContext,
+} from '../../core/utils/client-historial-return-context';
+import {
   IconActionComponent,
   LIST_TABLE_ROW_CLASS,
   PAGE_SHELL_CLASS,
@@ -179,19 +185,19 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
       <div *ngIf="auth.canViewSalesSummary" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full items-start">
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Ventas registradas</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Ventas registradas</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ sales.length }}</p>
         </div>
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Facturado</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Facturado</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ formatMoney(totalFacturado) }}</p>
         </div>
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Cobrado en ventas</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Cobrado en ventas</p>
           <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums leading-tight">{{ formatMoney(totalCobradoEnVentas) }}</p>
         </div>
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Saldo pendiente</p>
           <p class="text-xl sm:text-2xl font-bold text-orange-500 tabular-nums leading-tight">{{ formatMoney(totalSaldoPendiente) }}</p>
         </div>
       </div>
@@ -236,13 +242,13 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
             <span
               *ngIf="auth.canViewOrderSalePrice"
               compactTrailing
-              class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
+              class="text-xs font-bold tabular-nums shrink-0 text-gray-900 dark:text-gray-100">
               {{ formatMoney(sale.total || 0) }}
             </span>
             <span
               *ngIf="!auth.canViewOrderSalePrice && auth.canViewAccountBalance"
               compactTrailing
-              class="text-[11px] font-bold tabular-nums shrink-0"
+              class="text-xs font-bold tabular-nums shrink-0"
               [class.text-orange-500]="(sale.saldoPendiente || 0) > 0"
               [class.text-gray-500]="!(sale.saldoPendiente || 0)">
               {{ formatMoney(sale.saldoPendiente || 0) }}
@@ -259,7 +265,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Venta</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Cliente</th>
@@ -277,7 +283,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(sale.fecha) }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700 dark:text-teal-400">
                 <span *ngIf="sale.estado === 'borrador'" class="text-amber-700">Borrador</span>
                 <span *ngIf="sale.estado !== 'borrador'">#{{ formatSaleLabel(sale) }}</span>
                 <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(sale.fecha) }}</div>
@@ -612,7 +618,7 @@ type SaleModalMode = 'mostrador' | 'pedido' | 'edit';
 
         <div *ngIf="sale.cobros?.length" class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden">
           <div class="px-3 sm:px-4 py-2 sm:py-3 bg-gray-50 dark:bg-gray-800/80 border-b border-gray-100 dark:border-gray-800">
-            <p class="text-[11px] sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Cobros posteriores</p>
+            <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Cobros posteriores</p>
           </div>
           <div class="divide-y divide-gray-50 dark:divide-gray-800">
             <div
@@ -723,8 +729,9 @@ export class SalesComponent implements OnInit {
   detailModalOpen = false;
   detailSale: Sale | null = null;
   detailLoading = false;
-  private salesReturnTo: 'sales' | 'cash' = 'sales';
+  private salesReturnTo: 'sales' | 'cash' | 'client-historial' = 'sales';
   private cashReturnContext: CashReturnContext | null = null;
+  private clientHistorialReturnContext: ClientHistorialReturnContext | null = null;
 
   readonly detailSaleTableColumns = buildTransactionTableColumns(SALE_DETAIL_TABLE_COLUMNS);
 
@@ -774,7 +781,9 @@ export class SalesComponent implements OnInit {
   }
 
   get detailBackLabel(): string {
-    return this.salesReturnTo === 'cash' ? 'Volver a caja' : 'Volver a ventas';
+    if (this.salesReturnTo === 'cash') return 'Volver a caja';
+    if (this.salesReturnTo === 'client-historial') return 'Volver al historial';
+    return 'Volver a ventas';
   }
 
   get detailModalTitle(): string {
@@ -936,14 +945,30 @@ export class SalesComponent implements OnInit {
   }
 
   private syncSalesReturnContext(params: ParamMap) {
-    const ctx = parseCashReturnContext(params);
-    if (ctx) {
+    const cashCtx = parseCashReturnContext(params);
+    if (cashCtx) {
       this.salesReturnTo = 'cash';
-      this.cashReturnContext = ctx;
+      this.cashReturnContext = cashCtx;
+      this.clientHistorialReturnContext = null;
+      return;
+    }
+    const historialCtx = parseClientHistorialReturnContext(params);
+    if (historialCtx) {
+      this.salesReturnTo = 'client-historial';
+      this.clientHistorialReturnContext = historialCtx;
+      this.cashReturnContext = null;
+      return;
+    }
+    // Conservar el retorno en memoria si el modal sigue abierto y se limpió ventaId de la URL.
+    if (
+      this.detailModalOpen &&
+      (this.salesReturnTo === 'client-historial' || this.salesReturnTo === 'cash')
+    ) {
       return;
     }
     this.salesReturnTo = 'sales';
     this.cashReturnContext = null;
+    this.clientHistorialReturnContext = null;
   }
 
   private clearSalesQueryParam(key: string) {
@@ -962,7 +987,9 @@ export class SalesComponent implements OnInit {
           void this.router.navigate(['/orders', sale.pedidoId, 'edit'], {
             queryParams: this.cashReturnContext
               ? buildCashReturnQueryParams(this.cashReturnContext)
-              : undefined,
+              : this.clientHistorialReturnContext
+                ? buildClientHistorialReturnQueryParams(this.clientHistorialReturnContext.clientId)
+                : undefined,
           });
           this.clearSalesQueryParam('ventaId');
           return;
@@ -1017,6 +1044,11 @@ export class SalesComponent implements OnInit {
       this.resetSalesReturnContext();
       return;
     }
+    if (this.salesReturnTo === 'client-historial' && this.clientHistorialReturnContext) {
+      void this.router.navigate(clientHistorialRoute(this.clientHistorialReturnContext.clientId));
+      this.resetSalesReturnContext();
+      return;
+    }
 
     this.detailModalOpen = false;
     this.detailSale = null;
@@ -1026,6 +1058,7 @@ export class SalesComponent implements OnInit {
   private resetSalesReturnContext() {
     this.salesReturnTo = 'sales';
     this.cashReturnContext = null;
+    this.clientHistorialReturnContext = null;
     this.detailModalOpen = false;
     this.detailSale = null;
     this.detailLoading = false;

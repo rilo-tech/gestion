@@ -2,10 +2,15 @@ node_modules/
 build/
 dist/
 coverage/
+qa-artifacts/
 .DS_Store
 *.log
 .env*
 !.env.example
+!.env.staging.example
+!.env.rilo-staging.example
+!functions/.env.rilo-staging.example
+!functions/.env.example
 emulator-data/*
 !emulator-data/.gitkeep
 credentials/*

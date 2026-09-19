@@ -13,6 +13,10 @@ import {
   type CommercialCatalog,
   type CommercialUsageMode,
 } from './commercial-catalog.ts';
+import {
+  productSellsErpUserAddons,
+  productSellsWhatsappNumberAddons,
+} from './commercial-seat-policy.ts';
 
 /**
  * Recurrencia: Mercado Pago Preapproval (suscripciones oficiales).
@@ -178,17 +182,19 @@ export function resolveCommercialRates(input: {
   };
 
   const includedErp = pick(overrides.includedErpUsers, includedErpUsersFor(catalog, productId));
+  const sellsErpUsers = productSellsErpUserAddons(productId);
+  const sellsWaNumbers = productSellsWhatsappNumberAddons(productId);
   const extraErp = pick(
     overrides.extraErpUserPrice,
-    extraErpUserPriceFor(catalog, productId, country)
+    sellsErpUsers ? extraErpUserPriceFor(catalog, productId, country) : 0
   );
   const includedWa = pick(
     overrides.includedWhatsappNumbers,
-    includedWhatsappNumbersFor(catalog, productId)
+    sellsWaNumbers ? includedWhatsappNumbersFor(catalog, productId) : 0
   );
   const extraWa = pick(
     overrides.extraWhatsappNumberPrice,
-    extraWhatsappNumberPriceFor(catalog, productId, country)
+    sellsWaNumbers ? extraWhatsappNumberPriceFor(catalog, productId, country) : 0
   );
   const actions = pick(overrides.monthlyActionLimit, monthlyActionLimitFor(catalog, productId));
   const catalogMode = riloBotUsageModeFor(catalog, productId);
@@ -259,7 +265,7 @@ export function quoteCommercialMonthly(input: {
   if (extraErpCost > 0) {
     lines.push({
       code: 'ERP_EXTRA',
-      label: 'Usuarios ERP adicionales',
+      label: 'Usuarios de RILO Gestión adicionales',
       quantity: extraErpUsers,
       unitPrice: rates.extraErpUserPrice,
       amount: extraErpCost,
@@ -268,7 +274,7 @@ export function quoteCommercialMonthly(input: {
   if (extraWhatsappCost > 0) {
     lines.push({
       code: 'WA_EXTRA',
-      label: 'Números WhatsApp adicionales',
+      label: 'Números de WhatsApp adicionales',
       quantity: extraWhatsappNumbers,
       unitPrice: rates.extraWhatsappNumberPrice,
       amount: extraWhatsappCost,
@@ -336,6 +342,20 @@ export function quoteAddErpUser(input: {
   discount?: number;
   paidUntil?: string | null;
 }): AddonChangeQuote {
+  if (!productSellsErpUserAddons(input.productId)) {
+    const current = quoteCommercialMonthly(input);
+    return {
+      kind: 'erp_user',
+      extraUnit: 0,
+      extraQuantityAfter: 0,
+      oldTotal: current.total,
+      newTotal: current.total,
+      delta: 0,
+      effectiveAt: ADDON_BILLING_EFFECTIVE_AT,
+      policyCopy: 'Este plan no incluye usuarios adicionales de RILO Gestión. Sumá el panel o un número de WhatsApp según corresponda.',
+      paidUntil: input.paidUntil ?? null,
+    };
+  }
   const current = quoteCommercialMonthly(input);
   const next = quoteCommercialMonthly({
     ...input,
@@ -365,6 +385,20 @@ export function quoteAddWhatsappNumber(input: {
   discount?: number;
   paidUntil?: string | null;
 }): AddonChangeQuote {
+  if (!productSellsWhatsappNumberAddons(input.productId)) {
+    const current = quoteCommercialMonthly(input);
+    return {
+      kind: 'whatsapp_number',
+      extraUnit: 0,
+      extraQuantityAfter: 0,
+      oldTotal: current.total,
+      newTotal: current.total,
+      delta: 0,
+      effectiveAt: ADDON_BILLING_EFFECTIVE_AT,
+      policyCopy: 'Este plan no incluye números de WhatsApp. Sumá RILO Bot o Completo para conectarlos.',
+      paidUntil: input.paidUntil ?? null,
+    };
+  }
   const current = quoteCommercialMonthly(input);
   const next = quoteCommercialMonthly({
     ...input,
@@ -413,6 +447,45 @@ export function quoteReleaseWhatsappNumber(input: {
     ...input,
     billableWhatsappNumbers: Math.max(0, input.billableWhatsappNumbers - 1),
   });
+}
+
+export type CommercialPriceSnapshot = {
+  catalogVersion: string;
+  productId: TrialProductId;
+  basePrice: number;
+  currency: 'UYU' | 'ARS';
+  includedUsers: number;
+  extraUserPrice: number;
+  includedAiActions: number;
+  includedWhatsappNumbers: number;
+  extraWhatsappNumberPrice: number;
+  monthlyTotal: number;
+  capturedAt: string;
+};
+
+/** Motor único de cotización (alias explícito para EF). */
+export const quotePrice = quoteCommercialMonthly;
+
+export function buildCommercialPriceSnapshot(input: {
+  catalog: CommercialCatalog;
+  quote: CommercialMonthlyQuote;
+  productId: TrialProductId;
+  capturedAt?: string;
+}): CommercialPriceSnapshot {
+  const { quote, productId } = input;
+  return {
+    catalogVersion: input.catalog.priceVersion ?? 'unknown',
+    productId,
+    basePrice: quote.rates.baseAmount,
+    currency: quote.rates.currency,
+    includedUsers: quote.rates.includedErpUsers,
+    extraUserPrice: quote.rates.extraErpUserPrice,
+    includedAiActions: quote.rates.monthlyActionLimit,
+    includedWhatsappNumbers: quote.rates.includedWhatsappNumbers,
+    extraWhatsappNumberPrice: quote.rates.extraWhatsappNumberPrice,
+    monthlyTotal: quote.total,
+    capturedAt: input.capturedAt ?? new Date().toISOString(),
+  };
 }
 
 export type CommercialHistoryEventType =

@@ -29,6 +29,13 @@ import { normalizeBarcodeKey } from '../../core/utils/barcode-key';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import { StockItem, StockService, getStockEnDeposito } from '../../core/services/stock.service';
 import {
+  bindUnsavedChangesHost,
+  FormDirtyTracker,
+  PersistWaiter,
+  UnsavedChangesRegistry,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
+import {
   FORM_CONTROL_CLASS,
   FORM_LABEL_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
@@ -66,7 +73,7 @@ import {
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div class="lg:col-span-2 space-y-6">
-          <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+          <section class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
             <h2 class="text-base font-bold mb-3 flex items-center gap-2">
               <i-lucide name="package" class="w-4 h-4 text-teal-600"></i-lucide>
               Datos del item
@@ -104,13 +111,13 @@ import {
                 <div
                   *ngIf="codigoFieldHint || codigoPrefijoWarning || codigoDuplicadoWarning"
                   class="-mt-1 space-y-0.5 lg:col-span-12 lg:row-start-2">
-                  <p *ngIf="codigoFieldHint" class="text-[11px] text-gray-500 leading-snug">
+                  <p *ngIf="codigoFieldHint" class="text-xs text-gray-500 leading-snug">
                     {{ codigoFieldHint }}
                   </p>
-                  <p *ngIf="codigoPrefijoWarning" class="text-[11px] text-amber-700 leading-snug">
+                  <p *ngIf="codigoPrefijoWarning" class="text-xs text-amber-700 leading-snug">
                     {{ codigoPrefijoWarning }}
                   </p>
-                  <p *ngIf="codigoDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug">
+                  <p *ngIf="codigoDuplicadoWarning" class="text-xs text-amber-700 leading-snug">
                     {{ codigoDuplicadoWarning }}
                   </p>
                 </div>
@@ -121,21 +128,29 @@ import {
                     <input
                       [(ngModel)]="codigoBarras"
                       name="codigoBarras"
-                      placeholder="EAN, UPC u otro (opcional)"
+                      placeholder="EAN, UPC, Code128… (opcional)"
+                      autocomplete="off"
+                      inputmode="text"
+                      autocapitalize="off"
+                      spellcheck="false"
                       (ngModelChange)="onCodigoBarrasInput()"
                       (blur)="onCodigoBarrasBlur()"
                       [disabled]="formReadOnly"
-                      [class]="formControlClass + ' flex-1 min-w-0 tabular-nums'">
+                      [class]="formControlClass + ' flex-1 min-w-0'">
                     <app-barcode-scan-button
                       *ngIf="!formReadOnly"
                       size="header"
                       label="Escanear código de barras"
                       modalTitle="Escanear código de barras"
                       modalHint="Asigná el código leído a este producto."
+                      mode="single"
                       (scanned)="onBarcodeScanned($event)">
                     </app-barcode-scan-button>
                   </div>
-                  <p *ngIf="codigoBarrasDuplicadoWarning" class="text-[11px] text-amber-700 leading-snug mt-0.5">
+                  <p *ngIf="codigoBarrasDisponibleHint" class="text-xs text-teal-700 leading-snug mt-0.5">
+                    {{ codigoBarrasDisponibleHint }}
+                  </p>
+                  <p *ngIf="codigoBarrasDuplicadoWarning" class="text-xs text-amber-700 leading-snug mt-0.5">
                     {{ codigoBarrasDuplicadoWarning }}
                   </p>
                 </div>
@@ -178,7 +193,7 @@ import {
             </div>
           </section>
 
-          <section class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+          <section class="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
             <h2 class="text-base font-bold mb-3 flex items-center gap-2">
               <i-lucide name="bar-chart-3" class="w-4 h-4 text-teal-600"></i-lucide>
               Inventario
@@ -188,7 +203,7 @@ import {
                 *ngIf="canAdjustStock"
                 class="p-3 rounded-lg border border-teal-100 bg-teal-50/40 space-y-2">
                 <p class="text-sm font-semibold text-teal-800 leading-tight">Movimiento de stock</p>
-                <p class="text-[11px] text-teal-700 leading-snug">
+                <p class="text-xs text-teal-700 leading-snug">
                   Positivo suma, negativo resta. Guardá para registrar.
                 </p>
                 <div class="flex flex-wrap items-end gap-2">
@@ -299,11 +314,11 @@ import {
               </div>
               <p
                 *ngIf="showInventoryFields && isEditing"
-                class="text-[11px] text-gray-400 leading-snug">
+                class="text-xs text-gray-400 leading-snug">
                 <ng-container *ngIf="canEditStockActualInline">Stock inicial: al guardar no genera movimiento. </ng-container>
                 <ng-container *ngIf="!canEditStockActualInline">Stock actual: solo por movimientos. </ng-container>
               </p>
-              <p *appHasPermission="permissions.STOCK_VIEW_COSTS" class="text-[11px] text-gray-400 leading-snug">
+              <p *appHasPermission="permissions.STOCK_VIEW_COSTS" class="text-xs text-gray-400 leading-snug">
                 Costo base del producto al cargarlo en un pedido.
               </p>
               <div class="space-y-3">
@@ -342,7 +357,7 @@ import {
             </div>
           </section>
 
-          <section *ngIf="auth.canViewStockPrices" class="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <section *ngIf="auth.canViewStockPrices" class="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm">
             <h2 class="text-lg font-bold mb-4">Precio sugerido</h2>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Precio de venta sugerido</label>
@@ -409,7 +424,7 @@ import {
     </div>
   `,
 })
-export class NewProductComponent implements OnInit, OnDestroy {
+export class NewProductComponent implements OnInit, OnDestroy, UnsavedChangesHost {
   readonly formControlClass = FORM_CONTROL_CLASS;
   readonly formLabelClass = FORM_LABEL_CLASS;
   private stockService = inject(StockService);
@@ -435,6 +450,11 @@ export class NewProductComponent implements OnInit, OnDestroy {
   private returnSaleId: string | null = null;
   private returnPurchaseId: string | null = null;
   private returnPurchaseDraftId: string | null = null;
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
+  private readonly unsavedChanges = inject(UnsavedChangesRegistry);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private leavingAfterSave = false;
   saving = false;
   saveSuccessMessage = '';
   stockAdjustmentSuccessMessage = '';
@@ -453,6 +473,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   codigoBarras = '';
   savedCodigoBarras = '';
   codigoBarrasDuplicadoWarning = '';
+  codigoBarrasDisponibleHint = '';
   savedCodigo = '';
   savedCategoria = '';
   nextCodePreview = '';
@@ -589,6 +610,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
     this.codigoBarras = '';
     this.savedCodigoBarras = '';
     this.codigoBarrasDuplicadoWarning = '';
+    this.codigoBarrasDisponibleHint = '';
     this.savedCodigo = '';
     this.savedCategoria = '';
     this.nextCodePreview = '';
@@ -605,6 +627,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       costo: 0,
       precioSugerido: 0,
     };
+    this.dirty.capture(this.productDirtySnapshot());
   }
 
   private catalogConfigServiceLoad() {
@@ -817,6 +840,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
 
   onCodigoBarrasInput() {
     this.codigoBarrasDuplicadoWarning = '';
+    this.codigoBarrasDisponibleHint = '';
   }
 
   onCodigoBarrasBlur() {
@@ -826,6 +850,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
   onBarcodeScanned(code: string) {
     this.codigoBarras = normalizeBarcodeKey(code);
     this.codigoBarrasDuplicadoWarning = '';
+    this.codigoBarrasDisponibleHint = '';
     this.refreshCodigoBarrasAvailability();
   }
 
@@ -834,10 +859,12 @@ export class NewProductComponent implements OnInit, OnDestroy {
     const codigoBarras = normalizeBarcodeKey(this.codigoBarras);
     if (!codigoBarras) {
       this.codigoBarrasDuplicadoWarning = '';
+      this.codigoBarrasDisponibleHint = '';
       return;
     }
     if (this.isEditing && codigoBarras === this.savedCodigoBarras) {
       this.codigoBarrasDuplicadoWarning = '';
+      this.codigoBarrasDisponibleHint = '✓ Código actual del producto';
       return;
     }
 
@@ -847,12 +874,17 @@ export class NewProductComponent implements OnInit, OnDestroy {
       })
       .subscribe({
         next: (result) => {
-          this.codigoBarrasDuplicadoWarning = result.available
-            ? ''
-            : `El código de barras «${codigoBarras}» ya está asignado a otro producto.`;
+          if (result.available) {
+            this.codigoBarrasDuplicadoWarning = '';
+            this.codigoBarrasDisponibleHint = '✓ Código disponible';
+          } else {
+            this.codigoBarrasDisponibleHint = '';
+            this.codigoBarrasDuplicadoWarning = `⚠ Este código ya pertenece a otro producto.`;
+          }
         },
         error: () => {
           this.codigoBarrasDuplicadoWarning = '';
+          this.codigoBarrasDisponibleHint = '';
         },
       });
   }
@@ -962,12 +994,42 @@ export class NewProductComponent implements OnInit, OnDestroy {
     });
   }
 
+  hasUnsavedChanges(): boolean {
+    if (this.formReadOnly) return false;
+    return this.dirty.isDirty(this.productDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    this.leavingAfterSave = true;
+    const result = this.persistWaiter.start();
+    this.submitProduct();
+    return result;
+  }
+
+  private finishLeaveSave(ok: boolean): void {
+    if (!ok) this.leavingAfterSave = false;
+    this.persistWaiter.finish(ok);
+  }
+
+  private productDirtySnapshot() {
+    return {
+      nombreBase: this.nombreBase,
+      codigo: this.codigo,
+      codigoBarras: this.codigoBarras,
+      controlaStock: this.controlaStock,
+      permitirStockNegativo: this.permitirStockNegativo,
+      item: this.item,
+    };
+  }
+
   submitProduct() {
     if (!this.nombreBase.trim()) {
       this.dialogService.alert({
         title: 'Campo requerido',
         message: 'Ingresá el nombre del producto',
       });
+      this.finishLeaveSave(false);
       return;
     }
 
@@ -983,6 +1045,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
         title: 'Código de barras en uso',
         message: this.codigoBarrasDuplicadoWarning,
       });
+      this.finishLeaveSave(false);
       return;
     }
 
@@ -1032,6 +1095,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       })
       .subscribe((confirmed) => {
         if (confirmed) onConfirm();
+        else this.finishLeaveSave(false);
       });
   }
 
@@ -1049,6 +1113,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
       })
       .subscribe((confirmed) => {
         if (confirmed) onConfirm();
+        else this.finishLeaveSave(false);
       });
   }
 
@@ -1067,6 +1132,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
         title: 'Stock inválido',
         message: 'Este producto no permite stock negativo.',
       });
+      this.finishLeaveSave(false);
       return;
     }
 
@@ -1092,7 +1158,10 @@ export class NewProductComponent implements OnInit, OnDestroy {
     const codigoBarras = normalizeBarcodeKey(this.codigoBarras);
     payload.codigoBarras = codigoBarras || undefined;
 
-    if (this.formReadOnly) return;
+    if (this.formReadOnly) {
+      this.finishLeaveSave(false);
+      return;
+    }
 
     const manualCodigoSent = Boolean(payload.codigo);
     this.saving = true;
@@ -1120,6 +1189,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
             this.showSaveSuccess(
               omitCodigo ? 'Cambios guardados (sin código).' : 'Cambios guardados.'
             );
+            this.dirty.capture(this.productDirtySnapshot());
+            this.finishLeaveSave(true);
           };
 
           if (autoCodigoAssigned) {
@@ -1141,10 +1212,15 @@ export class NewProductComponent implements OnInit, OnDestroy {
         this.showSaveSuccess(
           omitCodigo ? 'Producto guardado (sin código).' : 'Producto guardado.'
         );
-        this.router.navigate(['/stock', result.id, 'edit'], {
-          replaceUrl: true,
-          queryParams: this.returnQueryParams(),
-        });
+        this.dirty.capture(this.productDirtySnapshot());
+        this.finishLeaveSave(true);
+        if (!this.leavingAfterSave) {
+          this.unsavedChanges.allowNextNavigation();
+          this.router.navigate(['/stock', result.id, 'edit'], {
+            replaceUrl: true,
+            queryParams: this.returnQueryParams(),
+          });
+        }
       },
       error: (err: HttpErrorResponse) => {
         this.saving = false;
@@ -1168,6 +1244,7 @@ export class NewProductComponent implements OnInit, OnDestroy {
           title: err.status === 409 ? 'Conflicto' : 'Error',
           message,
         });
+        this.finishLeaveSave(false);
       },
     });
   }
@@ -1312,5 +1389,8 @@ export class NewProductComponent implements OnInit, OnDestroy {
       this.permitirStockNegativo = false;
     }
     this.refreshCodigoPreview();
+    if (this.editingItemId) {
+      this.dirty.capture(this.productDirtySnapshot());
+    }
   }
 }

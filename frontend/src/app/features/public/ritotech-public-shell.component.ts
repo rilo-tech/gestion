@@ -1,13 +1,15 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 
 @Component({
   selector: 'app-ritotech-public-shell',
   standalone: true,
   imports: [CommonModule, RouterLink, RouterLinkActive],
+  host: { style: 'display: contents' },
   template: `
     <div class="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-teal-950 text-white">
       <header class="border-b border-white/10 bg-gray-950/80 backdrop-blur sticky top-0 z-20">
@@ -22,14 +24,13 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
               decoding="async" />
             <img
               src="/brand/rilotech-wordmark-on-dark.png"
-              alt="RiloTech"
+              alt=""
               width="140"
               height="36"
               class="hidden sm:block h-7 sm:h-8 w-auto object-contain object-left max-w-[140px] sm:max-w-[160px]"
               decoding="async" />
-            <span class="sr-only">RiloTech</span>
           </a>
-          <nav class="hidden sm:flex items-center gap-5 text-sm text-gray-300">
+          <nav class="hidden sm:flex items-center gap-5 text-sm text-gray-300" aria-label="Secciones">
             <a routerLink="/whatsapp" routerLinkActive="text-white" class="hover:text-white">RILO Bot</a>
             <a routerLink="/rilo-gestion" routerLinkActive="text-white" class="hover:text-white">RILO Gestión</a>
             <a
@@ -37,7 +38,11 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
               fragment="como-funciona"
               (click)="scrollToLandingSection('como-funciona')"
               class="hover:text-white hidden lg:inline">Cómo funciona</a>
-            <a routerLink="/planes" routerLinkActive="text-white" class="hover:text-white">Precios</a>
+            <a
+              routerLink="/"
+              fragment="planes"
+              (click)="scrollToLandingSection('planes')"
+              class="hover:text-white">Precios</a>
             <a
               routerLink="/"
               fragment="landing-faq"
@@ -51,7 +56,7 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
                 title="Mi cuenta"
                 class="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5 min-w-0">
                 <span
-                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold"
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white text-sm font-semibold"
                   aria-hidden="true">
                   {{ auth.userInitial }}
                 </span>
@@ -61,7 +66,7 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
               </a>
               <a
                 routerLink="/platform"
-                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                class="inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-600">
                 Plataforma
               </a>
               <button
@@ -77,7 +82,7 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
                 title="Mi cuenta"
                 class="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/5 min-w-0 max-w-[14rem]">
                 <span
-                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold"
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-white text-sm font-semibold"
                   aria-hidden="true">
                   {{ auth.userInitial }}
                 </span>
@@ -92,7 +97,7 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
               </a>
               <a
                 [routerLink]="auth.homeRoute"
-                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                class="inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-600">
                 {{ homeCtaLabel }}
               </a>
               <a
@@ -118,26 +123,27 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
               </button>
               <a
                 routerLink="/registro"
-                [queryParams]="{ producto: 'completo' }"
-                class="inline-flex rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold hover:bg-teal-500">
+                [queryParams]="{ producto: 'whatsapp' }"
+                class="inline-flex rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-600">
                 Probar {{ trialDays }} días
               </a>
             </ng-container>
           </div>
         </div>
       </header>
-      <main>
+      <main id="main-content" role="main">
         <ng-content></ng-content>
       </main>
-      <footer class="border-t border-white/10 mt-16 py-8 text-center text-xs text-gray-500">
+      <footer class="border-t border-white/10 mt-16 py-8 text-center text-xs text-gray-400">
         <div class="flex justify-center mb-3">
           <img
             src="/brand/rilotech-lockup-on-dark.png"
-            alt="RiloTech"
+            alt=""
             width="120"
             height="120"
             class="h-16 w-auto object-contain opacity-90"
             decoding="async" />
+          <span class="sr-only">RiloTech</span>
         </div>
         <p>RiloTech · RILO Gestión · Tu negocio desde WhatsApp o la web.</p>
         <p class="mt-2 max-w-lg mx-auto leading-relaxed">
@@ -152,10 +158,19 @@ import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
     </div>
   `,
 })
-export class RitotechPublicShellComponent {
+export class RitotechPublicShellComponent implements OnInit {
   private router = inject(Router);
+  private commercial = inject(CommercialCatalogService);
   readonly auth = inject(AuthService);
-  readonly trialDays = DEFAULT_TRIAL_DAYS;
+  trialDays = DEFAULT_TRIAL_DAYS;
+
+  ngOnInit() {
+    this.commercial.load('UY').subscribe({
+      next: (row) => {
+        this.trialDays = row.catalog.trialDays || DEFAULT_TRIAL_DAYS;
+      },
+    });
+  }
 
   get homeCtaLabel(): string {
     if (this.auth.canAccessErpWeb) return 'Ir al panel';

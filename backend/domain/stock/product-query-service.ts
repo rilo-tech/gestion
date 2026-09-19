@@ -1,11 +1,15 @@
 import { db } from '../../firebase.ts';
 import { resolveProductMatch } from '../../whatsapp/lookups.ts';
+import { finalizeEntityLookupResult } from '../entity-lookup-result.ts';
 
 export type ProductEntityResult = {
-  status: 'resolved' | 'ambiguous' | 'not_found';
+  status: 'resolved' | 'ambiguous' | 'not_found' | 'family_variant_missing';
   entity?: { id: string; name: string; price?: number; cost?: number; stock?: number };
   candidates?: Array<{ id: string; name: string; score?: number }>;
   query?: string;
+  missingVariant?: string;
+  familyLabel?: string;
+  matchKind?: string;
 };
 
 export type ProductListResult = {
@@ -27,33 +31,63 @@ function mapProduct(doc: { id: string; data: () => Record<string, unknown> }) {
 export async function findProduct(
   businessId: string,
   query: string,
-  options?: { utterance?: string }
+  options?: {
+    utterance?: string;
+    attributes?: { type?: string | null; fabric?: string | null; color?: string | null; size?: string | null };
+    preferChoices?: boolean;
+  }
 ): Promise<ProductEntityResult> {
   const hint = String(query ?? '').trim();
   if (!hint) return { status: 'not_found', query: '' };
-  const resolved = await resolveProductMatch(businessId, hint, { utterance: options?.utterance ?? hint });
-  if (resolved.status === 'unique') {
+  const resolved = await resolveProductMatch(businessId, hint, {
+    utterance: options?.utterance ?? hint,
+    attributes: options?.attributes,
+    preferChoices: options?.preferChoices,
+  });
+  const ambiguousPool =
+    resolved.status === 'ambiguous'
+      ? [...resolved.candidates, ...(resolved.rest ?? [])]
+      : [];
+  if (resolved.status === 'ambiguous' && resolved.matchKind === 'FAMILY_MATCH_VARIANT_MISSING') {
     return {
-      status: 'resolved',
-      entity: {
-        id: resolved.product.id,
-        name: resolved.product.nombre,
-        price: resolved.product.precioVenta,
-        cost: resolved.product.costo,
-      },
+      status: 'family_variant_missing',
       query: hint,
+      candidates: ambiguousPool.map((row) => ({
+        id: row.id,
+        name: row.nombre,
+        score: row.score,
+      })),
+      missingVariant: resolved.missingVariant,
+      familyLabel: resolved.familyLabel,
+      matchKind: resolved.matchKind,
     };
   }
-  if (resolved.status === 'none') return { status: 'not_found', query: hint };
-  return {
-    status: 'ambiguous',
+  const mapped = finalizeEntityLookupResult({
     query: hint,
-    candidates: resolved.candidates.map((row) => ({
+    unique: resolved.status === 'unique' ? resolved.product : null,
+    none: resolved.status === 'none',
+    ambiguousCandidates: ambiguousPool,
+    toEntity: (row) => ({
       id: row.id,
       name: row.nombre,
-      score: row.score,
-    })),
-  };
+      price: row.precioVenta,
+      cost: row.costo,
+    }),
+    getId: (row) => row.id,
+  });
+  if (mapped.status === 'ambiguous') {
+    return {
+      status: 'ambiguous',
+      query: hint,
+      candidates: mapped.candidates!.map((row) => ({
+        id: row.id,
+        name: row.nombre,
+        score: row.score,
+      })),
+      matchKind: resolved.status === 'ambiguous' ? resolved.matchKind : 'AMBIGUOUS',
+    };
+  }
+  return mapped;
 }
 
 export async function getProduct(

@@ -9,6 +9,7 @@ export const SUBSCRIPTION_MODULE_IDS = [
   'reports',
   'economics',
   'order_photos',
+  'automations',
 ] as const;
 
 export type SubscriptionModuleId = (typeof SUBSCRIPTION_MODULE_IDS)[number];
@@ -88,6 +89,13 @@ export const SUBSCRIPTION_MODULE_CATALOG: readonly SubscriptionModuleMeta[] = [
     defaultAddonPrice: 0,
     sellable: false,
   },
+  {
+    id: 'automations',
+    label: 'Automatizaciones',
+    description: 'Recordatorios, resúmenes programados y alertas por WhatsApp.',
+    defaultAddonPrice: 0,
+    sellable: false,
+  },
 ];
 
 export type ErpFeaturePackId = 'negocio' | 'equipo' | 'analisis';
@@ -146,6 +154,21 @@ export const TRIAL_DEFAULT_MODULES: SubscriptionModulesMap = {
   reports: false,
   economics: true,
   order_photos: true,
+  automations: true,
+};
+
+/** Plan mínimo RILO Caja: solo caja operativa (core interno sin módulos ERP visibles). */
+export const CAJA_PLAN_MODULES: SubscriptionModulesMap = {
+  core: true,
+  pedidos: false,
+  caja: true,
+  payables: false,
+  collaborators: false,
+  price_catalog: false,
+  reports: false,
+  economics: false,
+  order_photos: false,
+  automations: true,
 };
 
 /** 1 admin incluido en el precio base; el resto son extras cobrables. */
@@ -164,6 +187,7 @@ export const PLATFORM_OVERRIDE_MODULE_CATALOG = SUBSCRIPTION_MODULE_CATALOG.filt
 );
 
 export const DEFAULT_PLAN_MODULES: Record<string, SubscriptionModulesMap> = {
+  plan_caja: { ...CAJA_PLAN_MODULES },
   plan_basico: { ...TRIAL_DEFAULT_MODULES },
   plan_intermedio: { ...TRIAL_DEFAULT_MODULES },
   plan_profesional: { ...TRIAL_DEFAULT_MODULES },

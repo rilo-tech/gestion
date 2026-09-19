@@ -52,6 +52,7 @@ import {
 } from '../../shared/components/form-shell/form-field.constants';
 import { SegmentedControlComponent, SegmentedOption } from '../../shared/components/segmented-control/segmented-control.component';
 import { Subscription, finalize } from 'rxjs';
+import { FormDirtyTracker, PersistWaiter } from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-payable-obligation-form-panel',
@@ -117,7 +118,7 @@ import { Subscription, finalize } from 'rxjs';
         <div class="min-w-0">
           <span [class]="compactLabelUpperClass">Tipo de pago</span>
           <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
-            {{ form.tipo === 'mensual' ? 'Se repite cada mes.' : 'Una vez o en cuotas.' }}
+            {{ form.tipo === 'mensual' ? 'Se repite solo cada mes.' : 'Una vez o en cuotas.' }}
           </p>
         </div>
         <app-segmented-control
@@ -145,7 +146,8 @@ import { Subscription, finalize } from 'rxjs';
           <div *ngIf="pagoRequiereCuentaVisible" class="min-w-0">
             <label class="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-0.5">Cuenta / tarjeta</label>
             <select
-              [(ngModel)]="pagoTarjetaId"
+              [ngModel]="pagoTarjetaId"
+              (ngModelChange)="onPagoTarjetaChange($event)"
               [name]="'pagoCuenta_' + pagoMedioId"
               [disabled]="cuentasPagoList.length === 0"
               [class]="fieldClass + ' bg-white dark:bg-gray-900'">
@@ -177,6 +179,18 @@ import { Subscription, finalize } from 'rxjs';
         <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">1 = un solo pago.</p>
       </div>
 
+      <div
+        *ngIf="form.tipo === 'mensual'"
+        class="flex flex-wrap items-center gap-2 rounded-lg border border-teal-200/70 dark:border-teal-800/50 bg-teal-50/60 dark:bg-teal-950/20 px-3 py-2">
+        <span
+          class="inline-flex items-center rounded-md bg-teal-600/90 dark:bg-teal-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+          Recurrente
+        </span>
+        <p class="text-[11px] text-gray-600 dark:text-gray-300 m-0 leading-snug">
+          Un vencimiento por mes, sin cuotas fijas. Pagás mes a mes el monto habitual.
+        </p>
+      </div>
+
       <div *ngIf="showsMontoModoSelector" class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)] sm:items-end gap-2 sm:gap-4">
         <span [class]="compactLabelUpperClass">¿Qué monto ingresás?</span>
         <app-segmented-control
@@ -190,7 +204,9 @@ import { Subscription, finalize } from 'rxjs';
 
       <div [class]="paymentPairGridClass">
         <div class="min-w-0">
-          <label [class]="compactLabelClass">Primer vencimiento</label>
+          <label [class]="compactLabelClass">
+            {{ form.tipo === 'mensual' ? 'Próximo vencimiento' : 'Primer vencimiento' }}
+          </label>
           <input
             [(ngModel)]="form.fechaPrimerVencimiento"
             name="fechaPrimerVencimiento"
@@ -257,7 +273,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     ' text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400';
 
   readonly tipoOptions: SegmentedOption[] = [
-    { id: 'mensual', label: 'Mensual' },
+    { id: 'mensual', label: 'Recurrente' },
     { id: 'unico', label: 'Único / cuotas' },
   ];
 
@@ -272,6 +288,8 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
   private cdr = inject(ChangeDetectorRef);
 
   readonly saveFeedback = new TransactionSaveFeedback();
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
   formAmbito = '';
@@ -280,6 +298,9 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
 
   pagoMedioId = 'efectivo';
   pagoTarjetaId = '';
+  /** Preferencias a restaurar cuando la config de medios/tarjetas llega después del load. */
+  private preferredPagoMedioId = '';
+  private preferredPagoTarjetaId = '';
   pagoMedioLabel = '';
   pagoRequiereCuentaVisible = false;
   pagoGeneraCuotasVisible = false;
@@ -322,6 +343,9 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
   }
 
   get montoFieldLabel(): string {
+    if (this.form.tipo === 'mensual') {
+      return 'Monto por mes';
+    }
     if (this.form.tipo === 'unico' && this.pagoGeneraCuotasVisible) {
       return 'Monto total';
     }
@@ -353,7 +377,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     }
 
     if (this.form.tipo === 'mensual') {
-      return 'Monto de cada vencimiento mensual.';
+      return 'Monto habitual de cada vencimiento recurrente.';
     }
     return null;
   }
@@ -388,6 +412,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     });
     this.catalogConfig.getAppConfig().subscribe();
     this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
+    this.dirty.capture(this.obligationDirtySnapshot());
   }
 
   private applyAppConfig(config: AppConfig): void {
@@ -400,11 +425,17 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     if (finanzasChanged) {
       this.finanzasPagoConfigKey = finanzasKey;
     }
-    const medioInvalid = !this.mediosPago.some((m) => m.id === this.pagoMedioId);
-    if (medioInvalid || finanzasChanged) {
-      this.applyPagoMedioState(
-        medioInvalid ? this.resolveDefaultPagoMedioId() : this.pagoMedioId
-      );
+    const medioKnown = this.mediosPago.some((m) => m.id === this.pagoMedioId);
+    if (!medioKnown || finanzasChanged) {
+      // Si el medio aún no está en la config (carrera al cargar), conservar el id actual.
+      const nextMedio = medioKnown
+        ? this.pagoMedioId
+        : this.mediosPago.some((m) => m.id === this.preferredPagoMedioId)
+          ? this.preferredPagoMedioId
+          : this.mediosPago.length === 0
+            ? this.pagoMedioId
+            : this.resolveDefaultPagoMedioId();
+      this.applyPagoMedioState(nextMedio);
     }
     this.cdr.markForCheck();
   }
@@ -416,7 +447,13 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
 
   onPagoMedioChange(medioId: string): void {
     if (medioId === this.pagoMedioId) return;
-    this.applyPagoMedioState(medioId);
+    this.applyPagoMedioState(medioId, '');
+  }
+
+  onPagoTarjetaChange(tarjetaId: string): void {
+    this.pagoTarjetaId = tarjetaId;
+    this.preferredPagoTarjetaId = String(tarjetaId ?? '').trim();
+    this.cdr.markForCheck();
   }
 
   onTipoChange(value: string): void {
@@ -427,8 +464,43 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
 
   onMontoModoChange(value: string): void {
     if (value !== 'cuota' && value !== 'total') return;
+    if (value === this.montoModo) return;
+
+    const n = Math.max(1, Math.round(Number(this.form.cantidadCuotas) || 1));
+    const monto = Number(this.form.monto);
+    if (n > 1 && Number.isFinite(monto) && monto > 0) {
+      if (value === 'total') {
+        // Por cuota → Total: conservar el mismo valor económico.
+        this.form.monto = Math.round(monto * n * 100) / 100;
+      } else {
+        // Total → Por cuota.
+        this.form.monto = Math.round((monto / n) * 100) / 100;
+      }
+    }
+
     this.montoModo = value;
     this.cdr.markForCheck();
+  }
+
+  hasUnsavedChanges(): boolean {
+    return this.dirty.isDirty(this.obligationDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.submit();
+    return result;
+  }
+
+  private obligationDirtySnapshot() {
+    return {
+      form: this.form,
+      formAmbito: this.formAmbito,
+      pagoMedioId: this.pagoMedioId,
+      pagoTarjetaId: this.pagoTarjetaId,
+      montoModo: this.montoModo,
+    };
   }
 
   submitForm(): void {
@@ -441,9 +513,13 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
       this.dialog.alert({
         message: 'Completá beneficiario, monto, fecha y forma de pago (cuenta y cuotas si es crédito).',
       });
+      this.persistWaiter.finish(false);
       return;
     }
-    if (!this.saveFeedback.tryBeginSave()) return;
+    if (!this.saveFeedback.tryBeginSave()) {
+      this.persistWaiter.finish(false);
+      return;
+    }
     this.savingChange.emit(true);
 
     const editingId = this.editingObligationId?.trim() || null;
@@ -466,9 +542,12 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
             : 'Gasto / servicio guardado';
           this.saveFeedback.showSuccess(message);
           this.saveFeedback.markSkipReload(id);
+          this.dirty.capture(this.obligationDirtySnapshot());
+          this.persistWaiter.finish(true);
           this.saved.emit({ id, freshSave: !editingId });
         },
         error: (err) => {
+          this.persistWaiter.finish(false);
           const msg =
             typeof err?.error?.error === 'string'
               ? err.error.error
@@ -495,10 +574,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     }
 
     if (obligation.tipo === 'unico' && obligation.medioPagoId) {
-      this.applyPagoMedioState(obligation.medioPagoId);
-      if (obligation.tarjetaId) {
-        this.pagoTarjetaId = obligation.tarjetaId;
-      }
+      this.applyPagoMedioState(obligation.medioPagoId, obligation.tarjetaId ?? '');
     } else {
       this.applyPagoMedioState(this.resolveDefaultPagoMedioId());
     }
@@ -514,6 +590,7 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     }
 
     this.cdr.markForCheck();
+    this.dirty.capture(this.obligationDirtySnapshot());
   }
 
   private buildPayload(): CreatePayableObligationPayload | null {
@@ -562,10 +639,15 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
     return payload;
   }
 
-  private applyPagoMedioState(medioId: string): void {
+  private applyPagoMedioState(medioId: string, preferredTarjetaId?: string): void {
     this.pagoMedioId = medioId;
+    this.preferredPagoMedioId = medioId;
     const medio = getMedioPagoConfig(this.appConfig, medioId);
     this.pagoMedioLabel = medio?.label ?? medioId;
+
+    if (preferredTarjetaId !== undefined) {
+      this.preferredPagoTarjetaId = preferredTarjetaId.trim();
+    }
 
     const requiereCuenta = this.resolvePagoRequiereCuenta(medio);
     const generaCuotas = this.resolvePagoGeneraCuotas(medio);
@@ -573,12 +655,22 @@ export class PayableObligationFormPanelComponent implements OnInit, OnChanges, O
 
     if (!requiereCuenta) {
       this.pagoTarjetaId = '';
-    } else if (!this.cuentasPagoList.some((c) => c.id === this.pagoTarjetaId)) {
-      this.pagoTarjetaId = this.cuentasPagoList[0]?.id ?? '';
-    }
-
-    if (!generaCuotas && this.form.tipo === 'unico') {
-      // keep cantidadCuotas from manual field
+      this.preferredPagoTarjetaId = '';
+    } else {
+      const preferred =
+        this.preferredPagoTarjetaId ||
+        (this.pagoTarjetaId.trim() ? this.pagoTarjetaId : '');
+      if (preferred && this.cuentasPagoList.some((c) => c.id === preferred)) {
+        this.pagoTarjetaId = preferred;
+        this.preferredPagoTarjetaId = preferred;
+      } else if (this.cuentasPagoList.some((c) => c.id === this.pagoTarjetaId)) {
+        // keep current
+      } else if (preferred) {
+        // Config todavía no trae la tarjeta: conservar preferencia sin caer al default.
+        this.pagoTarjetaId = preferred;
+      } else {
+        this.pagoTarjetaId = this.cuentasPagoList[0]?.id ?? '';
+      }
     }
 
     this.pagoRequiereCuentaVisible = requiereCuenta;

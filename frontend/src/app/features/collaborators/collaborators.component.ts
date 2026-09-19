@@ -253,7 +253,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
         </div>
       </div>
 
-      <div *ngIf="summary" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6 sm:mb-8">
+      <div *ngIf="summary" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 mb-6 sm:mb-8">
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Horas</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums">{{ formatQty(summary.totalHoras) }}</p>
@@ -271,12 +271,8 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
           <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums">{{ formatMoney(summary.totalPagado) }}</p>
         </div>
         <div class="bg-white p-4 sm:p-5 rounded-xl border border-orange-100 shadow-sm">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Pendiente período</p>
-          <p class="text-xl sm:text-2xl font-bold text-orange-600 tabular-nums">{{ formatMoney(summary.totalPendientePeriodo) }}</p>
-        </div>
-        <div class="bg-white p-4 sm:p-5 rounded-xl border border-gray-100 shadow-sm">
           <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Saldo acumulado</p>
-          <p class="text-xl sm:text-2xl font-bold text-gray-900 tabular-nums">{{ formatMoney(summary.totalSaldoAcumulado) }}</p>
+          <p class="text-xl sm:text-2xl font-bold text-orange-600 tabular-nums">{{ formatMoney(summary.totalSaldoAcumulado) }}</p>
         </div>
       </div>
 
@@ -351,11 +347,11 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                     </div>
                     <div class="shrink-0 text-right">
                       <div class="font-semibold tabular-nums" [class.text-teal-700]="mov.tipo === 'pago'">
-                        {{ formatMoney(mov.monto) }}
+                        {{ formatMovementMonto(mov) }}
                       </div>
                       <span
                         *ngIf="isAccrualLiquidated(mov)"
-                        class="mt-1 block text-[11px] font-semibold text-teal-600">
+                        class="mt-1 block text-[10px] font-semibold text-teal-600 dark:text-teal-400 leading-tight whitespace-nowrap">
                         Liquidado
                       </span>
                     </div>
@@ -383,7 +379,6 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Extras</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Devengado</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Pagado</th>
-                <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Pendiente</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase text-right">Saldo total</th>
                 <th
                   *ngIf="auth.canEditRecords"
@@ -417,10 +412,12 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                   <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums">{{ formatMoney(row.montoExtras) }}</td>
                   <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums font-medium">{{ formatMoney(row.devengado) }}</td>
                   <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums text-teal-700">{{ formatMoney(row.pagado) }}</td>
-                  <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums" [class.text-orange-600]="row.pendientePeriodo > 0" [class.font-semibold]="row.pendientePeriodo > 0">
-                    {{ formatMoney(row.pendientePeriodo) }}
+                  <td
+                    class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums"
+                    [class.text-orange-600]="row.saldoAcumulado > 0"
+                    [class.font-semibold]="row.saldoAcumulado > 0">
+                    {{ formatMoney(row.saldoAcumulado) }}
                   </td>
-                  <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums">{{ formatMoney(row.saldoAcumulado) }}</td>
                   <td *ngIf="auth.canEditRecords" class="px-3 sm:px-4 py-3 text-right whitespace-nowrap">
                     <button
                       *ngIf="canPayBalance(row)"
@@ -434,16 +431,16 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                   </td>
                 </tr>
                 <tr *ngIf="isSummaryExpanded(row.colaboradorId)">
-                  <td [attr.colspan]="auth.canEditRecords ? 10 : 9" class="p-0 bg-gray-50/80 border-b border-gray-100">
+                  <td [attr.colspan]="auth.canEditRecords ? 9 : 8" class="p-0 bg-gray-50/80 border-b border-gray-100">
                     <div [class]="expandedNestedWrapClass">
-                      <table [class]="nativeCompactTableClass + ' w-full'">
+                      <table [class]="nativeCompactTableClass + ' w-full table-auto'">
                         <thead>
                           <tr class="bg-gray-100/80">
                             <th [class]="moduleTableHeadNestedClass">Fecha</th>
                             <th [class]="moduleTableHeadNestedClass">Tipo</th>
                             <th [class]="moduleTableHeadNestedClass">Detalle</th>
-                            <th [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap'">Monto</th>
-                            <th *ngIf="auth.canEditRecords" [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap'">Acción</th>
+                            <th [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap min-w-[6rem]'">Monto</th>
+                            <th *ngIf="auth.canEditRecords" [class]="moduleTableHeadNestedClass + ' text-right whitespace-nowrap min-w-[7.5rem]'">Acción</th>
                           </tr>
                         </thead>
                         <tbody class="divide-y divide-gray-100">
@@ -469,11 +466,22 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                               <span *ngIf="mov.tipo === 'pago'">Pago<span *ngIf="mov.periodoDesde"> · {{ formatPeriodRange(mov.periodoDesde, mov.periodoHasta) }}</span></span>
                               <p *ngIf="mov.notas" class="text-xs text-gray-400 mt-0.5 truncate">{{ mov.notas }}</p>
                             </td>
-                            <td class="px-3 py-2 text-sm text-right tabular-nums font-semibold whitespace-nowrap" [class.text-teal-700]="mov.tipo === 'pago'">
-                              {{ formatMoney(mov.monto) }}
+                            <td class="px-3 py-2 text-sm text-right align-top min-w-[6rem]">
+                              <div class="inline-flex flex-col items-end gap-0.5 max-w-full">
+                                <span
+                                  class="tabular-nums font-semibold whitespace-nowrap"
+                                  [class.text-teal-700]="mov.tipo === 'pago'">
+                                  {{ formatMovementMonto(mov) }}
+                                </span>
+                                <span
+                                  *ngIf="isAccrualLiquidated(mov)"
+                                  class="text-[10px] font-semibold text-teal-600 dark:text-teal-400 leading-tight whitespace-nowrap">
+                                  Liquidado
+                                </span>
+                              </div>
                             </td>
-                            <td *ngIf="auth.canEditRecords" class="px-3 py-2 text-right whitespace-nowrap" (click)="$event.stopPropagation()">
-                              <div class="inline-flex items-center justify-end gap-1.5 flex-nowrap max-w-full">
+                            <td *ngIf="auth.canEditRecords" class="px-3 py-2 text-right whitespace-nowrap align-top min-w-[7.5rem]" (click)="$event.stopPropagation()">
+                              <div class="inline-flex items-center justify-end gap-1.5 flex-nowrap">
                                 <button
                                   *ngIf="canPayAccrual(mov)"
                                   type="button"
@@ -482,11 +490,6 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                                   (click)="openPayAccrual(mov, $event)">
                                   Pagar
                                 </button>
-                                <span
-                                  *ngIf="isAccrualLiquidated(mov)"
-                                  class="text-[11px] font-semibold text-teal-600 shrink-0">
-                                  Liquidado
-                                </span>
                                 <app-list-row-actions
                                   [showDuplicate]="!!mov.id"
                                   [showDelete]="auth.canDeleteRecords"
@@ -513,7 +516,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                 </tr>
               </ng-container>
               <tr *ngIf="!summaryRows.length">
-                <td [attr.colspan]="auth.canEditRecords ? 10 : 9" class="px-6 py-10 text-center text-sm text-gray-400">Sin movimientos en el período.</td>
+                <td [attr.colspan]="auth.canEditRecords ? 9 : 8" class="px-6 py-10 text-center text-sm text-gray-400">Sin movimientos en el período.</td>
               </tr>
             </tbody>
           </table>
@@ -558,7 +561,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
               compactTrailing
               class="text-[11px] font-bold tabular-nums shrink-0"
               [class.text-teal-700]="mov.tipo === 'pago'">
-              {{ formatMoney(mov.monto) }}
+              {{ formatMovementMonto(mov) }}
             </span>
           </app-compact-list-row>
           <p *ngIf="!filteredMovements.length" [class]="compactListEmptyClass">Sin movimientos.</p>
@@ -594,13 +597,13 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
                   </span>
                 </td>
                 <td class="px-4 sm:px-6 py-3 text-sm text-gray-600">
-                  <span *ngIf="mov.tipo === 'horas'">{{ formatQty(mov.horas) }} h × {{ formatMoney(mov.valorHora) }}</span>
+                  <span *ngIf="mov.tipo === 'horas'">{{ movementHorasDetalle(mov) }}</span>
                   <span *ngIf="mov.tipo === 'extra'">{{ extraLabel(mov.extraTipo) }}<span *ngIf="mov.concepto"> · {{ mov.concepto }}</span></span>
                   <span *ngIf="mov.tipo === 'pago'">Pago<span *ngIf="mov.periodoDesde"> · {{ formatPeriodRange(mov.periodoDesde, mov.periodoHasta) }}</span></span>
                   <p *ngIf="mov.notas" class="text-xs text-gray-400 mt-0.5">{{ mov.notas }}</p>
                 </td>
                 <td class="px-4 sm:px-6 py-3 text-sm text-right tabular-nums font-semibold" [class.text-teal-700]="mov.tipo === 'pago'">
-                  {{ formatMoney(mov.monto) }}
+                  {{ formatMovementMonto(mov) }}
                 </td>
                 <td *ngIf="auth.canEditRecords" class="px-4 sm:px-6 py-3 text-right" (click)="$event.stopPropagation()">
                   <app-list-row-actions
@@ -906,7 +909,7 @@ function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null
             </p>
           </div>
 
-          <p class="text-xs text-gray-500">Estimado: {{ formatMoney(estimatedHoursAmount) }}</p>
+          <p class="text-xs text-gray-500">Estimado: {{ estimatedHoursLabel }}</p>
         </ng-container>
 
         <ng-container *ngIf="movementDraft.tipo === 'extra'">
@@ -1225,9 +1228,18 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     return Number(this.movementDraft.horas ?? 0);
   }
 
+  get estimatedHoursLabel(): string {
+    const horas = this.resolvedMovementHoras;
+    if (horas <= 0) return '—';
+    if (this.resolvedValorHora() === 0) return '$0';
+    if (this.resolvedValorHora() == null || this.resolvedValorHora()! <= 0) return 'Sin valorar';
+    return this.formatMoney(this.estimatedHoursAmount);
+  }
+
   get estimatedHoursAmount(): number {
     const horas = this.resolvedMovementHoras;
     const valor = this.resolvedValorHora();
+    if (valor == null) return 0;
     return Math.round(horas * valor * 100) / 100;
   }
 
@@ -1309,11 +1321,41 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
 
   movementHorasDetalle(mov: CollaboratorMovement): string {
     const horas = this.formatQty(mov.horas);
+    if (this.isUnvaluedHoursMovement(mov)) {
+      if (mov.horaDesde && mov.horaHasta) {
+        return `${horas} h (${mov.horaDesde}–${mov.horaHasta}) · Sin valorar`;
+      }
+      return `${horas} h · Sin valorar`;
+    }
+    if (mov.valorHora === 0) {
+      if (mov.horaDesde && mov.horaHasta) {
+        return `${horas} h (${mov.horaDesde}–${mov.horaHasta}) × $0`;
+      }
+      return `${horas} h × $0`;
+    }
     const valor = this.formatMoney(mov.valorHora);
     if (mov.horaDesde && mov.horaHasta) {
       return `${horas} h (${mov.horaDesde}–${mov.horaHasta}) × ${valor}`;
     }
     return `${horas} h × ${valor}`;
+  }
+
+  isUnvaluedHoursMovement(mov: CollaboratorMovement): boolean {
+    if (mov.tipo !== 'horas') return false;
+    const horas = Number(mov.horas ?? 0);
+    if (horas <= 0) return false;
+    if (mov.valorHora != null && Number.isFinite(Number(mov.valorHora))) {
+      if (Number(mov.valorHora) === 0) return false;
+      if (Number(mov.valorHora) > 0 && mov.monto != null && Number(mov.monto) >= 0) return false;
+    }
+    if (mov.monto != null && Number(mov.monto) > 0) return false;
+    return true;
+  }
+
+  formatMovementMonto(mov: CollaboratorMovement): string {
+    if (mov.tipo === 'horas' && this.isUnvaluedHoursMovement(mov)) return 'Sin valorar';
+    if (mov.tipo === 'horas' && mov.valorHora === 0) return '$0';
+    return this.formatMoney(mov.monto);
   }
 
   openCollaboratorModal(collaborator?: Collaborator): void {
@@ -1455,18 +1497,21 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     const collab = this.collaborators.find((c) => c.id === this.movementDraft.colaboradorId);
     const configured = Number(collab?.valorHora ?? 0);
     if (configured <= 0) return;
-    if (overwrite || !Number(this.movementDraft.valorHora)) {
+    const raw = this.movementDraft.valorHora;
+    const hasExplicitRate = raw === 0 || Number(raw) > 0;
+    if (overwrite || !hasExplicitRate) {
       this.movementDraft.valorHora = configured;
     }
   }
 
-  private resolvedValorHora(): number {
-    if (Number(this.movementDraft.valorHora) > 0) {
-      return Number(this.movementDraft.valorHora);
-    }
-    return Number(
+  private resolvedValorHora(): number | null {
+    const raw = this.movementDraft.valorHora;
+    if (raw === 0 || Number(raw) === 0) return 0;
+    if (Number(raw) > 0) return Number(raw);
+    const configured = Number(
       this.collaborators.find((c) => c.id === this.movementDraft.colaboradorId)?.valorHora ?? 0
     );
+    return configured > 0 ? configured : null;
   }
 
   private resetDefaultTimeRange(): void {
@@ -1500,7 +1545,7 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
   }
 
   canPayBalance(row: CollaboratorSummaryRow): boolean {
-    return this.canManageCollaboratorTeam && row.pendientePeriodo > 0;
+    return this.canManageCollaboratorTeam && row.saldoAcumulado > 0;
   }
 
   canPayAccrual(mov: CollaboratorMovement): boolean {
@@ -1511,15 +1556,9 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
 
   isAccrualLiquidated(mov: CollaboratorMovement): boolean {
     if (!mov.id || (mov.tipo !== 'horas' && mov.tipo !== 'extra')) return false;
-    if (
-      this.movements.some(
-        (p) => p.tipo === 'pago' && p.liquidacionMovimientoId === mov.id
-      )
-    ) {
-      return true;
-    }
-    const row = this.summaryRows.find((r) => r.colaboradorId === mov.colaboradorId);
-    return !!row && row.pendientePeriodo <= 0;
+    return this.movements.some(
+      (p) => p.tipo === 'pago' && p.liquidacionMovimientoId === mov.id
+    );
   }
 
   openPayAccrual(mov: CollaboratorMovement, event?: Event): void {
@@ -1551,8 +1590,8 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
     this.payLiquidationTarget = {
       colaboradorId: row.colaboradorId,
       nombre: row.nombre,
-      monto: row.pendientePeriodo,
-      subtitle: `Saldo pendiente del período (${formatDisplayDateRange(this.periodFrom, this.periodTo, '–')})`,
+      monto: row.saldoAcumulado,
+      subtitle: `Saldo total a pagar (${formatDisplayDateRange(this.periodFrom, this.periodTo, '–')})`,
       periodoDesde: this.periodFrom,
       periodoHasta: this.periodTo,
     };
@@ -1666,10 +1705,16 @@ export class CollaboratorsComponent implements OnInit, OnDestroy {
         tipo,
         fecha,
         horas,
-        valorHora: valorHora > 0 ? valorHora : undefined,
-        monto: this.estimatedHoursAmount,
         notas,
       };
+      if (valorHora === 0) {
+        payload.valorHora = 0;
+        payload.monto = 0;
+        (payload as Record<string, unknown>).valuationMode = 'explicit_rate';
+      } else if (valorHora != null && valorHora > 0) {
+        payload.valorHora = valorHora;
+        payload.monto = this.estimatedHoursAmount;
+      }
       if (this.movementHoursMode === 'franja') {
         payload.horaDesde = this.movementHoraDesde;
         payload.horaHasta = this.movementHoraHasta;

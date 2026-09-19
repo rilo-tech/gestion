@@ -340,3 +340,63 @@ export function resolvePurchasePagoDisplayLabel(
 ): string {
   return enrichPurchasePago(pago, finanzas)?.displayLabel ?? 'Efectivo';
 }
+
+export type PurchaseCostPolicy =
+  | 'never_update_catalog'
+  | 'initialize_if_missing'
+  | 'ask_before_update'
+  | 'update_on_purchase';
+
+export type PriceTaxMode = 'net' | 'gross' | 'unknown';
+
+export type PurchaseTaxConfig = {
+  pricesIncludeTax?: boolean;
+  defaultPurchaseTaxRate?: number | null;
+};
+
+export type FinanzasPurchaseConfig = {
+  purchaseCostPolicy?: PurchaseCostPolicy;
+  purchaseTax?: PurchaseTaxConfig;
+  installmentOptions?: number[];
+};
+
+export const DEFAULT_PURCHASE_COST_POLICY: PurchaseCostPolicy = 'initialize_if_missing';
+
+export const DEFAULT_INSTALLMENT_OPTIONS = [1, 2, 3, 6, 12];
+
+export function normalizeFinanzasPurchaseConfig(raw: unknown): FinanzasPurchaseConfig {
+  if (!raw || typeof raw !== 'object') return {};
+  const obj = raw as Record<string, unknown>;
+  const policy = String(obj.purchaseCostPolicy ?? '').trim() as PurchaseCostPolicy;
+  const validPolicies: PurchaseCostPolicy[] = [
+    'never_update_catalog',
+    'initialize_if_missing',
+    'ask_before_update',
+    'update_on_purchase',
+  ];
+  const purchaseCostPolicy = validPolicies.includes(policy)
+    ? policy
+    : DEFAULT_PURCHASE_COST_POLICY;
+  const taxRaw = obj.purchaseTax;
+  const purchaseTax: PurchaseTaxConfig = {};
+  if (taxRaw && typeof taxRaw === 'object') {
+    const tax = taxRaw as Record<string, unknown>;
+    if (typeof tax.pricesIncludeTax === 'boolean') {
+      purchaseTax.pricesIncludeTax = tax.pricesIncludeTax;
+    }
+    const rate = Number(tax.defaultPurchaseTaxRate);
+    if (Number.isFinite(rate) && rate >= 0) {
+      purchaseTax.defaultPurchaseTaxRate = rate;
+    }
+  }
+  const installmentOptions = Array.isArray(obj.installmentOptions)
+    ? obj.installmentOptions
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 1 && value <= 120)
+    : undefined;
+  return {
+    purchaseCostPolicy,
+    purchaseTax: Object.keys(purchaseTax).length ? purchaseTax : undefined,
+    installmentOptions: installmentOptions?.length ? installmentOptions : undefined,
+  };
+}

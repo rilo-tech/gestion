@@ -33,7 +33,7 @@ import { AuthService } from '../../core/services/auth.service';
           <h2 class="text-lg font-bold mb-4">Ejemplo de conversación</h2>
           <app-ritotech-chat-demo
             [messages]="chatDemo"
-            caption="Siempre te pide confirmación antes de guardar.">
+            caption="Si la instrucción es clara, RILO actúa. Si necesita información, te pregunta. Las acciones sensibles requieren confirmación.">
           </app-ritotech-chat-demo>
         </div>
 
@@ -53,17 +53,17 @@ import { AuthService } from '../../core/services/auth.service';
           </p>
         </div>
 
-        <div class="mt-8 flex flex-col sm:flex-row gap-3 items-start">
+        <div class="mt-8 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
           <ng-container *ngIf="isSessionCustomer; else productGuestCta">
             <a
               [routerLink]="auth.homeRoute"
-              class="inline-flex justify-center rounded-xl bg-teal-600 px-6 py-3 font-semibold text-white hover:bg-teal-500">
+              class="inline-flex items-center justify-center rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-600">
               {{ auth.canAccessErpWeb ? 'Ir al panel' : 'Ir a Mi cuenta' }}
             </a>
             <a
               *ngIf="auth.isSupervisor"
               [routerLink]="auth.planRoute"
-              class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
+              class="inline-flex items-center justify-center rounded-lg border border-gray-700 px-4 py-2.5 text-sm font-semibold text-gray-200 hover:bg-gray-800">
               Lo que tenés contratado
             </a>
           </ng-container>
@@ -76,7 +76,7 @@ import { AuthService } from '../../core/services/auth.service';
           <a
             *ngIf="!isSessionCustomer"
             routerLink="/planes"
-            class="inline-flex justify-center rounded-xl border border-gray-700 px-6 py-3 font-semibold text-gray-200 hover:bg-gray-900">
+            class="inline-flex items-center justify-center self-start rounded-lg border border-gray-700 px-4 py-2.5 text-sm font-semibold text-gray-200 hover:bg-gray-800">
             Ver precios
           </a>
         </div>

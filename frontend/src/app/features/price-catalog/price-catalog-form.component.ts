@@ -13,6 +13,10 @@ import {
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-price-catalog-form',
@@ -52,13 +56,15 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
     </app-transaction-form-page>
   `,
 })
-export class PriceCatalogFormComponent implements OnInit {
+export class PriceCatalogFormComponent implements OnInit, UnsavedChangesHost {
   @ViewChild('formPanel') formPanel?: PriceCatalogFormPanelComponent;
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   readonly auth = inject(AuthService);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
 
@@ -91,7 +97,19 @@ export class PriceCatalogFormComponent implements OnInit {
     });
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.formPanel?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.formPanel?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event: PriceCatalogFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
     this.saving = false;
     if (event.wasNew) {
       this.router.navigate(['/price-catalog'], {

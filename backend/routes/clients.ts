@@ -7,6 +7,7 @@ import { ventaSaldoClienteImpact } from '../../shared/comprobantes-config.ts';
 import { collectClientBalance, buildClientHistorialPagos, normalizePedidoPagosFromData, resolveVentasCashAmbitoMap } from '../utils/client-collections.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { requireBusinessFeature } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   buildClientDeletionBlockedMessage,
@@ -32,7 +33,8 @@ function coerceAccountOrderItems(raw: unknown): AccountLineItem[] {
       const cantidad = Number(row.cantidad) || 0;
       const precioUnitario = Number(row.precioVenta) || 0;
       const subtotal = Math.round(cantidad * precioUnitario * 100) / 100;
-      const nombre = String(row.nombre ?? '').trim() || 'Ítem';
+      const nombre =
+        String(row.nombre ?? row.descripcion ?? '').trim() || 'Ítem';
       if (subtotal <= 0 && cantidad <= 0) return null;
       return { nombre, cantidad, precioUnitario, subtotal };
     })
@@ -57,6 +59,7 @@ function coerceAccountSaleItems(raw: unknown): AccountLineItem[] {
 }
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('clients'));
 
 function isCancelledStatus(estado?: string) {
   const value = String(estado ?? '').toLowerCase().trim();
@@ -328,7 +331,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
           fechaEntrega: data.fechaEntrega ?? null,
           cancelado: isCancelledStatus(data.estado),
           pagos,
-          ...(saldo > 0 ? { lineas: coerceAccountOrderItems(data.items) } : {}),
+          lineas: coerceAccountOrderItems(data.items),
         };
       })
       .filter((order) => !order.cancelado)
@@ -363,9 +366,7 @@ router.get('/:businessId/:clientId/cuenta', async (req, res) => {
             })
           ),
           fecha: data.fecha ?? null,
-          ...(saldoPendiente > 0 && data.origen !== 'pedido'
-            ? { lineas: coerceAccountSaleItems(data.items) }
-            : {}),
+          lineas: data.origen === 'pedido' ? [] : coerceAccountSaleItems(data.items),
         };
       })
       .sort((a, b) => String(b.fecha ?? '').localeCompare(String(a.fecha ?? '')));

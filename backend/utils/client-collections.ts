@@ -9,6 +9,7 @@ import { resolveOrderLabel } from './order-number.ts';
 import { resolveSaleLabel } from './sale-number.ts';
 import { ventaSaldoClienteImpact } from '../../shared/comprobantes-config.ts';
 import { sumPagosHaciaTotal } from '../../shared/order-balance.ts';
+import { syncOrderLinkedVentaSaldo } from './sync-order-linked-venta.ts';
 
 type OrderPayment = {
   id: string;
@@ -33,6 +34,7 @@ type OrderRecord = {
   numeroPedidoLabel?: string;
   fechaEntrega?: string;
   createdAt?: string;
+  ventaId?: string | null;
 };
 
 export type ClientAccountPago = {
@@ -554,6 +556,8 @@ async function applyPedidoPayment(
     seniaBloqueada: true,
     updatedAt: new Date().toISOString(),
   });
+
+  await syncOrderLinkedVentaSaldo(businessId, order, saldo, total);
 
   return { movimientoCajaId, label: `Pedido #${orderLabel}` };
 }

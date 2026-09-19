@@ -2,6 +2,7 @@ import type { TrialProductId } from './platform-access.ts';
 
 /** Días de prueba por producto. El costo de IA de esos días lo absorbe RiloTech. */
 export const TRIAL_DAYS_BY_PRODUCT: Record<TrialProductId, number> = {
+  cash: 20,
   whatsapp: 20,
   erp: 20,
   completo: 20,

@@ -47,7 +47,8 @@ export type CollaboratorMovementRecord = {
   valorHora?: number;
   extraTipo?: CollaboratorExtraTipo;
   concepto?: string;
-  monto: number;
+  /** Ausente o null en horas sin valorar; 0 solo si explícitamente valió $0. */
+  monto?: number;
   periodoDesde?: string;
   periodoHasta?: string;
   notas?: string;
@@ -63,6 +64,8 @@ export type CollaboratorSummaryRow = {
   nombre: string;
   activo: boolean;
   horas: number;
+  /** Horas registradas sin tarifa / importe (no suman al devengado). */
+  horasSinValorar: number;
   montoHoras: number;
   montoExtras: number;
   devengado: number;
@@ -97,10 +100,77 @@ function movementsCollection(businessId: string) {
 function parseDateOnly(value: string, endOfDay = false): Date | null {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) return null;
-  const date = new Date(trimmed.length === 10 ? `${trimmed}T00:00:00` : trimmed);
+  const iso = normalizeCollaboratorFecha(trimmed);
+  if (!iso) return null;
+  const date = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(date.getTime())) return null;
-  if (endOfDay && trimmed.length === 10) date.setHours(23, 59, 59, 999);
+  if (endOfDay) date.setHours(23, 59, 59, 999);
   return date;
+}
+
+/**
+ * Normaliza fechas de movimientos a YYYY-MM-DD.
+ * Acepta ISO y formatos AR (DD/MM, DD/MM/YYYY). Sin esto, un "03/09" del bot
+ * queda invisible en el ERP (filtros por rango ISO).
+ */
+export function normalizeCollaboratorFecha(
+  raw: string,
+  today: string = new Date().toISOString().slice(0, 10)
+): string | null {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value.slice(0, 10))) {
+    const iso = value.slice(0, 10);
+    const [y, m, d] = iso.split('-').map(Number);
+    const check = new Date(Date.UTC(y, m - 1, d));
+    if (
+      check.getUTCFullYear() !== y ||
+      check.getUTCMonth() !== m - 1 ||
+      check.getUTCDate() !== d
+    ) {
+      return null;
+    }
+    return iso;
+  }
+  const full = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/.exec(value);
+  if (full) {
+    const day = Number(full[1]);
+    const month = Number(full[2]);
+    let year = Number(full[3]);
+    if (year < 100) year += 2000;
+    return buildCollaboratorIsoDay(day, month, year);
+  }
+  const short = /^(\d{1,2})[/\-.](\d{1,2})$/.exec(value);
+  if (short) {
+    const day = Number(short[1]);
+    const month = Number(short[2]);
+    const year = Number(today.slice(0, 4));
+    if (!Number.isFinite(year)) return null;
+    let iso = buildCollaboratorIsoDay(day, month, year);
+    if (!iso) return null;
+    const todayMs = Date.parse(`${today.slice(0, 10)}T12:00:00Z`);
+    const isoMs = Date.parse(`${iso}T12:00:00Z`);
+    if (Number.isFinite(todayMs) && Number.isFinite(isoMs) && isoMs - todayMs > 120 * 86400000) {
+      iso = buildCollaboratorIsoDay(day, month, year - 1);
+    }
+    return iso;
+  }
+  return null;
+}
+
+function buildCollaboratorIsoDay(day: number, month: number, year: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000 || year > 2100) return null;
+  const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const [y, m, d] = iso.split('-').map(Number);
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (
+    check.getUTCFullYear() !== y ||
+    check.getUTCMonth() !== m - 1 ||
+    check.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return iso;
 }
 
 function inRange(fecha: string, from: Date, to: Date): boolean {
@@ -154,6 +224,34 @@ function parseClockMinutes(value: string): number | null {
   return hours * 60 + minutes;
 }
 
+/** Horas trabajadas sin tarifa/importe (null ≠ $0). Incluye registros legacy con monto 0 sin rate. */
+export function isUnvaluedHoursMovement(
+  movement: Pick<CollaboratorMovementRecord, 'tipo' | 'horas' | 'valorHora' | 'monto'>
+): boolean {
+  if (movement.tipo !== 'horas') return false;
+  const horas = Number(movement.horas ?? 0);
+  if (horas <= 0) return false;
+  const rate = movement.valorHora;
+  if (rate != null && Number.isFinite(Number(rate))) {
+    if (Number(rate) === 0) return false;
+    if (Number(rate) > 0 && movement.monto != null && Number(movement.monto) >= 0) return false;
+  }
+  if (movement.monto != null && Number(movement.monto) > 0) return false;
+  return true;
+}
+
+type HourlyRateParse = 'unvalued' | 'missing' | number;
+
+function parseHourlyRateInput(body: Record<string, unknown>): HourlyRateParse {
+  if (String(body.valuationMode ?? '').trim() === 'unvalued') return 'unvalued';
+  const raw = body.valorHora ?? body.hourlyRate;
+  if (raw === null) return 'unvalued';
+  if (raw === undefined || raw === '') return 'missing';
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 'missing';
+  return roundMoney(n);
+}
+
 export function hoursFromTimeRange(horaDesde: string, horaHasta: string): number | null {
   const start = parseClockMinutes(horaDesde);
   const end = parseClockMinutes(horaHasta);
@@ -172,8 +270,10 @@ export function movementToFirestore(
     colaboradorId: input.colaboradorId,
     tipo: input.tipo,
     fecha: input.fecha,
-    monto: input.monto,
   };
+  if (input.monto !== undefined && input.monto !== null) {
+    doc.monto = input.monto;
+  }
 
   const optionalKeys = [
     'horas',
@@ -191,6 +291,10 @@ export function movementToFirestore(
 
   for (const key of optionalKeys) {
     const value = input[key];
+    if (value === 0) {
+      doc[key] = 0;
+      continue;
+    }
     if (value !== undefined && value !== null && value !== '') {
       doc[key] = value;
     }
@@ -236,6 +340,32 @@ export async function getCollaborator(
   return { id: doc.id, ...(doc.data() as Omit<CollaboratorRecord, 'id'>) };
 }
 
+export async function getCollaboratorMovement(
+  businessId: string,
+  movimientoId: string
+): Promise<CollaboratorMovementRecord | null> {
+  const id = String(movimientoId ?? '').trim();
+  if (!id) return null;
+  const doc = await movementsCollection(businessId).doc(id).get();
+  if (!doc.exists) return null;
+  return { id: doc.id, ...(doc.data() as Omit<CollaboratorMovementRecord, 'id'>) };
+}
+
+export async function listHoursMovementsForDate(
+  businessId: string,
+  colaboradorId: string,
+  fecha: string
+): Promise<CollaboratorMovementRecord[]> {
+  const date = normalizeCollaboratorFecha(String(fecha ?? '')) ?? String(fecha ?? '').slice(0, 10);
+  const rows = await listCollaboratorMovements(businessId, { colaboradorId, from: date, to: date });
+  return rows.filter((row) => {
+    if (row.tipo !== 'horas') return false;
+    const rowFecha =
+      normalizeCollaboratorFecha(String(row.fecha ?? '')) ?? String(row.fecha ?? '').slice(0, 10);
+    return rowFecha === date;
+  });
+}
+
 export async function listCollaboratorMovements(
   businessId: string,
   filters: { from?: string; to?: string; colaboradorId?: string }
@@ -244,16 +374,25 @@ export async function listCollaboratorMovements(
   const from = filters.from ? parseDateOnly(filters.from) : null;
   const to = filters.to ? parseDateOnly(filters.to, true) : null;
 
-  return snapshot.docs
-    .map((doc) => ({
+  const rows: CollaboratorMovementRecord[] = [];
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as Omit<CollaboratorMovementRecord, 'id'>;
+    const rawFecha = String(data.fecha ?? '').trim();
+    const normalized = normalizeCollaboratorFecha(rawFecha);
+    if (normalized && normalized !== rawFecha) {
+      // Repara fechas DD/MM guardadas por el bot sin bloquear el listado.
+      void doc.ref.update({ fecha: normalized }).catch(() => undefined);
+    }
+    const row: CollaboratorMovementRecord = {
       id: doc.id,
-      ...(doc.data() as Omit<CollaboratorMovementRecord, 'id'>),
-    }))
-    .filter((row) => {
-      if (filters.colaboradorId && row.colaboradorId !== filters.colaboradorId) return false;
-      if (from && to && !inRange(row.fecha, from, to)) return false;
-      return true;
-    });
+      ...data,
+      fecha: normalized ?? rawFecha,
+    };
+    if (filters.colaboradorId && row.colaboradorId !== filters.colaboradorId) continue;
+    if (from && to && !inRange(row.fecha, from, to)) continue;
+    rows.push(row);
+  }
+  return rows;
 }
 
 export async function parseMovementInput(
@@ -262,7 +401,8 @@ export async function parseMovementInput(
 ): Promise<Omit<CollaboratorMovementRecord, 'id' | 'createdAt' | 'colaboradorNombre'> | null> {
   const colaboradorId = String(body.colaboradorId ?? '').trim();
   const tipo = normalizeMovementTipo(body.tipo);
-  const fecha = String(body.fecha ?? '').slice(0, 10);
+  const fechaRaw = String(body.fecha ?? '').trim();
+  const fecha = normalizeCollaboratorFecha(fechaRaw);
   if (!colaboradorId || !tipo || !fecha) return null;
 
   const [collaborator, extraTipos] = await Promise.all([
@@ -284,27 +424,42 @@ export async function parseMovementInput(
     }
     if (!Number.isFinite(horas) || horas <= 0) return null;
 
-    const valorHora =
-      Number(body.valorHora) > 0
-        ? roundMoney(Number(body.valorHora))
-        : Number(collaborator.valorHora) > 0
-          ? roundMoney(Number(collaborator.valorHora))
-          : 0;
-
     const roundedHoras = roundHours(horas);
-    return {
+    const rateInput = parseHourlyRateInput(body);
+
+    const base = {
       colaboradorId,
       tipo,
       fecha,
       horas: roundedHoras,
       horaDesde,
       horaHasta,
-      valorHora: valorHora || undefined,
-      monto: roundMoney(roundedHoras * valorHora),
       periodoDesde,
       periodoHasta,
       notas,
     };
+
+    if (rateInput === 'unvalued') return base;
+
+    if (typeof rateInput === 'number') {
+      return {
+        ...base,
+        valorHora: rateInput,
+        monto: roundMoney(roundedHoras * rateInput),
+      };
+    }
+
+    const configuredRate =
+      Number(collaborator.valorHora) > 0 ? roundMoney(Number(collaborator.valorHora)) : null;
+    if (configuredRate != null) {
+      return {
+        ...base,
+        valorHora: configuredRate,
+        monto: roundMoney(roundedHoras * configuredRate),
+      };
+    }
+
+    return base;
   }
 
   if (tipo === 'extra') {
@@ -516,6 +671,7 @@ export async function buildCollaboratorsPeriodSummary(
       nombre: c.nombre,
       activo: c.activo !== false,
       horas: 0,
+      horasSinValorar: 0,
       montoHoras: 0,
       montoExtras: 0,
       devengado: 0,
@@ -544,17 +700,27 @@ export async function buildCollaboratorsPeriodSummary(
 
     if (movement.tipo === 'horas') {
       const horas = Number(movement.horas ?? 0);
+      if (isUnvaluedHoursMovement(movement)) {
+        if (inPeriod) {
+          row.horas += horas;
+          row.horasSinValorar += horas;
+          row.movimientosCount += 1;
+          totalHoras += horas;
+        }
+        continue;
+      }
+      const valuedMonto = Number(movement.monto ?? 0);
       lifetimeDevengado.set(
         movement.colaboradorId,
-        (lifetimeDevengado.get(movement.colaboradorId) ?? 0) + monto
+        (lifetimeDevengado.get(movement.colaboradorId) ?? 0) + valuedMonto
       );
       if (inPeriod) {
         row.horas += horas;
-        row.montoHoras += monto;
-        row.devengado += monto;
+        row.montoHoras += valuedMonto;
+        row.devengado += valuedMonto;
         row.movimientosCount += 1;
         totalHoras += horas;
-        totalDevengado += monto;
+        totalDevengado += valuedMonto;
       }
       continue;
     }

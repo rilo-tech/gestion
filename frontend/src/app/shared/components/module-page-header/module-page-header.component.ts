@@ -1,7 +1,8 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
-import { IconActionComponent, PAGE_DESC_CLASS } from '../icon-action/icon-action.component';
+import { IconActionComponent } from '../icon-action/icon-action.component';
+import { PAGE_DESC_CLASS, PAGE_TITLE_CLASS, PAGE_TITLE_COMPACT_CLASS } from '../../ui.constants';
 import {
   ActivityLogTriggerComponent,
 } from '../activity-log-trigger/activity-log-trigger.component';
@@ -80,11 +81,7 @@ export class ModulePageHeaderComponent {
   }
 
   get titleClass(): string {
-    const base = 'font-bold text-gray-900 dark:text-gray-100 sm:text-2xl sm:truncate-none';
-    if (this.compactMobile) {
-      return `${base} text-sm leading-snug`;
-    }
-    return `${base} text-xl truncate`;
+    return this.compactMobile ? PAGE_TITLE_COMPACT_CLASS : PAGE_TITLE_CLASS;
   }
 
   onSearchChange(value: string) {

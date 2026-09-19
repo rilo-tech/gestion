@@ -1,7 +1,5 @@
 import { db } from '../firebase.ts';
 import {
-  applyEntregaCompletaPayment,
-  applyEntregaConSaldoVenta,
   isCancelledStatus,
   isDeliveredEstado,
   loadOrderPedidosConfig,
@@ -14,7 +12,6 @@ import {
 import {
   buildOrderStockDiscountPreview,
   computeOrderStockStatus,
-  consumeOrderStockOnDelivery,
   consumeOrderStockOnStatusChange,
   isNoReservedUnitsStockError,
   orderStockFullyConsumed,
@@ -34,6 +31,7 @@ import {
 import { formatStockResolutionAsk, parseRequestedStockScope } from './stock-resolution.ts';
 import { formatOrderNumber, resolveOrderLabel } from '../utils/order-number.ts';
 import { resolveOrderBalance } from '../../shared/order-balance.ts';
+import { syncOrderLinkedVentaSaldo } from '../utils/sync-order-linked-venta.ts';
 import { parseOrderQueryFilter, filterOrdersByQuery } from './order-query-filter.ts';
 import { lockedOrderFromFocus, shouldUseLockedOrder } from './order-lock.ts';
 import { waBold, waCard } from '../../shared/whatsapp-format.ts';
@@ -84,8 +82,13 @@ function foldSearch(value: string): string {
 function itemSummary(data: Record<string, unknown>): string {
   const items = Array.isArray(data.items) ? data.items : [];
   return items
-    .slice(0, 3)
-    .map((row) => String((row as { nombre?: string }).nombre ?? '').trim())
+    .map((row) => {
+      const line = row as { nombre?: string; productName?: string; name?: string; cantidad?: number };
+      const name = String(line.nombre ?? line.productName ?? line.name ?? '').trim();
+      const qty = Number(line.cantidad) || 0;
+      if (!name) return '';
+      return qty > 1 ? `${qty} × ${name}` : name;
+    })
     .filter(Boolean)
     .join(' · ');
 }
@@ -649,9 +652,19 @@ export async function updateOrderStatusFromWhatsapp(
   clientId: string;
   amount: number;
   status: string;
+  saldoRemaining?: number;
   needsStockDecision?: StockDiscountAsk;
 }> {
-  const nextEstadoValue: WhatsappOrderStatus = entities.orderStatus ?? 'listo';
+  const configEarly = await loadOrderPedidosConfig(tenant.businessId);
+  const rawStatus = String(entities.orderStatus ?? entities.requestedStatus ?? 'listo');
+  const { resolveOrderStatusFromText } = await import('./business-runtime-context.ts');
+  const fromLabel = resolveOrderStatusFromText(
+    rawStatus,
+    configEarly.estados.map((e) => ({ id: e.value, label: e.label }))
+  );
+  const nextEstadoValue: WhatsappOrderStatus = (fromLabel ??
+    resolveOrderEstado(rawStatus) ??
+    'listo') as WhatsappOrderStatus;
   const resolution = await resolveOrderForStatus(tenant.businessId, tenant.phone, entities);
   if (resolution.status === 'ambiguous') {
     throw new Error(
@@ -849,41 +862,63 @@ export async function updateOrderStatusFromWhatsapp(
   let cobrado = 0;
 
   if (isDelivery) {
-    const deliveryConsumption = await consumeOrderStockOnDelivery(
-      tenant.businessId,
-      target.id,
-      asStockRecord(merged)
-    );
-    stockPatch = {
-      ...stockPatch,
-      items: deliveryConsumption.items,
-      stockDescontado: deliveryConsumption.stockDescontado,
-      estadoStock: deliveryConsumption.estadoStock,
-      stockPreparado: deliveryConsumption.stockPreparado ?? merged.stockPreparado,
-    };
-    Object.assign(merged, stockPatch);
-    stockDescontado = deliveryConsumption.stockDescontado;
-    if (deliveryConsumption.stockWarning) {
-      stockWarning = stockWarning
-        ? `${stockWarning}\n${deliveryConsumption.stockWarning}`
-        : deliveryConsumption.stockWarning;
-    }
-
     const saldoPrevio = Math.max(
       0,
       resolveOrderBalance(merged as Parameters<typeof resolveOrderBalance>[0]).saldo
     );
-    // «ya pagó» cierra el pedido; si no dijo nada del pago, la entrega queda con saldo.
-    const cobraTodo = entities.paid !== false && (entities.paid === true || saldoPrevio <= 0);
-    if (cobraTodo) {
-      deliveryPatch = await applyEntregaCompletaPayment(tenant.businessId, target.id, merged);
-      entregaConSaldo = false;
-      cobrado = saldoPrevio;
-    } else {
-      deliveryPatch = await applyEntregaConSaldoVenta(tenant.businessId, target.id, merged);
-      entregaConSaldo = true;
+    const amountHint = Number(entities.collectionAmount ?? entities.amount ?? entities.seniaAmount);
+    const hasAmount = Number.isFinite(amountHint) && amountHint > 0;
+    let mode: 'full' | 'partial' | 'pending' = 'pending';
+    if (entities.paid === true || entities.payFullBalance === true || saldoPrevio <= 0) {
+      mode = 'full';
+    } else if (hasAmount && amountHint >= saldoPrevio - 0.009) {
+      mode = 'full';
+    } else if (hasAmount) {
+      mode = 'partial';
+    } else if (entities.paid === false) {
+      mode = 'pending';
     }
+
+    const { finalizeOrder } = await import('../domain/orders/orders-application-service.ts');
+    const medio = String(entities.paymentMethod ?? '').trim().toLowerCase();
+    const finalized = await finalizeOrder({
+      businessId: tenant.businessId,
+      orderId: target.id,
+      source: 'whatsapp',
+      mode,
+      amountPaid: mode === 'partial' ? amountHint : mode === 'full' ? saldoPrevio : 0,
+      paymentMethod: medio || undefined,
+    });
+
+    cobrado =
+      mode === 'full' ? saldoPrevio : mode === 'partial' ? amountHint : 0;
+    entregaConSaldo = finalized.saldo > 0.009;
+    deliveryPatch = {
+      entregadoAt: new Date().toISOString(),
+      saldo: finalized.saldo,
+      totalPagado: finalized.totalPagado,
+      ventaId: finalized.ventaId ?? undefined,
+      ventaLabel: finalized.ventaLabel ?? undefined,
+      seniaBloqueada: true,
+    };
     Object.assign(merged, deliveryPatch);
+    stockDescontado = true;
+    // finalizeOrder ya persistió estado/caja/venta/stock; evitar segundo update conflictivo
+    const estadoLabel = getOrderEstadoLabel('entregado', config.estados);
+    const saldoLine =
+      finalized.saldo > 0.009
+        ? `Queda saldo $${money(finalized.saldo)}.`
+        : 'Quedó saldado.';
+    const cobroLine = cobrado > 0 ? ` Cobré $${money(cobrado)}.` : '';
+    return {
+      orderId: target.id,
+      label: target.label,
+      clientName: target.clientName,
+      clientId: target.clientId,
+      amount: target.total,
+      status: 'entregado',
+      reply: `Pedido #${target.label} → ${estadoLabel}.${cobroLine} ${saldoLine}`.trim(),
+    };
   }
 
   const total = Number(merged.total) || 0;
@@ -916,6 +951,15 @@ export async function updateOrderStatusFromWhatsapp(
 
   await orderRef.update(updatePayload);
 
+  if (isDelivery && updatePayload.saldo !== undefined) {
+    await syncOrderLinkedVentaSaldo(
+      tenant.businessId,
+      { ventaId: String(updatePayload.ventaId ?? merged.ventaId ?? '') || undefined },
+      Number(updatePayload.saldo) || 0,
+      total
+    );
+  }
+
   const estadoLabel = getOrderEstadoLabel(
     isDelivery ? 'entregado' : nextEstadoValue,
     config.estados
@@ -947,6 +991,7 @@ export async function updateOrderStatusFromWhatsapp(
     clientId: target.clientId,
     amount: total,
     status: isDelivery ? 'entregado' : nextEstadoValue,
+    saldoRemaining: Math.max(0, Number(updatePayload.saldo ?? target.saldo) || 0),
     reply: lines.join('\n'),
   };
 }

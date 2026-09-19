@@ -56,6 +56,8 @@ export type CommercialUsagePack = {
 };
 
 export type CommercialCatalog = {
+  /** Versión publicada del catálogo (grandfathering de precios). */
+  priceVersion?: string;
   trialDays: number;
   /** Acciones por WhatsApp por mes durante la prueba (uso generoso para que carguen el negocio). */
   trialAccionesIaMes: number;
@@ -80,6 +82,7 @@ export type CommercialCatalog = {
   /** Banderas de migraciones one-shot. Superadmin no las edita. */
   migrations?: {
     includedAi200AppliedAt?: string | null;
+    cashProductSeedAppliedAt?: string | null;
   };
   /** Costos de plataforma para Superadmin. Siempre etiquetar estimado vs real. */
   finops?: {
@@ -127,8 +130,9 @@ export function commercialFunnelSteps(catalog: CommercialCatalog): CommercialFun
   ];
 }
 
-/** Precios de lanzamiento MVP (UYU). Superadmin puede publicarlos distintos. */
+/** Precios beta sugeridos (UYU). Superadmin puede publicarlos distintos. */
 export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
+  priceVersion: 'beta-2026-01',
   trialDays: DEFAULT_TRIAL_DAYS,
   trialAccionesIaMes: 150,
   trialWhatsappMensajes: 400,
@@ -150,23 +154,38 @@ export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
   introDiscountMonths: 0,
   introDiscountPercent: 0,
   products: {
+    cash: {
+      amountMonthlyUY: 390,
+      amountMonthlyAR: 9900,
+      includedAi: 100,
+      includedWhatsapp: 400,
+      usageMode: 'limited',
+      includedErpUsers: 1,
+      extraErpUserPriceUY: 0,
+      extraErpUserPriceAR: 0,
+      includedWhatsappNumbers: 1,
+      extraWhatsappNumberPriceUY: 290,
+      extraWhatsappNumberPriceAR: 7900,
+      maxWhatsappNumbers: null,
+    },
     whatsapp: {
       amountMonthlyUY: 690,
       amountMonthlyAR: 16900,
       includedAi: 200,
       includedWhatsapp: 800,
       usageMode: 'limited',
+      /** Cuenta dueña para /inicio; no se vende ni se muestra como “usuario adicional”. */
       includedErpUsers: 1,
-      extraErpUserPriceUY: 190,
-      extraErpUserPriceAR: 4900,
+      extraErpUserPriceUY: 0,
+      extraErpUserPriceAR: 0,
       includedWhatsappNumbers: 1,
       extraWhatsappNumberPriceUY: 290,
       extraWhatsappNumberPriceAR: 7900,
       maxWhatsappNumbers: null,
     },
     erp: {
-      amountMonthlyUY: 590,
-      amountMonthlyAR: 14900,
+      amountMonthlyUY: 490,
+      amountMonthlyAR: 12900,
       includedAi: 0,
       includedWhatsapp: 0,
       usageMode: 'limited',
@@ -174,13 +193,13 @@ export const DEFAULT_COMMERCIAL_CATALOG: CommercialCatalog = {
       extraErpUserPriceUY: 190,
       extraErpUserPriceAR: 4900,
       includedWhatsappNumbers: 0,
-      extraWhatsappNumberPriceUY: 290,
-      extraWhatsappNumberPriceAR: 7900,
+      extraWhatsappNumberPriceUY: 0,
+      extraWhatsappNumberPriceAR: 0,
       maxWhatsappNumbers: null,
     },
     completo: {
-      amountMonthlyUY: 990,
-      amountMonthlyAR: 24900,
+      amountMonthlyUY: 890,
+      amountMonthlyAR: 22900,
       includedAi: 200,
       includedWhatsapp: 1200,
       usageMode: 'limited',
@@ -423,6 +442,10 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
     };
   };
   return {
+    priceVersion:
+      typeof raw?.priceVersion === 'string' && raw.priceVersion.trim()
+        ? raw.priceVersion.trim()
+        : base.priceVersion ?? 'beta-2026-01',
     trialDays: num(raw?.trialDays, base.trialDays, 1),
     trialAccionesIaMes: num(raw?.trialAccionesIaMes, base.trialAccionesIaMes, 0),
     trialWhatsappMensajes: num(raw?.trialWhatsappMensajes, base.trialWhatsappMensajes, 0),
@@ -464,6 +487,7 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
     introDiscountMonths: Math.min(24, num(raw?.introDiscountMonths, base.introDiscountMonths, 0)),
     introDiscountPercent: Math.min(90, num(raw?.introDiscountPercent, base.introDiscountPercent, 0)),
     products: {
+      cash: product('cash'),
       whatsapp: product('whatsapp'),
       erp: product('erp'),
       completo: product('completo'),
@@ -472,6 +496,10 @@ export function clampCommercialCatalog(raw: Partial<CommercialCatalog> | null | 
       includedAi200AppliedAt:
         typeof raw?.migrations?.includedAi200AppliedAt === 'string'
           ? raw.migrations.includedAi200AppliedAt
+          : null,
+      cashProductSeedAppliedAt:
+        typeof raw?.migrations?.cashProductSeedAppliedAt === 'string'
+          ? raw.migrations.cashProductSeedAppliedAt
           : null,
     },
     finops: {
@@ -563,6 +591,7 @@ export function completeVsSeparate(
 }
 
 export function trialCtaForProduct(productId: TrialProductId): string {
+  if (productId === 'cash') return 'Probar RILO Caja';
   if (productId === 'whatsapp') return 'Probar RILO Bot';
   if (productId === 'erp') return 'Probar RILO Gestión';
   return 'Probar RILO Completo';

@@ -111,6 +111,7 @@ function catalogFromPublic(
         : DEFAULT_COMMERCIAL_CATALOG.extraWhatsappNumberMonthlyAR,
     usagePacks: reconstructUsagePacks(row, country),
     products: {
+      cash: productQuote(row, country, 'cash'),
       whatsapp: productQuote(row, country, 'whatsapp'),
       erp: productQuote(row, country, 'erp'),
       completo: productQuote(row, country, 'completo'),

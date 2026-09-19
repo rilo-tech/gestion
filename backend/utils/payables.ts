@@ -110,6 +110,37 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Día del mes (1–31) → próxima fecha de vencimiento YYYY-MM-DD (incluye hoy). */
+export function resolveRecurringPayableFirstDueDate(
+  dueDay: number,
+  referenceDate = todayIso()
+): string {
+  const day = Math.min(31, Math.max(1, Math.round(Number(dueDay) || 0)));
+  if (!Number.isFinite(day) || day < 1) {
+    throw new Error('INVALID_DUE_DAY');
+  }
+  const ref = String(referenceDate).slice(0, 10);
+  const [yStr, mStr, dStr] = ref.split('-');
+  let year = Number(yStr);
+  let month = Number(mStr); // 1-12
+  const refDay = Number(dStr);
+  if (!year || !month || !refDay) throw new Error('INVALID_DUE_DAY');
+
+  const lastDayOf = (y: number, m: number) => new Date(y, m, 0).getDate();
+  const clamp = (y: number, m: number, d: number) => Math.min(d, lastDayOf(y, m));
+
+  let candidateDay = clamp(year, month, day);
+  if (candidateDay < refDay) {
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    candidateDay = clamp(year, month, day);
+  }
+  return `${year}-${String(month).padStart(2, '0')}-${String(candidateDay).padStart(2, '0')}`;
+}
+
 export function resolveDisplayEstado(
   estado: PayableCuotaEstado,
   fechaVencimiento: string,
@@ -440,7 +471,15 @@ async function getLatestCuotaDate(
   return latest;
 }
 
+/** Evita regenerar horizonte de gastos fijos en cada listado (caro en Firestore). */
+const HORIZON_TTL_MS = 5 * 60_000;
+const lastHorizonAt = new Map<string, number>();
+
 export async function ensureMensualCuotasHorizon(businessId: string): Promise<void> {
+  const last = lastHorizonAt.get(businessId) ?? 0;
+  if (Date.now() - last < HORIZON_TTL_MS) return;
+  lastHorizonAt.set(businessId, Date.now());
+
   const caja = await loadCajaConfig(businessId);
   const defaultAmbito = getBusinessCashAmbitoId(caja);
   const snapshot = await obligationsCollection(businessId).get();
@@ -588,7 +627,7 @@ function compareInstallmentsByDueDate(
   return a.beneficiario.localeCompare(b.beneficiario, 'es');
 }
 
-export type PayableInstallmentsScope = 'month' | 'all' | 'account';
+export type PayableInstallmentsScope = 'month' | 'all' | 'account' | 'obligation';
 
 export interface ListPayableInstallmentsOptions {
   /** YYYY-MM; con scope=month filtra vencimientos del mes; con scope=account define el mes del resumen. */
@@ -805,6 +844,14 @@ async function queryAccountViewCuotas(
   return [...byId.values()];
 }
 
+/** Solo cuotas de préstamos (origenTipo=prestamo); evita traer tarjetas/compras/gastos fijos. */
+async function queryObligationViewCuotas(
+  businessId: string
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const snap = await cuotasCollection(businessId).where('origenTipo', '==', 'prestamo').get();
+  return snap.docs;
+}
+
 /** Reparación de datos; ejecutar en escrituras, no en cada lectura de listado. */
 export async function preparePayablesData(businessId: string): Promise<void> {
   await ensureMensualCuotasHorizon(businessId);
@@ -822,14 +869,19 @@ export async function listPayableInstallments(
   businessId: string,
   options?: ListPayableInstallmentsOptions
 ): Promise<ListPayableInstallmentsResult> {
-  await ensureMensualCuotasHorizon(businessId);
+  const scope: PayableInstallmentsScope =
+    options?.scope ?? (options?.mes ? 'month' : 'all');
+
+  // Horizon solo hace falta para «Por mes» / listados amplios (gastos fijos).
+  // Préstamos y cuentas no lo necesitan y evita lecturas/escrituras caras en cada carga.
+  if (scope === 'month' || scope === 'all') {
+    await ensureMensualCuotasHorizon(businessId);
+  }
 
   if (options?.reconcile) {
     await preparePayablesData(businessId);
   }
 
-  const scope: PayableInstallmentsScope =
-    options?.scope ?? (options?.mes ? 'month' : 'all');
   const mes = String(options?.mes ?? '').trim().slice(0, 7);
   const ambito = String(options?.ambito ?? '').trim() || undefined;
   const displayEstado = options?.displayEstado;
@@ -864,6 +916,11 @@ export async function listPayableInstallments(
   if (scope === 'account') {
     const viewMes = /^\d{4}-\d{2}$/.test(mes) ? mes : todayIso().slice(0, 7);
     const docs = await queryAccountViewCuotas(businessId, viewMes);
+    return { items: mapInstallmentDocs(docs) };
+  }
+
+  if (scope === 'obligation') {
+    const docs = await queryObligationViewCuotas(businessId);
     return { items: mapInstallmentDocs(docs) };
   }
 
@@ -911,7 +968,7 @@ export async function createPayableObligation(
     updatedAt: now,
   });
 
-  const cuotaTotal = input.cuotaTotal ?? input.cantidadCuotas;
+  const cuotaTotal = input.tipo === 'mensual' ? undefined : input.cuotaTotal ?? input.cantidadCuotas;
 
   const initialCuotas = buildInitialCuotas(input).map((cuota) => ({
     ...cuota,
@@ -922,8 +979,8 @@ export async function createPayableObligation(
     tarjetaId: input.tarjetaId ?? null,
     tarjetaLabel: input.tarjetaLabel ?? null,
     medioPagoId: input.medioPagoId ?? null,
-    cuotaTotal,
-    descripcion: buildCuotaDescripcion(cuota, input, cuotaTotal, categoriaLabel),
+    ...(cuotaTotal != null ? { cuotaTotal } : {}),
+    descripcion: buildCuotaDescripcion(cuota, input, cuotaTotal ?? 1, categoriaLabel),
     createdAt: now,
   }));
 
@@ -1615,6 +1672,7 @@ const lastReconcileAt = new Map<string, number>();
 /** Forzar reconciliación en la próxima lectura (p. ej. tras corregir una cuota). */
 export function invalidatePayablesReconcileCache(businessId: string): void {
   lastReconcileAt.delete(businessId);
+  lastHorizonAt.delete(businessId);
 }
 
 /** Alinea tarjeta/cuenta en cuotas cuando la compra ya tiene tarjeta asignada. */
@@ -1710,7 +1768,9 @@ export async function reconcilePayablesAndCashData(
 
   await reconcilePurchaseCuotaTarjetas(businessId);
   await reconcileOverSplitInstallmentRecovery(businessId);
-  await reconcileTotalScaleInstallmentMontos(businessId);
+  // reconcileTotalScaleInstallmentMontos era un arreglo histórico que asumía
+  // "monto obligación = total". Hoy el modelo guarda monto por cuota; al correrlo
+  // en cada save dividía de nuevo (ej. 2835×8 → 354) y el cambio «por cuota» no quedaba.
   await reconcileCuotasToObligationMonto(businessId);
   await reconcileSplitInstallmentMontos(businessId);
   await reconcileCashMovementsFromLinkedCuotas(businessId);
@@ -1850,8 +1910,9 @@ async function updatePayableObligationPreservingPaid(
 
 export async function deletePayableObligation(
   businessId: string,
-  obligacionId: string
-): Promise<void> {
+  obligacionId: string,
+  options?: { allowPaidCuotas?: boolean }
+): Promise<{ deletedCuotas: number; paidCuotas: number }> {
   const ref = obligationsCollection(businessId).doc(obligacionId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -1862,13 +1923,16 @@ export async function deletePayableObligation(
     .where('obligacionId', '==', obligacionId)
     .get();
 
-  const hasPaidCuotas = cuotasSnap.docs.some((doc) => doc.data().estado === 'pagada');
-  if (hasPaidCuotas) {
+  const paidCuotas = cuotasSnap.docs.filter((doc) => doc.data().estado === 'pagada').length;
+  if (paidCuotas > 0 && !options?.allowPaidCuotas) {
     throw new Error('OBLIGATION_HAS_PAID_CUOTAS');
   }
 
+  // Borra obligación y cuotas; nunca toca movimientos de caja (aunque queden huérfanos).
   const batch = db.batch();
   cuotasSnap.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(ref);
   await batch.commit();
+
+  return { deletedCuotas: cuotasSnap.size, paidCuotas };
 }

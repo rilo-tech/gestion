@@ -15,6 +15,10 @@ import {
 } from '../../shared/components/transaction-form';
 import { RecordActionToolbarComponent } from '../../shared/components/icon-toolbar';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 import { formatMoneyValue } from '../../shared/pipes/money.pipe';
 import {
   comprobanteBorradorTitulo,
@@ -100,7 +104,7 @@ import {
     </app-transaction-form-page>
   `,
 })
-export class NewSaleComponent implements OnInit, AfterViewInit {
+export class NewSaleComponent implements OnInit, AfterViewInit, UnsavedChangesHost {
   @ViewChild('saleForm') saleForm!: SaleCounterFormPanelComponent;
 
   readonly auth = inject(AuthService);
@@ -111,6 +115,8 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
   private dialogService = inject(DialogService);
   private stockService = inject(StockService);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   editingSaleId: string | null = null;
   saleSaving = false;
@@ -255,7 +261,19 @@ export class NewSaleComponent implements OnInit, AfterViewInit {
     });
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.saleForm?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.saleForm?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event: TransactionFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
     this.saleSaving = false;
     if (!event?.id) return;
 

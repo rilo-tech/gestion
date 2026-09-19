@@ -18,6 +18,11 @@ import {
   toPublicPlatformAdmin,
   type PublicPlatformAdmin,
 } from './platform.ts';
+import { getBusiness, resolveForBusiness } from './business.ts';
+import { canUseBusinessFeature } from '../../shared/business-capability.ts';
+import type { BusinessFeatureId } from '../../shared/business-profile.ts';
+import { resolveBusinessProfile } from '../../shared/business-profile.ts';
+import { normalizePlatformAccess, productIdFromAccess } from '../../shared/platform-access.ts';
 
 export interface CompanyAuthContext {
   scope: 'company';
@@ -221,6 +226,42 @@ export function requireBusinessModule(...moduleIds: SubscriptionModuleId[]) {
     } catch (error) {
       console.error('Module entitlement check failed:', error);
       return res.status(500).json({ error: 'No se pudo validar la suscripción.' });
+    }
+  };
+}
+
+/** Gate por feature operativa + producto (ej. RILO Caja solo puede `cash`). */
+export function requireBusinessFeature(feature: BusinessFeatureId) {
+  return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.auth?.scope !== 'company') {
+      return res.status(403).json({ error: 'No tenés acceso a esta función.' });
+    }
+    try {
+      const business = await getBusiness(req.auth.businessId);
+      if (!business) {
+        return res.status(404).json({ error: 'Empresa no encontrada.' });
+      }
+      const { resolved } = await resolveForBusiness(business);
+      const productId = productIdFromAccess(normalizePlatformAccess(business.platformAccess));
+      const ok = canUseBusinessFeature({
+        productId,
+        entitlements: resolved.entitlements,
+        profile: resolveBusinessProfile(business.businessProfile),
+        feature,
+        permission: true,
+      });
+      if (!ok) {
+        return res.status(403).json({
+          error:
+            productId === 'cash'
+              ? 'Con RILO Caja solo podés usar ingresos, egresos, saldo y resúmenes. Sumá Bot o Gestión para el resto.'
+              : 'Esta función no está disponible en tu plan.',
+        });
+      }
+      next();
+    } catch (error) {
+      console.error('Feature entitlement check failed:', error);
+      return res.status(500).json({ error: 'No se pudo validar el acceso.' });
     }
   };
 }

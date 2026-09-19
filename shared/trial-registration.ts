@@ -35,8 +35,14 @@ export interface TrialContactVerification {
 export interface TrialLifecycle {
   source: BusinessSource;
   campaignSource?: string | null;
+  landingPath?: string | null;
   utmSource?: string | null;
+  utmMedium?: string | null;
   utmCampaign?: string | null;
+  utmContent?: string | null;
+  utmTerm?: string | null;
+  fbclid?: string | null;
+  gclid?: string | null;
   rubro?: TrialRubroId | string | null;
   pais?: string | null;
   ciudad?: string | null;

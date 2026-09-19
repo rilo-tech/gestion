@@ -21,9 +21,15 @@ import publicTrialRoutes from './routes/public-trial.ts';
 import publicCommercialRoutes from './routes/public-commercial.ts';
 import publicGeoRoutes from './routes/public-geo.ts';
 import addonsRoutes from './routes/addons.ts';
+import automationsRoutes from './routes/automations.ts';
 import billingRoutes from './routes/billing.ts';
 import whatsappWebhookRoutes from './routes/whatsapp-webhook.ts';
 import platformBotRoutes from './routes/platform-bot.ts';
+import summaryRoutes from './routes/summary.ts';
+import {
+  resolveFirebaseProjectId,
+  resolveRiloEnvironment,
+} from '../shared/rilo-environment.ts';
 import { ensureDefaultSupervisor } from './auth/users.ts';
 import { ensureDefaultBusiness } from './auth/business.ts';
 import { ensureDefaultPlatformAdmin } from './auth/platform.ts';
@@ -148,6 +154,8 @@ export function createApiApp(): express.Express {
       status: bootstrapState === 'ready' ? 'ok' : bootstrapState,
       bootstrap: bootstrapState,
       message: 'RILO Gestión API is running',
+      environment: resolveRiloEnvironment(),
+      projectId: resolveFirebaseProjectId() || null,
     });
   });
 
@@ -177,6 +185,7 @@ export function createApiApp(): express.Express {
   const api = express.Router();
   api.use('/platform', platformRoutes);
   api.use('/business', addonsRoutes);
+  api.use('/business', automationsRoutes);
   api.use('/business', businessRoutes);
   api.use('/clients', clientRoutes);
   api.use('/suppliers', supplierRoutes);
@@ -190,6 +199,7 @@ export function createApiApp(): express.Express {
   api.use('/price-catalog', priceCatalogRoutes);
   api.use('/payables', payablesRoutes);
   api.use('/activity', activityRoutes);
+  api.use('/summary', summaryRoutes);
   api.use('/reports', reportsRoutes);
   api.use('/collaborators', collaboratorsRoutes);
   api.use('/public/trial', publicTrialRoutes);

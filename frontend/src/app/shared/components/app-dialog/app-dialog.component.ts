@@ -22,7 +22,7 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
       </button>
 
       <div
-        class="relative flex w-full max-w-md max-h-[min(90dvh,34rem)] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-2xl">
+        class="relative flex w-full max-w-md max-h-[min(90dvh,34rem)] flex-col rounded-2xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 sm:p-6 shadow-2xl">
         <div class="mb-4 flex min-h-0 flex-1 items-start gap-4 overflow-hidden">
           <div
             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
@@ -30,25 +30,25 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
             <i-lucide [name]="iconName" class="h-5 w-5"></i-lucide>
           </div>
           <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pt-0.5">
-            <h2 class="text-lg font-bold text-gray-900">{{ title }}</h2>
+            <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ title }}</h2>
             <p class="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ request.options.message }}</p>
           </div>
         </div>
 
         <div
           *ngIf="request.type !== 'choice'"
-          class="flex shrink-0 justify-end gap-3 border-t border-gray-100 pt-4">
+          class="flex shrink-0 justify-end gap-3 border-t border-gray-100 dark:border-gray-800 pt-4">
           <button
             *ngIf="request.type === 'confirm'"
             type="button"
             (click)="onCancel()"
-            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
+            class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 min-h-[44px] sm:min-h-0">
             {{ cancelLabel }}
           </button>
           <button
             type="button"
             (click)="onConfirm()"
-            class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+            class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors min-h-[44px] sm:min-h-0"
             [ngClass]="confirmButtonClass">
             {{ confirmLabel }}
           </button>
@@ -56,19 +56,19 @@ import { DialogRequest, DialogService, DialogVariant } from '../../../core/servi
 
         <div
           *ngIf="request.type === 'choice'"
-          class="flex shrink-0 flex-col gap-2.5 border-t border-gray-100 pt-4">
+          class="flex shrink-0 flex-col gap-2.5 border-t border-gray-100 dark:border-gray-800 pt-4">
           <button
             *ngFor="let opt of request.options.options"
             type="button"
             (click)="onChoice(opt.id)"
-            class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+            class="rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors min-h-[44px] sm:min-h-0"
             [ngClass]="choiceButtonClass(opt.variant)">
             {{ opt.label }}
           </button>
           <button
             type="button"
             (click)="onCancel()"
-            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50">
+            class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 min-h-[44px] sm:min-h-0">
             {{ choiceCancelLabel }}
           </button>
         </div>
@@ -135,18 +135,20 @@ export class AppDialogComponent implements OnInit, OnDestroy {
 
   get iconWrapperClass(): string {
     if (this.request?.type === 'alert') {
-      return 'bg-teal-50 text-teal-600';
+      return 'bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-300';
     }
-    return this.isDanger ? 'bg-red-50 text-red-600' : 'bg-teal-50 text-teal-600';
+    return this.isDanger
+      ? 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-300'
+      : 'bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-300';
   }
 
   get confirmButtonClass(): string {
     if (this.request?.type === 'alert') {
-      return 'bg-primary text-white hover:bg-teal-700';
+      return 'bg-teal-600 text-white hover:bg-teal-700';
     }
     return this.isDanger
       ? 'bg-red-600 text-white hover:bg-red-700'
-      : 'bg-primary text-white hover:bg-teal-700';
+      : 'bg-teal-600 text-white hover:bg-teal-700';
   }
 
   choiceButtonClass(variant?: DialogVariant): string {
@@ -154,9 +156,9 @@ export class AppDialogComponent implements OnInit, OnDestroy {
       return 'bg-red-600 text-white hover:bg-red-700';
     }
     if (variant === 'secondary') {
-      return 'border-2 border-sky-300 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/60';
+      return 'border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-800';
     }
-    return 'bg-primary text-white hover:bg-teal-700';
+    return 'bg-teal-600 text-white hover:bg-teal-700';
   }
 
   onConfirm() {

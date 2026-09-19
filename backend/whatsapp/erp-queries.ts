@@ -19,6 +19,7 @@ import { formatWhatsappResponse } from '../../shared/whatsapp-format.ts';
 import {
   ASK_STOCK_PRODUCT,
   focusProductsFromOrderItems,
+  orderLineItemsFromErp,
   presentCountQuery,
   presentEntityList,
   presentOrderListItem,
@@ -49,11 +50,20 @@ async function pedidosEstadoLabel(businessId: string, estado?: string): Promise<
 function itemNames(items: unknown): string {
   if (!Array.isArray(items) || !items.length) return '';
   return items
-    .slice(0, 6)
+    .slice(0, 20)
     .map((row) => {
-      const data = row as { nombre?: string; cantidad?: number };
-      const name = String(data.nombre ?? '').trim();
-      const qty = Number(data.cantidad) || 0;
+      const data = row as {
+        nombre?: string;
+        productName?: string;
+        name?: string;
+        descripcion?: string;
+        cantidad?: number;
+        quantity?: number;
+      };
+      const name = String(
+        data.nombre ?? data.productName ?? data.name ?? data.descripcion ?? ''
+      ).trim();
+      const qty = Number(data.cantidad ?? data.quantity) || 0;
       if (!name) return '';
       return qty > 1 ? `${qty} × ${name}` : name;
     })
@@ -80,6 +90,7 @@ async function formatOrderDoc(
     clientName: String(data.clienteNombre ?? '').trim() || '(sin nombre)',
     statusLabel: estado || String(data.estado ?? 'pendiente'),
     products: itemNames(data.items) || undefined,
+    items: orderLineItemsFromErp(data.items),
     notes: notes && !/^origen:\s*whatsapp/i.test(notes) ? notes.slice(0, 160) : undefined,
     total: Number(data.total) || 0,
     saldo: Number.isFinite(saldo) ? saldo : undefined,

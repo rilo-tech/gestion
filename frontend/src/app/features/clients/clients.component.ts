@@ -86,11 +86,11 @@ import {
           <button
             type="button"
             (click)="toggleSaldoKpiFilter($event)"
-            [class]="saldoKpiMobileChipClass('orange')">
-            <span class="block text-[9px] font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
+            [class]="saldoKpiMobileChipClass('amber')">
+            <span class="block text-xs font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
               Por cobrar
             </span>
-            <span class="block text-[11px] font-bold tabular-nums text-orange-600 dark:text-orange-400 leading-tight mt-0.5 truncate">
+            <span class="block text-xs font-bold tabular-nums text-amber-700 dark:text-amber-300 leading-tight mt-0.5 truncate">
               {{ formatMoney(totalSaldoPorCobrar) }}
             </span>
           </button>
@@ -98,10 +98,10 @@ import {
             type="button"
             (click)="toggleSaldoKpiFilter($event)"
             [class]="saldoKpiMobileChipClass('neutral')">
-            <span class="block text-[9px] font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
+            <span class="block text-xs font-semibold uppercase leading-tight text-gray-500 dark:text-gray-400">
               Con saldo
             </span>
-            <span class="block text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-tight mt-0.5">
+            <span class="block text-xs font-bold tabular-nums text-gray-900 dark:text-gray-100 leading-tight mt-0.5">
               {{ debtorCount }}
             </span>
           </button>
@@ -115,15 +115,15 @@ import {
         <button
           type="button"
           (click)="toggleSaldoKpiFilter($event)"
-          [class]="saldoKpiCardClass('border-orange-100 dark:border-orange-900/50')">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Total por cobrar</p>
-          <p class="text-xl sm:text-2xl font-bold text-orange-600 tabular-nums">{{ formatMoney(totalSaldoPorCobrar) }}</p>
+          [class]="saldoKpiCardClass('border-amber-200/80 dark:border-amber-900/40 bg-gradient-to-br from-amber-50 to-orange-50/70 dark:from-amber-950/30 dark:to-orange-950/20')">
+          <p class="text-xs font-semibold text-amber-800/70 dark:text-amber-200/70 uppercase mb-1">Total por cobrar</p>
+          <p class="text-xl sm:text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">{{ formatMoney(totalSaldoPorCobrar) }}</p>
         </button>
         <button
           type="button"
           (click)="toggleSaldoKpiFilter($event)"
-          [class]="saldoKpiCardClass('border-gray-100 dark:border-gray-700')">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Clientes con saldo</p>
+          [class]="saldoKpiCardClass('border-stone-200/80 dark:border-gray-700')">
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Clientes con saldo</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums">{{ debtorCount }}</p>
         </button>
       </div>
@@ -165,8 +165,9 @@ import {
             <span
               *ngIf="auth.canViewAccountBalance"
               compactTrailing
-              class="text-[11px] font-bold tabular-nums shrink-0"
-              [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
+              class="text-xs font-bold tabular-nums shrink-0"
+              [class.text-amber-700]="(client.saldoPendiente || 0) > 0"
+              [class.dark:text-amber-300]="(client.saldoPendiente || 0) > 0"
               [class.text-gray-500]="!(client.saldoPendiente || 0)">
               {{ formatMoney(client.saldoPendiente || 0) }}
             </span>
@@ -195,7 +196,7 @@ import {
             <col class="w-[9rem]" />
           </colgroup>
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Nombre</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Contacto</th>
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Dirección</th>
@@ -210,7 +211,7 @@ import {
               (click)="openClient(client)"
               [class]="listTableRowClass">
               <td class="px-4 sm:px-6 py-3 sm:py-4">
-                <div class="font-medium text-gray-900 truncate">
+                <div class="font-medium text-gray-900 dark:text-gray-100 truncate">
                   {{ client.nombre }}<span *ngIf="client.activo === false" class="text-gray-400"> · inactivo</span>
                 </div>
               </td>
@@ -224,7 +225,7 @@ import {
                 <div class="flex gap-1 flex-wrap">
                   <span
                     *ngFor="let tag of client.etiquetas"
-                    class="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs rounded-full">
+                    class="px-2 py-0.5 bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 text-xs rounded-full">
                     {{ tag }}
                   </span>
                 </div>
@@ -232,7 +233,8 @@ import {
               <td *ngIf="auth.canViewAccountBalance" class="hidden sm:table-cell px-6 py-4 text-right whitespace-nowrap">
                 <div
                   class="text-sm font-bold tabular-nums"
-                  [class.text-orange-600]="(client.saldoPendiente || 0) > 0"
+                  [class.text-amber-700]="(client.saldoPendiente || 0) > 0"
+                  [class.dark:text-amber-300]="(client.saldoPendiente || 0) > 0"
                   [class.text-gray-400]="!(client.saldoPendiente || 0)">
                   {{ formatMoney(client.saldoPendiente || 0) }}
                 </div>
@@ -471,16 +473,16 @@ export class ClientsComponent implements OnInit {
     return `${base} ${borderClass}${ring}`;
   }
 
-  saldoKpiMobileChipClass(variant: 'orange' | 'neutral'): string {
+  saldoKpiMobileChipClass(variant: 'orange' | 'amber' | 'neutral'): string {
     const base =
       'w-full min-w-0 text-left rounded-lg px-2 py-1.5 border transition-colors active:scale-[0.98]';
     if (this.saldoKpiFilterActive) {
       return `${base} border-teal-500 bg-teal-50 ring-1 ring-teal-500/40 dark:bg-teal-950/50 dark:border-teal-600`;
     }
-    if (variant === 'orange') {
-      return `${base} border-orange-200 dark:border-orange-900/50 bg-white dark:bg-gray-900`;
+    if (variant === 'orange' || variant === 'amber') {
+      return `${base} border-amber-200 dark:border-amber-900/50 bg-gradient-to-br from-amber-50 to-orange-50/80 dark:from-amber-950/30 dark:to-orange-950/20 dark:bg-gray-900`;
     }
-    return `${base} border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900`;
+    return `${base} border-stone-200 dark:border-gray-700 bg-white dark:bg-gray-900`;
   }
 
   getContactDisplay(client: Client): string {

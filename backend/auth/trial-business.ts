@@ -128,9 +128,12 @@ export async function syncExpiredTrialStatus(
   }
 
   const now = new Date().toISOString();
+  const billingClean = Object.fromEntries(
+    Object.entries(next.billing ?? {}).filter(([, value]) => value !== undefined)
+  );
   const patch: Record<string, unknown> = {
     billing: {
-      ...(next.billing ?? {}),
+      ...billingClean,
       lifecycleStatus: resolvedLifecycle,
       updatedAt: now,
     },

@@ -22,15 +22,17 @@ export function overridesFromSubscription(
   suscripcion?: BusinessSubscriptionRecord | null
 ): CommercialOverrides {
   const sub = suscripcion ?? {};
+  const snap = sub.priceSnapshot ?? null;
   return {
-    includedErpUsers: sub.includedErpUsersOverride,
-    extraErpUserPrice: sub.extraErpUserPriceOverride,
-    includedWhatsappNumbers: sub.includedWhatsappNumbersOverride,
-    extraWhatsappNumberPrice: sub.extraWhatsappNumberPriceOverride,
-    monthlyActionLimit: sub.includedAiOverride,
+    includedErpUsers: sub.includedErpUsersOverride ?? snap?.includedUsers,
+    extraErpUserPrice: sub.extraErpUserPriceOverride ?? snap?.extraUserPrice,
+    includedWhatsappNumbers: sub.includedWhatsappNumbersOverride ?? snap?.includedWhatsappNumbers,
+    extraWhatsappNumberPrice:
+      sub.extraWhatsappNumberPriceOverride ?? snap?.extraWhatsappNumberPrice,
+    monthlyActionLimit: sub.includedAiOverride ?? snap?.includedAiActions,
     usageMode: sub.usageModeOverride,
     maxWhatsappNumbers: sub.maxWhatsappNumbersOverride,
-    precioFinal: sub.precioFinalOverride,
+    precioFinal: sub.precioFinalOverride ?? snap?.monthlyTotal ?? null,
   };
 }
 

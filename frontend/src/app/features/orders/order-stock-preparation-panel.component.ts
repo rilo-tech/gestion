@@ -49,7 +49,7 @@ type DraftLine = OrderStockPreparationLine & {
         <div class="shrink-0 border-b border-gray-100 dark:border-gray-800 px-3 py-2.5 sm:px-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div class="min-w-0">
-              <h2 class="text-sm sm:text-base font-bold text-gray-900 dark:text-gray-100">
+              <h2 class="text-base sm:text-lg font-bold text-gray-900 dark:text-gray-100">
                 {{ isReedit ? 'Editar stock' : 'Revisar stock' }}
                 <span *ngIf="displayOrderLabel" class="font-semibold text-teal-600 dark:text-teal-400">
                   #{{ displayOrderLabel }}
@@ -58,11 +58,11 @@ type DraftLine = OrderStockPreparationLine & {
               <p class="text-xs text-gray-700 dark:text-gray-300 mt-0.5 font-medium truncate" [title]="displayClientName">
                 {{ displayClientName }}
               </p>
-              <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
                 Al confirmar se reserva stock en depósito. Usá +/− o escribí cantidades; reservado + faltante = pedido.
               </p>
             </div>
-            <div *ngIf="view && !loading" class="flex flex-wrap gap-1.5 text-[10px]">
+            <div *ngIf="view && !loading" class="flex flex-wrap gap-1.5 text-xs">
               <span
                 class="inline-flex items-center rounded-md bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-medium text-gray-600 dark:text-gray-300">
                 {{ draftLines.length }} ítem{{ draftLines.length === 1 ? '' : 's' }}
@@ -83,14 +83,14 @@ type DraftLine = OrderStockPreparationLine & {
         <div class="flex-1 min-h-0 overflow-auto">
           <table class="app-data-table w-full min-w-0 text-left border-collapse text-xs">
             <thead
-              class="sticky top-0 z-[1] bg-gray-50 dark:bg-gray-950 text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              class="sticky top-0 z-[1] bg-gray-50 dark:bg-gray-950 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <tr>
-                <th class="px-2 py-1.5 font-semibold w-[34%]">Producto</th>
-                <th class="px-1 py-1.5 font-semibold text-center w-9">Ped.</th>
-                <th class="px-1 py-1.5 font-semibold text-center w-9" title="Libre en depósito">Lib.</th>
-                <th class="px-1 py-1.5 font-semibold text-center w-[4.75rem]">Reserv.</th>
-                <th class="px-1 py-1.5 font-semibold text-center w-[4.75rem]">Falt.</th>
-                <th class="px-1 py-1.5 font-semibold text-center w-14">Acc.</th>
+                <th class="px-2.5 py-2 font-semibold w-[34%]">Producto</th>
+                <th class="px-1.5 py-2 font-semibold text-center w-9">Ped.</th>
+                <th class="px-1.5 py-2 font-semibold text-center w-9" title="Libre en depósito">Lib.</th>
+                <th class="px-1.5 py-2 font-semibold text-center w-[4.75rem]">Reserv.</th>
+                <th class="px-1.5 py-2 font-semibold text-center w-[4.75rem]">Falt.</th>
+                <th class="px-1.5 py-2 font-semibold text-center w-14">Acc.</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
@@ -105,79 +105,79 @@ type DraftLine = OrderStockPreparationLine & {
               <ng-container *ngIf="!loading && view">
                 <ng-container *ngFor="let line of draftLines; trackBy: trackLine">
                   <tr class="align-middle transition-colors" [ngClass]="lineRowClass(line)">
-                    <td class="px-2 py-1 min-w-0">
+                    <td class="px-2.5 py-2 min-w-0">
                       <p
-                        class="font-medium text-gray-900 dark:text-gray-100 truncate leading-tight"
+                        class="font-medium text-sm text-gray-900 dark:text-gray-100 truncate leading-tight"
                         [title]="line.nombre">
                         {{ productBase(line) }}
-                        <span *ngIf="productVariant(line)" class="font-normal text-gray-500 dark:text-gray-400">
+                        <span *ngIf="productVariant(line)" class="font-normal text-xs text-gray-500 dark:text-gray-400">
                           · {{ productVariant(line) }}
                         </span>
                       </p>
-                      <p *ngIf="!line.controlaStock" class="text-[10px] text-gray-500 mt-0.5">Sin control de stock</p>
+                      <p *ngIf="!line.controlaStock" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Sin control de stock</p>
                       <p
                         *ngIf="isReedit && line.controlaStock"
-                        class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 tabular-nums">
+                        class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 tabular-nums">
                         Guardado {{ line.cantidadReservada }}/{{ getPendiente(line) }}
                         <span *ngIf="line.cantidadFaltante > 0"> · falt. {{ line.cantidadFaltante }}</span>
                       </p>
                     </td>
-                    <td class="px-1 py-1 text-center tabular-nums text-gray-700 dark:text-gray-300">
+                    <td class="px-1.5 py-2 text-center tabular-nums text-gray-700 dark:text-gray-300">
                       {{ getPendiente(line) }}
                     </td>
-                    <td class="px-1 py-1 text-center tabular-nums text-gray-600 dark:text-gray-400">
+                    <td class="px-1.5 py-2 text-center tabular-nums text-gray-600 dark:text-gray-400">
                       {{ line.controlaStock ? line.stockDisponible : '—' }}
                     </td>
-                    <td class="px-1 py-1">
+                    <td class="px-1.5 py-2">
                       <div class="flex items-center justify-center gap-0.5 mx-auto">
                         <button
                           type="button"
                           (click)="adjustReservar(line, -1)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
                           −
                         </button>
                         <input
                           type="text"
                           inputmode="numeric"
-                          class="form-control !min-h-0 !h-7 !w-9 !py-0 !px-1 !rounded !text-xs text-center tabular-nums focus:!ring-teal-500/40"
+                          class="form-control !min-h-0 !h-9 !w-10 !py-0 !px-1 !rounded !text-sm text-center tabular-nums focus:!ring-teal-500/40"
                           [(ngModel)]="line.reservarInput"
                           (ngModelChange)="onReservarInput(line)" />
                         <button
                           type="button"
                           (click)="adjustReservar(line, 1)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
                           +
                         </button>
                       </div>
                     </td>
-                    <td class="px-1 py-1">
+                    <td class="px-1.5 py-2">
                       <div class="flex items-center justify-center gap-0.5 mx-auto">
                         <button
                           type="button"
                           (click)="adjustFaltante(line, -1)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
                           −
                         </button>
                         <input
                           type="text"
                           inputmode="numeric"
-                          class="form-control !min-h-0 !h-7 !w-9 !py-0 !px-1 !rounded !text-xs text-center tabular-nums !border-sky-200 dark:!border-sky-800 focus:!ring-sky-400/40"
+                          class="form-control !min-h-0 !h-9 !w-10 !py-0 !px-1 !rounded !text-sm text-center tabular-nums !border-sky-200 dark:!border-sky-800 focus:!ring-sky-400/40"
                           [(ngModel)]="line.faltanteInput"
                           (ngModelChange)="onFaltanteInput(line)" />
                         <button
                           type="button"
                           (click)="adjustFaltante(line, 1)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
                           +
                         </button>
                       </div>
                     </td>
-                    <td class="px-1 py-1">
+                    <td class="px-1.5 py-2">
                       <div class="flex items-center justify-center gap-0.5">
                         <button
                           type="button"
                           (click)="markComplete(line)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border text-xs font-bold transition-colors"
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-bold transition-colors"
                           [class.border-teal-500]="getFaltante(line) === 0 && getReservar(line) === getPendiente(line)"
                           [class.bg-teal-600]="getFaltante(line) === 0 && getReservar(line) === getPendiente(line)"
                           [class.text-white]="getFaltante(line) === 0 && getReservar(line) === getPendiente(line)"
@@ -190,7 +190,7 @@ type DraftLine = OrderStockPreparationLine & {
                         <button
                           type="button"
                           (click)="markNeedsPurchase(line)"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-lg border text-xs font-bold transition-colors"
+                          class="inline-flex h-9 w-9 items-center justify-center rounded-lg border text-xs font-bold transition-colors"
                           [class.border-sky-400]="getFaltante(line) > 0"
                           [class.bg-sky-500/15]="getFaltante(line) > 0"
                           [class.text-sky-700]="getFaltante(line) > 0"
@@ -207,7 +207,7 @@ type DraftLine = OrderStockPreparationLine & {
 
                   <tr *ngIf="needsTransfer(line)" class="bg-sky-50/70 dark:bg-sky-950/25">
                     <td colspan="6" class="px-2 py-1.5 border-t border-sky-100 dark:border-sky-900/50">
-                      <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1.5 text-[11px] text-gray-700 dark:text-gray-300">
+                      <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300">
                         <span class="min-w-0 flex-1">
                           Falta libre para reservar {{ getReservar(line) }} u. Transferí de otro pedido o subí el faltante.
                         </span>
@@ -220,7 +220,7 @@ type DraftLine = OrderStockPreparationLine & {
                         </button>
                         <ng-container *ngIf="line.transferSources.length">
                           <select
-                            class="form-control !min-h-0 !h-7 !py-0 !px-2 !rounded !text-[11px] min-w-[8rem]"
+                            class="form-control !min-h-0 !h-9 !py-0 !px-2 !rounded !text-sm min-w-[8rem]"
                             [(ngModel)]="line.transferSourceKey"
                             (ngModelChange)="onTransferSourceChange(line)">
                             <option value="">Pedido...</option>
@@ -231,14 +231,14 @@ type DraftLine = OrderStockPreparationLine & {
                           <input
                             type="text"
                             inputmode="numeric"
-                            class="form-control !min-h-0 !h-7 !py-0 !px-2 !rounded !text-[11px] text-center tabular-nums w-12"
+                            class="form-control !min-h-0 !h-9 !py-0 !px-2 !rounded !text-sm text-center tabular-nums w-12"
                             [(ngModel)]="line.transferQtyInput"
                             (ngModelChange)="onTransferQtyInput(line)" />
                           <button
                             type="button"
                             (click)="executeTransfer(line)"
                             [disabled]="line.transferring || !line.transferSourceKey"
-                            class="px-2 py-1 rounded-md bg-teal-600 text-white text-[11px] font-semibold hover:bg-teal-700 disabled:opacity-60">
+                            class="px-3 py-2 rounded-lg bg-teal-600 text-white text-sm font-semibold hover:bg-teal-700 disabled:opacity-60 min-h-[36px]">
                             {{ line.transferring ? '...' : 'Transferir' }}
                           </button>
                         </ng-container>
@@ -252,7 +252,7 @@ type DraftLine = OrderStockPreparationLine & {
 
           <p
             *ngIf="!loading && view"
-            class="px-3 py-1.5 text-[10px] text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-950/40">
+            class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-950/40">
             Lib. = stock libre en depósito. Al confirmar se aparta lo reservado; el faltante queda para comprar.
           </p>
         </div>

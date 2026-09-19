@@ -17,9 +17,14 @@ describe('resolveHomeRoute', () => {
     );
   });
 
-  it('C: ERP=false WhatsApp=true → /inicio', () => {
+  it('C2: ERP summary (Bot Resumen) → /inicio', () => {
     assert.equal(
-      resolveHomeRoute({ isPlatformAdmin: false, canAccessErpWeb: false, canAccessWhatsapp: true }),
+      resolveHomeRoute({
+        isPlatformAdmin: false,
+        canAccessErpWeb: true,
+        canAccessWhatsapp: true,
+        summaryWebHome: true,
+      }),
       '/inicio'
     );
   });
@@ -28,6 +33,18 @@ describe('resolveHomeRoute', () => {
     assert.equal(
       resolveHomeRoute({ isPlatformAdmin: true, canAccessErpWeb: true, canAccessWhatsapp: true }),
       '/platform'
+    );
+  });
+
+  it('E: tenant caja-only → /cash', () => {
+    assert.equal(
+      resolveHomeRoute({
+        isPlatformAdmin: false,
+        canAccessErpWeb: true,
+        canAccessWhatsapp: true,
+        cashOnlyHome: true,
+      }),
+      '/cash'
     );
   });
 

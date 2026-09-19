@@ -7,6 +7,7 @@ import {
 import {
   ADDON_BILLING_EFFECTIVE_AT,
   billableWhatsappCount,
+  buildCommercialPriceSnapshot,
   canConfirmCommercialBilling,
   extraSeatCount,
   quoteAddErpUser,
@@ -218,17 +219,27 @@ describe('M. cambio de add-on tiene impacto comercial medible', () => {
 });
 
 describe('extras en los tres planes', () => {
-  it('Bot también suma usuario extra al total', () => {
-    const quote = quoteAddErpUser({
+  it('Bot no cobra usuario ERP adicional; sí cobra número WA', () => {
+    const userQuote = quoteAddErpUser({
       catalog,
       productId: bot,
       country: 'UY',
       activeErpUsers: 1,
       billableWhatsappNumbers: 1,
     });
-    const unit = catalog.products.whatsapp.extraErpUserPriceUY ?? catalog.extraUserMonthlyUY;
-    assert.equal(quote.delta, unit);
-    assert.equal(quote.extraQuantityAfter, 1);
+    assert.equal(userQuote.delta, 0);
+
+    const waQuote = quoteAddWhatsappNumber({
+      catalog,
+      productId: bot,
+      country: 'UY',
+      activeErpUsers: 1,
+      billableWhatsappNumbers: 1,
+    });
+    const unit =
+      catalog.products.whatsapp.extraWhatsappNumberPriceUY ??
+      catalog.extraWhatsappNumberMonthlyUY;
+    assert.equal(waQuote.delta, unit);
   });
 
   it('Gestión no cobra número WhatsApp si no hay líneas billable', () => {
@@ -258,6 +269,69 @@ describe('N. checkout usa CommercialPricingService', () => {
     assert.equal(quote.extraWhatsappNumbers, 1);
     assert.equal(quote.total, base + quote.extraErpCost + quote.extraWhatsappCost);
     assert.ok(quote.total > base);
+  });
+});
+
+describe('RILO Caja', () => {
+  it('cotiza base 390 sin extras', () => {
+    const quote = quoteCommercialMonthly({
+      catalog,
+      productId: 'cash',
+      country: 'UY',
+      activeErpUsers: 1,
+      billableWhatsappNumbers: 1,
+    });
+    assert.equal(quote.total, 390);
+    assert.equal(quote.rates.monthlyActionLimit, 100);
+  });
+});
+
+describe('priceSnapshot / grandfathering', () => {
+  it('precio congelado en snapshot ignora subida de catálogo', () => {
+    const raised = clampCommercialCatalog({
+      ...catalog,
+      products: {
+        ...catalog.products,
+        completo: {
+          ...catalog.products.completo,
+          amountMonthlyUY: 990,
+        },
+      },
+    });
+    const atCatalog = quoteCommercialMonthly({
+      catalog: raised,
+      productId: 'completo',
+      country: 'UY',
+      activeErpUsers: 1,
+      billableWhatsappNumbers: 1,
+    });
+    assert.equal(atCatalog.total, 990);
+
+    const frozen = quoteCommercialMonthly({
+      catalog: raised,
+      productId: 'completo',
+      country: 'UY',
+      overrides: { precioFinal: 690 },
+      activeErpUsers: 1,
+      billableWhatsappNumbers: 1,
+    });
+    assert.equal(frozen.customTotal, true);
+    assert.equal(frozen.total, 690);
+
+    const snapshot = buildCommercialPriceSnapshot({
+      catalog,
+      productId: 'completo',
+      quote: quoteCommercialMonthly({
+        catalog,
+        productId: 'completo',
+        country: 'UY',
+        activeErpUsers: 1,
+        billableWhatsappNumbers: 1,
+      }),
+      capturedAt: '2026-08-31T00:00:00.000Z',
+    });
+    assert.equal(snapshot.monthlyTotal, catalog.products.completo.amountMonthlyUY);
+    assert.equal(snapshot.catalogVersion, catalog.priceVersion);
   });
 });
 

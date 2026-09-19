@@ -467,7 +467,7 @@ interface PayableObligationGroupEntry {
                 <span class="block truncate min-w-0">{{ installmentCuentaLabel(row) }}</span>
               </div>
               <div compactSubtitle class="compact-list-subtitle truncate">
-                {{ formatDate(row.fechaVencimiento) }} · {{ cuotaLabel(row) }} · {{ installmentDetalleDisplayLabel(row) }}
+                {{ formatDate(row.fechaVencimiento) }}<ng-container *ngIf="cuotaLabel(row) !== '—'"> · {{ cuotaLabel(row) }}</ng-container> · {{ installmentDetalleDisplayLabel(row) }}
               </div>
               <span compactTrailing class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100 whitespace-nowrap">{{ formatMoney(row.monto) }}</span>
               <span
@@ -491,6 +491,16 @@ interface PayableObligationGroupEntry {
                 [class.opacity-50]="savingCuotaId === row.id"
                 class="text-[10px] font-semibold text-gray-500 hover:underline whitespace-nowrap">
                 Deshacer
+              </span>
+              <span
+                *ngIf="canDeleteInstallmentSchedule(row)"
+                compactTrailing
+                role="button"
+                tabindex="0"
+                (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                (keydown.enter)="confirmDeleteInstallmentSchedule(row, $event)"
+                class="text-[10px] font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                Eliminar
               </span>
             </app-compact-list-row>
             <p *ngIf="loadingInstallments" [class]="compactListEmptyClass">Cargando vencimientos...</p>
@@ -586,6 +596,16 @@ interface PayableObligationGroupEntry {
                       class="text-[10px] font-semibold text-gray-500 hover:underline whitespace-nowrap">
                       Deshacer
                     </span>
+                    <span
+                      *ngIf="canDeleteInstallmentSchedule(row)"
+                      compactTrailing
+                      role="button"
+                      tabindex="0"
+                      (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                      (keydown.enter)="confirmDeleteInstallmentSchedule(row, $event)"
+                      class="text-[10px] font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                      Eliminar
+                    </span>
                   </app-compact-list-row>
                   <p
                     *ngIf="isAccountCardExpanded(card.key) && !card.currentMonth"
@@ -610,17 +630,34 @@ interface PayableObligationGroupEntry {
                     [name]="isObligationExpanded(group.key) ? 'chevron-down' : 'chevron-right'"
                     class="w-3.5 h-3.5 shrink-0 text-gray-400"></i-lucide>
                   <span class="truncate min-w-0">{{ group.header.beneficiario }}</span>
-                  <span
-                    class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
-                    [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
-                    {{ estadoLabel(group.header.summaryEstado) }}
-                  </span>
                 </div>
                 <div compactSubtitle class="compact-list-subtitle truncate">
                   {{ obligationGroupSubtitle(group) }}
+                  <ng-container *ngIf="group.header.nextDueDate">
+                    · vence
+                    <span
+                      [class.text-red-700]="group.header.summaryEstado === 'vencida'"
+                      [class.font-semibold]="group.header.summaryEstado === 'vencida'">
+                      {{ formatDate(group.header.nextDueDate) }}
+                    </span>
+                  </ng-container>
                 </div>
-                <div compactTrailing class="shrink-0">
+                <div compactTrailing class="flex flex-col items-end gap-1 shrink-0">
                   <span class="text-[11px] font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ formatMoney(group.header.totalPending) }}</span>
+                  <button
+                    *ngIf="group.rows.length > 0"
+                    type="button"
+                    (click)="togglePaid(group.rows[0]); $event.stopPropagation()"
+                    [disabled]="savingCuotaId === group.rows[0].id"
+                    class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap text-right disabled:opacity-50">
+                    Pago
+                  </button>
+                  <span
+                    *ngIf="group.rows.length === 0"
+                    class="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
+                    [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
+                    Al día
+                  </span>
                 </div>
               </app-compact-list-row>
 
@@ -633,7 +670,9 @@ interface PayableObligationGroupEntry {
                     (activate)="onMobileInstallmentActivate(row)"
                     [disabled]="savingCuotaId === row.id">
                     <div compactTitle class="compact-list-title text-gray-800 dark:text-gray-200 flex items-center gap-1.5 min-w-0">
-                      <span class="truncate min-w-0">{{ cuotaLabel(row) }} · {{ formatDate(row.fechaVencimiento) }}</span>
+                      <span class="truncate min-w-0">
+                        <ng-container *ngIf="cuotaLabel(row) !== '—'">{{ cuotaLabel(row) }} · </ng-container>{{ formatDate(row.fechaVencimiento) }}
+                      </span>
                       <span
                         class="inline-flex shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none"
                         [ngClass]="estadoBadgeClass(row.displayEstado)">
@@ -654,6 +693,16 @@ interface PayableObligationGroupEntry {
                       [class.opacity-50]="savingCuotaId === row.id"
                       class="text-[10px] font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap">
                       Pago
+                    </span>
+                    <span
+                      *ngIf="canDeleteInstallmentSchedule(row)"
+                      compactTrailing
+                      role="button"
+                      tabindex="0"
+                      (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                      (keydown.enter)="confirmDeleteInstallmentSchedule(row, $event)"
+                      class="text-[10px] font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                      Eliminar
                     </span>
                   </app-compact-list-row>
                   <p
@@ -729,22 +778,31 @@ interface PayableObligationGroupEntry {
                   </span>
                 </td>
                 <td app-module-table-cell align="right">
-                  <button
-                    *ngIf="row.displayEstado !== 'pagada'"
-                    type="button"
-                    (click)="togglePaid(row); $event.stopPropagation()"
-                    [disabled]="savingCuotaId === row.id"
-                    class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
-                    Pago
-                  </button>
-                  <button
-                    *ngIf="row.displayEstado === 'pagada'"
-                    type="button"
-                    (click)="togglePaid(row); $event.stopPropagation()"
-                    [disabled]="savingCuotaId === row.id"
-                    class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
-                    Deshacer pago
-                  </button>
+                  <div class="inline-flex items-center justify-end gap-2 flex-wrap">
+                    <button
+                      *ngIf="row.displayEstado !== 'pagada'"
+                      type="button"
+                      (click)="togglePaid(row); $event.stopPropagation()"
+                      [disabled]="savingCuotaId === row.id"
+                      class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                      Pago
+                    </button>
+                    <button
+                      *ngIf="row.displayEstado === 'pagada'"
+                      type="button"
+                      (click)="togglePaid(row); $event.stopPropagation()"
+                      [disabled]="savingCuotaId === row.id"
+                      class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
+                      Deshacer pago
+                    </button>
+                    <button
+                      *ngIf="canDeleteInstallmentSchedule(row)"
+                      type="button"
+                      (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                      class="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                      Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>
               <tr app-module-table-empty-row *ngIf="loadingInstallments" [colspan]="7">Cargando vencimientos...</tr>
@@ -891,22 +949,31 @@ interface PayableObligationGroupEntry {
                               </span>
                             </td>
                             <td app-module-table-cell nested align="right">
-                              <button
-                                *ngIf="row.displayEstado !== 'pagada'"
-                                type="button"
-                                (click)="togglePaid(row); $event.stopPropagation()"
-                                [disabled]="savingCuotaId === row.id"
-                                class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
-                                Pago
-                              </button>
-                              <button
-                                *ngIf="row.displayEstado === 'pagada'"
-                                type="button"
-                                (click)="togglePaid(row); $event.stopPropagation()"
-                                [disabled]="savingCuotaId === row.id"
-                                class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
-                                Deshacer pago
-                              </button>
+                              <div class="inline-flex items-center justify-end gap-2 flex-wrap">
+                                <button
+                                  *ngIf="row.displayEstado !== 'pagada'"
+                                  type="button"
+                                  (click)="togglePaid(row); $event.stopPropagation()"
+                                  [disabled]="savingCuotaId === row.id"
+                                  class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                                  Pago
+                                </button>
+                                <button
+                                  *ngIf="row.displayEstado === 'pagada'"
+                                  type="button"
+                                  (click)="togglePaid(row); $event.stopPropagation()"
+                                  [disabled]="savingCuotaId === row.id"
+                                  class="text-xs font-semibold text-gray-500 hover:underline whitespace-nowrap disabled:opacity-50">
+                                  Deshacer pago
+                                </button>
+                                <button
+                                  *ngIf="canDeleteInstallmentSchedule(row)"
+                                  type="button"
+                                  (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                                  class="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                                  Eliminar
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         </tbody>
@@ -968,16 +1035,31 @@ interface PayableObligationGroupEntry {
                     {{ obligationGroupSubtitle(group) }}
                   </td>
                   <td app-module-table-cell [nowrap]="true" extraClass="tabular-nums">
-                    {{ group.header.nextDueDate ? formatDate(group.header.nextDueDate) : '—' }}
+                    <span
+                      *ngIf="group.header.nextDueDate"
+                      [class.text-red-700]="group.header.summaryEstado === 'vencida'"
+                      [class.font-semibold]="group.header.summaryEstado === 'vencida'">
+                      {{ formatDate(group.header.nextDueDate) }}
+                    </span>
+                    <span *ngIf="!group.header.nextDueDate" class="text-gray-400">—</span>
                   </td>
                   <td app-module-table-cell align="right" [nowrap]="true" extraClass="font-semibold tabular-nums">
                     {{ formatMoney(group.header.totalPending) }}
                   </td>
                   <td app-module-table-cell align="right">
+                    <button
+                      *ngIf="group.rows.length > 0"
+                      type="button"
+                      (click)="togglePaid(group.rows[0]); $event.stopPropagation()"
+                      [disabled]="savingCuotaId === group.rows[0].id"
+                      class="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline whitespace-nowrap disabled:opacity-50">
+                      Pago
+                    </button>
                     <span
+                      *ngIf="group.rows.length === 0"
                       class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
                       [ngClass]="estadoBadgeClass(group.header.summaryEstado)">
-                      {{ estadoLabel(group.header.summaryEstado) }}
+                      Al día
                     </span>
                   </td>
                 </tr>
@@ -1033,14 +1115,23 @@ interface PayableObligationGroupEntry {
                             </span>
                           </td>
                           <td app-module-table-cell nested align="right">
-                            <button
-                              *ngIf="row.displayEstado !== 'pagada'"
-                              type="button"
-                              (click)="togglePaid(row); $event.stopPropagation()"
-                              [disabled]="savingCuotaId === row.id"
-                              class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
-                              Pago
-                            </button>
+                            <div class="inline-flex items-center justify-end gap-2 flex-wrap">
+                              <button
+                                *ngIf="row.displayEstado !== 'pagada'"
+                                type="button"
+                                (click)="togglePaid(row); $event.stopPropagation()"
+                                [disabled]="savingCuotaId === row.id"
+                                class="text-xs font-semibold text-teal-700 hover:underline whitespace-nowrap disabled:opacity-50">
+                                Pago
+                              </button>
+                              <button
+                                *ngIf="canDeleteInstallmentSchedule(row)"
+                                type="button"
+                                (click)="confirmDeleteInstallmentSchedule(row, $event)"
+                                class="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline whitespace-nowrap">
+                                Eliminar
+                              </button>
+                            </div>
                           </td>
                         </tr>
                         <tr *ngIf="group.rows.length === 0">
@@ -1065,7 +1156,7 @@ interface PayableObligationGroupEntry {
         *ngIf="viewTab === 'month' && mensualObligations.length > 0"
         class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-4">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <h2 class="text-sm font-semibold text-gray-900">Gastos fijos mensuales</h2>
+          <h2 class="text-sm font-semibold text-gray-900">Gastos recurrentes</h2>
           <p class="text-xs text-gray-500 mt-1">Sueldos, servicios y otros pagos que se repiten cada mes.</p>
         </div>
         <div [class]="tableScrollClass">
@@ -1269,12 +1360,12 @@ interface PayableObligationGroupEntry {
             [class.bg-gray-50]="!payCuotaMontoEditable"
             [class.dark:bg-gray-800]="!payCuotaMontoEditable"
             class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm tabular-nums bg-white dark:bg-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary">
-          <p *ngIf="payCuotaMontoEditable && (payCuotaTarget?.cuotaTotal ?? 1) > 1" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Podés ajustar el monto por cuota si el importe programado no es correcto.
+          <p *ngIf="payCuotaMontoEditable && isRecurringInstallment(payCuotaTarget)" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Gasto recurrente: podés ajustar el importe si este mes vino distinto al habitual.
             Monto programado: {{ formatMoney(payCuotaTarget?.monto ?? 0) }}.
           </p>
-          <p *ngIf="payCuotaMontoEditable && (payCuotaTarget?.cuotaTotal ?? 1) <= 1" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Gasto recurrente: podés ajustar el importe si este mes vino distinto al habitual.
+          <p *ngIf="payCuotaMontoEditable && !isRecurringInstallment(payCuotaTarget)" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Podés ajustar el monto por cuota si el importe programado no es correcto.
             Monto programado: {{ formatMoney(payCuotaTarget?.monto ?? 0) }}.
           </p>
           <p *ngIf="!payCuotaMontoEditable" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -1347,12 +1438,16 @@ export class PayablesComponent implements OnInit, OnDestroy {
   payCuotaDetalle = '';
   loadingInstallments = true;
   private allInstallmentsCache: PayableInstallment[] | null = null;
+  private obligationInstallmentsCache: PayableInstallment[] | null = null;
   private accountInstallmentsCacheKey = '';
   private accountInstallmentsCache: PayableInstallment[] | null = null;
   private monthInstallmentsCacheKey = '';
   private monthInstallmentsCache: PayableInstallment[] | null = null;
   private cardMonthStatementsCache = new Map<string, PayableAccountMonthStatement[]>();
   private accountCardDetailsLoaded = new Set<string>();
+  /** Sube cuando cambia el listado de cuotas; evita armar un cache-key gigante. */
+  private installmentsRevision = 0;
+  private obligationGroupsPaintToken = 0;
   monthInstallmentSummary: PayableInstallmentMonthSummary | null = null;
 
   readonly payCardSave = new TransactionSaveFeedback();
@@ -1585,10 +1680,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
       this.obligacionFilter,
       this.searchQuery,
       this.activeAmbitoTab,
+      this.installmentsRevision,
       this.installments.length,
-      this.installments.map((row) => `${row.id}:${row.displayEstado}:${row.monto}`).join('\u0001'),
       this.obligations.length,
       getTarjetasActivas(this.appConfig).length,
+      this.estadoKpiFilterActive ? '1' : '0',
     ].join('|');
     if (key === this.payablesViewCacheKey) return;
     this.payablesViewCacheKey = key;
@@ -1606,10 +1702,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
       );
       this.syncAccountViewAutoExpand();
     } else if (this.viewTab === 'obligation') {
-      this.obligationViewGroups = this.buildObligationGroupEntries(
+      this.obligacionFilterOptions = this.buildObligacionFilterOptions();
+      const groups = this.buildObligationGroupEntries(
         this.sortInstallments(this.rowsMatchingFilters({ applyObligacion: true }))
       );
-      this.obligacionFilterOptions = this.buildObligacionFilterOptions();
+      this.paintObligationGroupsInBatches(groups);
     }
     this.mensualObligations = this.buildMensualObligations();
 
@@ -1628,6 +1725,34 @@ export class PayablesComponent implements OnInit, OnDestroy {
         .filter((row) => row.displayEstado === 'pendiente' || row.displayEstado === 'vencida')
         .reduce((sum, row) => sum + row.monto, 0);
     }
+  }
+
+  /** Pinta la grilla de préstamos por lotes para no bloquear el primer frame. */
+  private paintObligationGroupsInBatches(groups: PayableObligationGroupEntry[]): void {
+    const token = ++this.obligationGroupsPaintToken;
+    const batchSize = 8;
+    if (groups.length <= batchSize) {
+      this.obligationViewGroups = groups;
+      return;
+    }
+
+    this.obligationViewGroups = groups.slice(0, batchSize);
+    let offset = batchSize;
+
+    const pump = (): void => {
+      if (token !== this.obligationGroupsPaintToken) return;
+      if (offset >= groups.length) {
+        this.obligationViewGroups = groups;
+        return;
+      }
+      offset = Math.min(offset + batchSize, groups.length);
+      this.obligationViewGroups = groups.slice(0, offset);
+      if (offset < groups.length) {
+        requestAnimationFrame(pump);
+      }
+    };
+
+    requestAnimationFrame(pump);
   }
 
   private rowsMatchingFilters(opts: {
@@ -2127,8 +2252,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
       queueMicrotask(() => this.loadCardStatements());
       return;
     }
-    if (this.allInstallmentsCache) {
-      this.installments = this.allInstallmentsCache;
+    if (this.obligationInstallmentsCache) {
+      this.applyInstallments(this.obligationInstallmentsCache);
       this.syncPayablesView();
       return;
     }
@@ -2262,11 +2387,15 @@ export class PayablesComponent implements OnInit, OnDestroy {
     );
   }
 
+  isRecurringInstallment(row: PayableInstallment | null | undefined): boolean {
+    return row?.tipo === 'mensual' && !row.tarjetaId && !row.compraId;
+  }
+
   get payCuotaMontoEditable(): boolean {
     const row = this.payCuotaTarget;
     if (!row) return false;
     if (row.tarjetaId || row.compraId) return false;
-    if (row.tipo === 'mensual') return true;
+    if (this.isRecurringInstallment(row)) return true;
     // Gastos en cuotas manuales: permitir ajustar el importe al pagar.
     return row.tipo === 'unico';
   }
@@ -2276,6 +2405,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   get payCuotaConfirmLabel(): string {
+    if (this.isRecurringInstallment(this.payCuotaTarget)) return 'Confirmar pago';
     return 'Confirmar pago de la cuota';
   }
 
@@ -2300,10 +2430,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   get payCuotaModalSubtitle(): string {
     if (!this.payCuotaTarget) return '';
-    const cuota = this.payCuotaTarget.numeroCuota ?? 1;
-    const total = this.payCuotaTarget.cuotaTotal ?? 1;
-    const cuotaLabel = total > 1 ? ` · cuota ${cuota}/${total}` : '';
-    return `${this.installmentCuentaLabel(this.payCuotaTarget)}${cuotaLabel} · vence ${this.formatDate(this.payCuotaTarget.fechaVencimiento)}`;
+    const cuotaPart =
+      this.isRecurringInstallment(this.payCuotaTarget) || (this.payCuotaTarget.cuotaTotal ?? 1) <= 1
+        ? ''
+        : ` · cuota ${this.payCuotaTarget.numeroCuota ?? 1}/${this.payCuotaTarget.cuotaTotal ?? 1}`;
+    return `${this.installmentCuentaLabel(this.payCuotaTarget)}${cuotaPart} · vence ${this.formatDate(this.payCuotaTarget.fechaVencimiento)}`;
   }
 
   private resolvePayCardPendingRows(target: CardStatementSummary): PayableInstallment[] {
@@ -2499,14 +2630,17 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   installmentCuotaCompraLabel(row: PayableInstallment): string {
+    if (this.isRecurringInstallment(row)) {
+      return 'Gasto recurrente';
+    }
     const cuota = this.cuotaLabel(row);
     if (row.origenTipo === 'compra' && row.compraLabel) {
       return `Compra #${row.compraLabel} · Cuota ${cuota}`;
     }
-    if ((row.cuotaTotal ?? 0) > 1 || (row.numeroCuota ?? 1) > 1) {
+    if ((row.cuotaTotal ?? 0) > 1) {
       return `Cuota ${cuota}`;
     }
-    return cuota;
+    return cuota === '—' ? '—' : cuota;
   }
 
   /** Monto programado de la cuota (tras corrección en servidor). */
@@ -2601,8 +2735,8 @@ export class PayablesComponent implements OnInit, OnDestroy {
       this.savingCuotaId = row.id;
       this.payables.setInstallmentPaid(row.id, false).subscribe({
         next: (updated) => {
-          this.installments = this.installments.map((item) =>
-            item.id === updated.id ? updated : item
+          this.applyInstallments(
+            this.installments.map((item) => (item.id === updated.id ? updated : item))
           );
           this.payablesViewCacheKey = '';
           this.invalidateInstallmentsCache();
@@ -2686,7 +2820,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
   payMensualObligation(item: PayableObligation, event?: Event): void {
     event?.stopPropagation();
     if (!item.activo) {
-      this.dialog.alert({ message: 'Activá el gasto fijo antes de registrar un pago.' });
+      this.dialog.alert({ message: 'Activá el gasto recurrente antes de registrar un pago.' });
       return;
     }
 
@@ -2750,19 +2884,92 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   confirmDeleteObligation(item: PayableObligation): void {
+    this.confirmDeleteObligationById(item.id, item.beneficiario);
+  }
+
+  canDeleteInstallmentSchedule(row: PayableInstallment): boolean {
+    return this.auth.canDeleteRecords && !!row.obligacionId;
+  }
+
+  installmentScheduleLabel(row: PayableInstallment): string {
+    const compra = row.compraLabel?.trim();
+    if (compra) return compra;
+    const detalle = this.installmentDetalleDisplayLabel(row)?.trim();
+    if (detalle) return detalle;
+    return row.beneficiario?.trim() || 'este vencimiento';
+  }
+
+  /** True si hay indicios de cuotas ya pagadas en el mismo plan. */
+  private installmentScheduleLikelyHasPaid(row: PayableInstallment): boolean {
+    const obligacionId = row.obligacionId?.trim();
+    if (!obligacionId) return false;
+    const siblings = this.installments.filter((item) => item.obligacionId === obligacionId);
+    if (siblings.some((item) => item.displayEstado === 'pagada')) return true;
+    const numero = Number(row.numeroCuota) || 0;
+    const total = Number(row.cuotaTotal) || 0;
+    if (numero > 1) return true;
+    if (total > 1 && siblings.length > 0 && siblings.length < total) return true;
+    return false;
+  }
+
+  confirmDeleteInstallmentSchedule(row: PayableInstallment, event?: Event): void {
+    event?.stopPropagation();
+    if (!this.canDeleteInstallmentSchedule(row) || !row.obligacionId) return;
+    this.confirmDeleteObligationById(
+      row.obligacionId,
+      this.installmentScheduleLabel(row),
+      this.installmentScheduleLikelyHasPaid(row)
+    );
+  }
+
+  private confirmDeleteObligationById(
+    obligacionId: string,
+    label: string,
+    likelyHasPaid = false
+  ): void {
+    const safeLabel = label.trim() || 'esta obligación';
+    const message = likelyHasPaid
+      ? `¿Eliminar "${safeLabel}" y sus vencimientos? Ya hay cuotas pagadas: los movimientos de caja de esos pagos NO se eliminan.`
+      : `¿Eliminar "${safeLabel}" y todos sus vencimientos? Esta acción no se puede deshacer.`;
+
     this.dialog
       .confirm({
-        title: 'Eliminar obligación',
-        message: `¿Eliminar "${item.beneficiario}" y todos sus vencimientos? Esta acción no se puede deshacer.`,
+        title: 'Eliminar',
+        message,
+        confirmLabel: 'Eliminar',
         variant: 'danger',
       })
       .subscribe((confirmed) => {
         if (!confirmed) return;
-        this.payables.deleteObligation(item.id).subscribe({
-          next: () => this.loadData(),
-          error: () => this.dialog.alert({ message: 'No se pudo eliminar la obligación.' }),
-        });
+        this.executeDeleteObligation(obligacionId, likelyHasPaid);
       });
+  }
+
+  private executeDeleteObligation(obligacionId: string, allowPaidCuotas: boolean): void {
+    this.payables.deleteObligation(obligacionId, { allowPaidCuotas }).subscribe({
+      next: () => this.reloadList(true),
+      error: (err) => {
+        const code = err?.error?.code;
+        const msg =
+          typeof err?.error?.error === 'string' ? err.error.error : 'No se pudo eliminar la obligación.';
+        if (code === 'OBLIGATION_HAS_PAID_CUOTAS' && !allowPaidCuotas) {
+          this.dialog
+            .confirm({
+              title: 'Hay cuotas pagadas',
+              message:
+                'Ya pagaste alguna cuota de este plan. Se borrarán los vencimientos, pero los movimientos de caja NO se eliminan. ¿Confirmás?',
+              confirmLabel: 'Eliminar igual',
+              variant: 'danger',
+            })
+            .subscribe((confirmed) => {
+              if (!confirmed) return;
+              this.executeDeleteObligation(obligacionId, true);
+            });
+          return;
+        }
+        this.dialog.alert({ message: msg });
+      },
+    });
   }
 
   formatMoney(value: number | null | undefined): string {
@@ -2781,16 +2988,21 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   cuotaLabel(row: PayableInstallment): string {
+    // Gastos fijos mensuales no son un plan de cuotas: el número interno es solo horizonte.
+    if (this.isRecurringInstallment(row)) return '—';
     const total = row.cuotaTotal;
-    if (total && total > 0) {
+    if (total && total > 1) {
       return `${row.numeroCuota}/${total}`;
     }
-    return String(row.numeroCuota);
+    if (total === 1) return '—';
+    return String(row.numeroCuota ?? '—');
   }
 
   installmentMobileTitle(row: PayableInstallment): string {
     const mes = this.formatMes(this.installmentMesKey(row));
-    return `${mes} · ${this.cuotaLabel(row)}`;
+    if (this.isRecurringInstallment(row)) return mes;
+    const cuota = this.cuotaLabel(row);
+    return cuota === '—' ? mes : `${mes} · ${cuota}`;
   }
 
   installmentMobileSubtitle(row: PayableInstallment): string {
@@ -2816,7 +3028,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
   }
 
   tipoLabel(tipo: PayableTipo): string {
-    return tipo === 'mensual' ? 'Mensual' : 'Cuotas fijas';
+    return tipo === 'mensual' ? 'Recurrente' : 'Cuotas fijas';
   }
 
   estadoLabel(estado: PayableDisplayEstado): string {
@@ -2850,6 +3062,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
 
   private invalidateInstallmentsCache(): void {
     this.allInstallmentsCache = null;
+    this.obligationInstallmentsCache = null;
     this.accountInstallmentsCache = null;
     this.accountInstallmentsCacheKey = '';
     this.monthInstallmentsCacheKey = '';
@@ -2865,24 +3078,24 @@ export class PayablesComponent implements OnInit, OnDestroy {
     } else {
       queueMicrotask(() => this.loadCardStatements());
     }
+    // Cuotas no esperan obligaciones: la grilla de préstamos puede pintar antes.
+    this.loadInstallmentsForCurrentView(reconcile);
     this.payables.getObligations().subscribe({
       next: (obligations) => {
         this.obligations = obligations;
         this.syncPayablesView();
-        this.loadInstallmentsForCurrentView(reconcile);
       },
       error: () => {
         this.obligations = [];
         this.syncPayablesView();
-        this.loadInstallmentsForCurrentView(reconcile);
       },
     });
   }
 
-  private installmentsScopeForView(): 'month' | 'all' | 'account' {
+  private installmentsScopeForView(): 'month' | 'all' | 'account' | 'obligation' {
     if (this.viewTab === 'month') return 'month';
     if (this.viewTab === 'account') return 'account';
-    return 'all';
+    return 'obligation';
   }
 
   private accountInstallmentsCacheToken(): string {
@@ -2902,6 +3115,11 @@ export class PayablesComponent implements OnInit, OnDestroy {
     ].join('|');
   }
 
+  private applyInstallments(items: PayableInstallment[]): void {
+    this.installments = items;
+    this.installmentsRevision += 1;
+  }
+
   private loadInstallmentsForCurrentView(reconcile = false): void {
     const scope = this.installmentsScopeForView();
     const mes =
@@ -2914,14 +3132,22 @@ export class PayablesComponent implements OnInit, OnDestroy {
     const accountCacheToken = scope === 'account' ? this.accountInstallmentsCacheToken() : '';
 
     if (scope === 'month' && !reconcile && this.monthInstallmentsCache && this.monthInstallmentsCacheKey === monthCacheToken) {
-      this.installments = this.monthInstallmentsCache;
+      this.applyInstallments(this.monthInstallmentsCache);
       this.loadingInstallments = false;
       this.syncPayablesView();
       return;
     }
 
     if (scope === 'account' && !reconcile && this.accountInstallmentsCache && this.accountInstallmentsCacheKey === accountCacheToken) {
-      this.installments = this.accountInstallmentsCache;
+      this.applyInstallments(this.accountInstallmentsCache);
+      this.monthInstallmentSummary = null;
+      this.loadingInstallments = false;
+      this.syncPayablesView();
+      return;
+    }
+
+    if (scope === 'obligation' && this.obligationInstallmentsCache && !reconcile) {
+      this.applyInstallments(this.obligationInstallmentsCache);
       this.monthInstallmentSummary = null;
       this.loadingInstallments = false;
       this.syncPayablesView();
@@ -2929,7 +3155,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
     }
 
     if (scope === 'all' && this.allInstallmentsCache && !reconcile) {
-      this.installments = this.allInstallmentsCache;
+      this.applyInstallments(this.allInstallmentsCache);
       this.monthInstallmentSummary = null;
       this.loadingInstallments = false;
       this.syncPayablesView();
@@ -2947,7 +3173,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
       })
       .subscribe({
         next: (response) => {
-          this.installments = response.items ?? [];
+          this.applyInstallments(response.items ?? []);
           if (scope === 'month') {
             this.monthInstallmentSummary = response.monthSummary ?? null;
             this.monthInstallmentsCache = this.installments;
@@ -2956,6 +3182,9 @@ export class PayablesComponent implements OnInit, OnDestroy {
             this.monthInstallmentSummary = null;
             this.accountInstallmentsCache = this.installments;
             this.accountInstallmentsCacheKey = accountCacheToken;
+          } else if (scope === 'obligation') {
+            this.monthInstallmentSummary = null;
+            this.obligationInstallmentsCache = this.installments;
           } else {
             this.monthInstallmentSummary = null;
             this.allInstallmentsCache = this.installments;
@@ -2964,7 +3193,7 @@ export class PayablesComponent implements OnInit, OnDestroy {
           queueMicrotask(() => this.syncPayablesView());
         },
         error: () => {
-          this.installments = [];
+          this.applyInstallments([]);
           this.monthInstallmentSummary = null;
           this.loadingInstallments = false;
           this.payablesViewCacheKey = '';

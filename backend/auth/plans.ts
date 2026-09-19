@@ -10,7 +10,7 @@ import {
   type SubscriptionModulesMap,
 } from '../../shared/subscription-modules.ts';
 import { ERP_PLAN_BILLING_DEFAULTS, getErpPlanTemplatePrices } from '../../shared/billing-catalog.ts';
-import { erpPlanPricesFromCatalog, includedErpUsersFor } from '../../shared/commercial-catalog.ts';
+import { erpPlanPricesFromCatalog, includedErpUsersFor, DEFAULT_COMMERCIAL_CATALOG } from '../../shared/commercial-catalog.ts';
 import { getCommercialCatalog } from './commercial-catalog.ts';
 
 export interface PlanRecord {
@@ -49,7 +49,10 @@ export interface PublicPlanInfo {
 }
 
 function landingPrices(planId: string) {
-  return getErpPlanTemplatePrices(planId, 'UY');
+  return (
+    erpPlanPricesFromCatalog(DEFAULT_COMMERCIAL_CATALOG, planId, 'UY') ??
+    getErpPlanTemplatePrices(planId, 'UY')
+  );
 }
 
 async function landingPricesLive(planId: string) {
@@ -58,20 +61,36 @@ async function landingPricesLive(planId: string) {
 }
 
 const basicoPrices = landingPrices('plan_basico');
+const cajaPrices = landingPrices('plan_caja');
 const intermedioPrices = landingPrices('plan_intermedio');
 const profesionalPrices = landingPrices('plan_profesional');
 
 const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
+  {
+    id: 'plan_caja',
+    nombre: 'RILO Caja',
+    limiteAdministradores: 1,
+    limiteOperadores: 0,
+    limiteUsuariosTotal: 1,
+    precioMensual: cajaPrices?.precioBaseMensual ?? 290,
+    precioBaseMensual: cajaPrices?.precioBaseMensual ?? 290,
+    precioPorAdministrador: 0,
+    precioPorOperador: cajaPrices?.precioPorOperador ?? 90,
+    modulosIncluidos: DEFAULT_PLAN_MODULES.plan_caja,
+    preciosAddonModulo: {},
+    maxAmbitosCaja: 2,
+    activo: true,
+  },
   {
     id: 'plan_basico',
     nombre: 'RILO Bot',
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 1,
-    precioMensual: basicoPrices?.precioBaseMensual ?? 1490,
-    precioBaseMensual: basicoPrices?.precioBaseMensual ?? 1490,
+    precioMensual: basicoPrices?.precioBaseMensual ?? 690,
+    precioBaseMensual: basicoPrices?.precioBaseMensual ?? 690,
     precioPorAdministrador: 0,
-    precioPorOperador: basicoPrices?.precioPorOperador ?? 490,
+    precioPorOperador: basicoPrices?.precioPorOperador ?? 190,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_basico,
     preciosAddonModulo: {},
     maxAmbitosCaja: 0,
@@ -83,10 +102,10 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 1,
-    precioMensual: intermedioPrices?.precioBaseMensual ?? 2490,
-    precioBaseMensual: intermedioPrices?.precioBaseMensual ?? 2490,
+    precioMensual: intermedioPrices?.precioBaseMensual ?? 490,
+    precioBaseMensual: intermedioPrices?.precioBaseMensual ?? 490,
     precioPorAdministrador: 0,
-    precioPorOperador: intermedioPrices?.precioPorOperador ?? 490,
+    precioPorOperador: intermedioPrices?.precioPorOperador ?? 150,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_intermedio,
     preciosAddonModulo: {},
     maxAmbitosCaja: 1,
@@ -98,10 +117,10 @@ const DEFAULT_PLANS: Omit<PlanRecord, 'createdAt' | 'updatedAt'>[] = [
     limiteAdministradores: 1,
     limiteOperadores: 0,
     limiteUsuariosTotal: 1,
-    precioMensual: profesionalPrices?.precioBaseMensual ?? 3490,
-    precioBaseMensual: profesionalPrices?.precioBaseMensual ?? 3490,
+    precioMensual: profesionalPrices?.precioBaseMensual ?? 890,
+    precioBaseMensual: profesionalPrices?.precioBaseMensual ?? 890,
     precioPorAdministrador: 0,
-    precioPorOperador: profesionalPrices?.precioPorOperador ?? 490,
+    precioPorOperador: profesionalPrices?.precioPorOperador ?? 250,
     modulosIncluidos: DEFAULT_PLAN_MODULES.plan_profesional,
     preciosAddonModulo: {},
     maxAmbitosCaja: 2,

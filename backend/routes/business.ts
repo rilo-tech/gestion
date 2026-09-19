@@ -1,5 +1,5 @@
 import express from 'express';
-import { toPublicBusinessInfo } from '../auth/business.ts';
+import { toPublicBusinessInfo, updateBusiness, updateBusinessLifecycleProfile } from '../auth/business.ts';
 import { disableProductOnBusiness, enableProductOnBusiness } from '../auth/enable-product.ts';
 import { assertSupervisorActionSecret } from '../auth/confirm-action.ts';
 import {
@@ -14,8 +14,30 @@ import {
   type AuthenticatedRequest,
 } from '../auth/middleware.ts';
 import { buildUsageReport } from '../auth/usage-gates.ts';
+import {
+  normalizeBusinessProfile,
+  type BusinessMode,
+  type BusinessProfile,
+} from '../../shared/business-profile.ts';
+import { auditBusinessCapabilities } from '../auth/audit-business-capabilities.ts';
 
 const router = express.Router();
+
+router.get(
+  '/:businessId/capability-audit',
+  requireAuth,
+  assertCompanyTenantAccess,
+  requireSupervisor,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await auditBusinessCapabilities(req.params.businessId);
+      res.json(result);
+    } catch (error) {
+      console.error('Error auditing business capabilities:', error);
+      res.status(500).json({ error: 'No se pudo auditar las capacidades.' });
+    }
+  }
+);
 
 router.get(
   '/:businessId/usage',
@@ -228,6 +250,86 @@ router.post(
       if (mapped) return res.status(mapped.status).json({ error: mapped.error, code });
       console.error('Error verifying WhatsApp phone:', error);
       res.status(500).json({ error: 'No se pudo confirmar el WhatsApp.' });
+    }
+  }
+);
+
+router.get(
+  '/:businessId/whatsapp-onboarding',
+  requireAuth,
+  assertCompanyTenantAccess,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { getWhatsAppOnboardingPublicStatus } = await import('../whatsapp/v4-onboarding.ts');
+      const status = await getWhatsAppOnboardingPublicStatus(req.params.businessId);
+      res.json(status);
+    } catch (error) {
+      console.error('Error fetching WhatsApp onboarding:', error);
+      res.status(500).json({ error: 'No se pudo cargar el onboarding de WhatsApp.' });
+    }
+  }
+);
+
+router.patch(
+  '/:businessId/lifecycle-profile',
+  requireAuth,
+  assertCompanyTenantAccess,
+  requireSupervisor,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { businessId } = req.params;
+      const body = req.body ?? {};
+      await updateBusinessLifecycleProfile(businessId, {
+        rubro: typeof body.rubro === 'string' || body.rubro === null ? body.rubro : undefined,
+        pais: typeof body.pais === 'string' || body.pais === null ? body.pais : undefined,
+        ciudad: typeof body.ciudad === 'string' || body.ciudad === null ? body.ciudad : undefined,
+      });
+      const business = await toPublicBusinessInfo(businessId);
+      res.json(business);
+    } catch (error) {
+      console.error('Error updating lifecycle profile:', error);
+      res.status(500).json({ error: 'No se pudo guardar el perfil del negocio.' });
+    }
+  }
+);
+
+router.patch(
+  '/:businessId/profile',
+  requireAuth,
+  assertCompanyTenantAccess,
+  requireSupervisor,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { businessId } = req.params;
+      const body = req.body ?? {};
+      const current = await toPublicBusinessInfo(businessId);
+      const base = normalizeBusinessProfile(current.businessProfile ?? {});
+      const mode = body.mode as BusinessMode | undefined;
+      const next: BusinessProfile = normalizeBusinessProfile({
+        ...base,
+        ...(mode ? { mode } : {}),
+        enabledFeatures: body.enabledFeatures ?? base.enabledFeatures,
+        terminology: body.terminology ?? base.terminology,
+        defaults: body.defaults ? { ...base.defaults, ...body.defaults } : base.defaults,
+        onboarding: {
+          ...base.onboarding,
+          ...(typeof body.onboarding?.completed === 'boolean'
+            ? { completed: body.onboarding.completed }
+            : {}),
+          ...(typeof body.onboarding?.step === 'string'
+            ? { step: body.onboarding.step }
+            : {}),
+          ...(body.onboarding?.completed === true
+            ? { completedAt: new Date().toISOString() }
+            : {}),
+        },
+      });
+      await updateBusiness(businessId, { businessProfile: next });
+      const business = await toPublicBusinessInfo(businessId);
+      res.json(business);
+    } catch (error) {
+      console.error('Error updating business profile:', error);
+      res.status(500).json({ error: 'No se pudo guardar el perfil del negocio.' });
     }
   }
 );

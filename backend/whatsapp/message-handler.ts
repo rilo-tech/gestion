@@ -200,6 +200,7 @@ import { whatsappCopyForRubro } from './copy.ts';
 import { handleHelpTurn, HELP_TOPIC_INTENT, isHelpFollowUp, matchSetupLoad } from './help.ts';
 import { isThanksText } from '../../shared/whatsapp-copy.ts';
 import { splitWaBubbles, waBold, waCard, renderListPage, WA_PRESENT } from '../../shared/whatsapp-format.ts';
+import { presentV4WhatsappHandlerResult } from './v4-whatsapp-present.ts';
 import {
   applyCardToEntities,
   applyDraftToEntities,
@@ -5493,30 +5494,24 @@ async function handleResumeContext(
 export async function handleWhatsappMessage(
   message: WhatsappInboundMessage
 ): Promise<WhatsappHandlerResult> {
-  const result = await handleWhatsappTurn(message);
-  if (!result.reply && !result.replies?.length) return result;
-  const pages =
-    result.replies && result.replies.length > 1
-      ? result.replies
-      : splitWaBubbles(result.reply);
-  if (!pages.length) return result;
+  const rawResult = await handleWhatsappTurn(message);
+  if (!rawResult.reply && !rawResult.replies?.length) return rawResult;
+
+  const extraPages: string[] = [];
   if (
-    result.businessId &&
-    result.intent !== 'wa_quota' &&
-    result.intent !== 'ai_quota'
+    rawResult.businessId &&
+    rawResult.intent !== 'wa_quota' &&
+    rawResult.intent !== 'ai_quota'
   ) {
     try {
-      const warn = await maybeWhatsappQuotaWarning(result.businessId);
-      if (warn) pages.push(warn);
+      const warn = await maybeWhatsappQuotaWarning(rawResult.businessId);
+      if (warn) extraPages.push(warn);
     } catch (error) {
       console.warn('[whatsapp] quota warning:', error);
     }
   }
-  return {
-    ...result,
-    reply: pages[0] ?? result.reply,
-    replies: pages.length > 1 ? pages : undefined,
-  };
+
+  return presentV4WhatsappHandlerResult(rawResult, extraPages);
 }
 
 async function handleWhatsappTurn(
@@ -5698,7 +5693,7 @@ async function handleWhatsappTurn(
       }
       text = transcript;
     }
-    return handleV4WhatsappTurn({ tenant, phone, message, text, state });
+    return handleV4WhatsappTurn({ tenant, phone, message, text, state, image });
   }
 
   let skipPendingGates = false;

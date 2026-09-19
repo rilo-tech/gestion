@@ -35,7 +35,7 @@ export interface CollaboratorMovement {
   valorHora?: number;
   extraTipo?: CollaboratorExtraTipo;
   concepto?: string;
-  monto: number;
+  monto?: number;
   periodoDesde?: string;
   periodoHasta?: string;
   notas?: string;
@@ -50,6 +50,7 @@ export interface CollaboratorSummaryRow {
   nombre: string;
   activo: boolean;
   horas: number;
+  horasSinValorar?: number;
   montoHoras: number;
   montoExtras: number;
   devengado: number;

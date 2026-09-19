@@ -109,8 +109,8 @@ import {
         </div>
       </article>
 
-      <article *ngIf="addons" class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 p-4 sm:p-5">
-        <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">Usuarios</h3>
+      <article *ngIf="addons && addons.erp.extraUnit > 0" class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 p-4 sm:p-5">
+        <h3 class="text-sm font-bold text-gray-900 dark:text-gray-100">Usuarios de RILO Gestión</h3>
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
           <div>
             <p class="text-xs text-gray-500">Incluidos</p>

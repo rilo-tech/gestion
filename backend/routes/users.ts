@@ -29,8 +29,11 @@ import {
   shrinkErpSeatsToActive,
 } from '../auth/commercial-pricing.ts';
 import { extraSeatCount } from '../../shared/commercial-pricing.ts';
+import { productSellsErpUserAddons } from '../../shared/commercial-seat-policy.ts';
 import { recordCommercialEvent } from '../auth/commercial-events.ts';
 import { safeSyncRecurringAmount } from '../billing/recurring.ts';
+import { isErpWebOperational } from '../../shared/platform-access.ts';
+import { normalizePlatformAccess } from '../../shared/platform-access.ts';
 
 const router = createCompanyRouter();
 
@@ -188,6 +191,16 @@ router.post('/:businessId', requireCompanyUserManager, async (req: Authenticated
 
     const normalized = normalizeUserPayload({ ...raw, rol });
     const ctx = await loadCommercialContext(businessId);
+    if (!productSellsErpUserAddons(ctx.productId) || !isErpWebOperational(normalizePlatformAccess(ctx.business.platformAccess))) {
+      const extras = extraSeatCount(ctx.activeErpUsers + 1, ctx.rates.includedErpUsers);
+      if (extras > 0) {
+        return res.status(400).json({
+          code: 'ERP_USER_ADDON_NOT_IN_PLAN',
+          error:
+            'En RILO Bot el acceso extra es un número de WhatsApp, no un usuario de panel. Sumá RILO Gestión o Completo para usuarios adicionales.',
+        });
+      }
+    }
     const extraBefore = extraSeatCount(ctx.activeErpUsers, ctx.rates.includedErpUsers);
     const extraAfter = extraSeatCount(ctx.activeErpUsers + 1, ctx.rates.includedErpUsers);
     if (extraAfter > extraBefore) {

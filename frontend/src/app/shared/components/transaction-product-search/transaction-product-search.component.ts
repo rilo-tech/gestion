@@ -14,6 +14,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
+import { Router } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 import { StockItem, StockService } from '../../../core/services/stock.service';
@@ -21,6 +22,8 @@ import { ListSearchFieldComponent } from '../list-search-field/list-search-field
 import { BarcodeScanButtonComponent } from '../barcode-scanner/barcode-scan-button.component';
 import { normalizeBarcodeKey, looksLikeBarcodeQuery } from '../../../core/utils/barcode-key';
 import { DialogService } from '../../../core/services/dialog.service';
+import { AuthService } from '../../../core/services/auth.service';
+import { isBarcodeScannerEnabledForBusiness } from '../../../../../../shared/feature-flags.ts';
 
 @Component({
   selector: 'app-transaction-product-search',
@@ -113,13 +116,46 @@ import { DialogService } from '../../../core/services/dialog.service';
           </div>
         </div>
         <app-barcode-scan-button
-          *ngIf="showBarcodeScan"
+          *ngIf="barcodeScanVisible"
           size="header"
           [disabled]="disabled"
           label="Escanear producto"
           modalTitle="Escanear para agregar"
+          [mode]="scanMode === 'oneByOne' ? 'continuous' : 'single'"
+          [continuousFeedback]="lastScanFeedback"
           (scanned)="onBarcodeScanned($event)">
         </app-barcode-scan-button>
+      </div>
+
+      <div
+        *ngIf="lastScanFeedback && scanMode === 'oneByOne'"
+        class="mt-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm font-medium text-teal-900">
+        ✓ {{ lastScanFeedback }}
+      </div>
+
+      <div
+        *ngIf="associateBarcode"
+        class="mt-2 rounded-lg border border-amber-200 bg-amber-50/80 p-3 space-y-2">
+        <p class="text-sm font-semibold text-gray-900">Asociar {{ associateBarcode }}</p>
+        <p class="text-xs text-gray-600">Buscá el producto existente y confirmá.</p>
+        <input
+          type="text"
+          [(ngModel)]="associateQuery"
+          name="associateProductQuery"
+          placeholder="Nombre o código interno"
+          class="form-control w-full text-sm"
+          (ngModelChange)="onAssociateQueryChange()">
+        <div *ngIf="associateResults.length" class="max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white divide-y">
+          <button
+            type="button"
+            *ngFor="let item of associateResults"
+            class="w-full text-left px-3 py-2 text-sm hover:bg-teal-50"
+            (click)="confirmAssociate(item)">
+            {{ item.nombre }}
+            <span *ngIf="item.codigo" class="text-xs text-gray-500"> · {{ item.codigo }}</span>
+          </button>
+        </div>
+        <button type="button" class="text-xs text-gray-600 underline" (click)="cancelAssociate()">Cancelar</button>
       </div>
 
       <div
@@ -170,6 +206,8 @@ import { DialogService } from '../../../core/services/dialog.service';
 export class TransactionProductSearchComponent implements OnChanges, OnDestroy, OnInit {
   private stockService = inject(StockService);
   private dialogService = inject(DialogService);
+  private auth = inject(AuthService);
+  private router = inject(Router);
 
   @ViewChild('searchField') searchField?: ListSearchFieldComponent;
   @ViewChild('searchMenu') searchMenu?: ElementRef<HTMLDivElement>;
@@ -179,7 +217,8 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
   @Input() minChars = 2;
   @Input() debounceMs = 80;
   @Input() disabled = false;
-  @Input() showBarcodeScan = true;
+  /** Si no se fuerza, usa feature flag (ERP web / beta). */
+  @Input() showBarcodeScan: boolean | null = null;
   @Input() scanMode: 'oneByOne' | 'manualQuantity' = 'oneByOne';
   @Input() addedProductIds: string[] = [];
   @Input() addedLabel = 'En la lista';
@@ -187,11 +226,19 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
   @Input() showBaseCost = true;
   @Input() selectOnRowClick = true;
   @Input() itemMeta?: (item: StockItem) => string | null;
+  /** Ruta de retorno al crear producto desde código desconocido. */
+  @Input() createProductReturnTo = '';
 
   @Output() productSelected = new EventEmitter<StockItem>();
   @Output() productQuantitySelected = new EventEmitter<{ item: StockItem; quantity: number }>();
   @Output() focused = new EventEmitter<void>();
 
+  get barcodeScanVisible(): boolean {
+    if (typeof this.showBarcodeScan === 'boolean') return this.showBarcodeScan;
+    return isBarcodeScannerEnabledForBusiness(this.auth.currentBusinessId, {
+      erpWebEnabled: this.auth.hasErpEntitlement,
+    });
+  }
   query = '';
   results: StockItem[] = [];
   searching = false;
@@ -199,6 +246,10 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
   activeIndex = -1;
   pendingBarcodeItem: StockItem | null = null;
   pendingQuantity = 1;
+  lastScanFeedback = '';
+  associateBarcode = '';
+  associateQuery = '';
+  associateResults: StockItem[] = [];
 
   private suppressBlur = false;
   private blurTimeout?: ReturnType<typeof setTimeout>;
@@ -411,6 +462,9 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
       if (this.scanMode === 'oneByOne') {
         this.suppressBlur = true;
         this.productSelected.emit(item);
+        if (options?.fromBarcode) {
+          this.lastScanFeedback = `${item.nombre} · cantidad +1`;
+        }
         this.prepareNextSearch();
         return;
       }
@@ -420,6 +474,9 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
 
     this.suppressBlur = true;
     this.productSelected.emit(item);
+    if (options?.fromBarcode) {
+      this.lastScanFeedback = `${item.nombre} agregada`;
+    }
     this.prepareNextSearch();
   }
 
@@ -518,12 +575,110 @@ export class TransactionProductSearchComponent implements OnChanges, OnDestroy, 
       },
       error: (err: HttpErrorResponse) => {
         this.searching = false;
+        if (err.status === 404) {
+          this.offerUnknownBarcode(code);
+          return;
+        }
         const message =
           (err.error as { error?: string })?.error ??
           'No se encontró un producto con ese código.';
         this.dialogService.alert({ title: 'Sin coincidencias', message });
       },
     });
+  }
+
+  private offerUnknownBarcode(code: string) {
+    this.dialogService
+      .choose({
+        title: 'Código sin producto',
+        message: `Este código todavía no está asociado a ningún producto.\n\n${code}`,
+        cancelLabel: 'Cancelar',
+        options: [
+          ...(this.auth.canEditRecords
+            ? [
+                { id: 'create', label: 'Crear producto' },
+                { id: 'associate', label: 'Asociar a producto existente' },
+              ]
+            : []),
+        ],
+      })
+      .subscribe((choice) => {
+        if (choice === 'create') {
+          const returnTo = this.createProductReturnTo || this.router.url;
+          void this.router.navigate(['/stock/new'], {
+            queryParams: {
+              codigoBarras: code,
+              returnTo,
+            },
+          });
+          return;
+        }
+        if (choice === 'associate') {
+          this.associateBarcode = code;
+          this.associateQuery = '';
+          this.associateResults = [];
+          this.stockService.preloadSearchIndex();
+        }
+      });
+  }
+
+  onAssociateQueryChange() {
+    const q = this.associateQuery.trim();
+    if (q.length < 2) {
+      this.associateResults = [];
+      return;
+    }
+    this.associateResults = this.stockService.filterSearchIndex(q, 8);
+  }
+
+  confirmAssociate(item: StockItem) {
+    if (!item.id || !this.associateBarcode || !this.auth.canEditRecords) return;
+    const code = this.associateBarcode;
+    this.dialogService
+      .confirm({
+        title: 'Confirmar asociación',
+        message: `¿Asociar ${code} a ${item.nombre}?`,
+        confirmLabel: 'Asociar',
+      })
+      .subscribe((ok) => {
+        if (!ok) return;
+        this.stockService.getItem(item.id!).subscribe({
+          next: (full) => {
+            this.stockService
+              .updateItem(item.id!, { ...full, codigoBarras: code })
+              .subscribe({
+                next: () => {
+                  this.stockService.notifyCatalogChanged({
+                    item: { ...full, codigoBarras: code },
+                  });
+                  this.cancelAssociate();
+                  this.lastScanFeedback = `Código asociado a ${full.nombre}`;
+                  this.selectProduct({ ...full, codigoBarras: code }, { fromBarcode: true });
+                },
+                error: (err: HttpErrorResponse) => {
+                  this.dialogService.alert({
+                    title: 'No se pudo asociar',
+                    message:
+                      (err.error as { error?: string })?.error ??
+                      'Error al guardar el código de barras.',
+                  });
+                },
+              });
+          },
+          error: () => {
+            this.dialogService.alert({
+              title: 'Error',
+              message: 'No se pudo cargar el producto.',
+            });
+          },
+        });
+      });
+  }
+
+  cancelAssociate() {
+    this.associateBarcode = '';
+    this.associateQuery = '';
+    this.associateResults = [];
   }
 
   private findLocalBarcodeMatch(code: string): StockItem | null {

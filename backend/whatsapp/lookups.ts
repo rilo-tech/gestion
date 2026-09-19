@@ -1,6 +1,6 @@
 import { db } from '../firebase.ts';
 import { findProductAlias } from './product-aliases.ts';
-import { findClientAlias } from './operator-memory.ts';
+import { findClientAlias, findSupplierAlias } from './operator-memory.ts';
 import { pickClientsWithAi, pickProductsWithAi } from './catalog-ai.ts';
 import {
   formatLocalPhone,
@@ -537,6 +537,11 @@ function isExactCatalogName(query: string, nombre: string): boolean {
   return nameTokensWithoutPhone(q).join(' ') === nameTokensWithoutPhone(n).join(' ');
 }
 
+/** Case/accent/space fold only. Not a synonym list. */
+export function catalogNameEquals(query: string, storedName: string): boolean {
+  return isExactCatalogName(query, storedName);
+}
+
 async function findExactClientMatches(businessId: string, name: string): Promise<MatchedClient[]> {
   const snap = await db.collection(`negocios/${businessId}/clientes`).get();
   const queries = entityLookupCandidates(name);
@@ -726,8 +731,8 @@ export async function resolveClientMatch(
   if (close.length === 1 && top.score >= 70) {
     return { status: 'unique', client: top };
   }
-  if (top.score >= 95 && close.length === 1) {
-    return { status: 'unique', client: top };
+  if (listed.length === 1) {
+    return { status: 'unique', client: listed[0]! };
   }
 
   return {
@@ -785,19 +790,32 @@ export async function resolveSupplierMatch(
   const query = String(name ?? '').trim();
   if (!query) return { status: 'none', query: '' };
 
+  const aliased = await findSupplierAlias(businessId, query);
+  if (aliased) {
+    return {
+      status: 'unique',
+      supplier: { id: aliased.supplierId, nombre: aliased.supplierName, score: 100 },
+    };
+  }
+
   const candidates = await findSuppliersByName(businessId, query);
   if (!candidates.length) return { status: 'none', query };
 
+  if (candidates.length === 1) {
+    return { status: 'unique', supplier: candidates[0]! };
+  }
+
   const top = candidates[0]!;
   const close = candidates.filter((c) => c.score >= Math.max(50, top.score - 20));
+  const pool = close.length ? close : candidates;
 
-  if (top.score >= 95 && close.length === 1) {
-    return { status: 'unique', supplier: top };
+  if (pool.length === 1) {
+    return { status: 'unique', supplier: pool[0]! };
   }
 
   return {
     status: 'ambiguous',
-    candidates: close.length ? close : candidates,
+    candidates: pool,
     query,
   };
 }
@@ -858,7 +876,15 @@ export async function resolveProductMatch(
   options?: MatchResolveOptions
 ): Promise<
   | { status: 'unique'; product: MatchedStockItem }
-  | { status: 'ambiguous'; candidates: MatchedStockItem[]; rest?: MatchedStockItem[]; query: string }
+  | {
+      status: 'ambiguous';
+      candidates: MatchedStockItem[];
+      rest?: MatchedStockItem[];
+      query: string;
+      matchKind?: 'AMBIGUOUS' | 'FAMILY_MATCH_VARIANT_MISSING';
+      missingVariant?: string;
+      familyLabel?: string;
+    }
   | { status: 'none'; query: string }
 > {
   const query = String(name ?? '').trim();
@@ -872,7 +898,7 @@ export async function resolveProductMatch(
 
   const exactHits = await findExactProductMatches(businessId, query);
   if (exactHits.length) {
-    const decision = decideCatalogMatch(exactHits, signals);
+    const decision = decideCatalogMatch(exactHits, signals, query);
     if (decision.status === 'unique') return { status: 'unique', product: decision.item as MatchedStockItem };
     if (decision.status === 'ambiguous') {
       return {
@@ -880,6 +906,9 @@ export async function resolveProductMatch(
         candidates: decision.options as MatchedStockItem[],
         rest: decision.rest as MatchedStockItem[],
         query,
+        matchKind: decision.kind,
+        missingVariant: decision.missingVariant,
+        familyLabel: decision.familyLabel,
       };
     }
   }
@@ -955,7 +984,7 @@ export async function resolveProductMatch(
     );
   if (!ranked.length) return { status: 'none', query };
 
-  const decision = decideCatalogMatch(ranked, signals);
+  const decision = decideCatalogMatch(ranked, signals, query);
   if (decision.status === 'unique') {
     return { status: 'unique', product: decision.item as MatchedStockItem };
   }
@@ -964,13 +993,23 @@ export async function resolveProductMatch(
   const exact = ranked.filter(
     (c) => isExactCatalogName(query, c.nombre) || isExactCatalogName(query, c.label)
   );
-  if (exact.length === 1) return { status: 'unique', product: exact[0]! };
+  if (exact.length === 1 && decision.kind !== 'FAMILY_MATCH_VARIANT_MISSING') {
+    return { status: 'unique', product: exact[0]! };
+  }
+
+  const pool = decision.options as MatchedStockItem[];
+  if (pool.length === 1 && decision.kind !== 'FAMILY_MATCH_VARIANT_MISSING') {
+    return { status: 'unique', product: pool[0]! };
+  }
 
   return {
     status: 'ambiguous',
-    candidates: decision.options as MatchedStockItem[],
+    candidates: pool,
     rest: decision.rest as MatchedStockItem[],
     query,
+    matchKind: decision.kind,
+    missingVariant: decision.missingVariant,
+    familyLabel: decision.familyLabel,
   };
 }
 

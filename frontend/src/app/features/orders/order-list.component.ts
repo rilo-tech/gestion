@@ -17,6 +17,7 @@ import {
   getOrderStatusCardTitleClass,
   getOrderStatusCardValueClass,
   orderMatchesStatusCardFilter,
+  countOrdersByStatusCard,
   orderHasEntregaConSaldo,
   ORDER_STATUS_OPTIONS,
 } from '../../core/constants/order-status';
@@ -85,7 +86,7 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
           headerActions
           href="/orders"
           (click)="openAllOrders($event)"
-          class="text-xs sm:text-sm font-semibold text-teal-700 hover:text-teal-900 hover:underline dark:text-teal-300 dark:hover:text-teal-200">
+          class="text-xs sm:text-sm font-semibold text-teal-700 dark:text-teal-400 hover:text-teal-900 hover:underline dark:text-teal-300 dark:hover:text-teal-200">
           Ver todos los pedidos
         </a>
         <a
@@ -110,12 +111,12 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
             (click)="toggleStatusCardFilter(card.value, $event)"
             [class]="mobileStatusChipClass(card.value, i)">
             <span
-              class="block text-[9px] font-semibold uppercase leading-tight truncate"
+              class="block text-xs font-semibold uppercase leading-tight truncate"
               [ngClass]="getOrderStatusCardTitleClass(i)">
               {{ getMobileEstadoChipLabel(card.value) }}
             </span>
             <span
-              class="block text-[11px] font-bold tabular-nums leading-tight mt-0.5"
+              class="block text-xs font-bold tabular-nums leading-tight mt-0.5"
               [ngClass]="getOrderStatusCardValueClass(i)">
               {{ statusCounts[card.value] ?? 0 }}
             </span>
@@ -146,8 +147,8 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
         class="mb-3 sm:mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg sm:rounded-xl border border-teal-100 dark:border-teal-900/50 bg-teal-50 dark:bg-teal-950/40 px-3 py-2 sm:px-4 sm:py-3 text-xs sm:text-sm text-teal-800 dark:text-teal-200">
         <span class="min-w-0 truncate">
           <span class="sm:hidden">Filtrado: </span>
-          <span class="hidden sm:inline">Mostrando solo pedidos en «{{ getOrderEstadoCardLabel(statusCardFilter) }}». Hacé click fuera de las tarjetas para ver todos.</span>
-          <span class="sm:hidden font-semibold">{{ getOrderEstadoCardLabel(statusCardFilter) }}</span>
+          <span class="hidden sm:inline">Mostrando solo pedidos en «{{ getStatusCardFilterLabel(statusCardFilter) }}». Hacé click fuera de las tarjetas para ver todos.</span>
+          <span class="sm:hidden font-semibold">{{ getStatusCardFilterLabel(statusCardFilter) }}</span>
         </span>
         <button
           type="button"
@@ -186,12 +187,18 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
             <div compactSubtitle class="compact-list-subtitle truncate">
               Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
             </div>
-            <span
-              compactTrailing
-              class="inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold shrink-0 whitespace-nowrap"
-              [ngClass]="getOrderStatusBadgeClass(order.estado)">
-              {{ getOrderStatusLabelFor(order.estado) }}
-            </span>
+            <div compactTrailing class="shrink-0 pl-2 self-center flex flex-col items-end gap-0.5">
+              <span
+                class="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap"
+                [ngClass]="getOrderStatusBadgeClass(order.estado)">
+                {{ getOrderStatusLabelFor(order.estado) }}
+              </span>
+              <span
+                *ngIf="auth.canViewOrderSalePrice"
+                class="text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">
+                {{ formatMoney(order.total) }}
+              </span>
+            </div>
           </app-compact-list-row>
           <p *ngIf="loading" [class]="compactListEmptyClass">Cargando pedidos...</p>
           <p
@@ -220,7 +227,7 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
             <col class="w-[5.5rem]" />
           </colgroup>
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th class="hidden sm:table-cell" [class]="desktopThClass">
                 <button type="button" (click)="toggleSort('fecha')" [class]="sortHeaderClass('fecha')">
                   Fecha
@@ -277,13 +284,13 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
               </td>
               <td class="font-semibold text-teal-700 whitespace-nowrap" [class]="desktopTdClass">
                 {{ getOrderNumber(order) ? ('#' + getOrderNumber(order)) : '—' }}
-                <div class="text-[10px] font-normal text-gray-400 sm:hidden">
+                <div class="text-xs font-normal text-gray-400 sm:hidden">
                   {{ getOrderDate(order) ? (getOrderDate(order) | date:'dd/MM/yyyy') : '—' }}
                 </div>
               </td>
               <td class="min-w-0" [class]="desktopTdClass">
-                <div class="font-medium text-gray-900 truncate">{{ getClientName(order) }}</div>
-                <div class="text-[10px] text-gray-400 sm:hidden">
+                <div class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ getClientName(order) }}</div>
+                <div class="text-xs text-gray-400 sm:hidden">
                   Entrega: {{ order.fechaEntrega ? (order.fechaEntrega | date:'dd/MM/yyyy') : '—' }}
                 </div>
               </td>
@@ -293,14 +300,14 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
               <td [class]="desktopTdClass">
                 <div class="flex items-center gap-1 flex-nowrap">
                   <span
-                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold"
+                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-xs font-semibold"
                     [title]="getOrderStatusLabelFor(order.estado)"
                     [ngClass]="getOrderStatusBadgeClass(order.estado)">
                     {{ getOrderStatusListLabel(order) }}
                   </span>
                   <span
                     *ngIf="orderShowsStockStatus(order) && (order.stockPreparado || order.estadoStock)"
-                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold border"
+                    class="inline-flex shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-xs font-semibold border"
                     [title]="getOrderStockStatusLabel(order.estadoStock)"
                     [ngClass]="getOrderStockStatusBadgeClass(order.estadoStock)">
                     {{ getOrderStockStatusShortLabel(order.estadoStock) }}
@@ -316,7 +323,7 @@ type OrderSortColumn = 'fecha' | 'pedido' | 'entrega' | 'estado';
                 </div>
                 <div
                   *ngIf="auth.canViewOrderBalance"
-                  class="text-[10px] font-medium tabular-nums"
+                  class="text-xs font-medium tabular-nums"
                   [class.text-orange-500]="getOrderSaldo(order) > 0"
                   [class.text-gray-400]="!(getOrderSaldo(order) > 0)">
                   Saldo {{ formatMoney(getOrderSaldo(order)) }}
@@ -426,6 +433,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     }
     return getOrderStatusLabelFromConfig(value, this.appConfig.pedidos);
   }
+  getStatusCardFilterLabel(value: string): string {
+    return this.getOrderEstadoCardLabel(value);
+  }
   readonly normalizeOrderStatus = normalizeOrderStatus;
   readonly getOrderStatusCardBorderClass = getOrderStatusCardBorderClass;
   readonly getOrderStatusCardTitleClass = getOrderStatusCardTitleClass;
@@ -450,6 +460,8 @@ export class OrderListComponent implements OnInit, OnDestroy {
   sortColumn: OrderSortColumn = 'pedido';
   sortDirection: 'desc' | 'asc' = 'desc';
   statusCounts: Record<string, number> = {};
+  private ordersForStatusCounts: Array<{ id: string; estado?: string }> = [];
+  private statusCountsReady = false;
 
   private searchDebounce?: ReturnType<typeof setTimeout>;
   private backgroundLoadToken = 0;
@@ -486,7 +498,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
   }
 
   get visibleOrders(): Order[] {
-    return this.orders.filter((order) => this.auth.canViewOrder(order.estado));
+    return this.dedupeOrdersById(this.orders).filter((order) => this.auth.canViewOrder(order.estado));
   }
 
   get paginatedDisplayOrders(): Order[] {
@@ -636,21 +648,6 @@ export class OrderListComponent implements OnInit, OnDestroy {
       (a, b) => this.compareOrders(a, b, this.sortColumn) * direction
     );
 
-    const counts: Record<string, number> = {};
-    for (const card of this.statusCardEstados) {
-      counts[card.value] = 0;
-    }
-
-    for (const order of this.visibleOrders) {
-      for (const card of this.statusCardEstados) {
-        if (orderMatchesStatusCardFilter(order.estado, card.value, this.appConfig.pedidos)) {
-          counts[card.value] = (counts[card.value] ?? 0) + 1;
-        }
-      }
-    }
-
-    this.statusCounts = counts;
-
     if (
       this.statusCardFilter &&
       !this.statusCardEstados.some((card) => card.value === this.statusCardFilter)
@@ -658,6 +655,42 @@ export class OrderListComponent implements OnInit, OnDestroy {
       this.statusCardFilter = null;
     }
     this.cdr.markForCheck();
+  }
+
+  /** Totales globales por estado: solo desde el backend (nunca la página cargada). */
+  private rebuildStatusCounts() {
+    if (!this.statusCountsReady) return;
+    const cardValues = getOrderStatusCardEstados(this.appConfig.pedidos).map((card) => card.value);
+    const universe = this.ordersForStatusCounts.filter((order) => this.auth.canViewOrder(order.estado));
+    this.statusCounts = countOrdersByStatusCard(universe, cardValues, this.appConfig.pedidos);
+  }
+
+  private fetchStatusCounts() {
+    this.statusCountsReady = false;
+    this.orderService.getOrderStatusCounts().subscribe({
+      next: (items) => {
+        this.ordersForStatusCounts = items;
+        this.statusCountsReady = true;
+        this.rebuildStatusCounts();
+        this.cdr.markForCheck();
+      },
+      error: () => {
+        this.statusCountsReady = false;
+        this.ordersForStatusCounts = [];
+        this.statusCounts = {};
+        this.cdr.markForCheck();
+      },
+    });
+  }
+
+  private dedupeOrdersById(items: Order[]): Order[] {
+    const seen = new Set<string>();
+    return items.filter((order) => {
+      if (!order.id) return true;
+      if (seen.has(order.id)) return false;
+      seen.add(order.id);
+      return true;
+    });
   }
 
   private compareOrders(a: Order, b: Order, column: OrderSortColumn): number {
@@ -731,6 +764,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.catalogConfigService.getAppConfig().subscribe((config) => {
       this.appConfig = config;
       this.rebuildDisplayOrders();
+      if (this.statusCountsReady) {
+        this.rebuildStatusCounts();
+      }
     });
 
     this.route.queryParamMap.subscribe((params) => {
@@ -742,6 +778,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     });
 
     this.fetchOrders();
+    this.fetchStatusCounts();
   }
 
   ngOnDestroy() {
@@ -753,7 +790,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.ordersNextCursor = null;
     this.ordersHasMore = false;
     this.loadingMore = false;
+    this.statusCounts = {};
     this.loadOrders();
+    this.fetchStatusCounts();
   }
 
   loadOrders() {
@@ -762,7 +801,8 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   /**
    * Primer pintado rápido con una página chica y luego completa el resto en
-   * segundo plano para que el buscador y los contadores cubran todo el historial.
+   * segundo plano para que el buscador cubra todo el historial.
+   * Los KPI de estado usan fetchStatusCounts() aparte.
    */
   private fetchOrders() {
     this.loading = true;
@@ -773,7 +813,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.orderService.getOrdersPage(PROGRESSIVE_LIST_FIRST_PAGE_SIZE).subscribe({
       next: (page) => {
         if (token !== this.backgroundLoadToken) return;
-        this.orders = page.items;
+        this.orders = this.dedupeOrdersById(page.items);
         this.ordersHasMore = page.hasMore;
         this.ordersNextCursor = page.nextCursor;
         this.loading = false;
@@ -800,7 +840,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (page) => {
           if (token !== this.backgroundLoadToken) return;
-          this.orders = [...this.orders, ...page.items];
+          this.orders = this.dedupeOrdersById([...this.orders, ...page.items]);
           this.ordersHasMore = page.hasMore;
           this.ordersNextCursor = page.nextCursor;
           this.rebuildDisplayOrders();
@@ -819,7 +859,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
       .getOrdersPage(PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE, this.ordersNextCursor)
       .subscribe({
         next: (page) => {
-          this.orders = [...this.orders, ...page.items];
+          this.orders = this.dedupeOrdersById([...this.orders, ...page.items]);
           this.ordersHasMore = page.hasMore;
           this.ordersNextCursor = page.nextCursor;
           this.loadingMore = false;

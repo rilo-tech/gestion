@@ -422,12 +422,41 @@ export class StockService {
     );
   }
 
-  adjustStock(itemId: string, quantity: number, motivo: string): Observable<any> {
-    return this.http.patch(`/api/stock/${this.businessId}/${itemId}`, {
-      quantity,
-      motivo,
-      usuarioId: 'admin' // Placeholder
-    });
+  adjustStock(
+    itemId: string,
+    quantity: number,
+    motivo: string,
+    options?: { scanOperationId?: string }
+  ): Observable<{ success?: boolean; newStock: number; stockActual?: number; applied?: boolean; duplicate?: boolean }> {
+    const scanOperationId =
+      options?.scanOperationId?.trim() ||
+      (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `scan-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+
+    return this.http
+      .patch<{
+        success?: boolean;
+        newStock: number;
+        stockActual?: number;
+        applied?: boolean;
+        duplicate?: boolean;
+      }>(`/api/stock/${this.businessId}/${itemId}`, {
+        quantity,
+        motivo,
+        scanOperationId,
+      })
+      .pipe(
+        tap((res) => {
+          const cached = this.peekItem(itemId);
+          if (cached && typeof res?.newStock === 'number') {
+            this.cacheItem({ ...cached, stockActual: res.newStock });
+            this.notifyCatalogChanged({ item: { ...cached, stockActual: res.newStock } });
+          } else {
+            this.invalidateSearchIndex();
+          }
+        })
+      );
   }
 
   getShortages(): Observable<{ grouped: StockShortageGroup[]; rows: StockShortageRow[] }> {

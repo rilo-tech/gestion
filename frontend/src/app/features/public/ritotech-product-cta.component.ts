@@ -144,9 +144,9 @@ export class RitotechProductCtaComponent {
       return 'shrink-0 inline-flex justify-center rounded-lg border border-gray-700 px-4 py-2 text-xs font-semibold text-gray-200 hover:bg-gray-800 whitespace-nowrap';
     }
     if (this.variant === 'secondary') {
-      return 'shrink-0 inline-flex justify-center self-start rounded-lg px-4 py-2.5 text-sm font-semibold bg-gray-800 hover:bg-gray-700';
+      return 'shrink-0 inline-flex items-center justify-center self-start rounded-lg px-4 py-2.5 text-sm font-semibold bg-gray-800 hover:bg-gray-700';
     }
-    return 'shrink-0 inline-flex justify-center self-start rounded-lg px-4 py-2.5 text-sm font-semibold bg-teal-600 hover:bg-teal-500';
+    return 'shrink-0 inline-flex items-center justify-center self-start rounded-lg px-4 py-2.5 text-sm font-semibold bg-teal-700 text-white hover:bg-teal-600';
   }
 
   get actionClass(): string {
@@ -154,6 +154,9 @@ export class RitotechProductCtaComponent {
   }
 
   get isOperational(): boolean {
+    if (this.product === 'cash') {
+      return this.auth.trialProductId === 'cash' || this.auth.isCashOnlyTenant;
+    }
     if (this.product === 'whatsapp') return this.auth.canAccessWhatsapp;
     if (this.product === 'erp') return this.auth.canAccessErpWeb;
     return this.auth.canAccessWhatsapp && this.auth.canAccessErpWeb;
@@ -258,7 +261,7 @@ export class RitotechProductCtaComponent {
       error: (err: { status?: number; error?: { error?: string; checkoutProduct?: string } }) => {
         this.busy = false;
         if (err?.status === 402) {
-          const producto = err.error?.checkoutProduct ?? 'completo';
+          const producto = err.error?.checkoutProduct ?? this.product;
           void this.router.navigate(['/activar-suscripcion'], { queryParams: { producto } });
           return;
         }

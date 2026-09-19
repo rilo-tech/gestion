@@ -4,6 +4,7 @@ import {
   resolveClientMatch,
   type MatchedClient,
 } from '../../whatsapp/lookups.ts';
+import { finalizeEntityLookupResult } from '../entity-lookup-result.ts';
 
 export type ClientEntityResult = {
   status: 'resolved' | 'ambiguous' | 'not_found';
@@ -40,25 +41,26 @@ export async function findClient(
   const hint = String(query ?? '').trim();
   if (!hint) return { status: 'not_found', query: '' };
   const resolved = await resolveClientMatch(businessId, hint, { utterance: options?.utterance ?? hint });
-  if (resolved.status === 'unique') {
+  const mapped = finalizeEntityLookupResult({
+    query: hint,
+    unique: resolved.status === 'unique' ? resolved.client : null,
+    none: resolved.status === 'none',
+    ambiguousCandidates: resolved.status === 'ambiguous' ? resolved.candidates : [],
+    toEntity: (row) => ({ id: row.id, name: row.nombre }),
+    getId: (row) => row.id,
+  });
+  if (mapped.status === 'ambiguous') {
     return {
-      status: 'resolved',
-      entity: { id: resolved.client.id, name: resolved.client.nombre },
+      status: 'ambiguous',
       query: hint,
+      candidates: mapped.candidates!.map((row: MatchedClient) => ({
+        id: row.id,
+        name: row.nombre,
+        score: row.score,
+      })),
     };
   }
-  if (resolved.status === 'none') {
-    return { status: 'not_found', query: hint };
-  }
-  return {
-    status: 'ambiguous',
-    query: hint,
-    candidates: resolved.candidates.map((row: MatchedClient) => ({
-      id: row.id,
-      name: row.nombre,
-      score: row.score,
-    })),
-  };
+  return mapped;
 }
 
 export async function getClient(

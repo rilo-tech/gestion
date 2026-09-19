@@ -18,6 +18,10 @@ import {
 } from '../../shared/components/transaction-form';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
 import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
+import {
   FORM_CANCEL_CLASS,
   FORM_SUBMIT_CLASS,
 } from '../../shared/components/icon-action/icon-action.component';
@@ -44,7 +48,7 @@ import { LucideAngularModule } from 'lucide-angular';
       backLabel="Volver a cuentas a pagar"
       backShortLabel="Volver"
       backAriaLabel="Volver a cuentas a pagar"
-      [hideAside]="!!editingObligationId"
+      [hideAside]="true"
       [hasHeaderActions]="hasHeaderActions"
       (backClick)="goBack()">
       <section main [class]="formCardClass">
@@ -72,7 +76,7 @@ import { LucideAngularModule } from 'lucide-angular';
                 <div class="min-w-0">
                   <p class="text-sm font-semibold text-gray-900 dark:text-gray-100 m-0">Pagar este mes</p>
                   <p class="text-xs text-gray-600 dark:text-gray-400 mt-0.5 mb-0 leading-snug">
-                    {{ formatMonthYearLabel(payMes) }} · podés ajustar el monto al confirmar.
+                    {{ formatMonthYearLabel(payMes) }} · gasto recurrente · podés ajustar el monto al confirmar.
                   </p>
                 </div>
               </div>
@@ -147,7 +151,7 @@ import { LucideAngularModule } from 'lucide-angular';
     </app-payable-cuota-pay-modal>
   `,
 })
-export class NewPayableObligationComponent implements OnInit {
+export class NewPayableObligationComponent implements OnInit, UnsavedChangesHost {
   @ViewChild('obligationForm') obligationForm!: PayableObligationFormPanelComponent;
 
   private router = inject(Router);
@@ -156,6 +160,8 @@ export class NewPayableObligationComponent implements OnInit {
   readonly auth = inject(AuthService);
   private dialog = inject(DialogService);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   readonly formCardClass = TRANSACTION_FORM_CARD_CLASS;
   readonly formCancelClass = FORM_CANCEL_CLASS;
@@ -174,7 +180,7 @@ export class NewPayableObligationComponent implements OnInit {
 
   get pageTitle(): string {
     if (this.editingObligationId && this.loadedObligation?.tipo === 'mensual') {
-      return 'Gasto fijo mensual';
+      return 'Gasto recurrente';
     }
     return this.editingObligationId ? 'Editar gasto o servicio' : 'Nuevo gasto o servicio';
   }
@@ -294,17 +300,30 @@ export class NewPayableObligationComponent implements OnInit {
     });
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.obligationForm?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.obligationForm?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event: TransactionFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
     this.obligationSaving = false;
     const id = event?.id?.trim();
     if (!id) return;
 
-    if (this.editingObligationId !== id) {
-      this.editingObligationId = id;
+    // Create → edit: navegar sin mutar el form actual (evita que se ensanche / cambie la UI).
+    if (!this.editingObligationId) {
       this.router.navigate(['/payables/obligations', id, 'edit'], {
         replaceUrl: true,
         queryParams: { mes: this.payMes },
       });
+      return;
     }
 
     this.payables.getObligation(id).subscribe({
@@ -329,7 +348,7 @@ export class NewPayableObligationComponent implements OnInit {
 
     this.dialog
       .confirm({
-        title: nextActive ? 'Reactivar gasto fijo' : 'Desactivar gasto fijo',
+        title: nextActive ? 'Reactivar gasto recurrente' : 'Desactivar gasto recurrente',
         message: `¿${nextActive ? 'Reactivar' : 'Desactivar'} "${this.loadedObligation.beneficiario}"?`,
         confirmLabel: nextActive ? 'Reactivar' : 'Desactivar',
       })
@@ -348,7 +367,7 @@ export class NewPayableObligationComponent implements OnInit {
               message:
                 typeof err.error?.error === 'string'
                   ? err.error.error
-                  : `No se pudo ${actionLabel} el gasto fijo.`,
+                  : `No se pudo ${actionLabel} el gasto recurrente.`,
             });
           },
         });
@@ -408,25 +427,43 @@ export class NewPayableObligationComponent implements OnInit {
       })
       .subscribe((confirmed) => {
         if (!confirmed) return;
-
-        this.deletingObligation = true;
-        this.payables.deleteObligation(id).subscribe({
-          next: () => {
-            this.deletingObligation = false;
-            this.goBack();
-          },
-          error: (err) => {
-            this.deletingObligation = false;
-            this.dialog.alert({
-              title: 'No se pudo eliminar',
-              message:
-                typeof err.error?.error === 'string'
-                  ? err.error.error
-                  : 'No se pudo eliminar el gasto.',
-            });
-          },
-        });
+        this.runDeleteObligation(id, false);
       });
+  }
+
+  private runDeleteObligation(id: string, allowPaidCuotas: boolean): void {
+    this.deletingObligation = true;
+    this.payables.deleteObligation(id, { allowPaidCuotas }).subscribe({
+      next: () => {
+        this.deletingObligation = false;
+        this.goBack();
+      },
+      error: (err) => {
+        this.deletingObligation = false;
+        if (err?.error?.code === 'OBLIGATION_HAS_PAID_CUOTAS' && !allowPaidCuotas) {
+          this.dialog
+            .confirm({
+              title: 'Hay cuotas pagadas',
+              message:
+                'Ya pagaste alguna cuota. Se borrarán los vencimientos, pero los movimientos de caja NO se eliminan. ¿Confirmás?',
+              confirmLabel: 'Eliminar igual',
+              variant: 'danger',
+            })
+            .subscribe((confirmed) => {
+              if (!confirmed) return;
+              this.runDeleteObligation(id, true);
+            });
+          return;
+        }
+        this.dialog.alert({
+          title: 'No se pudo eliminar',
+          message:
+            typeof err.error?.error === 'string'
+              ? err.error.error
+              : 'No se pudo eliminar el gasto.',
+        });
+      },
+    });
   }
 
   formatMonthYearLabel = formatMonthYearLabel;

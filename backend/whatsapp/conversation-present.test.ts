@@ -10,6 +10,7 @@ import {
   WA_FORBIDDEN_PAGER_PHRASES,
   WA_PRESENT,
 } from '../../shared/whatsapp-format.ts';
+import { WA_INSTRUCTION } from '../../shared/whatsapp-visual.ts';
 import { numberedOptionItems, presentSimple, transactionViewFor } from './whatsapp-present.ts';
 
 function pagesHaveFullItems(pages: string[], items: string[]): void {
@@ -134,14 +135,15 @@ describe('presentación WhatsApp', () => {
     });
     assert.equal(
       choice,
-      '*Encontré estas opciones*\n1. Canguro felpa rojo XL\n2. Canguro algodón rojo XL\n3. Canguro frisa rojo XL\n4. Ninguno de estos\n¿Cuál querés?'
+      `*Encontré estas opciones*\n1. Canguro felpa rojo XL\n2. Canguro algodón rojo XL\n3. Canguro frisa rojo XL\n4. Ninguno de estos\n\n${WA_INSTRUCTION}`
     );
     const summary = formatWhatsappMessage({
       title: 'Pedido a Juan',
       lines: ['• 2 Dry Cool negras L', '• 1 Dry Cool blanca XL', '• 3 Algodón rojas M'],
       ask: '📅 ¿Para qué fecha es la entrega?',
     });
-    assert.doesNotMatch(summary, /\n\n/);
+    assert.doesNotMatch(summary, /\n\n\n/);
+    assert.match(summary, /• 2 Dry Cool negras L\n• 1 Dry Cool blanca XL/);
     assert.match(summary, /📅 ¿Para qué fecha es la entrega\?/);
   });
 

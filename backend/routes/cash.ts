@@ -10,25 +10,25 @@ import {
   mapDeletionError,
   validateCashMovementDeletion,
 } from '../utils/deletion-guards.ts';
-import {
-  normalizeMovementAmbito,
-} from '../utils/caja-ambitos.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import { requireBusinessModule } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
-import {
-  normalizeTransactionDateTimeToIso,
-} from '../utils/transaction-date.ts';
 import { sortCashMovementsByRecency } from '../../shared/cash-movement-sort.ts';
 import { schedulePayablesDataRepair } from '../utils/payables.ts';
 import {
+  buildCashMovementUpdate,
+  getCashMonthlyIncomeSummary,
   getCashMovements,
   getCashSummary,
+  getCashWalletSummaryForPeriod,
   isCashDomainError,
+  isManualCashMovement,
   loadCajaConfig,
   registerCashMovement,
+  type CashWalletPeriodKey,
 } from '../domain/cash/index.ts';
+import { loadFinanzasConfig } from '../utils/finance-config.ts';
 
 const router = createCompanyRouter();
 router.use(requireBusinessModule('caja'));
@@ -63,31 +63,8 @@ async function loadCashOrigenes(businessId: string): Promise<CajaOrigen[]> {
   return normalized;
 }
 
-function normalizeAmbito(value: unknown, caja: Record<string, unknown>): string {
-  return normalizeMovementAmbito(value, caja);
-}
-
-function isLinkedSystemMovement(movement: Record<string, unknown>): boolean {
-  const tipo = String(movement.origenTipo ?? '');
-  return (
-    tipo === 'colaborador_pago' ||
-    tipo === 'cuenta_pagar' ||
-    tipo === 'tarjeta_resumen' ||
-    tipo === 'compra'
-  );
-}
-
 function isManualMovement(movement: Record<string, unknown>): boolean {
-  if (isLinkedSystemMovement(movement)) return false;
-  if (movement.origenGrupo === 'manual') return true;
-
-  const tipo = String(movement.origenTipo ?? '');
-  if (tipo.startsWith('caja_manual')) return true;
-  if (movement.pedidoId) return false;
-  if (tipo.startsWith('pedido') || tipo === 'venta' || tipo.startsWith('venta')) return false;
-  if (movement.origenGrupo === 'pedido' || movement.origenGrupo === 'venta') return false;
-
-  return true;
+  return isManualCashMovement(movement);
 }
 
 function resolveOrigenGrupo(movement: Record<string, unknown>): OrigenGrupo {
@@ -104,8 +81,8 @@ function resolveOrigenGrupo(movement: Record<string, unknown>): OrigenGrupo {
 
   const tipo = String(movement.origenTipo ?? '');
   if (tipo.startsWith('pedido') || movement.pedidoId) return 'pedido';
-  if (tipo === 'compra' || tipo.startsWith('compra')) return 'compra';
-  if (tipo === 'venta' || tipo.startsWith('venta')) return 'venta';
+  if (tipo === 'compra' || tipo.startsWith('compra') || movement.compraId) return 'compra';
+  if (tipo === 'venta' || tipo.startsWith('venta') || movement.ventaId) return 'venta';
   if (tipo.startsWith('caja_manual')) return 'manual';
   if (isManualMovement(movement)) return 'manual';
   return 'otro';
@@ -195,6 +172,64 @@ router.get('/:businessId/summary', async (req, res) => {
   }
 });
 
+/** Ingresos de caja por mes (últimos N) + promedio — no lista de pedidos. */
+router.get('/:businessId/monthly-income', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const months = Number(req.query.months ?? req.query.meses ?? 6);
+    const ambitoId = String(req.query.ambitoId ?? req.query.ambito ?? '').trim() || undefined;
+    const summary = await getCashMonthlyIncomeSummary(businessId, { months, ambitoId });
+    res.json(summary);
+  } catch (error) {
+    console.error('Error fetching cash monthly income:', error);
+    res.status(500).json({ error: 'Error fetching cash monthly income' });
+  }
+});
+
+/** Resumen tipo billetera: ingresos/egresos/balance agrupados por categoría. */
+router.get('/:businessId/wallet-summary', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const rawPeriod = String(req.query.period ?? req.query.periodo ?? 'month').trim().toLowerCase();
+    const period = (
+      ['today', 'week', 'month', 'previous_month', 'custom'].includes(rawPeriod)
+        ? rawPeriod
+        : 'month'
+    ) as CashWalletPeriodKey;
+    const ambitoId = String(req.query.ambitoId ?? req.query.ambito ?? '').trim() || undefined;
+    const from = String(req.query.from ?? req.query.desde ?? '').trim() || undefined;
+    const to = String(req.query.to ?? req.query.hasta ?? '').trim() || undefined;
+
+    const summary = await getCashWalletSummaryForPeriod(businessId, period, {
+      from,
+      to,
+      ambitoId,
+    });
+
+    // Enriquecer labels de categoría desde config si el movimiento solo tiene id
+    const finanzas = await loadFinanzasConfig(businessId);
+    const catMap = new Map<string, string>();
+    for (const c of finanzas.categoriasGasto) catMap.set(c.id, c.label);
+    for (const c of finanzas.conceptosIngreso) catMap.set(c.id, c.label);
+
+    const remap = (rows: typeof summary.ingresosByCategory) =>
+      rows.map((row) => ({
+        ...row,
+        label: catMap.get(row.label) ?? row.label,
+      }));
+
+    const enriched = {
+      ...summary,
+      ingresosByCategory: remap(summary.ingresosByCategory),
+      egresosByCategory: remap(summary.egresosByCategory),
+    };
+    res.json(enriched);
+  } catch (error) {
+    console.error('Error fetching cash wallet summary:', error);
+    res.status(500).json({ error: 'Error fetching cash wallet summary' });
+  }
+});
+
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
@@ -275,21 +310,7 @@ router.post('/:businessId', async (req, res) => {
 router.put('/:businessId/:movementId', async (req, res) => {
   try {
     const { businessId, movementId } = req.params;
-    const tipo = req.body.tipo === 'egreso' ? 'egreso' : 'ingreso';
-    const monto = Number(req.body.monto) || 0;
-    const concepto = String(req.body.concepto ?? '').trim();
-    const medio = String(req.body.medio ?? 'efectivo').trim() || 'efectivo';
-
-    if (monto <= 0) {
-      return res.status(400).json({ error: 'El monto debe ser mayor a cero.' });
-    }
-
-    if (!concepto) {
-      return res.status(400).json({ error: 'Ingresá un concepto.' });
-    }
-
-    const caja = await loadCajaConfig(businessId);
-    const ambito = normalizeAmbito(req.body.ambito, caja);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
 
     const movementRef = db
       .collection(`negocios/${businessId}/movimientos_caja`)
@@ -298,46 +319,28 @@ router.put('/:businessId/:movementId', async (req, res) => {
 
     if (!snap.exists) return res.status(404).json({ error: 'Movement not found' });
 
-    const existing = snap.data();
-    if (!isManualMovement(existing ?? {})) {
-      return res.status(403).json({
-        error: 'Solo se pueden editar movimientos manuales de caja.',
-      });
-    }
+    const existing = (snap.data() ?? {}) as Record<string, unknown>;
+    const caja = await loadCajaConfig(businessId);
+    const patch = buildCashMovementUpdate(existing, body, caja);
 
-    const categoriaId = String(req.body.categoriaId ?? '').trim() || null;
-    const descripcion = normalizeMovementDescripcion(req.body.descripcion);
-    const fecha = normalizeTransactionDateTimeToIso(
-      req.body.fecha,
-      new Date(String(existing?.fecha ?? Date.now()))
-    );
+    await movementRef.update(patch);
 
-    await movementRef.update({
-      tipo,
-      monto,
-      medio,
-      concepto,
-      categoriaId,
-      descripcion,
-      ambito,
-      fecha,
-      origenTipo: tipo === 'egreso' ? 'caja_manual_egreso' : 'caja_manual_ingreso',
-      origenGrupo: 'manual',
-      updatedAt: new Date().toISOString(),
-    });
-
+    const concepto = String(patch.concepto ?? existing.concepto ?? movementId);
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'cash',
       action: 'update',
       entityType: 'movimiento_caja',
       entityId: movementId,
-      summary: `Editó movimiento manual de caja: ${concepto}`,
+      summary: `Editó movimiento de caja: ${concepto}`,
     });
 
     res.json({ id: movementId });
   } catch (error) {
+    if (isCashDomainError(error)) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
     console.error('Error updating cash movement:', error);
-    res.status(500).json({ error: 'Error updating cash movement' });
+    res.status(500).json({ error: 'No se pudo actualizar el movimiento.' });
   }
 });
 

@@ -335,23 +335,38 @@ export class ActivateSubscriptionComponent implements OnInit {
 
   includesFor(plan: BillingPlan): string[] {
     const lines: string[] = [];
-    const actions = whatsappActionsLabel(plan.includedAi ?? 0, parseUsageMode(plan.usageMode));
-    if (actions) lines.push(actions);
-    const numbers = plan.includedWhatsappNumbers ?? 0;
-    if (numbers > 0) {
-      lines.push(numbers === 1 ? '1 número de WhatsApp incluido' : `${numbers} números de WhatsApp incluidos`);
+    const sellsWa = plan.id === 'whatsapp' || plan.id === 'completo' || plan.id === 'cash';
+    const sellsUsers = plan.id === 'erp' || plan.id === 'completo';
+    if (sellsWa) {
+      const actions = whatsappActionsLabel(plan.includedAi ?? 0, parseUsageMode(plan.usageMode));
+      if (actions) lines.push(actions);
+      if ((plan.includedWhatsapp ?? 0) > 0) {
+        lines.push(
+          `${Number(plan.includedWhatsapp).toLocaleString('es-UY')} mensajes de WhatsApp al mes`
+        );
+      }
+      const numbers = plan.includedWhatsappNumbers ?? 0;
+      if (numbers > 0) {
+        lines.push(numbers === 1 ? '1 número de WhatsApp incluido' : `${numbers} números de WhatsApp incluidos`);
+      }
+      const extraWa = plan.extraWhatsappNumberPrice ?? 0;
+      if (extraWa > 0) {
+        lines.push(`Número adicional: ${formatCatalogPriceLabel(this.country, extraWa)}`);
+      }
     }
-    const extraWa = plan.extraWhatsappNumberPrice ?? 0;
-    if (extraWa > 0 && (plan.id === 'whatsapp' || plan.id === 'completo')) {
-      lines.push(`Número adicional: ${formatCatalogPriceLabel(this.country, extraWa)}`);
-    }
-    const users = plan.includedErpUsers ?? 0;
-    if (users > 0) {
-      lines.push(users === 1 ? '1 usuario incluido' : `${users} usuarios incluidos`);
-    }
-    const extraUser = plan.extraErpUserPrice ?? plan.extraUserMonthly ?? 0;
-    if (extraUser > 0 && users > 0) {
-      lines.push(`Usuario adicional: ${formatCatalogPriceLabel(this.country, extraUser)}`);
+    if (sellsUsers) {
+      const users = plan.includedErpUsers ?? 0;
+      if (users > 0) {
+        lines.push(
+          users === 1
+            ? '1 usuario de RILO Gestión incluido'
+            : `${users} usuarios de RILO Gestión incluidos`
+        );
+      }
+      const extraUser = plan.extraErpUserPrice ?? plan.extraUserMonthly ?? 0;
+      if (extraUser > 0 && users > 0) {
+        lines.push(`Usuario adicional: ${formatCatalogPriceLabel(this.country, extraUser)}`);
+      }
     }
     return lines;
   }

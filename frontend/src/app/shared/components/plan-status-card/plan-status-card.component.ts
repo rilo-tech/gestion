@@ -66,6 +66,9 @@ import { productLabelForAccess } from '../../../../../../shared/platform-access.
           <p class="text-sm font-bold text-gray-900 dark:text-gray-100 pt-1">
             Total mensual {{ addons.currency }} {{ addons.quote.total }}
           </p>
+          <p *ngIf="priceSnapshotHint" class="text-[11px] text-emerald-700 dark:text-emerald-400 pt-1">
+            {{ priceSnapshotHint }}
+          </p>
           <p *ngIf="addons.paidUntil" class="text-[11px] text-gray-500">
             Próxima renovación: {{ addons.paidUntil | date:'shortDate' }}
           </p>
@@ -475,6 +478,13 @@ export class PlanStatusCardComponent implements OnInit {
 
   get productLabel(): string {
     return productLabelForAccess(this.auth.platformAccess);
+  }
+
+  get priceSnapshotHint(): string | null {
+    const snap = this.business?.suscripcion?.priceSnapshot;
+    if (!snap?.monthlyTotal || !this.addons) return null;
+    if (Math.round(snap.monthlyTotal) === Math.round(this.addons.quote.total)) return null;
+    return `Precio acordado al alta: ${snap.currency} ${snap.monthlyTotal}. Catálogo vigente: ${this.addons.currency} ${this.addons.quote.total}.`;
   }
 
   get heading(): string {

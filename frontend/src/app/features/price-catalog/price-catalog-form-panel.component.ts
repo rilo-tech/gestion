@@ -12,6 +12,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpErrorResponse } from '@angular/common/http';
 import { finalize } from 'rxjs';
+import { FormDirtyTracker, PersistWaiter } from '../../core/utils/unsaved-changes';
 import {
   PriceCatalogEntry,
   PriceCatalogQuantityRange,
@@ -259,6 +260,8 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
   readonly quantityPriceCellClass = QUANTITY_PRICE_CELL_CLASS;
   readonly labelClass = FORM_COMPACT_LABEL_CLASS;
   readonly saveFeedback = new TransactionSaveFeedback();
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   @Input() entryId: string | null = null;
   @Output() saved = new EventEmitter<PriceCatalogFormSaveEvent>();
@@ -332,7 +335,10 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
   }
 
   saveEntry() {
-    if (!this.auth.canManagePriceCatalog || !this.saveFeedback.tryBeginSave()) return;
+    if (!this.auth.canManagePriceCatalog || !this.saveFeedback.tryBeginSave()) {
+      this.persistWaiter.finish(false);
+      return;
+    }
     this.emitSaving(true);
     this.saveFeedback.clearSuccess();
 
@@ -347,6 +353,7 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
         title: 'Falta el nombre',
         message: 'Indicá a qué producto corresponde esta referencia.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -362,6 +369,7 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
         title: 'Falta el precio',
         message: 'Indicá al menos un precio por unidad.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -385,9 +393,12 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
             ? 'Referencia creada correctamente. Ya podés usarla en pedidos.'
             : 'Cambios guardados correctamente.'
         );
+        this.dirty.capture(this.entryForm);
+        this.persistWaiter.finish(true);
         this.saved.emit({ id, entry: { ...payload, id }, wasNew });
       },
       error: (err: HttpErrorResponse) => {
+        this.persistWaiter.finish(false);
         const message =
           typeof err.error?.error === 'string'
             ? err.error.error
@@ -408,10 +419,23 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
     queueMicrotask(() => this.savingChange.emit(saving));
   }
 
+  hasUnsavedChanges(): boolean {
+    if (this.formReadOnly) return false;
+    return this.dirty.isDirty(this.entryForm);
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.saveEntry();
+    return result;
+  }
+
   private loadEntry() {
     if (!this.entryId) {
       this.entryForm = createEmptyPriceCatalogEntry();
       this.loadingEntry = false;
+      this.dirty.capture(this.entryForm);
       return;
     }
 
@@ -430,6 +454,7 @@ export class PriceCatalogFormPanelComponent implements OnChanges, OnDestroy {
           ],
         };
         this.loadingEntry = false;
+        this.dirty.capture(this.entryForm);
       },
       error: () => {
         this.loadingEntry = false;

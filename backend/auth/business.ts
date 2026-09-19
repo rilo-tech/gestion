@@ -53,6 +53,13 @@ import {
   parseBusinessUsageQuota,
   type BusinessUsageQuota,
 } from '../../shared/usage-cost.ts';
+import {
+  defaultProfileForMode,
+  hasStoredBusinessProfile,
+  resolveBusinessProfile,
+  type BusinessProfile,
+} from '../../shared/business-profile.ts';
+import { isBusinessProfileIncomplete } from '../../shared/business-profile-completion.ts';
 
 export type SubscriptionStatus = 'activa' | 'suspendida' | 'vencida';
 
@@ -92,6 +99,10 @@ export interface BusinessRecord {
   contactVerification?: TrialContactVerification;
   lifecycle?: TrialLifecycle;
   platformAccess?: ClientPlatformAccess;
+  /** Perfil operativo resuelto (legacyFullProfile si no hay uno persistido). */
+  businessProfile?: BusinessProfile;
+  /** true si el tenant tiene BusinessProfile persistido en Firestore. */
+  businessProfileStored?: boolean;
   usageQuota?: BusinessUsageQuota;
   suscripcion?: BusinessSubscriptionRecord;
   billing?: BusinessBillingInfo;
@@ -148,7 +159,11 @@ export interface PublicBusinessInfo {
   /** Si el email/teléfono siguen reservados para esta empresa en la landing. */
   contactClaims?: { emailBound: boolean; phoneBound: boolean };
   lifecycle?: TrialLifecycle;
+  /** Calculado: falta rubro, país o ciudad real (incluye legacy "A completar"). */
+  profileIncomplete?: boolean;
   platformAccess?: ClientPlatformAccess;
+  businessProfile?: BusinessProfile;
+  businessProfileStored?: boolean;
   usageQuota?: BusinessUsageQuota;
   createdAt?: string;
   administradoresActivos: number;
@@ -170,6 +185,7 @@ const BUSINESS_MUTABLE_FIELDS = new Set([
   'trialEndDate',
   'trialStatus',
   'platformAccess',
+  'businessProfile',
   'usageQuota',
   'contactVerification',
   'creadoPor',
@@ -296,6 +312,10 @@ function mapBusiness(id: string, data: Record<string, unknown>): BusinessRecord 
         ? (data.lifecycle as TrialLifecycle)
         : undefined,
     platformAccess: resolvePlatformAccessForBusiness(data),
+    businessProfile: resolveBusinessProfile(
+      data.businessProfile as Partial<BusinessProfile> | undefined
+    ),
+    businessProfileStored: hasStoredBusinessProfile(data.businessProfile),
     usageQuota: parseBusinessUsageQuota(data.usageQuota),
     suscripcion: parseBusinessSubscription(data),
     billing: parseBusinessBilling(data),
@@ -355,6 +375,12 @@ export function sanitizeBusinessPayload(
 
   if (payload.platformAccess && typeof payload.platformAccess === 'object') {
     next.platformAccess = payload.platformAccess as BusinessRecord['platformAccess'];
+  }
+
+  if (payload.businessProfile && typeof payload.businessProfile === 'object') {
+    next.businessProfile = resolveBusinessProfile(
+      payload.businessProfile as Partial<BusinessProfile>
+    );
   }
 
   if (payload.usageQuota && typeof payload.usageQuota === 'object') {
@@ -433,6 +459,7 @@ export async function createBusiness(
     contactVerification?: TrialContactVerification;
     lifecycle?: TrialLifecycle;
     platformAccess?: ClientPlatformAccess;
+    businessProfile?: BusinessProfile;
     suscripcion?: BusinessSubscriptionRecord;
   }
 ): Promise<BusinessRecord> {
@@ -466,6 +493,7 @@ export async function createBusiness(
     ...(payload.contactVerification ? { contactVerification: payload.contactVerification } : {}),
     ...(payload.lifecycle ? { lifecycle: payload.lifecycle } : {}),
     ...(payload.platformAccess ? { platformAccess: payload.platformAccess } : {}),
+    ...(payload.businessProfile ? { businessProfile: payload.businessProfile } : {}),
     ...(payload.suscripcion ? { suscripcion: payload.suscripcion } : {}),
     createdAt: new Date().toISOString(),
   };
@@ -548,6 +576,42 @@ export async function updateBusiness(
   }
 
   return after;
+}
+
+/** Actualiza solo rubro/país/ciudad del lifecycle (perfil comercial). */
+export async function updateBusinessLifecycleProfile(
+  businessId: string,
+  fields: { rubro?: string | null; pais?: string | null; ciudad?: string | null }
+): Promise<BusinessRecord> {
+  const ref = businessRef(businessId);
+  const doc = await ref.get();
+  if (!doc.exists) {
+    throw new Error('BUSINESS_NOT_FOUND');
+  }
+  const before = mapBusiness(doc.id, doc.data() as Record<string, unknown>);
+  const prev = before.lifecycle ?? { source: 'self_service_trial' as const };
+  const nextCiudad =
+    fields.ciudad !== undefined
+      ? fields.ciudad == null || String(fields.ciudad).trim() === '' || /^a\s+completar$/i.test(String(fields.ciudad).trim())
+        ? null
+        : String(fields.ciudad).trim()
+      : prev.ciudad ?? null;
+  const next: TrialLifecycle = {
+    ...prev,
+    ...(fields.rubro !== undefined
+      ? { rubro: fields.rubro == null ? null : String(fields.rubro).trim() || null }
+      : {}),
+    ...(fields.pais !== undefined
+      ? { pais: fields.pais == null ? null : String(fields.pais).trim() || null }
+      : {}),
+    ciudad: nextCiudad,
+  };
+  const now = new Date().toISOString();
+  await ref.update({
+    lifecycle: next,
+    updatedAt: now,
+  });
+  return mapBusiness(businessId, (await ref.get()).data() as Record<string, unknown>);
 }
 
 export async function listBusinesses(): Promise<BusinessRecord[]> {
@@ -640,7 +704,10 @@ function buildPublicBusinessInfo(
     source: business.source,
     contactVerification: business.contactVerification,
     lifecycle: business.lifecycle,
+    profileIncomplete: isBusinessProfileIncomplete(business.lifecycle),
     platformAccess: business.platformAccess ?? resolvePlatformAccessForBusiness({}),
+    businessProfile: business.businessProfile ?? resolveBusinessProfile(undefined),
+    businessProfileStored: business.businessProfileStored === true,
     usageQuota: parseBusinessUsageQuota(business.usageQuota),
     createdAt: business.createdAt,
     administradoresActivos: counts.administradoresActivos,

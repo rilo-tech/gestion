@@ -19,6 +19,10 @@ import {
   usagePackPriceLabel,
   whatsappActionsLabel,
 } from './commercial-catalog.ts';
+import {
+  productSellsErpUserAddons,
+  productSellsWhatsappNumberAddons,
+} from './commercial-seat-policy.ts';
 
 export interface RitotechUseCase {
   title: string;
@@ -52,17 +56,20 @@ export interface RitotechPricingTier {
 }
 
 export const RILOTECH_HERO = {
-  title: 'Más orden. Más control. Más tiempo para vender.',
+  title: 'Registrá ventas, pedidos y cobros hablando por WhatsApp.',
   subtitle:
-    'Controlá tu negocio sin planillas ni anotaciones sueltas. Registrá pedidos, ventas, cobros y caja desde WhatsApp o desde la web.',
-  tagline: 'Todo en un solo lugar, simple y rápido.',
-  ctaPrimary: `Probar ${RILOBOT_TRIAL_DAYS} días gratis`,
-  ctaSecondary: 'Ver cómo funciona',
-  microcopy: 'Sin tarjeta · Configuración guiada · Cancelás cuando quieras',
+    'Escribile a RILO como hablás. Él organiza la información de tu negocio. Con RILO Bot también podés revisar tu actividad en Resumen RILO.',
+  tagline: 'Cargás hablando. Lo ves ordenado.',
+  ctaPrimary: `Probar RILO gratis`,
+  ctaSecondary: 'Ver demo',
+  microcopy: 'Sin tarjeta · sin instalar nada · cancelás cuando quieras',
 };
 
+/** Orden comercial público: Bot → Gestión → Completo. */
+export const LANDING_PRODUCT_ORDER: TrialProductId[] = ['whatsapp', 'erp', 'completo'];
+
 export const RILOTECH_AUDIENCE_PITCH =
-  'Para ferias, talleres, delivery y negocios chicos. Controlá caja, ventas, compras, proveedores y clientes sin sistemas pesados.';
+  'No abras Excel para anotar todo. Escribile a RILO. Para ferias, talleres, delivery y negocios chicos.';
 
 /** Respaldo comercial: los montos de la web se pueden actualizar. */
 export const RILOTECH_PRICE_ADJUSTMENT_NOTE =
@@ -76,50 +83,56 @@ export const RILOTECH_USE_CASES: RitotechUseCase[] = [
   },
   {
     title: 'No pierdas cobros',
-    description: 'Consultá quién debe, cuánto y desde cuándo.',
+    description: 'Preguntale cuánto te deben sin abrir una planilla.',
     icon: 'store',
   },
   {
     title: 'Caja al instante',
-    description: 'Preguntá cuánto vendiste, cobraste o cuánto te deben sin abrir una planilla.',
+    description: 'Preguntá cuánto vendiste o cobraste hoy.',
     icon: 'chart',
   },
   {
     title: 'Más orden',
-    description: 'Cada operación queda asociada al cliente y disponible en el historial.',
+    description: 'Todo queda asociado al cliente y disponible en historial.',
     icon: 'team',
   },
 ];
 
+/** Carrusel “Decíselo a RILO” — solo casos respaldados por tools operativas. */
+export const RILOTECH_SAY_IT_CASES = [
+  { id: 'sale', label: 'VENTA', example: 'Vendí 2 remeras a Ana por $1.600.' },
+  { id: 'order', label: 'PEDIDO', example: 'Pedido para Martín: 3 buzos para el viernes.' },
+  { id: 'collect', label: 'COBRO', example: 'Lucía pagó $1.000.' },
+  { id: 'client_balance', label: 'CLIENTE', example: '¿Cuánto debe Pedro?' },
+  { id: 'cash_today', label: 'CAJA', example: '¿Cuánto vendí hoy?' },
+  { id: 'stock', label: 'STOCK', example: '¿Cuántas camisetas negras M quedan?' },
+] as const;
+
 export const RILOTECH_CHAT_DEMO: RitotechChatMessage[] = [
-  { from: 'user', text: 'Venta a María, 2 remeras, cobró 800' },
+  { from: 'user', text: 'Venta a María, 2 remeras, total $1.500. Pagó $800.' },
   {
     from: 'bot',
-    text: 'Resumen — Registrar VENTA\n• Cliente: María\n• Producto: 2 remeras\n• Cobrado: $800\n¿Confirmás? Respondé SÍ o NO.',
-  },
-  { from: 'user', text: 'Sí' },
-  {
-    from: 'bot',
-    text: 'Listo. Venta guardada. Cuando quieras: "saldo de María" o "¿cuánto vendí hoy?".',
+    text: 'Listo. Venta registrada.\nTotal: $1.500\nCobrado: $800\nSaldo: $700.',
   },
 ];
 
 export const RILOTECH_HOW_IT_WORKS = [
   {
     step: '1',
-    title: 'Elegí cómo trabajar',
-    description: 'RILO Bot por WhatsApp, RILO Gestión en la computadora, o los dos juntos.',
+    title: 'Escribile a RILO',
+    description: 'Mandá el pedido, la venta o la consulta por WhatsApp, como hablás.',
   },
   {
     step: '2',
-    title: `Probá ${RILOBOT_TRIAL_DAYS} días gratis`,
-    description: 'Sin tarjeta. Cargá tu negocio real. Al vencer, tus datos siguen guardados.',
+    title: 'RILO entiende y trabaja',
+    description:
+      'Si está claro, actúa. Si falta algo, pregunta. Las acciones sensibles te piden confirmación.',
   },
   {
     step: '3',
-    title: 'Activá el plan cuando quieras',
+    title: 'Lo ves ordenado',
     description:
-      'Contratá mensual desde tu cuenta. Si ya tenés un canal, sumá el otro con la misma empresa. La baja no borra datos.',
+      'Con RILO Bot revisás la actividad en Resumen RILO. Con Completo, además tenés RILO Gestión completa.',
   },
 ];
 
@@ -127,39 +140,25 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
   {
     id: 'whatsapp',
     label: TRIAL_PRODUCT_LABELS.whatsapp,
-    headline: 'Escribile como hablás. Tu agente con IA trabaja sobre tu negocio.',
+    headline: 'Empezá por WhatsApp.',
     trialIncludes: `${RILOBOT_TRIAL_DAYS} días gratis, sin tarjeta`,
     afterTrial: 'Al vencer, contratá el plan mensual para seguir operando. Tus datos no se borran.',
     trialDays: trialDaysForProduct('whatsapp'),
     whatsapp: true,
-    panelWeb: false,
-    includes: [
-      'Pedidos, ventas, compras, cobros y caja',
-      'Confirmación SÍ/NO antes de guardar',
-      'Consulta de saldos y caja del día',
-      'Alta de cliente o producto al usarlos',
-    ],
-  },
-  {
-    id: 'completo',
-    label: TRIAL_PRODUCT_LABELS.completo,
-    headline: 'Usalo por WhatsApp. Controlalo en RILO Gestión.',
-    trialIncludes: `${PANEL_TRIAL_DAYS} días gratis, sin tarjeta`,
-    afterTrial: 'Al vencer, contratá RILO Completo. Tus datos no se borran.',
-    trialDays: trialDaysForProduct('completo'),
-    whatsapp: true,
     panelWeb: true,
-    featured: true,
-    badgeLabel: 'Más elegido',
+    featured: false,
+    badgeLabel: undefined,
     includes: [
-      'Todo RILO Bot + RILO Gestión',
-      'Misma empresa, misma información',
+      'Pedidos, ventas, compras, cobros y caja por WhatsApp',
+      'Resumen RILO web para revisar lo anotado',
+      'Avisos de pedidos y vencimientos',
+      'Actúa cuando está claro; pregunta si falta información',
     ],
   },
   {
     id: 'erp',
     label: TRIAL_PRODUCT_LABELS.erp,
-    headline: 'Panel web para controlar tu negocio.',
+    headline: 'Solo panel web.',
     trialIncludes: `${PANEL_TRIAL_DAYS} días gratis, sin tarjeta`,
     afterTrial: 'Al vencer, contratá el plan mensual. Tus datos no se borran.',
     trialDays: trialDaysForProduct('erp'),
@@ -168,7 +167,24 @@ export const RILOTECH_PRICING_TIERS: RitotechPricingTier[] = [
     includes: [
       'Clientes, productos, proveedores',
       'Pedidos, ventas, compras y caja',
-      'Inicio y configuración básica',
+      'Listados, fichas y control en pantalla',
+    ],
+  },
+  {
+    id: 'completo',
+    label: TRIAL_PRODUCT_LABELS.completo,
+    headline: 'WhatsApp + panel.',
+    trialIncludes: `${PANEL_TRIAL_DAYS} días gratis, sin tarjeta`,
+    afterTrial: 'Al vencer, contratá RILO Completo. Tus datos no se borran.',
+    trialDays: trialDaysForProduct('completo'),
+    whatsapp: true,
+    panelWeb: true,
+    featured: true,
+    badgeLabel: 'Mejor valor',
+    includes: [
+      'RILO Bot + RILO Gestión',
+      'Cargás hablando. Controlás en pantalla.',
+      'Sale menos que Bot + Gestión por separado',
     ],
   },
 ];
@@ -191,7 +207,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'ia',
     question: '¿Cómo usa inteligencia artificial?',
     answer:
-      'RILO Bot usa inteligencia artificial de Google Gemini para interpretar mensajes. Puede equivocarse; por eso siempre muestra un resumen y no guarda la operación hasta que confirmás.',
+      'RILO Bot interpreta lo que escribís. Si la instrucción es clara y segura, actúa. Si falta información, pregunta. Las acciones sensibles te piden confirmación antes de guardar.',
   },
   {
     id: 'solo-whatsapp',
@@ -214,7 +230,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'confirmacion',
     question: '¿El bot guarda solo o me pregunta?',
     answer:
-      'Siempre te muestra un resumen y pedís SÍ o NO. Si el cliente o el producto no están claros, te lista opciones para elegir.',
+      'Si está claro y es seguro, registra. Si falta un dato, te pregunta. En operaciones sensibles te pide confirmación. Si hay dudas de cliente o producto, te lista opciones.',
   },
   {
     id: 'limites',
@@ -243,7 +259,7 @@ export const RILOTECH_FAQ: RitotechFaqItem[] = [
     id: 'extras',
     question: '¿Puedo agregar usuarios o números de WhatsApp?',
     answer:
-      'Sí, en los tres planes. RILO Bot y Completo incluyen 1 número; Gestión incluye 1 usuario de panel. Extra usuarios y extra números se suman al mismo total mensual. Lo confirmás antes de agregar; se cobra en la próxima renovación.',
+      'Sí. En RILO Bot sumás números de WhatsApp; en Gestión, usuarios del panel; en Completo, ambos (son cosas distintas). Lo confirmás antes de agregar; se cobra en la próxima renovación.',
   },
   {
     id: 'instalacion',
@@ -286,13 +302,15 @@ export function quotaLinesForProduct(
 ): string[] {
   const quote = catalog.products[productId];
   const lines: string[] = [];
-  const hasBot = productId === 'whatsapp' || productId === 'completo';
-  const actionsLine = whatsappActionsLabel(quote?.includedAi ?? 0, parseUsageMode(quote?.usageMode));
-  if (hasBot && actionsLine) lines.push(actionsLine);
-  if (hasBot && (quote?.includedWhatsapp ?? 0) > 0) {
-    lines.push(`${quote.includedWhatsapp.toLocaleString('es-UY')} mensajes de WhatsApp al mes`);
-  }
-  if (hasBot) {
+  const sellsWa = productSellsWhatsappNumberAddons(productId);
+  const sellsUsers = productSellsErpUserAddons(productId);
+
+  if (sellsWa) {
+    const actionsLine = whatsappActionsLabel(quote?.includedAi ?? 0, parseUsageMode(quote?.usageMode));
+    if (actionsLine) lines.push(actionsLine);
+    if ((quote?.includedWhatsapp ?? 0) > 0) {
+      lines.push(`${quote.includedWhatsapp.toLocaleString('es-UY')} mensajes de WhatsApp al mes`);
+    }
     const numbers = quote?.includedWhatsappNumbers ?? 1;
     if (numbers > 0) {
       lines.push(
@@ -304,17 +322,16 @@ export function quotaLinesForProduct(
       lines.push(`Número adicional: ${formatCatalogPriceLabel(country, extraWa)}`);
     }
   }
-  const users = quote?.includedErpUsers ?? 1;
-  if (users > 0) {
-    lines.push(
-      productId === 'whatsapp'
-        ? users === 1
-          ? '1 usuario incluido'
-          : `${users} usuarios incluidos`
-        : users === 1
+
+  if (sellsUsers) {
+    const users = quote?.includedErpUsers ?? 1;
+    if (users > 0) {
+      lines.push(
+        users === 1
           ? '1 usuario de RILO Gestión incluido'
           : `${users} usuarios de RILO Gestión incluidos`
-    );
+      );
+    }
     const extraUser = extraErpUserPriceFor(catalog, productId, country);
     if (extraUser > 0) {
       lines.push(`Usuario adicional: ${formatCatalogPriceLabel(country, extraUser)}`);
@@ -327,13 +344,16 @@ export function pricingTiersFromCatalog(
   catalog: CommercialCatalog,
   country: BillingCountryCode = 'UY'
 ): RitotechPricingTier[] {
-  return RILOTECH_PRICING_TIERS.map((tier) => ({
-    ...tier,
-    trialDays: catalog.trialDays,
-    trialIncludes: `${catalog.trialDays} días gratis, sin tarjeta`,
-    afterTrial: litePitch(catalog),
-    includes: [...quotaLinesForProduct(catalog, tier.id, country), ...tier.includes],
-  }));
+  const rank = new Map(LANDING_PRODUCT_ORDER.map((id, index) => [id, index]));
+  return RILOTECH_PRICING_TIERS.filter((tier) => rank.has(tier.id))
+    .sort((a, b) => (rank.get(a.id) ?? 9) - (rank.get(b.id) ?? 9))
+    .map((tier) => ({
+      ...tier,
+      trialDays: catalog.trialDays,
+      trialIncludes: `${catalog.trialDays} días gratis, sin tarjeta`,
+      afterTrial: litePitch(catalog),
+      includes: [...quotaLinesForProduct(catalog, tier.id, country), ...tier.includes],
+    }));
 }
 
 export function usagePackCardsFromCatalog(
@@ -380,8 +400,7 @@ export function faqFromCatalog(
       return {
         ...item,
         answer:
-          `Cada plan incluye un cupo mensual. SÍ, NO y elegir un número también cuentan: así el bot sigue claro. ` +
-          `Si te quedás corto, en Mi plan comprás un pack de ${wa.quantity.toLocaleString('es-UY')} mensajes ` +
+          `Cada plan incluye un cupo mensual. Si te quedás corto, en Mi plan comprás un pack de ${wa.quantity.toLocaleString('es-UY')} mensajes ` +
           `(${usagePackPriceLabel(packed, 'whatsapp', country)}) o ${ai.quantity.toLocaleString('es-UY')} acciones por WhatsApp ` +
           `(${usagePackPriceLabel(packed, 'ai', country)}). El plan se cobra aparte y se renueva solo.`,
       };
@@ -395,7 +414,7 @@ export const RILOTECH_PRICING_FOOTNOTE = pricingFootnoteForCountry('UY');
 
 export const RILOTECH_CTA_FINAL = {
   title: 'Empezá hoy.',
-  body: `${RILOBOT_TRIAL_DAYS} días gratis, sin tarjeta. Usá RILO Bot, RILO Gestión o los dos. Cancelás cuando quieras.`,
+  body: `${RILOBOT_TRIAL_DAYS} días gratis, sin tarjeta. Probá RILO Bot y sumá el panel cuando lo necesites.`,
 };
 
 /** Tips / upsells in-app (sesión). */
@@ -411,8 +430,16 @@ export interface ProductCoachTip {
 export const RILOTECH_COACH_TIPS: ProductCoachTip[] = [
   {
     id: 'tip-bot-caja',
-    title: 'Tip: cobrá por WhatsApp',
-    body: 'Escribí “pago de Juan 500” y RILO Bot te pide confirmación antes de imputar el cobro.',
+    title: 'Consejo de RILO Bot',
+    body: 'Podés registrar ventas, pedidos y cobros hablando por WhatsApp.',
+    ctaLabel: 'Probar por WhatsApp',
+    ctaRoute: '/inicio',
+    audience: 'whatsapp',
+  },
+  {
+    id: 'tip-bot-confirm',
+    title: 'Consejo de RILO Bot',
+    body: 'Si el mensaje está claro, registra. Si falta info, pregunta. Las acciones sensibles te piden confirmación.',
     audience: 'whatsapp',
   },
   {
@@ -425,16 +452,18 @@ export const RILOTECH_COACH_TIPS: ProductCoachTip[] = [
   },
   {
     id: 'upsell-bot',
-    title: 'Cargá más rápido con RILO Bot',
-    body: 'Si ya usás el panel, sumá WhatsApp desde Planes para anotar pedidos desde el celular.',
-    ctaLabel: 'Sumar RILO Bot',
+    title: '¿Querés cargar ventas hablando por WhatsApp?',
+    body: 'Conocé RILO Completo y sumá RILO Bot sin dejar el panel.',
+    ctaLabel: 'Conocé RILO Completo',
     ctaRoute: '/planes',
     audience: 'erp',
   },
   {
-    id: 'tip-confirm',
-    title: 'Siempre confirmás antes de guardar',
-    body: 'El bot te manda un resumen. Solo se registra en RILO Gestión si respondés SÍ.',
+    id: 'tip-avisos',
+    title: 'RILO te avisa lo importante',
+    body: 'Pedidos para hoy, vencimientos y saldos. Abrí la campanita del encabezado para verlos.',
+    ctaLabel: 'Ver avisos',
+    ctaRoute: '/avisos',
     audience: 'all',
   },
 ];

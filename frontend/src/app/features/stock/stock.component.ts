@@ -68,6 +68,7 @@ import { CompactDataListComponent } from '../../shared/components/compact-list/c
 import { ListSearchFieldComponent } from '../../shared/components/list-search-field/list-search-field.component';
 import { bindListPageRefreshOnReturn } from '../../core/utils/list-page-refresh';
 import { StockBarcodeAdjustPanelComponent } from './stock-barcode-adjust-panel.component';
+import { isBarcodeScannerEnabledForBusiness } from '../../../../../shared/feature-flags.ts';
 import {
   PROGRESSIVE_LIST_BACKGROUND_PAGE_SIZE,
   PROGRESSIVE_LIST_FIRST_PAGE_SIZE,
@@ -108,7 +109,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
           <span class="hidden sm:inline">Nuevo producto</span>
         </a>
         <button
-          *ngIf="auth.canEditRecords"
+          *ngIf="auth.canEditRecords && barcodeScannerEnabled"
           type="button"
           headerActions
           [class]="iconActionLinkClass"
@@ -121,6 +122,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
       </app-module-page-header>
 
       <app-stock-barcode-adjust-panel
+        *ngIf="barcodeScannerEnabled"
         [open]="barcodeAdjustOpen"
         (closed)="barcodeAdjustOpen = false"
         (adjusted)="onBarcodeStockAdjusted($event)">
@@ -160,7 +162,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               Reservas
               <span
                 *ngIf="reservationRows.length > 0"
-                class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1 text-[10px] font-bold leading-none text-white tabular-nums">
+                class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1 text-xs font-bold leading-none text-white tabular-nums">
                 {{ reservationRows.length }}
               </span>
             </button>
@@ -214,7 +216,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             <span
               *ngIf="!controlsStockItem(item)"
               compactTrailing
-              class="text-[11px] font-medium text-violet-600">
+              class="text-xs font-medium text-violet-600 dark:text-violet-300">
               Servicio
             </span>
           </app-compact-list-row>
@@ -235,7 +237,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         <div listDesktop>
         <table [class]="nativeCompactTableClass + ' stock-products-table sm:table-fixed w-full max-w-full'">
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th
                 data-col-weight="28"
                 class="px-2 sm:px-3 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -250,25 +252,25 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
               <th data-col-weight="13" class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Categoría</th>
               <th
                 data-col-weight="6"
-                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
                 title="Unidades en depósito">
                 Dep.
               </th>
               <th
                 data-col-weight="6"
-                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
                 title="Apartadas para pedidos">
                 Res.
               </th>
               <th
                 data-col-weight="6"
-                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
                 title="Libre para usar en pedidos nuevos">
                 Disp.
               </th>
               <th
                 data-col-weight="4"
-                class="px-0.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
+                class="px-1.5 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wider text-center whitespace-nowrap"
                 title="Mínimo de stock">
                 Mín.
               </th>
@@ -308,15 +310,15 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   *ngIf="item.id; else stockItemNamePlain"
                   [routerLink]="['/stock', item.id, 'edit']"
                   (click)="$event.stopPropagation()"
-                  class="font-medium text-gray-900 truncate block hover:text-teal-700 hover:underline">
+                  class="font-medium text-gray-900 dark:text-gray-100 truncate block hover:text-teal-700 hover:underline">
                   {{ item.nombre }}
                 </a>
                 <ng-template #stockItemNamePlain>
-                  <div class="font-medium text-gray-900 truncate">{{ item.nombre }}</div>
+                  <div class="font-medium text-gray-900 dark:text-gray-100 truncate">{{ item.nombre }}</div>
                 </ng-template>
                 <span
                   *ngIf="!controlsStockItem(item)"
-                  class="inline-flex mt-1 px-2 py-0.5 text-[10px] rounded-full uppercase font-bold bg-violet-50 text-violet-700">
+                  class="inline-flex mt-1 px-2 py-0.5 text-xs rounded-full uppercase font-bold bg-violet-50 text-violet-700">
                   Servicio
                 </span>
               </td>
@@ -330,16 +332,16 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   {{ item.categoria || '—' }}
                 </span>
               </td>
-              <td class="px-0.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockTotalClass(item)">
+              <td class="px-1.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockTotalClass(item)">
                 {{ stockUnitsLabel(item, 'actual') }}
               </td>
-              <td class="px-0.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockReservedClass(item)">
+              <td class="px-1.5 py-3 text-center text-xs tabular-nums whitespace-nowrap" [class]="stockReservedClass(item)">
                 {{ stockUnitsLabel(item, 'reservado') }}
               </td>
-              <td class="px-0.5 py-3 text-center text-xs tabular-nums font-bold whitespace-nowrap" [class]="stockAvailableClass(item)">
+              <td class="px-1.5 py-3 text-center text-xs tabular-nums font-bold whitespace-nowrap" [class]="stockAvailableClass(item)">
                 {{ stockUnitsLabel(item, 'disponible') }}
               </td>
-              <td class="px-0.5 py-3 text-xs text-gray-600 tabular-nums text-center whitespace-nowrap">
+              <td class="px-1.5 py-3 text-xs text-gray-600 dark:text-gray-300 tabular-nums text-center whitespace-nowrap">
                 {{ stockUnitsLabel(item, 'minimo') }}
               </td>
               <td
@@ -408,10 +410,10 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </app-list-pagination>
       </app-compact-data-list>
 
-      <div *ngIf="activeTab === 'movimientos'" class="bg-white rounded-xl shadow-sm border border-gray-100">
+      <div *ngIf="activeTab === 'movimientos'" class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800">
         <p
           *ngIf="deletingMovementId"
-          class="px-3 py-2 sm:px-6 text-xs sm:text-sm font-medium text-amber-800 bg-amber-50 border-b border-amber-100 flex items-center gap-2"
+          class="px-3 py-2 sm:px-6 text-xs sm:text-sm font-medium text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-100 dark:border-amber-900/50 flex items-center gap-2"
           role="status"
           aria-live="polite">
           <span
@@ -482,7 +484,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             </div>
             <span
               compactTrailing
-              class="text-[11px] font-bold tabular-nums shrink-0"
+              class="text-xs font-bold tabular-nums shrink-0"
               [class.text-teal-600]="movement.tipo === 'entrada'"
               [class.text-red-500]="movement.tipo === 'salida'">
               {{ movement.tipo === 'salida' ? '-' : '+' }}{{ movement.cantidad }}
@@ -503,7 +505,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         <div class="hidden sm:block" [class]="tableScrollClass">
           <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
-              <tr class="bg-gray-50 border-b border-gray-100">
+              <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
                 <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
                 <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Producto</th>
                 <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Tipo</th>
@@ -539,7 +541,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
                   [class.text-teal-600]="movement.tipo === 'entrada'"
                   [class.text-red-500]="movement.tipo === 'salida'">
                   <span
-                    class="inline-flex sm:hidden items-center rounded-full px-2 py-0.5 text-[10px] font-medium mr-1 align-middle"
+                    class="inline-flex sm:hidden items-center rounded-full px-2 py-0.5 text-xs font-medium mr-1 align-middle"
                     [class.bg-teal-50]="movement.tipo === 'entrada'"
                     [class.text-teal-700]="movement.tipo === 'entrada'"
                     [class.bg-red-50]="movement.tipo === 'salida'"
@@ -649,7 +651,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         </app-list-pagination>
       </div>
 
-      <div *ngIf="activeTab === 'reservas'" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div *ngIf="activeTab === 'reservas'" class="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-100 dark:border-gray-800 overflow-hidden">
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50 space-y-2">
           <p class="text-sm text-gray-600 desc-lg-only">
             Stock apartado para pedidos pendientes. El depósito real baja al pasar a producción.
@@ -671,7 +673,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
             <div compactSubtitle class="compact-list-subtitle truncate">
               #{{ row.orderLabel }} · {{ row.clienteNombre }}
             </div>
-            <span compactTrailing class="text-[11px] font-bold text-teal-700 tabular-nums">
+            <span compactTrailing class="text-xs font-bold text-teal-700 tabular-nums">
               {{ row.cantidadActiva }} u.
             </span>
           </app-compact-list-row>
@@ -688,7 +690,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         <div class="hidden sm:block" [class]="tableScrollClass">
           <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
             <thead>
-              <tr class="bg-gray-50 border-b border-gray-100">
+              <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Producto</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Pedido</th>
                 <th class="px-4 sm:px-6 py-3 text-xs font-semibold text-gray-400 uppercase">Cliente</th>
@@ -758,7 +760,7 @@ type StockTab = 'productos' | 'movimientos' | 'reservas';
         *ngIf="transferReservationRow"
         class="fixed inset-0 z-[60] flex items-center justify-center p-4">
         <button type="button" class="absolute inset-0 bg-black/75 backdrop-blur-sm" (click)="closeReservationTransfer()" aria-label="Cerrar"></button>
-        <div class="relative z-[1] w-full max-w-md rounded-xl bg-white border border-gray-100 shadow-2xl p-5 space-y-4">
+        <div class="relative z-[1] w-full max-w-md rounded-xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl p-5 space-y-4">
           <div>
             <h3 class="text-base font-bold text-gray-900">Mover reserva a otro pedido</h3>
             <p class="text-sm text-gray-500 mt-1">
@@ -819,6 +821,12 @@ export class StockComponent implements OnInit, OnDestroy {
   readonly compactListEmptyClass = COMPACT_LIST_EMPTY_CLASS;
   readonly iconActionLinkClass = ICON_ACTION_LINK_CLASS;
   readonly auth = inject(AuthService);
+
+  get barcodeScannerEnabled(): boolean {
+    return isBarcodeScannerEnabledForBusiness(this.auth.currentBusinessId, {
+      erpWebEnabled: this.auth.hasErpEntitlement,
+    });
+  }
   readonly permissions = PERMISSIONS;
   readonly getStockDisponible = getStockDisponible;
   readonly getOrderStatusLabel = getOrderStatusLabel;

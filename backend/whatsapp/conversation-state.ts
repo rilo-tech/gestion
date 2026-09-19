@@ -1,5 +1,6 @@
 import { db } from '../firebase.ts';
 import { traceOrderItems } from './conversation-log.ts';
+import type { VisualDocumentDraft } from './v4-visual-draft.ts';
 
 export type LastWhatsappOperation = {
   kind: 'order' | 'sale' | 'purchase' | 'payment' | 'cash' | 'client';
@@ -47,6 +48,8 @@ export type ConversationFocusEntities = {
   products?: ConversationFocusProduct[];
   purchase?: { id?: string; label?: string; locked?: boolean };
   sale?: { id?: string; label?: string; locked?: boolean };
+  cash?: { id?: string; name?: string; locked?: boolean };
+  collaborator?: { id?: string; name?: string; locked?: boolean };
 };
 
 export type WhatsappChatTurn = {
@@ -62,6 +65,8 @@ export type ConversationActiveTask = {
     field?: string;
     type?: string;
     itemIndex?: number;
+    draftId?: string;
+    extractedDescription?: string;
     reason?: string;
     allowedActions?: string[];
   };
@@ -136,12 +141,34 @@ export interface ConversationState {
   operationPlan?: Record<string, unknown> | null;
   /** Entidades confirmadas (cliente, pedido, producto) para no saltar de foco. */
   focusEntities?: ConversationFocusEntities | null;
+  /** Última entidad presentada al usuario (detalle o selección), con IDs reales. */
+  lastPresentedEntities?: import('./v4-conversation-context.ts').LastPresentedEntities | null;
+  /** Resultados estructurados de tools READ del último turno del Agent. */
+  lastToolResults?: import('./v4-conversation-context.ts').LastToolResults | null;
+  /** IDs del último listado mostrado (p. ej. pedidos numerados). */
+  lastQueryResultIds?: string[] | null;
+  /**
+   * Última operación / conjunto de registros referenciables (IDs ordenados + TTL).
+   * Sirve para follow-ups («listamelos», «el tercero», «los que modifiqué») sin re-buscar.
+   */
+  recentOperation?: import('./v4-recent-operation.ts').RecentOperationContext | null;
+  /**
+   * Borrador temporal de compra/pedido extraído de imagen.
+   * No es una operación ERP hasta confirmar (`status=executed`).
+   */
+  visualDraft?: VisualDocumentDraft | null;
   /** Tarea que quedó en pausa al preguntar si seguimos (el foco no se borra). */
   suspendedTask?: ConversationActiveTask | null;
   /** Última actividad del hilo. Distinto de un pending eterno. */
   lastActiveAt?: string;
   /** Configuración inicial (caja/productos/proveedores) ofrecida al arrancar. */
   setupStatus?: 'offered' | 'done' | null;
+  /** Workflows V4 (activos, suspendidos, cancelados). */
+  v4Workflows?: import('./v4-workflow-manager.ts').WorkflowState[] | null;
+  /** Workflow interactivo actual (resolución de draft, confirmación, etc.). */
+  activeWorkflowId?: string | null;
+  /** Último OperationPlan mostrado al usuario para confirmación exacta Sí/No. */
+  lastPresentedConfirmation?: import('./v4-workflow-manager.ts').LastPresentedConfirmation | null;
   updatedAt: string;
 }
 
@@ -157,8 +184,11 @@ export async function dropConversationContext(
     activeTask: null,
     lastQuery: null,
     listContext: null,
+    lastQueryResultIds: null,
+    recentOperation: null,
     queuedTasks: null,
     operationPlan: null,
+    visualDraft: null,
     focusOrder: null,
     focusEntities: null,
     turns: [],
@@ -229,6 +259,7 @@ export async function clearConversationState(businessId: string, phone: string):
       activeTask: null,
       suspendedTask: null,
       operationPlan: null,
+      visualDraft: null,
       updatedAt: now,
       lastActiveAt: now,
     },

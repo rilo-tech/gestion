@@ -5,6 +5,7 @@ import { allocateSaleNumber, resolveSaleLabel } from '../utils/sale-number.ts';
 import { createCompromisoPago, parseCompromisoInput } from '../utils/payment-commitments.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { requireBusinessFeature } from '../auth/middleware.ts';
 import { isPrivilegedRole } from '../auth/constants.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import { normalizeTransactionDateToIso } from '../utils/transaction-date.ts';
@@ -49,6 +50,7 @@ import {
 } from '../../shared/comprobantes-config.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('sales'));
 
 async function loadCajaConfig(businessId: string): Promise<Record<string, unknown>> {
   const appDoc = await db.doc(`negocios/${businessId}/config/app`).get();
@@ -1509,114 +1511,172 @@ router.post('/:businessId', async (req, res) => {
       return res.status(201).json({ id: ventaRef.id, ventaLabel: 'Borrador', draft: true });
     }
 
-    const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
-
-    const esDonacion = total === 0 && !esNotaComprobante(tipoComprobante);
-    const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
-      origen: 'mostrador',
-      pedidoId: null,
-      estado: 'confirmada',
-      tipoComprobante,
-      motivo: notaFields.motivo || null,
-      descripcionMotivo: notaFields.descripcionMotivo || null,
-      comprobanteRelacionadoId: notaFields.comprobanteRelacionadoId,
-      numeroVenta,
-      ventaLabel,
-      clienteId,
-      items,
-      total,
-      costoReal: economics.costoReal,
-      gananciaEstimada: economics.gananciaEstimada,
-      totalPagadoAnterior: 0,
-      montoCobrado,
-      saldoPendiente: computeComprobanteSaldoPendiente(total, montoCobrado),
-      medioPago,
-      notas: esDonacion ? (notas?.trim() ? `${notas.trim()} · Donación` : 'Donación') : notas,
-      esDonacion,
-      fecha: timestamp,
-      negocioId: businessId,
-    });
-
-    for (const line of items) {
-      const stockError = await applyStockForVenta(
-        businessId,
-        ventaRef.id,
+    // Notas de crédito / débito: flujo ERP específico (devoluciones).
+    // Ticket/factura mostrador: mismo Application Service que WhatsApp.
+    if (esNotaComprobante(tipoComprobante)) {
+      const { numero: numeroVenta, label: ventaLabel } = await allocateSaleNumber(businessId);
+      const esDonacion = total === 0 && !esNotaComprobante(tipoComprobante);
+      const ventaRef = await db.collection(`negocios/${businessId}/ventas`).add({
+        origen: 'mostrador',
+        pedidoId: null,
+        estado: 'confirmada',
+        tipoComprobante,
+        motivo: notaFields.motivo || null,
+        descripcionMotivo: notaFields.descripcionMotivo || null,
+        comprobanteRelacionadoId: notaFields.comprobanteRelacionadoId,
+        numeroVenta,
         ventaLabel,
-        [line],
-        tipoComprobante
-      );
-      if (stockError) {
-        await reverseStockMovementsForDeletedVenta(
+        clienteId,
+        items,
+        total,
+        costoReal: economics.costoReal,
+        gananciaEstimada: economics.gananciaEstimada,
+        totalPagadoAnterior: 0,
+        montoCobrado,
+        saldoPendiente: computeComprobanteSaldoPendiente(total, montoCobrado),
+        medioPago,
+        notas: esDonacion ? (notas?.trim() ? `${notas.trim()} · Donación` : 'Donación') : notas,
+        esDonacion,
+        fecha: timestamp,
+        negocioId: businessId,
+      });
+
+      for (const line of items) {
+        const stockError = await applyStockForVenta(
           businessId,
           ventaRef.id,
           ventaLabel,
-          items
+          [line],
+          tipoComprobante
         );
-        await ventaRef.delete();
-        return res.status(400).json({ error: stockError });
+        if (stockError) {
+          await reverseStockMovementsForDeletedVenta(
+            businessId,
+            ventaRef.id,
+            ventaLabel,
+            items,
+            tipoComprobante
+          );
+          await ventaRef.delete();
+          return res.status(400).json({ error: stockError });
+        }
       }
+
+      let movimientoCajaId: string | null = null;
+      if (montoCobrado > 0) {
+        movimientoCajaId = esNotaCredito(tipoComprobante)
+          ? await createCashRefund(businessId, {
+              monto: montoCobrado,
+              concepto: `Devolución nota de crédito #${ventaLabel}`,
+              origenId: ventaRef.id,
+              origenTipo: 'venta_nota_credito',
+              medio: medioPago,
+              clienteId,
+              ventaId: ventaRef.id,
+              ventaLabel,
+            })
+          : await createCashIncome(businessId, {
+              monto: montoCobrado,
+              concepto: `Venta mostrador #${ventaLabel}`,
+              origenId: ventaRef.id,
+              origenTipo: 'venta_mostrador',
+              medio: medioPago,
+              clienteId,
+              ventaId: ventaRef.id,
+              ventaLabel,
+              pedidoId: null,
+            });
+        await ventaRef.update({ movimientoCajaId });
+      }
+
+      const saldoPendiente = computeComprobanteSaldoPendiente(total, montoCobrado);
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'sales',
+        action: 'create',
+        entityType: 'venta',
+        entityId: ventaRef.id,
+        entityLabel: ventaLabel,
+        summary: `Registró ${tipoComprobante} #${ventaLabel} · $${total}`,
+      });
+
+      return res.status(201).json({
+        id: ventaRef.id,
+        ventaLabel,
+        total,
+        montoCobrado,
+        saldoPendiente,
+      });
     }
 
-    let movimientoCajaId: string | null = null;
-    if (montoCobrado > 0) {
-      movimientoCajaId = esNotaCredito(tipoComprobante)
-        ? await createCashRefund(businessId, {
-            monto: montoCobrado,
-            concepto: `Devolución nota de crédito #${ventaLabel}`,
-            origenId: ventaRef.id,
-            origenTipo: 'venta_nota_credito',
-            medio: medioPago,
-            clienteId,
-            ventaId: ventaRef.id,
-            ventaLabel,
-          })
-        : await createCashIncome(businessId, {
-            monto: montoCobrado,
-            concepto: `Venta mostrador #${ventaLabel}`,
-            origenId: ventaRef.id,
-            origenTipo: 'venta_mostrador',
-            medio: medioPago,
-            clienteId,
-            ventaId: ventaRef.id,
-            ventaLabel,
-            pedidoId: null,
-          });
-      await ventaRef.update({ movimientoCajaId });
+    const { createMostradorSale } = await import('../domain/sales/create-mostrador-sale.ts');
+    const authUser = (req as AuthenticatedRequest).user;
+    let saleResult;
+    try {
+      saleResult = await createMostradorSale({
+        businessId,
+        clienteId,
+        items: items.map((line) => ({
+          stockItemId: line.stockItemId,
+          nombre: line.nombre,
+          cantidad: line.cantidad,
+          precioUnitario: line.precioUnitario,
+          subtotal: line.subtotal,
+          costoUnitario: line.costoUnitario,
+          tipoLinea: line.tipoLinea,
+          mueveStock: line.mueveStock,
+          costoPersonalizacion: line.costoPersonalizacion,
+          costosExtra: line.costosExtra,
+        })),
+        total,
+        montoCobrado,
+        medioPagoId: medioPago,
+        notas,
+        fechaIso: timestamp,
+        source: 'erp',
+        actorId: String(authUser?.userId ?? '').trim() || 'system',
+        tipoComprobante,
+        motivo: notaFields.motivo || null,
+        descripcionMotivo: notaFields.descripcionMotivo || null,
+        comprobanteRelacionadoId: notaFields.comprobanteRelacionadoId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error creating sale';
+      return res.status(400).json({ error: message });
     }
 
-    const saldoPendiente = computeComprobanteSaldoPendiente(total, montoCobrado);
-    const compromisoId = esNotaCredito(tipoComprobante)
-      ? null
-      : await maybeCreateCompromisoPago(businessId, {
-          body: req.body,
-          saldoPendiente,
-          clienteId,
-          origenTipo: 'venta',
-          origenId: ventaRef.id,
-          referenciaLabel: `Venta mostrador #${ventaLabel}`,
-          ventaId: ventaRef.id,
-        });
+    const compromisoId = await maybeCreateCompromisoPago(businessId, {
+      body: req.body,
+      saldoPendiente: saleResult.saldoPendiente,
+      clienteId,
+      origenTipo: 'venta',
+      origenId: saleResult.ventaId,
+      referenciaLabel: `Venta mostrador #${saleResult.ventaLabel}`,
+      ventaId: saleResult.ventaId,
+    });
 
     if (compromisoId) {
-      await ventaRef.update({ compromisoPagoId: compromisoId });
+      await db
+        .doc(`negocios/${businessId}/ventas/${saleResult.ventaId}`)
+        .update({ compromisoPagoId: compromisoId });
     }
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'sales',
       action: 'create',
       entityType: 'venta',
-      entityId: ventaRef.id,
-      entityLabel: ventaLabel,
-      summary: `Registró venta mostrador #${ventaLabel} · $${total}`,
+      entityId: saleResult.ventaId,
+      entityLabel: saleResult.ventaLabel,
+      summary: `Registró venta mostrador #${saleResult.ventaLabel} · $${saleResult.total}`,
     });
 
     return res.status(201).json({
-      id: ventaRef.id,
-      ventaLabel,
-      total,
-      montoCobrado,
-      saldoPendiente,
+      id: saleResult.ventaId,
+      ventaLabel: saleResult.ventaLabel,
+      total: saleResult.total,
+      montoCobrado: saleResult.montoCobrado,
+      saldoPendiente: saleResult.saldoPendiente,
       compromisoPagoId: compromisoId,
+      medioPago: saleResult.medioPago,
     });
   } catch (error) {
     console.error('Error creating sale:', error);

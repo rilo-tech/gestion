@@ -14,13 +14,18 @@ export function normalizeTransactionDateToIso(
   return fallback.toISOString();
 }
 
+function toSafeIsoDate(value: Date): Date {
+  return Number.isNaN(value.getTime()) ? new Date() : value;
+}
+
 /** Conserva hora y minuto cuando vienen en el ISO (p. ej. movimientos de caja). */
 export function normalizeTransactionDateTimeToIso(
   value: unknown,
   fallback: Date = new Date()
 ): string {
+  const safeFallback = toSafeIsoDate(fallback);
   const raw = String(value ?? '').trim();
-  if (!raw) return fallback.toISOString();
+  if (!raw || raw === '[object Object]') return safeFallback.toISOString();
 
   const parsed = Date.parse(raw);
   if (!Number.isNaN(parsed)) {
@@ -32,5 +37,5 @@ export function normalizeTransactionDateTimeToIso(
     return new Date(`${dateOnly}T12:00:00`).toISOString();
   }
 
-  return fallback.toISOString();
+  return safeFallback.toISOString();
 }

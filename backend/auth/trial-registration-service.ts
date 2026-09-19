@@ -32,10 +32,21 @@ import {
 } from '../../shared/platform-access.ts';
 import { getCommercialCatalog } from './commercial-catalog.ts';
 import { trialDaysForProduct } from '../../shared/trial-state.ts';
-import { getBillingProduct } from '../../shared/billing-catalog.ts';
+import { getBillingProduct, resolveBillingCountry } from '../../shared/billing-catalog.ts';
 import { INCLUDED_ADMIN_SEATS } from '../../shared/subscription-modules.ts';
 import { seedBusinessWhatsappAccess } from '../whatsapp/seed-access.ts';
 import { enableProductOnBusiness } from './enable-product.ts';
+import { initialProfileForTrialProduct } from '../../shared/business-profile.ts';
+import {
+  CASH_DEFAULT_CATEGORIAS_GASTO,
+  CASH_DEFAULT_CONCEPTOS_INGRESO,
+  CASH_DEFAULT_MEDIOS_PAGO,
+} from '../../shared/cash-taxonomy.ts';
+import { buildStandardAppConfigSeed } from '../../shared/rilo-standard-config.ts';
+import {
+  buildCommercialPriceSnapshot,
+  quoteCommercialMonthly,
+} from '../../shared/commercial-pricing.ts';
 
 const FALLBACK_TRIAL_PLAN_ID = process.env.TRIAL_DEFAULT_PLAN_ID ?? 'plan_intermedio';
 
@@ -62,24 +73,44 @@ function loginFromEmail(email: string): string {
 async function seedBusinessConfig(
   businessId: string,
   rubro: string,
-  pais: string
+  pais: string,
+  trialProduct?: TrialProductId
 ): Promise<void> {
   const ref = db.doc(`negocios/${businessId}/config/app`);
   const snap = await ref.get();
   if (snap.exists) return;
 
-  await ref.set({
+  const payload: Record<string, unknown> = {
     general: {
       moneda: pais.toLowerCase().includes('uruguay') || pais === 'UY' ? 'UYU' : 'ARS',
       nombreComercial: '',
     },
     onboarding: {
       rubro,
-      completed: false,
+      completed: trialProduct === 'cash',
+      ...(trialProduct === 'cash' ? { step: 'done', product: 'cash' } : {}),
     },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  });
+  };
+
+  if (trialProduct === 'cash') {
+    payload.finanzas = {
+      categoriasGasto: CASH_DEFAULT_CATEGORIAS_GASTO,
+      conceptosIngreso: CASH_DEFAULT_CONCEPTOS_INGRESO,
+      mediosPago: CASH_DEFAULT_MEDIOS_PAGO,
+    };
+  } else if (trialProduct === 'whatsapp' || trialProduct === 'erp' || trialProduct === 'completo') {
+    const standard = buildStandardAppConfigSeed();
+    payload.standardConfigVersion = standard.standardConfigVersion;
+    payload.finanzas = {
+      categoriasGasto: standard.finanzas.categoriasGasto,
+      mediosPago: standard.finanzas.mediosPago,
+      conceptosIngreso: [],
+    };
+  }
+
+  await ref.set(payload);
 }
 
 async function resolveExistingBusinessId(params: {
@@ -202,6 +233,23 @@ export async function completeTrialRegistration(registrationId: string): Promise
   const now = new Date().toISOString();
   const commercial = await getCommercialCatalog();
   const trialDays = commercial.trialDays || trialDaysForProduct(trialProduct);
+  const billingCountry = resolveBillingCountry(registration.pais);
+  const initialQuote = quoteCommercialMonthly({
+    catalog: commercial,
+    productId: trialProduct,
+    country: billingCountry,
+    activeErpUsers: INCLUDED_ADMIN_SEATS,
+    billableWhatsappNumbers:
+      trialProduct === 'cash' || trialProduct === 'whatsapp' || trialProduct === 'completo'
+        ? 1
+        : 0,
+  });
+  const priceSnapshot = buildCommercialPriceSnapshot({
+    catalog: commercial,
+    quote: initialQuote,
+    productId: trialProduct,
+  });
+  const initialBusinessProfile = initialProfileForTrialProduct(trialProduct);
 
   const contactVerification: TrialContactVerification = {
     email: registration.email,
@@ -225,11 +273,17 @@ export async function completeTrialRegistration(registrationId: string): Promise
   const lifecycle: TrialLifecycle = {
     source: 'self_service_trial',
     campaignSource: registration.campaignSource ?? null,
+    landingPath: registration.landingPath ?? null,
     utmSource: registration.utmSource ?? null,
+    utmMedium: registration.utmMedium ?? null,
     utmCampaign: registration.utmCampaign ?? null,
+    utmContent: registration.utmContent ?? null,
+    utmTerm: registration.utmTerm ?? null,
+    fbclid: registration.fbclid ?? null,
+    gclid: registration.gclid ?? null,
     rubro: registration.rubro,
     pais: registration.pais,
-    ciudad: registration.ciudad,
+    ciudad: registration.ciudad ?? null,
     ownerName: registration.ownerName,
     onboardingStep: 'welcome',
     usageSummary: {
@@ -258,10 +312,12 @@ export async function completeTrialRegistration(registrationId: string): Promise
     contactVerification,
     lifecycle,
     platformAccess: platformAccessFromTrialProduct(trialProduct),
+    businessProfile: initialBusinessProfile,
     suscripcion: {
       limiteAdministradores: INCLUDED_ADMIN_SEATS,
       limiteOperadores: 0,
       limiteUsuariosTotal: INCLUDED_ADMIN_SEATS,
+      priceSnapshot,
     },
   });
 
@@ -286,7 +342,7 @@ export async function completeTrialRegistration(registrationId: string): Promise
     updatedAt: now,
   });
 
-  await seedBusinessConfig(businessId, registration.rubro, registration.pais);
+  await seedBusinessConfig(businessId, registration.rubro, registration.pais, trialProduct);
   await seedBusinessWhatsappAccess({
     businessId,
     phone: registration.phone,
@@ -353,7 +409,7 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
   businessName: string;
   rubro: string;
   pais: string;
-  ciudad: string;
+  ciudad: string | null;
   ownerName: string;
   email: string;
   phone: string;
@@ -370,9 +426,14 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
   }
 
   const businessName = String(body.businessName ?? body.nombreNegocio ?? '').trim();
-  const rubro = String(body.rubro ?? '').trim();
-  const pais = String(body.pais ?? 'Uruguay').trim();
-  const ciudad = String(body.ciudad ?? '').trim();
+  const rubro = String(body.rubro ?? 'otro').trim() || 'otro';
+  const pais = String(body.pais ?? 'Uruguay').trim() || 'Uruguay';
+  const ciudadRaw = body.ciudad;
+  const ciudad =
+    ciudadRaw == null || String(ciudadRaw).trim() === '' || /^a\s+completar$/i.test(String(ciudadRaw).trim())
+      ? null
+      : String(ciudadRaw).trim();
+  // ciudad null = pendiente (sin placeholder ficticio).
   const ownerName = String(body.ownerName ?? body.nombreResponsable ?? '').trim();
   const email = String(body.email ?? '').trim().toLowerCase();
   const phoneCountryCode = String(body.phoneCountryCode ?? body.phoneDial ?? DEFAULT_PHONE_DIAL).trim();
@@ -383,13 +444,12 @@ export function validateRegistrationPayload(body: Record<string, unknown>): {
   const password = String(body.password ?? '').trim();
   const loginUsername = String(body.loginUsername ?? loginFromEmail(email)).trim().toLowerCase();
   const whatsappOptIn = body.whatsappOptIn === true;
-  const marketingEmailOptIn = body.marketingEmailOptIn !== false;
+  const marketingEmailOptIn = body.marketingEmailOptIn === true;
   const acceptTerms = body.acceptTerms === true;
   const trialProduct = parseTrialProductFromBody(body);
 
   if (businessName.length < 2) throw new Error('BUSINESS_NAME_REQUIRED');
-  if (!rubro) throw new Error('RUBRO_REQUIRED');
-  if (!pais || !ciudad) throw new Error('LOCATION_REQUIRED');
+  if (!pais) throw new Error('LOCATION_REQUIRED');
   if (ownerName.length < 2) throw new Error('OWNER_NAME_REQUIRED');
   if (!isValidEmail(email)) throw new Error('EMAIL_INVALID');
   if (!phone || !isValidE164Phone(phone)) throw new Error('PHONE_INVALID');
@@ -447,8 +507,14 @@ export async function registerTrialLead(
     privacyAcceptedAt: now,
     consentIp,
     utmSource: typeof body.utmSource === 'string' ? body.utmSource : null,
+    utmMedium: typeof body.utmMedium === 'string' ? body.utmMedium : null,
     utmCampaign: typeof body.utmCampaign === 'string' ? body.utmCampaign : null,
+    utmContent: typeof body.utmContent === 'string' ? body.utmContent : null,
+    utmTerm: typeof body.utmTerm === 'string' ? body.utmTerm : null,
+    fbclid: typeof body.fbclid === 'string' ? body.fbclid : null,
+    gclid: typeof body.gclid === 'string' ? body.gclid : null,
     campaignSource: typeof body.campaignSource === 'string' ? body.campaignSource : null,
+    landingPath: typeof body.landingPath === 'string' ? body.landingPath : null,
     trialProduct: parsed.trialProduct,
     existingBusinessId,
   });

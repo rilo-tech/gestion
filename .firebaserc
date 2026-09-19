@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "rilo-7eff4"
+    "default": "rilo-7eff4",
+    "production": "rilo-7eff4",
+    "staging": "rilo-staging"
   }
 }

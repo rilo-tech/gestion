@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DEFAULT_COMMERCIAL_CATALOG, clampCommercialCatalog } from './commercial-catalog.ts';
 import {
+  applyCashProductSeed,
   applyIncludedAi200Migration,
   isLegacyListPriceCatalog,
+  needsCashProductSeed,
   needsIncludedAi200Migration,
 } from './commercial-migrations.ts';
 
@@ -49,5 +51,19 @@ describe('migraciones de catálogo', () => {
       },
     });
     assert.equal(catalog.products.whatsapp.amountMonthlyUY, 800);
+  });
+
+  it('seed de RILO Caja marca migración una sola vez', () => {
+    const legacy = clampCommercialCatalog({
+      ...DEFAULT_COMMERCIAL_CATALOG,
+      migrations: { cashProductSeedAppliedAt: null },
+    });
+    assert.equal(needsCashProductSeed(legacy), true);
+    const first = applyCashProductSeed(legacy, new Date('2026-08-31T12:00:00Z'));
+    assert.equal(first.changed, true);
+    assert.equal(first.catalog.products.cash.amountMonthlyUY, 390);
+    assert.ok(first.catalog.migrations?.cashProductSeedAppliedAt);
+    const second = applyCashProductSeed(first.catalog);
+    assert.equal(second.changed, false);
   });
 });

@@ -66,6 +66,27 @@ export interface CashSummary {
   ambitos: Record<string, CashAmbitoSummary>;
 }
 
+export interface CashMonthlyIncomeRow {
+  period: string;
+  label: string;
+  year: number;
+  month: number;
+  ingreso: number;
+  egreso: number;
+  neto: number;
+}
+
+export interface CashMonthlyIncomeSummary {
+  monthsRequested: number;
+  monthsWithIncome: number;
+  totalIngresos: number;
+  totalEgresos: number;
+  promedioMensualIngresos: number;
+  months: CashMonthlyIncomeRow[];
+  cashAccountId?: string;
+  cashAccountName?: string;
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -101,6 +122,14 @@ export class CashService {
     return this.http.get<CashSummary>(`/api/cash/${this.businessId}/summary`, { params });
   }
 
+  getMonthlyIncome(months = 6, ambitoId?: string): Observable<CashMonthlyIncomeSummary> {
+    const params: Record<string, string> = { months: String(months) };
+    if (ambitoId) params.ambitoId = ambitoId;
+    return this.http.get<CashMonthlyIncomeSummary>(`/api/cash/${this.businessId}/monthly-income`, {
+      params,
+    });
+  }
+
   createMovement(
     movement: Omit<CashMovement, 'id' | 'fecha'> & { fecha?: string }
   ): Observable<{ id: string }> {
@@ -111,7 +140,7 @@ export class CashService {
     movementId: string,
     movement: Pick<
       CashMovement,
-      'tipo' | 'monto' | 'concepto' | 'medio' | 'ambito' | 'descripcion' | 'fecha'
+      'tipo' | 'monto' | 'concepto' | 'medio' | 'ambito' | 'descripcion' | 'fecha' | 'categoriaId'
     >
   ): Observable<{ id: string }> {
     return this.http.put<{ id: string }>(

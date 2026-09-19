@@ -45,6 +45,10 @@ import {
   DEFAULT_TRIAL_DAYS,
   TRIAL_STATUS_LABELS,
 } from '../../../../../shared/trial-state.ts';
+import {
+  TRIAL_PRODUCT_LABELS,
+  type TrialProductId,
+} from '../../../../../shared/platform-access.ts';
 
 type PlatformTab = 'empresas' | 'pruebas' | 'pagos' | 'planes';
 type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
@@ -192,9 +196,9 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
                 placeholder="Contraseña inicial"
                 class="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
               <p
-                *ngIf="businessDraft.trialProduct === 'whatsapp' || businessDraft.trialProduct === 'completo'"
+                *ngIf="businessDraft.trialProduct === 'cash' || businessDraft.trialProduct === 'whatsapp' || businessDraft.trialProduct === 'completo'"
                 class="md:col-span-2 text-xs text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
-                Con RILO Bot / RILO Completo el WhatsApp se habilita automáticamente con ese número.
+                Con RILO Caja, RILO Bot o RILO Completo el WhatsApp se habilita automáticamente con ese número.
               </p>
               <label class="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900 md:col-span-2 cursor-pointer">
                 <input
@@ -993,7 +997,7 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
         </article>
         <p class="text-sm text-gray-600 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
           Los planes son <strong>plantillas para empresas nuevas</strong> y deben coincidir con la landing:
-          RILO Bot · RILO Gestión · RILO Completo (UYU) + precio por usuario extra.
+          RILO Bot (números WA) · RILO Gestión (usuarios panel) · RILO Completo (ambos).
           Para cambiar un cliente puntual, abrí su ficha en Empresas.
         </p>
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1021,12 +1025,19 @@ type PaymentFilter = 'all' | SubscriptionPaymentStatus | 'en_prueba';
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">{{ product.name }}</p>
             <p class="text-lg font-bold text-gray-900 mt-1">{{ product.priceLabel }}</p>
             <p class="text-xs text-gray-500 mt-1">
-              + {{ formatMoney(product.extraUserMonthly) }}/usuario extra
-              <span *ngIf="product.extraWhatsappNumberMonthly">
-                · + {{ formatMoney(product.extraWhatsappNumberMonthly) }}/número extra
-              </span>
-              · {{ product.includedErpUsers }} usuario{{ product.includedErpUsers === 1 ? '' : 's' }}
-              · {{ product.includedWhatsappNumbers }} número{{ product.includedWhatsappNumbers === 1 ? '' : 's' }} WA
+              <ng-container *ngIf="product.extraUserMonthly > 0">
+                + {{ formatMoney(product.extraUserMonthly) }}/usuario Gestión
+              </ng-container>
+              <ng-container *ngIf="product.extraUserMonthly > 0 && product.extraWhatsappNumberMonthly"> · </ng-container>
+              <ng-container *ngIf="product.extraWhatsappNumberMonthly">
+                + {{ formatMoney(product.extraWhatsappNumberMonthly) }}/número WA
+              </ng-container>
+              <ng-container *ngIf="product.extraUserMonthly > 0">
+                · {{ product.includedErpUsers }} usuario{{ product.includedErpUsers === 1 ? '' : 's' }}
+              </ng-container>
+              <ng-container *ngIf="product.includedWhatsappNumbers > 0">
+                · {{ product.includedWhatsappNumbers }} número{{ product.includedWhatsappNumbers === 1 ? '' : 's' }} WA
+              </ng-container>
             </p>
           </div>
         </div>
@@ -1394,7 +1405,8 @@ export class PlatformComponent implements OnInit {
   syncingLandingPrices = false;
   commercialDraft: CommercialCatalog = clampCommercialCatalog(DEFAULT_COMMERCIAL_CATALOG);
   savingCommercial = false;
-  readonly commercialProductRows: { id: 'whatsapp' | 'erp' | 'completo'; label: string }[] = [
+  readonly commercialProductRows: { id: TrialProductId; label: string }[] = [
+    { id: 'cash', label: 'RILO Caja' },
     { id: 'whatsapp', label: 'RILO Bot' },
     { id: 'erp', label: 'RILO Gestión' },
     { id: 'completo', label: 'RILO Completo' },
@@ -1425,7 +1437,7 @@ export class PlatformComponent implements OnInit {
     id: '',
     nombre: '',
     planId: 'plan_basico',
-    trialProduct: 'whatsapp' as 'whatsapp' | 'erp' | 'completo',
+    trialProduct: 'whatsapp' as TrialProductId,
     enPrueba: false,
     trialStartDate: '',
     trialEndDate: '',
@@ -2137,9 +2149,9 @@ export class PlatformComponent implements OnInit {
   }
 
   trialProductLabel(product: string | null | undefined): string {
-    if (product === 'whatsapp') return 'RILO Bot';
-    if (product === 'erp') return 'RILO Gestión';
-    if (product === 'completo') return 'RILO Completo';
+    if (product && product in TRIAL_PRODUCT_LABELS) {
+      return TRIAL_PRODUCT_LABELS[product as TrialProductId];
+    }
     return product ?? '';
   }
 
@@ -2152,13 +2164,15 @@ export class PlatformComponent implements OnInit {
     }
     const access = business.platformAccess;
     if (access?.whatsappEnabled && access?.erpWebEnabled) return 'RILO Completo';
+    if (access?.whatsappEnabled && access.trialProduct === 'cash') return 'RILO Caja';
     if (access?.whatsappEnabled) return 'RILO Bot';
     if (access?.erpWebEnabled) return 'RILO Gestión';
     return business.plan?.nombre || '—';
   }
 
   onCreateProductChange() {
-    const map: Record<'whatsapp' | 'erp' | 'completo', string> = {
+    const map: Record<TrialProductId, string> = {
+      cash: 'plan_caja',
       whatsapp: 'plan_basico',
       erp: 'plan_intermedio',
       completo: 'plan_profesional',
@@ -2178,6 +2192,7 @@ export class PlatformComponent implements OnInit {
       .toLowerCase();
     const phone = this.businessDraft.supervisorPhone.trim();
     const needsWhatsapp =
+      this.businessDraft.trialProduct === 'cash' ||
       this.businessDraft.trialProduct === 'whatsapp' ||
       this.businessDraft.trialProduct === 'completo';
 

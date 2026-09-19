@@ -37,6 +37,10 @@ export function nBoolean(): Record<string, unknown> {
   return { type: ['boolean', 'null'] };
 }
 
+export function nArray(items: Record<string, unknown>): Record<string, unknown> {
+  return { type: ['array', 'null'], items };
+}
+
 export function strictObject(properties: Record<string, unknown>): Record<string, unknown> {
   const keys = Object.keys(properties);
   return {

@@ -9,7 +9,7 @@ export const FORM_PAYMENT_PAIR_GRID_CLASS =
 /** Inputs, selects y textareas compactos en móvil; tamaño normal desde sm. */
 /** Misma altura que `.form-control` (min-h-8 / sm:min-h-10) para alinear con buscadores y fechas. */
 export const FORM_COMPACT_FIELD_CLASS =
-  'form-control w-full min-h-8 sm:min-h-10 box-border px-2 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+  'form-control w-full min-h-10 box-border px-3 py-2 sm:px-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm leading-normal outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50 dark:disabled:bg-gray-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 /** Valor numérico solo lectura en tarjetas móvil (detalle y formulario). */
 export const FORM_COMPACT_MOBILE_NUMERIC_VALUE_CLASS =
@@ -20,14 +20,14 @@ export const FORM_COMPACT_MOBILE_NUMERIC_INPUT_CLASS =
   'txn-mobile-num-input w-full min-w-0 h-4 max-h-4 px-0 py-0 m-0 box-border border-0 border-b border-gray-200/80 dark:border-gray-700/80 bg-transparent text-xs leading-4 tabular-nums outline-none rounded-none shadow-none focus:border-teal-500 focus:ring-0 dark:bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
 export const FORM_COMPACT_LABEL_CLASS =
-  'block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-0.5 sm:mb-1';
+  'block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1';
 
 /** Fila de etiqueta alineada con campos en grid (proveedor + fecha, etc.). */
 export const FORM_COMPACT_LABEL_ROW_CLASS =
-  'min-h-[1.125rem] sm:min-h-[1.375rem] mb-0.5 sm:mb-1 flex items-center';
+  'min-h-[1.25rem] sm:min-h-[1.375rem] mb-1 flex items-center';
 
 export const FORM_COMPACT_LABEL_INLINE_CLASS =
-  'text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 leading-tight';
+  'text-sm font-medium text-gray-700 dark:text-gray-300 leading-tight';
 
 /** Contenedor de chips + buscador embebido (etiquetas, etc.). */
 export const FORM_COMPACT_CHIP_INPUT_WRAP_CLASS =
@@ -41,4 +41,4 @@ export const FORM_PICKER_OVERLAY_HOST_CLASS = 'relative z-50 overflow-visible';
 
 /** Menú desplegable de buscadores picker (sobre el host z-50 y secciones con z-30). */
 export const FORM_PICKER_OVERLAY_MENU_CLASS =
-  'product-search-menu absolute left-0 right-0 top-full z-[60] mt-1 w-full max-h-56 sm:max-h-52 overflow-y-auto overscroll-y-contain touch-pan-y rounded-lg border border-gray-200 bg-white text-gray-900 shadow-xl divide-y divide-gray-100 dark:divide-gray-700 dark:bg-gray-900';
+  'product-search-menu absolute left-0 right-0 top-full z-[60] mt-1 w-full max-h-56 sm:max-h-52 overflow-y-auto overscroll-y-contain touch-pan-y rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-xl divide-y divide-gray-100 dark:divide-gray-700';

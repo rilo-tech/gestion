@@ -33,6 +33,7 @@ import { FORM_COMPACT_CHIP_INPUT_WRAP_CLASS } from '../../shared/components/form
 import { Subscription } from 'rxjs';
 import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
+import { FormDirtyTracker, PersistWaiter } from '../../core/utils/unsaved-changes';
 
 export interface SupplierFormSaveEvent {
   id: string;
@@ -184,6 +185,8 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   etiquetasText = '';
   private etiquetaSelectOptionsCache: SearchableSelectOption[] = [];
   private etiquetaSelectOptionsKey = '';
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   get isEditing(): boolean {
     return !!this.supplierId;
@@ -249,12 +252,13 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
 
     this.loadingSupplier = false;
     this.supplierForm = this.emptySupplierForm();
-    if (this.prefillNombre.trim()) {
-      this.supplierForm.nombre = this.prefillNombre.trim();
-    }
     this.etiquetasText = '';
     this.etiquetaPicker = '';
     this.syncEtiquetaSelectOptions();
+    this.dirty.capture(this.supplierDirtySnapshot());
+    if (this.prefillNombre.trim()) {
+      this.supplierForm.nombre = this.prefillNombre.trim();
+    }
   }
 
   private loadSupplier(id: string) {
@@ -272,6 +276,7 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         this.etiquetasText = (supplier.etiquetas ?? []).join(', ');
         this.etiquetaPicker = '';
         this.loadingSupplier = false;
+        this.dirty.capture(this.supplierDirtySnapshot());
       },
       error: () => {
         this.loadingSupplier = false;
@@ -324,12 +329,39 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       .filter(Boolean);
   }
 
+  hasUnsavedChanges(): boolean {
+    if (this.formReadOnly) return false;
+    return this.dirty.isDirty(this.supplierDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.saveSupplier();
+    if (!this.savingSupplier && this.persistWaiter.isPending) {
+      this.persistWaiter.finish(false);
+    }
+    return result;
+  }
+
+  private supplierDirtySnapshot() {
+    return {
+      nombre: this.supplierForm.nombre ?? '',
+      telefono: this.supplierForm.telefono ?? '',
+      email: this.supplierForm.email ?? '',
+      direccion: this.supplierForm.direccion ?? '',
+      igWeb: this.supplierForm.redes?.igWeb ?? '',
+      etiquetas: this.resolveEtiquetas(),
+    };
+  }
+
   saveSupplier() {
     if (!this.supplierForm.nombre?.trim()) {
       this.dialogService.alert({
         title: 'Campo requerido',
         message: 'Ingresá el nombre del proveedor.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -361,11 +393,17 @@ export class SupplierFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         next: (response) => {
           this.savingSupplier = false;
           const id = this.supplierId ?? response.id;
-          if (!id) return;
+          if (!id) {
+            this.persistWaiter.finish(false);
+            return;
+          }
+          this.dirty.capture(this.supplierDirtySnapshot());
+          this.persistWaiter.finish(true);
           this.saved.emit({ id, supplier: { ...payload, id } });
         },
         error: () => {
           this.savingSupplier = false;
+          this.persistWaiter.finish(false);
           this.dialogService.alert({
             title: 'Error',
             message: this.supplierId

@@ -123,7 +123,30 @@ export function orderMatchesStatusCardFilter(
   if (cardValue === 'entregado') {
     return status === 'entregado' || status === 'entregado_con_saldo';
   }
+  if (cardValue === 'pendiente') {
+    return status === 'pendiente';
+  }
   return normalizeOrderEstadoValue(String(status)) === normalizeOrderEstadoValue(cardValue);
+}
+
+/** Conteos de las tarjetas KPI sobre el universo completo (sin filtros de pantalla). */
+export function countOrdersByStatusCard(
+  orders: Array<{ estado?: string }>,
+  cardValues: readonly string[],
+  pedidos?: OrderPedidosConfigShape
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of cardValues) {
+    counts[value] = 0;
+  }
+  for (const order of orders) {
+    for (const value of cardValues) {
+      if (orderMatchesStatusCardFilter(order.estado, value, pedidos)) {
+        counts[value] = (counts[value] ?? 0) + 1;
+      }
+    }
+  }
+  return counts;
 }
 
 export function getOrderStatusBadgeClass(

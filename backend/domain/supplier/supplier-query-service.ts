@@ -1,5 +1,6 @@
 import { db } from '../../firebase.ts';
 import { findSuppliersByName, resolveSupplierMatch } from '../../whatsapp/lookups.ts';
+import { finalizeEntityLookupResult } from '../entity-lookup-result.ts';
 
 export type SupplierEntityResult = {
   status: 'resolved' | 'ambiguous' | 'not_found';
@@ -18,15 +19,22 @@ export async function findSupplier(businessId: string, query: string): Promise<S
   const hint = String(query ?? '').trim();
   if (!hint) return { status: 'not_found', query: '' };
   const resolved = await resolveSupplierMatch(businessId, hint);
-  if (resolved.status === 'unique') {
-    return { status: 'resolved', entity: { id: resolved.supplier.id, name: resolved.supplier.nombre }, query: hint };
-  }
-  if (resolved.status === 'none') return { status: 'not_found', query: hint };
-  return {
-    status: 'ambiguous',
+  const mapped = finalizeEntityLookupResult({
     query: hint,
-    candidates: resolved.candidates.map((row) => ({ id: row.id, name: row.nombre, score: row.score })),
-  };
+    unique: resolved.status === 'unique' ? resolved.supplier : null,
+    none: resolved.status === 'none',
+    ambiguousCandidates: resolved.status === 'ambiguous' ? resolved.candidates : [],
+    toEntity: (row) => ({ id: row.id, name: row.nombre }),
+    getId: (row) => row.id,
+  });
+  if (mapped.status === 'ambiguous') {
+    return {
+      status: 'ambiguous',
+      query: hint,
+      candidates: mapped.candidates!.map((row) => ({ id: row.id, name: row.nombre, score: row.score })),
+    };
+  }
+  return mapped;
 }
 
 export async function getSupplier(

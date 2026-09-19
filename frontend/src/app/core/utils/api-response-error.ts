@@ -27,3 +27,27 @@ export function isHtmlInsteadOfJsonError(err: unknown): boolean {
 
 export const API_HTML_RESPONSE_MESSAGE =
   'No se pudo conectar con la API del servidor. Si acabás de desplegar, esperá 1–2 minutos y probá de nuevo.';
+
+export function extractHttpErrorMessage(err: unknown, fallback: string): string {
+  if (isHtmlInsteadOfJsonError(err)) return API_HTML_RESPONSE_MESSAGE;
+
+  const http = err as { error?: unknown; message?: string };
+  const body = http.error;
+
+  if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+    return (body as { error: string }).error;
+  }
+
+  if (typeof body === 'string' && body.trim() && !body.trimStart().toLowerCase().startsWith('<!')) {
+    try {
+      const parsed = JSON.parse(body) as { error?: unknown };
+      if (typeof parsed.error === 'string') return parsed.error;
+    } catch {
+      if (body.length < 220 && !body.toLowerCase().includes('unexpected token')) {
+        return body;
+      }
+    }
+  }
+
+  return fallback;
+}

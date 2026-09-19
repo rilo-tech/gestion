@@ -8,8 +8,9 @@ import { allocateOrderNumber, resolveOrderLabel } from '../utils/order-number.ts
 import { formatOrderStockMotivo } from '../utils/stock-movimientos.ts';
 import { productControlsStock } from '../utils/stock-product.ts';
 import { createSaleFromOrder } from '../utils/create-sale-from-order.ts';
+import { syncOrderLinkedVentaSaldo } from '../utils/sync-order-linked-venta.ts';
 import { createCompanyRouter } from './create-company-router.ts';
-import { requireBusinessModule } from '../auth/middleware.ts';
+import { requireBusinessModule, requireBusinessFeature } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { getBusinessSubscription } from '../auth/business.ts';
 import { businessHasModule } from '../auth/subscription-entitlements.ts';
@@ -71,6 +72,7 @@ import {
 } from '../utils/order-photos.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('orders'));
 router.use(requireBusinessModule('pedidos'));
 
 export async function loadOrderPedidosConfig(businessId: string) {
@@ -248,7 +250,7 @@ async function enrichOrdersWithClientNames<
   }));
 }
 
-function normalizePagos(order: OrderRecord): OrderPayment[] {
+export function normalizePagos(order: OrderRecord): OrderPayment[] {
   const pagos = [...(order.pagos ?? [])];
   if (
     pagos.length === 0 &&
@@ -272,7 +274,7 @@ function getPagadoHaciaPedido(order: OrderRecord): number {
   return 0;
 }
 
-function orderAllowsPayments(order: OrderRecord): boolean {
+export function orderAllowsPayments(order: OrderRecord): boolean {
   if (isDraftStatus(order.estado) || isCancelledStatus(order.estado)) {
     return false;
   }
@@ -343,34 +345,11 @@ function validateOrderPaymentRemoval(
   return null;
 }
 
-async function syncOrderLinkedVentaSaldo(
-  businessId: string,
-  order: OrderRecord,
-  saldo: number,
-  total: number
-): Promise<void> {
-  const ventaId = order.ventaId ? String(order.ventaId).trim() : '';
-  if (!ventaId) return;
-
-  const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
-  const ventaSnap = await ventaRef.get();
-  if (!ventaSnap.exists) return;
-
-  const ventaData = ventaSnap.data() ?? {};
-  const totalVenta = Number(ventaData.total) || total;
-  const montoCobrado = Math.max(0, totalVenta - saldo);
-  await ventaRef.update({
-    montoCobrado,
-    saldoPendiente: saldo,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
 function normalizeEstado(estado?: string) {
   return String(estado ?? '').toLowerCase().trim();
 }
 
-function isDraftStatus(estado?: string) {
+export function isDraftStatus(estado?: string) {
   const value = normalizeEstado(estado);
   return value === 'borrador' || value.includes('borrador');
 }
@@ -940,6 +919,23 @@ export async function restoreStockForOrderEstadoRollback(
   };
 }
 
+router.get('/:businessId/status-counts', async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const snapshot = await db
+      .collection(`negocios/${businessId}/pedidos`)
+      .select('estado')
+      .get();
+    const items = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      estado: String((doc.data() as { estado?: unknown }).estado ?? ''),
+    }));
+    res.json({ items });
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching order status counts' });
+  }
+});
+
 router.get('/:businessId', async (req, res) => {
   try {
     const { businessId } = req.params;
@@ -1102,87 +1098,96 @@ router.post('/:businessId', async (req, res) => {
     const { senia, ...orderData } = req.body;
     const seniaAmount = Number(senia) || 0;
     const isDraft = isDraftStatus(orderData.estado);
-
     const total = Number(orderData.total) || 0;
     const normalizedItems = await enrichOrderItemsStockControl(businessId, orderData.items ?? []);
-
-    let orderNumberPatch: Partial<OrderRecord> = {};
-    if (!isDraft) {
-      const allocated = await allocateOrderNumber(businessId);
-      orderNumberPatch = {
-        numeroPedido: allocated.numero,
-        numeroPedidoLabel: allocated.label,
-      };
-    }
-
     const costoReal = Number(orderData.costoReal) || 0;
-    const docRef = await db.collection(`negocios/${businessId}/pedidos`).add({
-      ...orderData,
-      items: normalizedItems,
-      ...orderNumberPatch,
-      esDonacion: total === 0,
-      gananciaEstimada: resolveOrderGananciaForStorage(
-        total,
-        costoReal,
-        String(orderData.estado ?? ''),
-        orderData.gananciaEstimada
-      ),
-      senia: isDraft ? seniaAmount : 0,
-      totalPagado: 0,
-      saldo: total,
-      pagos: [],
-      seniaBloqueada: false,
-      stockDescontado: false,
-      stockPreparado: false,
-      estadoStock: 'sin_preparar',
-      negocioId: businessId,
-      createdAt: normalizeTransactionDateToIso(req.body.fecha ?? req.body.createdAt),
+
+    const { createOrder } = await import('../domain/orders/orders-application-service.ts');
+    const created = await createOrder({
+      businessId,
+      source: 'erp',
+      clientId: String(orderData.clienteId ?? ''),
+      clientName: String(orderData.clienteNombre ?? ''),
+      items: normalizedItems as OrderRecord['items'],
+      total,
+      costoReal,
+      estado: orderData.estado,
+      fechaEntrega: orderData.fechaEntrega ?? null,
+      descripcion: orderData.descripcion,
+      seniaAmount: isDraft ? 0 : seniaAmount,
+      isDraft,
+      extras: orderData,
     });
 
-    let seniaPatch: Partial<OrderRecord> = {};
-    if (!isDraft && seniaAmount > 0) {
-      seniaPatch = await registerInitialSenia(businessId, docRef.id, {
-        ...orderData,
-        ...orderNumberPatch,
-        senia: seniaAmount,
-      });
-    }
-
-    const mergedOrder: OrderRecord = {
-      ...orderData,
-      ...orderNumberPatch,
-      ...seniaPatch,
-      items: normalizedItems,
-      estado: orderData.estado,
-    };
-
-    const postCreatePatch: Partial<OrderRecord> = {
-      ...seniaPatch,
-      ...orderNumberPatch,
-    };
-    if (Object.keys(postCreatePatch).length > 0) {
-      await docRef.update(postCreatePatch);
-    }
-
-    const orderLabel = orderNumberPatch.numeroPedidoLabel ?? docRef.id;
+    const orderLabel = created.numeroPedidoLabel ?? created.orderId;
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'orders',
       action: 'create',
       entityType: 'pedido',
-      entityId: docRef.id,
+      entityId: created.orderId,
       entityLabel: orderLabel,
       summary: isDraft
         ? `Guardó borrador de pedido`
         : `Creó el pedido #${orderLabel}`,
     });
 
-    res.status(201).json({ id: docRef.id });
+    res.status(201).json({ id: created.orderId });
   } catch (error) {
     if (error instanceof StockValidationError || error instanceof OrderStockError) {
       return res.status(400).json({ error: error.message });
     }
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Error creating order' });
+  }
+});
+
+router.post('/:businessId/:orderId/finalize', async (req, res) => {
+  try {
+    const paymentAllowed = assertStaffOrderPaymentAllowed(req as AuthenticatedRequest);
+    if (!paymentAllowed.ok) {
+      return res.status(paymentAllowed.status).json({ error: paymentAllowed.error });
+    }
+    const { businessId, orderId } = req.params;
+    const modeRaw = String(req.body.mode ?? 'full').toLowerCase();
+    const mode =
+      modeRaw === 'partial' || modeRaw === 'pending' || modeRaw === 'full'
+        ? modeRaw
+        : 'full';
+    const { finalizeOrder } = await import('../domain/orders/orders-application-service.ts');
+    const result = await finalizeOrder({
+      businessId,
+      orderId,
+      source: 'erp',
+      mode,
+      amountPaid: req.body.amountPaid != null ? Number(req.body.amountPaid) : undefined,
+      paymentMethod: req.body.paymentMethod
+        ? String(req.body.paymentMethod).trim().toLowerCase()
+        : undefined,
+    });
+    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+      module: 'orders',
+      action: 'update',
+      entityType: 'pedido',
+      entityId: orderId,
+      summary: result.alreadyFinalized
+        ? `Pedido ya estaba finalizado`
+        : `Finalizó el pedido (${mode})`,
+    });
+    void import('../automation/attention-sync.ts')
+      .then((m) => m.syncAttentionNotices(businessId))
+      .catch(() => undefined);
+    res.json(result);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : '';
+    if (msg === 'ORDER_NOT_FOUND') return res.status(404).json({ error: 'Pedido no encontrado.' });
+    if (msg === 'ORDER_CANCELLED') return res.status(400).json({ error: 'Pedido cancelado.' });
+    if (msg === 'ORDER_NOT_READY') return res.status(400).json({ error: 'Confirmá el pedido antes de finalizar.' });
+    if (msg === 'AMOUNT_REQUIRED') return res.status(400).json({ error: 'Indicá el monto cobrado.' });
+    if (msg === 'AMOUNT_EXCEEDS_BALANCE') {
+      return res.status(400).json({ error: 'El monto supera el saldo del pedido.' });
+    }
+    console.error('Error finalizing order:', error);
+    res.status(500).json({ error: 'No se pudo finalizar el pedido.' });
   }
 });
 
@@ -1300,21 +1305,7 @@ router.post('/:businessId/:orderId/pagos', async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    const ventaId = order.ventaId ? String(order.ventaId).trim() : '';
-    if (ventaId) {
-      const ventaRef = db.collection(`negocios/${businessId}/ventas`).doc(ventaId);
-      const ventaSnap = await ventaRef.get();
-      if (ventaSnap.exists) {
-        const ventaData = ventaSnap.data() ?? {};
-        const totalVenta = Number(ventaData.total) || total;
-        const montoCobrado = Math.max(0, totalVenta - saldo);
-        await ventaRef.update({
-          montoCobrado,
-          saldoPendiente: saldo,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
+    await syncOrderLinkedVentaSaldo(businessId, order, saldo, total);
 
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'orders',
@@ -1905,7 +1896,34 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     const mergedTotal = Number(orderData.total ?? existingOrder.total) || 0;
     const mergedCostoReal = Number(orderData.costoReal ?? existingOrder.costoReal) || 0;
     const mergedEstadoLabel = String(orderData.estado ?? existingOrder.estado ?? '');
-    const updatePayload: Record<string, unknown> = {
+    if (Array.isArray(orderData.items)) {
+      const { toFirestoreOrderItem, stripUndefinedDeep: stripDeep } = await import(
+        '../whatsapp/firestore-mappers.ts'
+      );
+      orderData.items = (orderData.items as Record<string, unknown>[]).map((line) =>
+        stripDeep(
+          toFirestoreOrderItem({
+            stockItemId: line.stockItemId as string | undefined,
+            nombre: line.nombre as string | undefined,
+            cantidad: line.cantidad as number | undefined,
+            precioVenta: line.precioVenta as number | undefined,
+            costoUnitario: line.costoUnitario as number | undefined,
+            controlaStock: line.controlaStock as boolean | undefined,
+            costosExtra: line.costosExtra as Array<{ nombre?: string; costo?: number }> | undefined,
+            costoPersonalizacion: line.costoPersonalizacion as number | undefined,
+            tipoLinea: line.tipoLinea as 'producto' | 'concepto' | undefined,
+            mueveStock: line.mueveStock as boolean | undefined,
+            precioUnitario: line.precioUnitario as number | undefined,
+            subtotal: line.subtotal as number | undefined,
+          })
+        )
+      );
+    }
+
+    const { stripUndefinedDeep, assertNoUndefinedDeep } = await import(
+      '../whatsapp/firestore-mappers.ts'
+    );
+    const updatePayload: Record<string, unknown> = stripUndefinedDeep({
       ...orderData,
       ...orderNumberPatch,
       ...seniaPatch,
@@ -1919,7 +1937,12 @@ router.patch('/:businessId/:orderId', async (req, res) => {
         deliveryPatch.gananciaEstimada ?? orderData.gananciaEstimada
       ),
       updatedAt: new Date().toISOString(),
-    };
+    }) as Record<string, unknown>;
+
+    for (const key of Object.keys(updatePayload)) {
+      if (updatePayload[key] === undefined) delete updatePayload[key];
+    }
+    assertNoUndefinedDeep(updatePayload, 'pedido.update');
 
     if (deliveryPatch.pagos) {
       updatePayload.pagos = deliveryPatch.pagos.map(sanitizePagoForFirestore);
@@ -1947,6 +1970,17 @@ router.patch('/:businessId/:orderId', async (req, res) => {
     }
 
     await orderRef.update(updatePayload);
+
+    if (isDeliveryTransition && updatePayload.saldo !== undefined) {
+      await syncOrderLinkedVentaSaldo(
+        businessId,
+        {
+          ventaId: String(updatePayload.ventaId ?? mergedOrder.ventaId ?? '') || undefined,
+        },
+        Number(updatePayload.saldo) || 0,
+        Number(updatePayload.total ?? mergedOrder.total) || 0
+      );
+    }
 
     const orderLabel = resolveOrderLabel({
       ...existingOrder,

@@ -29,6 +29,17 @@ describe('whatsappActionsLabel', () => {
 });
 
 describe('DEFAULT_COMMERCIAL_CATALOG', () => {
+  it('RILO Caja incluye 100 acciones y 390 UYU', () => {
+    assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.cash.amountMonthlyUY, 390);
+    assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.cash.includedAi, 100);
+    assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.cash.includedWhatsappNumbers, 1);
+  });
+
+  it('Gestión y Completo usan precios EF 490 / 890', () => {
+    assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.erp.amountMonthlyUY, 490);
+    assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.completo.amountMonthlyUY, 890);
+  });
+
   it('Bot y Completo incluyen 200 acciones por WhatsApp, limited', () => {
     assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.whatsapp.includedAi, 200);
     assert.equal(DEFAULT_COMMERCIAL_CATALOG.products.completo.includedAi, 200);
@@ -59,16 +70,22 @@ describe('DEFAULT_COMMERCIAL_CATALOG', () => {
   });
 });
 
-describe('cuotas de los tres planes', () => {
+describe('cuotas de los cuatro planes', () => {
   const catalog = clampCommercialCatalog(DEFAULT_COMMERCIAL_CATALOG);
 
-  it('Bot incluye acciones, 1 número, extras de número y usuario', () => {
+  it('Caja incluye acciones y 1 número, sin usuario de panel', () => {
+    const lines = quotaLinesForProduct(catalog, 'cash', 'UY');
+    assert.ok(lines.some((line) => line.includes('100 acciones')));
+    assert.ok(lines.some((line) => line.includes('1 número de WhatsApp')));
+    assert.equal(lines.some((line) => line.toLowerCase().includes('usuario')), false);
+  });
+
+  it('Bot incluye acciones, 1 número y extra de número; sin usuario de panel', () => {
     const lines = quotaLinesForProduct(catalog, 'whatsapp', 'UY');
     assert.ok(lines.some((line) => line.includes('200 acciones')));
     assert.ok(lines.some((line) => line.includes('1 número de WhatsApp')));
     assert.ok(lines.some((line) => line.includes('Número adicional')));
-    assert.ok(lines.some((line) => line.includes('1 usuario incluido')));
-    assert.ok(lines.some((line) => line.includes('Usuario adicional')));
+    assert.equal(lines.some((line) => line.toLowerCase().includes('usuario')), false);
   });
 
   it('Gestión incluye usuario de panel y extra, sin número WhatsApp', () => {

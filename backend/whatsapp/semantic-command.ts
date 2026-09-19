@@ -865,20 +865,72 @@ function resolveTurnDates(dates: TurnDates | undefined, cashDate: string | undef
 export function resolveDateToken(value: string | undefined, today: string): string | undefined {
   const raw = String(value ?? '').trim();
   if (!raw) return undefined;
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    const iso = raw.slice(0, 10);
+    return isValidCalendarIsoDay(iso) ? iso : undefined;
+  }
   const fold = raw
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
   const base = parseIsoDay(today);
-  if (!base) return raw;
+  if (!base) return undefined;
   if (fold === 'hoy' || fold === 'today') return today;
   if (fold === 'ayer' || fold === 'yesterday') return shiftDay(base, -1);
   if (fold === 'manana' || fold === 'mañana' || fold === 'tomorrow') return shiftDay(base, 1);
   if (fold === 'pasado manana' || fold === 'pasado mañana' || fold === 'day_after_tomorrow') {
     return shiftDay(base, 2);
   }
-  return raw;
+
+  // AR: DD/MM, DD/MM/YY, DD/MM/YYYY (también con - o .)
+  const full = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/.exec(raw);
+  if (full) {
+    const day = Number(full[1]);
+    const month = Number(full[2]);
+    let year = Number(full[3]);
+    if (year < 100) year += 2000;
+    return buildIsoDay(day, month, year) ?? undefined;
+  }
+  const short = /^(\d{1,2})[/\-.](\d{1,2})$/.exec(raw);
+  if (short) {
+    return resolveDayMonthAgainstToday(Number(short[1]), Number(short[2]), today) ?? undefined;
+  }
+
+  return undefined;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function buildIsoDay(day: number, month: number, year: number): string | null {
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000 || year > 2100) return null;
+  const iso = `${year}-${pad2(month)}-${pad2(day)}`;
+  return isValidCalendarIsoDay(iso) ? iso : null;
+}
+
+function isValidCalendarIsoDay(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const check = new Date(Date.UTC(y, m - 1, d));
+  return (
+    check.getUTCFullYear() === y && check.getUTCMonth() === m - 1 && check.getUTCDate() === d
+  );
+}
+
+/** DD/MM sin año: usa el año de `today`; si cae >120 días en el futuro, año anterior. */
+function resolveDayMonthAgainstToday(day: number, month: number, today: string): string | null {
+  const year = Number(today.slice(0, 4));
+  if (!Number.isFinite(year)) return null;
+  let iso = buildIsoDay(day, month, year);
+  if (!iso) return null;
+  const todayMs = Date.parse(`${today}T12:00:00Z`);
+  const isoMs = Date.parse(`${iso}T12:00:00Z`);
+  if (Number.isFinite(todayMs) && Number.isFinite(isoMs) && isoMs - todayMs > 120 * 86400000) {
+    iso = buildIsoDay(day, month, year - 1);
+  }
+  return iso;
 }
 
 function parseIsoDay(iso: string): Date | null {

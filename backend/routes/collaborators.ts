@@ -1,7 +1,7 @@
 import type { Response } from 'express';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
-import { requirePermission, requireBusinessModule } from '../auth/middleware.ts';
+import { requirePermission, requireBusinessModule, requireBusinessFeature } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   buildCollaboratorsPeriodSummary,
@@ -17,6 +17,10 @@ import {
   collaboratorsCollection,
 } from '../utils/collaborators.ts';
 import {
+  CollaboratorMovementValidationError,
+  updateCollaboratorMovement,
+} from '../domain/collaborator/collaborator-movement-domain-service.ts';
+import {
   assertCanManageCollaboratorTeam,
   assertCollaboratorInScope,
   CollaboratorScopeError,
@@ -25,12 +29,18 @@ import {
 } from '../utils/collaborator-scope.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('collaborators'));
 router.use(requireBusinessModule('collaborators'));
 router.use('/:businessId', requirePermission('collaborators.access'));
 
 function handleCollaboratorRouteError(res: Response, error: unknown, fallback: string) {
   if (error instanceof CollaboratorScopeError) {
     return res.status(403).json({ error: error.message });
+  }
+  if (error instanceof CollaboratorMovementValidationError) {
+    const status =
+      error.code === 'PERMISSION_DENIED' ? 403 : error.code === 'INVALID_INPUT' ? 400 : 400;
+    return res.status(status).json({ error: error.message });
   }
   console.error(fallback, error);
   return res.status(500).json({ error: fallback });
@@ -272,57 +282,26 @@ router.patch('/:businessId/movimientos/:movimientoId', async (req, res) => {
     const { businessId, movimientoId } = req.params;
     const scope = await resolveCollaboratorAccessScope(businessId, authReq);
 
-    const ref = movementsCollection(businessId).doc(movimientoId);
-    const existing = await ref.get();
-    if (!existing.exists) return res.status(404).json({ error: 'Movimiento no encontrado.' });
-    const existingData = existing.data() ?? {};
-    assertCollaboratorInScope(scope, String(existingData.colaboradorId ?? ''));
-
-    const input = await parseMovementInput(businessId, req.body ?? {});
-    if (!input) {
-      return res.status(400).json({ error: 'Datos del movimiento inválidos.' });
-    }
-    assertCollaboratorInScope(scope, input.colaboradorId);
-    if (scope.mode === 'own' && (input.tipo === 'pago' || input.tipo === 'extra')) {
-      return res.status(403).json({ error: 'No tenés permiso para registrar pagos ni extras.' });
-    }
-
-    const collaborator = await getCollaborator(businessId, input.colaboradorId);
-    const colaboradorNombre = collaborator?.nombre ?? '';
-
-    const movimientoCajaId = await syncCollaboratorPaymentCash(
+    const result = await updateCollaboratorMovement({
       businessId,
       movimientoId,
-      { ...input, colaboradorNombre },
-      existingData.movimientoCajaId ? String(existingData.movimientoCajaId) : undefined
-    );
-
-    const patch = {
-      ...movementToFirestore(input),
-      colaboradorNombre,
-      movimientoCajaId: movimientoCajaId ?? null,
-    };
-    if (input.tipo === 'pago') {
-      patch.medioPagoId = input.medioPagoId ?? 'efectivo';
-    } else {
-      patch.medioPagoId = null;
-    }
-    await ref.update(patch);
+      body: req.body ?? {},
+      scope,
+    });
 
     await logActivityFromRequest(authReq, businessId, {
       module: 'collaborators',
       action: 'update',
       entityType: 'movimiento',
       entityId: movimientoId,
-      entityLabel: collaborator?.nombre,
-      summary: `Actualizó movimiento · ${collaborator?.nombre ?? ''}`,
+      entityLabel: result.movement.colaboradorNombre,
+      summary: `Actualizó movimiento · ${result.movement.colaboradorNombre ?? ''}`,
     });
 
     res.json({
-      id: movimientoId,
-      ...input,
-      colaboradorNombre,
-      movimientoCajaId,
+      id: result.id,
+      ...result.movement,
+      movimientoCajaId: result.movimientoCajaId,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'MEDIO_PAGO_INVALID') {

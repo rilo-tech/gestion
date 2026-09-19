@@ -9,10 +9,10 @@ import type { RitotechChatMessage } from '../../../../../shared/ritotech-marketi
   template: `
     <div class="rounded-2xl border border-gray-800 bg-gray-950/80 p-4 sm:p-5 max-w-md mx-auto shadow-xl">
       <div class="flex items-center gap-2 pb-3 mb-3 border-b border-gray-800">
-        <span class="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center text-xs font-bold">R</span>
+        <span class="w-8 h-8 rounded-full bg-teal-700 text-white flex items-center justify-center text-xs font-bold">R</span>
         <div>
           <p class="text-sm font-semibold text-white">RILO Bot</p>
-          <p class="text-[10px] text-gray-500">WhatsApp · en línea</p>
+          <p class="text-[10px] text-gray-400">WhatsApp · en línea</p>
         </div>
       </div>
       <div class="space-y-2.5">
@@ -32,7 +32,7 @@ import type { RitotechChatMessage } from '../../../../../shared/ritotech-marketi
           </div>
         </div>
       </div>
-      <p *ngIf="caption" class="mt-4 text-[11px] text-gray-500 text-center leading-relaxed">{{ caption }}</p>
+      <p *ngIf="caption" class="mt-4 text-[11px] text-gray-400 text-center leading-relaxed">{{ caption }}</p>
     </div>
   `,
 })

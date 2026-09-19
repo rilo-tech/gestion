@@ -1,8 +1,8 @@
 import { Component, DestroyRef, ElementRef, Injector, ViewChild, inject, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router } from '@angular/router';
-import { CashMovement, CashService, CashSummary } from '../../core/services/cash.service';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { CashMovement, CashMonthlyIncomeSummary, CashService, CashSummary } from '../../core/services/cash.service';
 import {
   AppConfig,
   CatalogConfigService,
@@ -23,6 +23,7 @@ import {
 import { DialogService } from '../../core/services/dialog.service';
 import { AuthService } from '../../core/services/auth.service';
 import { isDeletableCashMovement } from '../../core/utils/deletion-rules';
+import { extractHttpErrorMessage } from '../../core/utils/api-response-error';
 import {
   CalendarMonthRange,
   formatMonthYearLabel,
@@ -104,6 +105,7 @@ import {
   imports: [
     CommonModule,
     FormsModule,
+    RouterLink,
     LucideAngularModule,
     SearchableSelectComponent,
     TransactionModalComponent,
@@ -145,13 +147,13 @@ import {
       </app-module-page-header>
 
       <div *ngIf="usesAmbitoSeparation" class="mb-3">
-        <div class="rounded-lg border border-gray-100 bg-white shadow-sm overflow-hidden">
+        <div class="rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
           <div class="flex items-stretch border-b border-gray-100">
             <div class="flex min-w-0 flex-1 gap-0">
               <button
                 *ngFor="let ambito of cajaAmbitos"
                 type="button"
-                (click)="activeAmbitoTab = ambito.id"
+                (click)="selectAmbitoTab(ambito.id)"
                 class="px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap"
                 [class.border-teal-600]="activeAmbitoTab === ambito.id"
                 [class.text-teal-700]="activeAmbitoTab === ambito.id"
@@ -164,7 +166,7 @@ import {
             <div
               *ngIf="cajaAmbitos.length > 1"
               class="flex shrink-0 items-center gap-2 border-l-2 border-teal-600/40 bg-teal-50/70 px-3 py-2 text-sm">
-              <span class="text-[10px] font-semibold uppercase tracking-wide text-teal-800/70">Total neto</span>
+              <span class="text-xs font-semibold uppercase tracking-wide text-teal-800/70 dark:text-teal-300/80">Total neto</span>
               <span class="text-base font-bold tabular-nums text-teal-900">{{ formatMoney(totalNetoSaldo) }}</span>
             </div>
           </div>
@@ -206,6 +208,63 @@ import {
           [centerCaption]="kpiPeriodMonthLabel"
           ariaLabel="Indicadores del mes y saldo acumulado">
         </app-compact-inline-stats>
+      </div>
+
+      <!-- Promedio histórico: colapsado por defecto para priorizar movimientos del mes. -->
+      <div *ngIf="monthlyIncome" class="mb-2 sm:mb-3">
+        <button
+          type="button"
+          class="w-full flex items-center gap-2 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-3 py-2 text-left shadow-sm hover:bg-gray-50/80 dark:hover:bg-gray-800/60 transition-colors"
+          [attr.aria-expanded]="monthlyIncomeOpen"
+          (click)="monthlyIncomeOpen = !monthlyIncomeOpen">
+          <i-lucide
+            [name]="monthlyIncomeOpen ? 'chevron-down' : 'chevron-right'"
+            class="h-4 w-4 shrink-0 text-gray-400">
+          </i-lucide>
+          <span class="min-w-0 flex-1 text-sm text-gray-600 dark:text-gray-300 truncate">
+            Promedio
+            <span class="text-gray-400">· {{ monthlyIncome.monthsRequested }} meses</span>
+            <span class="ml-1 font-bold tabular-nums text-teal-700 dark:text-teal-400">{{
+              formatMoney(monthlyIncome.promedioMensualIngresos)
+            }}</span>
+          </span>
+          <span class="shrink-0 text-xs font-medium text-teal-700 dark:text-teal-400">
+            {{ monthlyIncomeOpen ? 'Ocultar' : 'Ver detalle' }}
+          </span>
+        </button>
+        <div
+          *ngIf="monthlyIncomeOpen"
+          class="mt-1.5 rounded-lg border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
+          <div class="px-3 sm:px-4 py-2.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 flex items-center justify-between gap-3">
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              <span *ngIf="monthlyIncome.monthsWithIncome">
+                {{ monthlyIncome.monthsWithIncome }} mes{{ monthlyIncome.monthsWithIncome === 1 ? '' : 'es' }} con ingresos
+              </span>
+              <span *ngIf="!monthlyIncome.monthsWithIncome">Sin meses con ingresos en el rango</span>
+            </p>
+            <div class="text-right shrink-0">
+              <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Total</p>
+              <p class="text-sm font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ formatMoney(monthlyIncome.totalIngresos) }}</p>
+            </div>
+          </div>
+          <div class="divide-y divide-gray-50 dark:divide-gray-800 max-h-48 overflow-y-auto">
+            <div
+              *ngFor="let row of monthlyIncome.months"
+              class="px-3 sm:px-4 py-2 flex items-center justify-between gap-3 text-sm">
+              <span class="text-gray-600 dark:text-gray-300 font-medium">{{ row.label }}</span>
+              <span class="tabular-nums font-semibold text-teal-700 dark:text-teal-400">{{ formatMoney(row.ingreso) }}</span>
+            </div>
+          </div>
+          <div
+            *ngIf="auth.canViewReports"
+            class="px-3 sm:px-4 py-2 border-t border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-900/40">
+            <a
+              routerLink="/reports"
+              class="text-xs font-semibold text-teal-700 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300">
+              Ver también en Reportes →
+            </a>
+          </div>
+        </div>
       </div>
 
       <app-compact-data-list [showSearch]="true">
@@ -252,7 +311,7 @@ import {
             </div>
             <span
               compactTrailing
-              class="text-[11px] font-bold tabular-nums"
+              class="text-xs font-bold tabular-nums"
               [class.text-teal-600]="movement.tipo === 'ingreso'"
               [class.text-red-500]="movement.tipo === 'egreso'">
               {{ movement.tipo === 'egreso' ? '-' : '+' }}{{ formatMoney(movement.monto || 0) }}
@@ -277,7 +336,7 @@ import {
             <col style="width: 5.25rem" />
           </colgroup>
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th class="hidden sm:table-cell px-3 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
               <th class="px-3 sm:px-4 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Concepto</th>
               <th class="hidden sm:table-cell px-4 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Descripción</th>
@@ -321,7 +380,7 @@ import {
               </td>
               <td class="hidden sm:table-cell px-2 py-4 text-center whitespace-nowrap">
                 <span
-                  class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-medium max-w-full truncate"
+                  class="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium max-w-full truncate"
                   [ngClass]="getOrigenBadgeClass(movement)">
                   {{ getOrigenLabel(movement) }}
                 </span>
@@ -409,7 +468,7 @@ import {
           <app-transaction-save-banner [message]="movementSaveFeedback.successMessage"></app-transaction-save-banner>
           <p
             *ngIf="movementSaveHint"
-            class="text-[11px] sm:text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-2"
+            class="text-xs sm:text-xs text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/40 border border-teal-100 dark:border-teal-900/50 rounded-lg px-2.5 py-1.5 sm:px-3 sm:py-2"
             role="status">
             {{ movementSaveHint }}
           </p>
@@ -488,7 +547,7 @@ import {
             class="grid gap-2 sm:gap-3"
             [ngClass]="usesAmbitoSeparation ? 'grid-cols-2' : 'grid-cols-1'">
             <div class="min-w-0 flex flex-col">
-              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1 min-h-[1.125rem] sm:min-h-[1.375rem]">Tipo</span>
+              <span class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1 min-h-[1.25rem]">Tipo</span>
               <div class="min-h-10 flex items-center">
                 <div class="grid grid-cols-2 gap-1 w-full rounded-lg sm:rounded-xl border border-gray-200 bg-gray-50 p-0.5 sm:p-1">
                 <button
@@ -525,7 +584,7 @@ import {
               </div>
             </div>
             <div *ngIf="usesAmbitoSeparation" class="min-w-0 flex flex-col">
-              <span class="block text-[10px] sm:text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1 min-h-[1.125rem] sm:min-h-[1.375rem]">Ámbito</span>
+              <span class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1 min-h-[1.25rem]">Ámbito</span>
               <div class="min-h-10 flex items-center">
                 <div
                   class="grid gap-1 sm:gap-1.5 w-full"
@@ -649,6 +708,9 @@ export class CashComponent implements OnInit, OnDestroy {
   appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   movements: CashMovement[] = [];
   cashSummary: CashSummary | null = null;
+  monthlyIncome: CashMonthlyIncomeSummary | null = null;
+  /** Detalle de promedio histórico cerrado por defecto (prioridad: movimientos del mes). */
+  monthlyIncomeOpen = false;
   monthFilterRange: CalendarMonthRange = getCalendarMonthRange();
   searchQuery = '';
   movementsPage = 1;
@@ -978,19 +1040,26 @@ export class CashComponent implements OnInit, OnDestroy {
   }
 
   isManualMovement(movement: CashMovement): boolean {
-    if (movement.pedidoId || movement.ventaId) return false;
+    if (movement.pedidoId || movement.ventaId || movement.compraId) return false;
 
     const tipo = String(movement.origenTipo ?? '');
     if (
       tipo === 'colaborador_pago' ||
       tipo === 'cuenta_pagar' ||
       tipo === 'tarjeta_resumen' ||
-      tipo === 'compra'
+      tipo === 'compra' ||
+      tipo.startsWith('compra')
     ) {
       return false;
     }
     if (tipo.startsWith('pedido') || tipo === 'venta' || tipo.startsWith('venta')) return false;
-    if (movement.origenGrupo === 'pedido' || movement.origenGrupo === 'venta') return false;
+    if (
+      movement.origenGrupo === 'pedido' ||
+      movement.origenGrupo === 'venta' ||
+      movement.origenGrupo === 'compra'
+    ) {
+      return false;
+    }
     if (movement.origenGrupo === 'manual') return true;
     if (tipo.startsWith('caja_manual')) return true;
 
@@ -1608,6 +1677,18 @@ export class CashComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const ambito = this.usesAmbitoSeparation
+      ? this.movementAmbito.trim()
+      : getDefaultCashAmbitoId(this.appConfig);
+    if (this.usesAmbitoSeparation && !ambito) {
+      this.movementSaveFeedback.endSave();
+      this.dialogService.alert({
+        title: 'Campo requerido',
+        message: 'Elegí en qué caja va el movimiento.',
+      });
+      return;
+    }
+
     const categoriaId = resolveCategoriaIdForCashConcept(
       this.appConfig,
       this.movementTipo,
@@ -1622,7 +1703,7 @@ export class CashComponent implements OnInit, OnDestroy {
       descripcion: this.movementDescripcion.trim() || null,
       fecha: combineDateAndTimeToIso(this.movementFecha, this.movementHora),
       ...(categoriaId ? { categoriaId } : { categoriaId: null }),
-      ...(this.usesAmbitoSeparation ? { ambito: this.movementAmbito } : {}),
+      ambito,
     };
 
     const request = this.editingMovementId
@@ -1633,9 +1714,7 @@ export class CashComponent implements OnInit, OnDestroy {
     const previousMovement = editingId
       ? this.movements.find((movement) => movement.id === editingId)
       : undefined;
-    const ambitoForPayload = this.usesAmbitoSeparation
-      ? this.movementAmbito
-      : getDefaultCashAmbitoId(this.appConfig);
+    const ambitoForPayload = ambito;
 
     request.pipe(finalize(() => this.movementSaveFeedback.endSave())).subscribe({
       next: (result) => {
@@ -1683,12 +1762,12 @@ export class CashComponent implements OnInit, OnDestroy {
       error: (err) => {
         this.dialogService.alert({
           title: 'Error',
-          message:
-            typeof err.error?.error === 'string'
-              ? err.error.error
-              : this.editingMovementId
-                ? 'No se pudo actualizar el movimiento.'
-                : 'No se pudo registrar el movimiento.',
+          message: extractHttpErrorMessage(
+            err,
+            this.editingMovementId
+              ? 'No se pudo actualizar el movimiento.'
+              : 'No se pudo registrar el movimiento.'
+          ),
         });
       },
     });
@@ -1701,6 +1780,7 @@ export class CashComponent implements OnInit, OnDestroy {
     this.loadingMoreMovements = false;
     this.reloadMovements();
     this.loadCashSummary();
+    this.loadMonthlyIncome();
   }
 
   private loadCashSummary() {
@@ -1714,6 +1794,25 @@ export class CashComponent implements OnInit, OnDestroy {
         // Mantener totales optimistas si falla el resumen.
       },
     });
+  }
+
+  private loadMonthlyIncome() {
+    const ambitoId = this.usesAmbitoSeparation ? this.activeAmbitoTab || undefined : undefined;
+    this.cashService.getMonthlyIncome(6, ambitoId).subscribe({
+      next: (summary) => {
+        this.monthlyIncome = summary;
+      },
+      error: () => {
+        this.monthlyIncome = null;
+      },
+    });
+  }
+
+  selectAmbitoTab(ambitoId: string) {
+    if (this.activeAmbitoTab === ambitoId) return;
+    this.activeAmbitoTab = ambitoId;
+    this.movementsPage = 1;
+    this.loadMonthlyIncome();
   }
 
   private reloadMovements(showLoading = true) {

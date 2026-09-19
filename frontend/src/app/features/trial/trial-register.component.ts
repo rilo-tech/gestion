@@ -5,6 +5,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   TRIAL_PRODUCT_LABELS,
   isTrialProductId,
+  resolveTrialProductId,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
 import { priceLabelFromCatalog, pricingTiersFromCatalog } from '../../../../../shared/ritotech-marketing.ts';
@@ -23,6 +24,7 @@ import {
 import { TrialRegistrationService } from '../../core/services/trial-registration.service';
 import { LocationLookupService } from '../../core/services/location-lookup.service';
 import { AuthService } from '../../core/services/auth.service';
+import { AnalyticsService } from '../../core/services/analytics.service';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   SearchableSelectComponent,
@@ -43,17 +45,22 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
   selector: 'app-trial-register',
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink, SearchableSelectComponent, PasswordInputComponent],
+  host: { style: 'display: contents' },
   template: `
     <div class="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-teal-950 text-white">
-      <div class="max-w-lg mx-auto px-4 py-8 sm:py-12">
+      <header class="sr-only">
+        <h1>Registro de prueba RiloTech</h1>
+      </header>
+      <main id="main-content" role="main" class="max-w-lg mx-auto px-4 py-8 sm:py-12">
         <div class="text-center mb-8">
           <img
             src="/brand/rilotech-lockup-on-dark.png"
-            alt="RiloTech"
+            alt=""
             width="120"
             height="120"
             class="mx-auto h-20 w-auto object-contain"
             decoding="async" />
+          <span class="sr-only">RiloTech</span>
           <h1 class="text-2xl sm:text-3xl font-bold mt-3">{{ trialDays }} días gratis, sin tarjeta</h1>
           <p class="text-gray-400 text-sm mt-2 max-w-md mx-auto">
             {{ productIntro }}
@@ -105,7 +112,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
           <button
             type="button"
             (click)="openForm()"
-            class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500">
+            class="w-full rounded-xl bg-teal-700 py-3 font-semibold text-white hover:bg-teal-600">
             Continuar con {{ selectedProductLabel }}
           </button>
           <p class="text-center text-sm text-gray-500">
@@ -129,57 +136,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm">
           </div>
           <div>
-            <label [class]="formLabelClass" for="rubro">Rubro *</label>
-            <select
-              id="rubro"
-              [(ngModel)]="form.rubro"
-              name="rubro"
-              required
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm">
-              <option value="" disabled>Seleccioná un rubro</option>
-              <option *ngFor="let r of rubros" [value]="r.id">{{ r.label }}</option>
-            </select>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label [class]="formLabelClass" for="pais">País *</label>
-              <app-searchable-select
-                [(ngModel)]="form.pais"
-                name="pais"
-                [labeledOptions]="countrySelectOptions"
-                (ngModelChange)="onCountrySelected($event)"
-                placeholder="Buscar país..."
-                [inputClass]="trialFieldClass"
-                emptyMessage="Sin coincidencias"
-                [emptyOptionsMessage]="loadingCountries ? 'Cargando países...' : 'No hay países disponibles'"
-                [listHint]="loadingCountries ? 'Cargando países...' : ''">
-              </app-searchable-select>
-            </div>
-            <div>
-              <label [class]="formLabelClass" for="ciudad">Ciudad *</label>
-              <app-searchable-select
-                *ngIf="form.pais; else cityNeedsCountry"
-                [(ngModel)]="form.ciudad"
-                name="ciudad"
-                [options]="cityOptions"
-                [allowCustomValue]="true"
-                placeholder="Buscar ciudad..."
-                [inputClass]="trialFieldClass"
-                emptyMessage="Sin coincidencias — podés escribir la tuya"
-                [emptyOptionsMessage]="loadingCities ? 'Cargando ciudades...' : 'Escribí el nombre de tu ciudad'"
-                [listHint]="loadingCities ? 'Cargando ciudades...' : (cityOptions.length ? 'Podés buscar o escribir otra ciudad' : '')">
-              </app-searchable-select>
-              <ng-template #cityNeedsCountry>
-                <input
-                  disabled
-                  placeholder="Elegí un país primero"
-                  class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-900 text-sm text-gray-500 opacity-70">
-              </ng-template>
-            </div>
-          </div>
-          <p *ngIf="geoError" class="text-xs text-amber-300">{{ geoError }}</p>
-          <div>
-            <label [class]="formLabelClass" for="ownerName">Nombre y apellido del responsable *</label>
+            <label [class]="formLabelClass" for="ownerName">Nombre del responsable *</label>
             <input
               id="ownerName"
               [(ngModel)]="form.ownerName"
@@ -189,19 +146,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm">
           </div>
           <div>
-            <label [class]="formLabelClass" for="email">Email *</label>
-            <input
-              id="email"
-              [(ngModel)]="form.email"
-              name="email"
-              type="email"
-              required
-              autocomplete="email"
-              placeholder="tu@email.com"
-              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm">
-          </div>
-          <div>
-            <label [class]="formLabelClass" for="phone">Teléfono / WhatsApp *</label>
+            <label [class]="formLabelClass" for="phone">WhatsApp *</label>
             <div class="flex gap-2">
               <div
                 class="flex shrink-0 items-center justify-center min-w-[4.5rem] px-3 py-2.5 rounded-lg border border-gray-700 bg-gray-900 text-sm text-gray-200"
@@ -222,6 +167,18 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             <p *ngIf="formattedPhonePreview" class="text-xs text-gray-500 mt-1">
               Se guardará como {{ formattedPhonePreview }}
             </p>
+          </div>
+          <div>
+            <label [class]="formLabelClass" for="email">Email *</label>
+            <input
+              id="email"
+              [(ngModel)]="form.email"
+              name="email"
+              type="email"
+              required
+              autocomplete="email"
+              placeholder="tu@email.com"
+              class="w-full px-4 py-2.5 rounded-lg border border-gray-700 bg-gray-950 text-sm">
           </div>
           <div>
             <label [class]="formLabelClass" for="password">Contraseña *</label>
@@ -262,11 +219,22 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
               *
             </label>
           </div>
-          <!-- Ayuda por WhatsApp (soporte): oculto hasta tener número de soporte distinto del bot -->
+          <div class="flex items-start gap-2 text-xs text-gray-400">
+            <input
+              type="checkbox"
+              id="marketingEmailOptIn"
+              [(ngModel)]="form.marketingEmailOptIn"
+              name="marketingEmailOptIn"
+              class="mt-0.5 rounded shrink-0">
+            <label for="marketingEmailOptIn" class="cursor-pointer leading-relaxed">
+              Quiero recibir novedades, consejos y promociones de RiloTech.
+              <span class="block text-gray-500">Opcional. No incluye emails de verificación ni avisos de la cuenta.</span>
+            </label>
+          </div>
           <p *ngIf="error" class="text-sm text-red-400">{{ error }}</p>
           <button type="submit" [disabled]="loading"
-            class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500 disabled:opacity-60">
-            {{ loading ? 'Enviando...' : 'Continuar' }}
+            class="w-full rounded-xl bg-teal-700 py-3 font-semibold text-white hover:bg-teal-600 disabled:opacity-60">
+            {{ loading ? 'Enviando...' : 'Crear mi prueba gratis' }}
           </button>
         </form>
 
@@ -300,7 +268,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
           </div>
           <p *ngIf="error" class="text-sm text-red-400">{{ error }}</p>
           <button type="button" (click)="verifyOtp()" [disabled]="loading"
-            class="w-full rounded-xl bg-teal-600 py-3 font-semibold disabled:opacity-60">
+            class="w-full rounded-xl bg-teal-700 py-3 font-semibold text-white disabled:opacity-60">
             {{ loading ? 'Verificando...' : (existingAccount ? 'Verificar y sumar el módulo' : 'Verificar y crear mi cuenta') }}
           </button>
           <button type="button" (click)="resendOtp()" [disabled]="loading"
@@ -318,26 +286,29 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             <p class="text-lg font-semibold text-teal-300 text-center">{{ doneTitle }}</p>
             <p class="text-sm text-gray-300 mt-2 text-center">{{ doneLead }}</p>
 
-            <div *ngIf="showWhatsappInstructions" class="mt-4 rounded-lg border border-teal-900 bg-black/20 px-3 py-3 space-y-2">
-              <p class="text-sm text-white font-medium">Cómo usar RILO Bot</p>
-              <p class="text-sm text-gray-300 leading-relaxed">
-                Escribí <strong>siempre desde este WhatsApp</strong>:
-                <span class="font-mono text-white">{{ registeredPhoneDisplay }}</span>
-              </p>
-              <p class="text-sm text-gray-300 leading-relaxed">
-                Al número de RILO Bot:
-                <span class="font-mono text-white">{{ rilobotNumberDisplay }}</span>
-              </p>
-              <p class="text-xs text-gray-500">
-                Si escribís desde otro número, el bot no te reconoce. Te pide confirmación (SÍ/NO) antes de guardar.
+            <div *ngIf="showWhatsappInstructions" class="mt-4 rounded-lg border border-teal-900 bg-black/20 px-3 py-3 space-y-3">
+              <ol class="space-y-2 text-sm text-gray-200 list-decimal list-inside">
+                <li>Abrí WhatsApp.</li>
+                <li>Mandale una operación real a RILO.</li>
+                <li>RILO la registra.</li>
+              </ol>
+              <div class="rounded-md bg-black/30 px-3 py-2">
+                <p class="text-[11px] uppercase tracking-wide text-teal-400/90 font-semibold">Ejemplo</p>
+                <p class="text-sm text-white mt-1">“Venta a Ana, 2 remeras por $1.600.”</p>
+              </div>
+              <p class="text-xs text-gray-400 leading-relaxed">
+                Escribí siempre desde <span class="font-mono text-white">{{ registeredPhoneDisplay }}</span>
+                al número <span class="font-mono text-white">{{ rilobotNumberDisplay }}</span>.
               </p>
               <a
                 [href]="rilobotWaLink"
                 target="_blank"
                 rel="noopener"
-                class="inline-flex mt-1 text-sm font-semibold text-teal-400 hover:underline">
-                Abrir chat con RILO Bot
+                (click)="onWhatsappOpened()"
+                class="inline-flex w-full justify-center rounded-xl bg-teal-700 py-3 text-sm font-semibold text-white hover:bg-teal-600">
+                Abrir RILO en WhatsApp
               </a>
+              <p class="text-xs text-gray-500 text-center">Después preguntale: “¿cuánto vendí hoy?”</p>
             </div>
 
             <p *ngIf="canEnterErp" class="text-sm text-gray-400 mt-4 text-center">
@@ -350,8 +321,8 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
             *ngIf="canEnterErp"
             type="button"
             (click)="enterApp()"
-            class="w-full rounded-xl bg-teal-600 py-3 font-semibold hover:bg-teal-500">
-            Entrar al panel
+            class="w-full rounded-xl border border-teal-700 py-3 font-semibold text-teal-200 hover:bg-teal-950/40">
+            Ver esta operación en RILO Gestión
           </button>
         </div>
 
@@ -360,7 +331,7 @@ type Step = 'intro' | 'form' | 'email' | 'creating' | 'done';
           <a [href]="supportWhatsapp" target="_blank" rel="noopener" class="text-teal-500 hover:underline">WhatsApp</a>
           (opcional)
         </p>
-      </div>
+      </main>
     </div>
   `,
 })
@@ -371,6 +342,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private commercial = inject(CommercialCatalogService);
+  private analytics = inject(AnalyticsService);
 
   readonly rubros = TRIAL_RUBROS;
   catalog: CommercialCatalog = DEFAULT_COMMERCIAL_CATALOG;
@@ -444,6 +416,9 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   }
 
   get productIntro(): string {
+    if (this.trialProduct === 'cash') {
+      return 'RILO Caja: ingresos, gastos y saldo por WhatsApp. Simple, sin ERP completo.';
+    }
     if (this.trialProduct === 'whatsapp') {
       return 'RILO Bot: pedidos, ventas, compras, cobros y caja por WhatsApp.';
     }
@@ -456,6 +431,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
   get doneTitle(): string {
     if (this.completeOutcome === 'already_active') return 'Este módulo ya estaba activo';
     if (this.completeOutcome === 'module_added') return 'Módulo activado en tu empresa';
+    if (this.showWhatsappInstructions) return 'Probá RILO ahora.';
     return '¡Listo! Tu prueba está activa';
   }
 
@@ -467,16 +443,19 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
       return `Tu empresa ${this.loginHint?.businessCode ?? ''} ya tenía ${this.selectedProductLabel}.`;
     }
     if (this.trialProduct === 'whatsapp') {
-      return 'Tu prueba de RILO Bot está activa. No hace falta entrar al panel: se usa por WhatsApp.';
+      return 'Tu prueba de RILO Bot está activa. Empezá con una operación real por WhatsApp.';
     }
     if (this.trialProduct === 'erp') {
       return 'Tu prueba de RILO Gestión está activa. Ingresá con usuario y contraseña.';
     }
-    return 'Podés usar RILO Gestión y también WhatsApp con el mismo número registrado.';
+    return 'Podés cargar por WhatsApp y controlar todo en RILO Gestión.';
   }
 
   get showWhatsappInstructions(): boolean {
-    return this.whatsappEnabled || this.trialProduct === 'whatsapp' || this.trialProduct === 'completo';
+    return this.whatsappEnabled ||
+      this.trialProduct === 'cash' ||
+      this.trialProduct === 'whatsapp' ||
+      this.trialProduct === 'completo';
   }
 
   get canEnterErp(): boolean {
@@ -494,7 +473,7 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
   form = {
     businessName: '',
-    rubro: '',
+    rubro: 'otro',
     pais: 'Uruguay',
     ciudad: '',
     ownerName: '',
@@ -504,11 +483,12 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     password: '',
     acceptTerms: false,
     whatsappOptIn: false,
-    marketingEmailOptIn: true,
+    marketingEmailOptIn: false,
     website: '',
   };
 
   ngOnInit() {
+    this.analytics.captureAttributionFromUrl();
     this.restoreDraft();
     this.commercial.load(this.billingCountry).subscribe({
       next: (row) => {
@@ -521,13 +501,15 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
     this.route.queryParamMap.subscribe((params) => {
       const producto = params.get('producto');
-      if (producto && isTrialProductId(producto)) {
-        this.trialProduct = producto;
+      const resolved = resolveTrialProductId(producto);
+      if (resolved) {
+        this.trialProduct = resolved;
+        if (this.step === 'intro') {
+          this.step = 'form';
+          if (!this.countries.length) this.loadGeoData();
+        }
       }
-      const utmSource = params.get('utm_source');
-      const utmCampaign = params.get('utm_campaign');
-      if (utmSource) (this.form as { utmSource?: string }).utmSource = utmSource;
-      if (utmCampaign) (this.form as { utmCampaign?: string }).utmCampaign = utmCampaign;
+      this.analytics.captureAttributionFromUrl();
     });
   }
 
@@ -555,8 +537,9 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
     Object.assign(this.form, draft.form);
     this.registrationId = draft.registrationId ?? '';
     this.otpCode = draft.otpCode ?? '';
-    if (draft.trialProduct && isTrialProductId(draft.trialProduct)) {
-      this.trialProduct = draft.trialProduct;
+    if (draft.trialProduct) {
+      const resolved = resolveTrialProductId(draft.trialProduct);
+      if (resolved) this.trialProduct = resolved;
     }
     if (draft.step && draft.step !== 'intro') {
       this.step = draft.step;
@@ -657,21 +640,28 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
 
   submitForm() {
     this.error = '';
-    if (!this.form.pais.trim() || !this.form.ciudad.trim()) {
-      this.error = 'Completá país y ciudad.';
-      return;
-    }
     if (!this.form.phone.trim()) {
-      this.error = 'Ingresá tu teléfono.';
+      this.error = 'Ingresá tu WhatsApp.';
       return;
     }
+    if (!this.form.pais.trim()) {
+      this.form.pais = 'Uruguay';
+    }
+    if (!this.form.rubro.trim()) {
+      this.form.rubro = 'otro';
+    }
+    // Ciudad opcional en registro; se completa después en el panel.
     this.loading = true;
+    this.analytics.track('registration_started', { product: this.trialProduct });
+    const attribution = this.analytics.attributionForRegistration();
     this.trialService
       .register({
         ...this.form,
         phoneCountryCode: this.form.phoneCountryCode,
         acceptTerms: this.form.acceptTerms,
+        marketingEmailOptIn: this.form.marketingEmailOptIn === true,
         trialProduct: this.trialProduct,
+        ...attribution,
       })
       .subscribe({
         next: (res) => {
@@ -685,6 +675,10 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
           this.error = this.readError(err);
         },
       });
+  }
+
+  onWhatsappOpened(): void {
+    this.analytics.track('whatsapp_opened', { product: this.trialProduct });
   }
 
   private sendOtpAndGoEmail() {
@@ -760,6 +754,11 @@ export class TrialRegisterComponent implements OnInit, OnDestroy {
         });
         this.loading = false;
         this.step = 'done';
+        this.analytics.track('email_verified', { product: this.trialProduct });
+        this.analytics.track('registration_completed', {
+          product: this.trialProduct,
+          outcome: this.completeOutcome,
+        });
         clearTrialRegisterDraft();
       },
       error: (err) => {

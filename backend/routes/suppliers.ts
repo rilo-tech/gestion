@@ -3,9 +3,11 @@ import { db } from '../firebase.ts';
 
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { requireBusinessFeature } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('suppliers'));
 
 router.get('/:businessId', async (req, res) => {
   try {

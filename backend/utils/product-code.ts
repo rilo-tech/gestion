@@ -8,6 +8,7 @@ import {
   shouldAutoAssignProductCode,
   type ProductosCodigoConfig,
 } from '../../shared/product-code-config.ts';
+import { normalizeBarcodeKey as sharedNormalizeBarcodeKey } from '../../shared/barcode.ts';
 
 export type { ProductosCodigoConfig };
 export {
@@ -22,9 +23,50 @@ function normalizeCodigoKey(codigo: unknown): string {
 }
 
 export function normalizeBarcodeKey(value: unknown): string {
-  return String(value ?? '')
-    .trim()
-    .replace(/\s+/g, '');
+  return sharedNormalizeBarcodeKey(value);
+}
+
+function barcodeLockRef(businessId: string, key: string) {
+  return db.doc(`negocios/${businessId}/barcode_locks/${encodeURIComponent(key)}`);
+}
+
+/** Reserva exclusiva del barcode normalizado para un producto (anti-duplicado concurrente). */
+export async function claimBarcodeLock(
+  businessId: string,
+  codigoBarras: string,
+  productId: string
+): Promise<void> {
+  const key = normalizeBarcodeKey(codigoBarras);
+  if (!key || !productId) return;
+  const ref = barcodeLockRef(businessId, key);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const owner = String(snap.data()?.productId ?? '');
+      if (owner && owner !== productId) {
+        throw Object.assign(new Error(`BARCODE_TAKEN:${key}`), { code: 'BARCODE_TAKEN', key });
+      }
+    }
+    tx.set(ref, {
+      productId,
+      codigoBarrasKey: key,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+}
+
+export async function releaseBarcodeLock(
+  businessId: string,
+  codigoBarras: string,
+  productId: string
+): Promise<void> {
+  const key = normalizeBarcodeKey(codigoBarras);
+  if (!key) return;
+  const ref = barcodeLockRef(businessId, key);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  if (String(snap.data()?.productId ?? '') !== productId) return;
+  await ref.delete();
 }
 
 export async function findStockItemByCodigoBarras(
@@ -35,14 +77,20 @@ export async function findStockItemByCodigoBarras(
   const key = normalizeBarcodeKey(codigoBarras);
   if (!key) return null;
 
-  const snapshot = await db.collection(`negocios/${businessId}/stock`).get();
-  for (const doc of snapshot.docs) {
+  const col = db.collection(`negocios/${businessId}/stock`);
+
+  const byKey = await col.where('codigoBarrasKey', '==', key).limit(5).get();
+  for (const doc of byKey.docs) {
     if (excludeId && doc.id === excludeId) continue;
-    const existing = normalizeBarcodeKey(doc.data().codigoBarras);
-    if (existing && existing === key) {
-      return { id: doc.id, codigoBarras: existing };
-    }
+    return { id: doc.id, codigoBarras: key };
   }
+
+  const byRaw = await col.where('codigoBarras', '==', key).limit(5).get();
+  for (const doc of byRaw.docs) {
+    if (excludeId && doc.id === excludeId) continue;
+    return { id: doc.id, codigoBarras: key };
+  }
+
   return null;
 }
 

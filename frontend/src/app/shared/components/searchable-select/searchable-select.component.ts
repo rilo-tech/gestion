@@ -53,26 +53,26 @@ export interface SearchableSelectOption {
 
         <div
           *ngIf="open && (visibleDropdownItems.length || showCreateOption)"
-          class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white text-gray-900 shadow-lg">
+          class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-lg">
           <button
             type="button"
             *ngFor="let option of visibleDropdownItems; trackBy: trackByValue"
             (mousedown)="pickOption(option, $event)"
-            class="searchable-select-option w-full px-4 py-2 text-left text-sm text-gray-900 hover:bg-teal-50">
+            class="searchable-select-option w-full px-4 py-2.5 text-left text-sm text-gray-900 dark:text-gray-100 hover:bg-teal-50 dark:hover:bg-teal-950/40">
             {{ option.label }}
           </button>
           <button
             type="button"
             *ngIf="showCreateOption"
             (mousedown)="createFromSearch($event)"
-            class="searchable-select-option w-full border-t border-gray-100 px-4 py-2 text-left text-sm font-medium text-teal-700 hover:bg-teal-50">
+            class="searchable-select-option w-full border-t border-gray-100 dark:border-gray-800 px-4 py-2.5 text-left text-sm font-medium text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40">
             {{ createLabelPrefix }} «{{ searchText.trim() }}»
           </button>
         </div>
 
         <div
           *ngIf="open && !visibleDropdownItems.length && !showCreateOption && !showDropdownOnTypeOnly"
-          class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-500 shadow-lg">
+          class="searchable-select-menu absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 text-sm text-gray-500 dark:text-gray-400 shadow-lg">
           {{ emptyListMessage }}
         </div>
       </div>

@@ -8,6 +8,8 @@ import {
   parseNumericSelectionTurn,
   resolveCandidateSelectionTurn,
 } from './v4-candidate-selection.ts';
+import { resumeBlockedToolAfterSelection } from './v4-resume-blocked-tool.ts';
+import { READ_TOOL_HANDLERS } from './agent/tools/read-tools.ts';
 import type { ConversationState } from './conversation-state.ts';
 import type { WhatsappTenantContext } from './tenant-resolver.ts';
 
@@ -133,7 +135,7 @@ describe('V4 turn: numeric selection without LLM', () => {
     );
     assert.equal(agentCalls, 0);
     assert.equal(result.intent, 'v4_candidate_invalid');
-    assert.match(result.reply, /Respondeme con un número del 1 al 3/);
+    assert.match(result.reply, /Opción inválida\. Indicá un número del 1 al 3/);
   });
 
   it('"2, solo los pendientes" selects B and sends remainder to agent', async () => {
@@ -165,5 +167,102 @@ describe('V4 turn: numeric selection without LLM', () => {
     assert.equal(agentCalls, 1);
     assert.equal(agentText, 'solo los pendientes');
     assert.equal(result.reply, 'ok pending filter');
+  });
+});
+
+describe('V4 find_client selection resumes with debt detail', () => {
+  it('choosing a client after "cuánto me debe" shows pending receivables with items', async () => {
+    const originalBalance = READ_TOOL_HANDLERS.get_client_balance;
+    const originalList = READ_TOOL_HANDLERS.list_orders;
+    let listOrdersCalls = 0;
+    READ_TOOL_HANDLERS.get_client_balance = async () => ({
+      status: 'resolved',
+      clientId: 'natalia-1',
+      clientName: 'Natalia Silva - Nato',
+      balance: 1850,
+      formattedBalance: '1.850',
+      pending: [
+        {
+          kind: 'venta',
+          id: 'v1',
+          label: 'Venta #00251',
+          detail: 'Venta mostrador',
+          date: '2026-08-10',
+          balance: 300,
+          items: [{ name: 'Limpieza Vico', quantity: 1, unitPrice: 300, subtotal: 300 }],
+        },
+        {
+          kind: 'pedido',
+          id: 'o1',
+          label: 'Pedido #00226',
+          detail: 'listo',
+          date: '2026-08-25',
+          balance: 550,
+          items: [{ name: 'Camiseta dry cool Niño Negro 10', quantity: 1, unitPrice: 550, subtotal: 550 }],
+        },
+        {
+          kind: 'venta',
+          id: 'v2',
+          label: 'Venta #00290',
+          detail: 'Venta mostrador',
+          date: '2026-08-29',
+          balance: 1000,
+          items: [{ name: 'Limpieza Vico', quantity: 4, unitPrice: 250, subtotal: 1000 }],
+        },
+      ],
+      pendingCount: 3,
+    });
+    READ_TOOL_HANDLERS.list_orders = async () => {
+      listOrdersCalls += 1;
+      return { status: 'ok', items: [], total: 0 };
+    };
+
+    try {
+      const awaiting = getCandidateSelectionAwaiting({
+        businessId: 'rilo',
+        phone: tenant.phone,
+        updatedAt: new Date().toISOString(),
+        ...buildCandidateSelectionState({
+          entityType: 'client',
+          options: [
+            { index: 1, entityId: 'natalia-1', label: 'Natalia Silva - Nato' },
+            { index: 2, entityId: 'natalia-2', label: 'Natalia Teixeira' },
+          ],
+          resume: {
+            originalUserText: 'Cuanto me debe natalia?',
+            blockedTool: 'find_client',
+            blockedArgs: { query: 'natalia' },
+          },
+        }),
+      } as ConversationState)!;
+
+      const resumed = await resumeBlockedToolAfterSelection({
+        tenant,
+        state: {
+          businessId: 'rilo',
+          phone: tenant.phone,
+          updatedAt: new Date().toISOString(),
+          pendingIntent: 'awaiting:candidate_selection',
+          pendingPayload: { candidateSelection: awaiting },
+        },
+        awaiting,
+        option: awaiting.options[0]!,
+      });
+
+      assert.equal(listOrdersCalls, 0);
+      assert.doesNotMatch(resumed.reply, /^Cliente:/);
+      assert.match(resumed.reply, /Natalia Silva - Nato/);
+      assert.match(resumed.reply, /1\.850|1850/);
+      assert.match(resumed.reply, /Venta #00251/);
+      assert.match(resumed.reply, /Limpieza Vico/);
+      assert.match(resumed.reply, /Pedido #00226/);
+      assert.match(resumed.reply, /Camiseta dry cool Niño Negro 10/);
+      assert.match(resumed.reply, /Total pendiente/);
+      assert.doesNotMatch(resumed.reply, /#00087/);
+      assert.doesNotMatch(resumed.reply, /3 productos/i);
+    } finally {
+      READ_TOOL_HANDLERS.get_client_balance = originalBalance;
+      READ_TOOL_HANDLERS.list_orders = originalList;
+    }
   });
 });

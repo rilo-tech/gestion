@@ -244,3 +244,19 @@ describe('meaningEquivalent invariante', () => {
     assert.ok(plan.operations.some((op) => op.intent === 'register_payment'));
   });
 });
+
+describe('resolveDateToken AR formats', () => {
+  it('normaliza DD/MM y DD/MM/YYYY a ISO', () => {
+    assert.equal(resolveDateToken('03/09', '2026-09-04'), '2026-09-03');
+    assert.equal(resolveDateToken('3/9/2026', '2026-09-04'), '2026-09-03');
+    assert.equal(resolveDateToken('03/09/2026', '2026-09-04'), '2026-09-03');
+    assert.equal(resolveDateToken('03-09-2026', '2026-09-04'), '2026-09-03');
+    assert.equal(resolveDateToken('2026-09-03', '2026-09-04'), '2026-09-03');
+  });
+
+  it('rechaza formatos inválidos en vez de devolver el raw', () => {
+    assert.equal(resolveDateToken('03/09', 'not-a-day'), undefined);
+    assert.equal(resolveDateToken('32/13', '2026-09-04'), undefined);
+    assert.equal(resolveDateToken('31/02/2026', '2026-09-04'), undefined);
+  });
+});

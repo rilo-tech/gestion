@@ -34,17 +34,41 @@ export function utteranceIsHowTo(text: string): boolean {
   );
 }
 
+/** Pregunta general: qué puede hacer el bot. */
+export function utteranceIsCapabilityOverview(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  return (
+    /\bqu[eé]\s+(pod[eé]s|puedes|puedo)\s+hacer\b/i.test(t) ||
+    /\bpara\s+qu[eé]\s+serv[ií]s\b/i.test(t) ||
+    /\bqu[eé]\s+puedo\s+hacer\s+por\s+whatsapp\b/i.test(t) ||
+    /\bqu[eé]\s+cosas\s+(pod[eé]s|puedo)\b/i.test(t)
+  );
+}
+
+/** Pregunta por límites / qué no puede. */
+export function utteranceIsCapabilityLimits(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  return /\bqu[eé]\s+no\s+(pod[eé]s|puedes|puedo)\b/i.test(t) || /\bl[ií]mites?\b/i.test(t);
+}
+
 /** Pregunta si una función existe o si se puede hacer, no la ejecuta. */
 export function utteranceIsCapabilityQuestion(text: string): boolean {
   const t = String(text ?? '').trim();
   if (!t) return false;
   if (utteranceIsHowTo(t)) return false;
+  if (utteranceIsCapabilityOverview(t) || utteranceIsCapabilityLimits(t)) return true;
   const asks =
-    /^(puedo|se puede|se pueden|es posible|acept[aá]s|soport[aá]s)\b/i.test(t) ||
-    ((/[¿?]/.test(t) || /^(se\s+pueden?|puedo)\b/i.test(t)) &&
-      /\b(puedo|se puede[n]?|es posible)\b/i.test(t));
+    /^(puedo|pod[eé]s|puedes|se puede|se pueden|es posible|acept[aá]s|soport[aá]s)\b/i.test(t) ||
+    ((/[¿?]/.test(t) || /^(se\s+pueden?|puedo|pod[eé]s|puedes)\b/i.test(t)) &&
+      /\b(puedo|pod[eé]s|puedes|se puede[n]?|es posible)\b/i.test(t));
   if (!asks) return false;
-  return /\b(pedido|orden|venta|compra|producto|caja|cobro|cliente)\b/i.test(t);
+  return (
+    /\b(pedido|orden|venta|compra|producto|caja|cobro|cliente|proveedor|stock|foto|imagen|reporte|borrar|quitar|modificar|pagar)\b/i.test(
+      t
+    ) || /\bpod[eé]s\s+hacer\b/i.test(t)
+  );
 }
 
 export function expectedItemCountFromText(text: string): number | undefined {

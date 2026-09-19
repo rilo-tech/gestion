@@ -4,6 +4,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { BusinessService } from '../../core/services/business.service';
 import {
   AppConfig,
   ConfigFieldKey,
@@ -43,6 +44,7 @@ import { DialogService } from '../../core/services/dialog.service';
 import { SettingsUsersPanelComponent } from './settings-users-panel.component';
 import { SettingsFinancePanelComponent } from './settings-finance-panel.component';
 import { SettingsCollaboratorsPanelComponent } from './settings-collaborators-panel.component';
+import { SettingsAutomationsPanelComponent } from './settings-automations-panel.component';
 import { FormSaveFooterComponent } from '../../shared/components/form-save-footer/form-save-footer.component';
 import { ConfigStringListComponent } from '../../shared/components/config-string-list/config-string-list.component';
 import {
@@ -74,7 +76,7 @@ interface ConfigSection {
 }
 
 interface ConfigModule {
-  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'finanzas' | 'stock' | 'pedidos' | 'colaboradores' | 'usuarios';
+  id: 'productos' | 'clientes' | 'proveedores' | 'caja' | 'finanzas' | 'stock' | 'pedidos' | 'colaboradores' | 'usuarios' | 'avisos';
   title: string;
   description: string;
   sections: ConfigSection[];
@@ -104,6 +106,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
     SettingsUsersPanelComponent,
     SettingsFinancePanelComponent,
     SettingsCollaboratorsPanelComponent,
+    SettingsAutomationsPanelComponent,
     FormSaveFooterComponent,
     ConfigStringListComponent,
     ConfigEditableListComponent,
@@ -122,7 +125,12 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               <ng-container *ngIf="activeModule">Configuración de {{ activeModule.title }}</ng-container>
             </h1>
             <p *ngIf="!activeModuleId" [class]="configDescClass">
-              Listas, reglas y opciones de uso del sistema. El plan y la suscripción están en Plan, no acá.
+              <ng-container *ngIf="auth.isSummaryWebTenant">
+                Ajustes simples de RILO Bot: avisos, nombres de estados de pedido y cobros.
+              </ng-container>
+              <ng-container *ngIf="!auth.isSummaryWebTenant">
+                Listas, reglas y opciones de uso del sistema. El plan y la suscripción están en Plan, no acá.
+              </ng-container>
             </p>
             <p *ngIf="activeModule" [class]="activeModuleDescClass">{{ activeModule.description }}</p>
           </div>
@@ -197,6 +205,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
               </app-config-editable-list>
             </app-config-setting-card>
 
+            <ng-container *ngIf="!auth.isSummaryWebTenant">
             <app-config-setting-card
               title="Stock · modo"
               description="Desde qué estado baja el depósito."
@@ -540,6 +549,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
             </div>
           </div>
         </app-config-setting-card>
+            </ng-container>
         </div>
       </section>
 
@@ -616,9 +626,62 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
 
       <app-settings-users-panel *ngIf="activeModuleId === 'usuarios'"></app-settings-users-panel>
 
-      <app-settings-finance-panel *ngIf="activeModuleId === 'finanzas'"></app-settings-finance-panel>
+      <app-settings-finance-panel
+        *ngIf="activeModuleId === 'finanzas' && !auth.isSummaryWebTenant">
+      </app-settings-finance-panel>
+
+      <section
+        *ngIf="activeModuleId === 'finanzas' && auth.isSummaryWebTenant"
+        [class]="configSectionClass">
+        <div [class]="configSectionsListClass">
+          <app-config-setting-card
+            title="Medio de pago predeterminado"
+            description="Se usa cuando cobrás por WhatsApp y no indicás otro medio."
+            [listCount]="null"
+            [sectionCollapse]="false"
+            [cardClass]="configCardClass">
+            <div configList class="space-y-2">
+              <select
+                class="w-full max-w-sm px-2.5 py-1.5 rounded-md border border-gray-200 text-sm bg-white dark:bg-gray-950"
+                [ngModel]="summaryDefaultPaymentMethod"
+                (ngModelChange)="onSummaryDefaultPaymentChange($event)"
+                [disabled]="savingSummaryPayment"
+                name="summaryDefaultPayment">
+                <option *ngFor="let medio of summaryActiveMedios" [value]="medio.id">
+                  {{ medio.label }}
+                </option>
+              </select>
+            </div>
+          </app-config-setting-card>
+          <app-config-setting-card
+            title="Medios activos"
+            description="Activá o desactivá los medios que usás al cobrar."
+            [listCount]="config.finanzas.mediosPago.length"
+            [sectionCollapse]="false"
+            [cardClass]="configCardClass">
+            <div configList class="space-y-2">
+              <label
+                *ngFor="let medio of config.finanzas.mediosPago"
+                class="flex items-center gap-2 rounded-md border border-gray-100 px-2 py-1.5">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-gray-300 text-teal-600"
+                  [checked]="medio.activo !== false"
+                  (change)="onSummaryMedioActivo(medio.id, $any($event.target).checked)"
+                  [disabled]="savingSummaryMedios" />
+                <span class="text-sm text-gray-900">{{ medio.label }}</span>
+              </label>
+            </div>
+          </app-config-setting-card>
+        </div>
+      </section>
 
       <app-settings-collaborators-panel *ngIf="activeModuleId === 'colaboradores'"></app-settings-collaborators-panel>
+
+      <app-settings-automations-panel
+        *ngIf="activeModuleId === 'avisos'"
+        [summaryMode]="auth.isSummaryWebTenant">
+      </app-settings-automations-panel>
 
       <section *ngIf="activeModuleId === 'productos'" [class]="configSectionClass">
         <div [class]="configSectionsListClass">
@@ -791,7 +854,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
         </div>
       </section>
 
-      <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'stock' && activeModuleId !== 'usuarios' && activeModuleId !== 'productos' && activeModuleId !== 'finanzas'" [class]="configSectionClass">
+      <section *ngIf="activeModule && activeModuleId !== 'pedidos' && activeModuleId !== 'caja' && activeModuleId !== 'stock' && activeModuleId !== 'usuarios' && activeModuleId !== 'productos' && activeModuleId !== 'finanzas' && activeModuleId !== 'avisos'" [class]="configSectionClass">
         <div [class]="configSectionsListClass">
           <app-config-setting-card
             *ngFor="let section of activeModule!.sections"
@@ -819,7 +882,7 @@ const SAVE_SUCCESS_DISPLAY_MS = 3500;
       </section>
 
       <div
-        *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas' && activeModuleId !== 'colaboradores'"
+        *ngIf="activeModuleId && activeModuleId !== 'usuarios' && activeModuleId !== 'finanzas' && activeModuleId !== 'colaboradores' && activeModuleId !== 'avisos'"
         class="mt-6 sm:mt-8">
         <app-form-save-footer
           [saving]="isActiveModuleSaving()"
@@ -844,11 +907,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   readonly auth = inject(AuthService);
+  private readonly businessService = inject(BusinessService);
 
   config: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
   activeModuleId: ConfigModule['id'] | null = null;
   saving = false;
   savingPedidos = false;
+  savingSummaryPayment = false;
+  savingSummaryMedios = false;
+  summaryDefaultPaymentMethod = '';
   saveSuccessMessage = '';
   optionDrafts: Record<string, string> = {};
   savingFields = new Set<string>();
@@ -1012,6 +1079,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
       description: 'Operadores, permisos y acceso al sistema.',
       sections: [],
       supervisorOnly: true,
+    },
+    {
+      id: 'avisos',
+      title: 'RILO te avisa',
+      description: 'Resúmenes, pedidos, saldos y stock. Activá solo lo que te sirve.',
+      sections: [],
+      everyone: true,
     },
   ];
 
@@ -1481,10 +1555,35 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   get visibleModules(): ConfigModule[] {
-    return this.modules.filter((module) => {
+    const modules = this.modules.filter((module) => {
       if (module.supervisorOnly) return this.auth.canManageUsers;
+      if (module.everyone) return true;
       return this.auth.canManageSettings;
     });
+    if (!this.auth.isSummaryWebTenant) return modules;
+    const allowed = new Set(['avisos', 'pedidos', 'finanzas']);
+    return modules
+      .filter((module) => allowed.has(module.id))
+      .map((module) => {
+        if (module.id === 'finanzas') {
+          return {
+            ...module,
+            title: 'Cobros',
+            description: 'Medio predeterminado y medios activos para cobrar por WhatsApp.',
+          };
+        }
+        if (module.id === 'pedidos') {
+          return {
+            ...module,
+            description: 'Nombres de los estados del pedido (los IDs no se cambian).',
+          };
+        }
+        return module;
+      });
+  }
+
+  get summaryActiveMedios() {
+    return (this.config.finanzas?.mediosPago ?? []).filter((m) => m.activo !== false);
   }
 
   get activeModule(): ConfigModule | undefined {
@@ -1494,7 +1593,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   get showActiveModuleSave(): boolean {
     return (
       !!this.activeModuleId &&
-      this.activeModuleId !== 'usuarios'
+      this.activeModuleId !== 'usuarios' &&
+      this.activeModuleId !== 'avisos'
     );
   }
 
@@ -1756,21 +1856,24 @@ export class SettingsComponent implements OnInit, OnDestroy {
       const tab = params.get('tab');
 
       if (!this.auth.canManageSettings) {
-        this.router.navigate(['/dashboard']);
+        this.router.navigate([this.auth.isSummaryWebTenant ? '/inicio' : '/dashboard']);
         return;
       }
 
-      const knownTabs: ConfigModule['id'][] = [
-        'caja',
-        'stock',
-        'clientes',
-        'proveedores',
-        'productos',
-        'pedidos',
-        'usuarios',
-        'finanzas',
-        'colaboradores',
-      ];
+      const knownTabs: ConfigModule['id'][] = this.auth.isSummaryWebTenant
+        ? ['pedidos', 'finanzas', 'avisos']
+        : [
+            'caja',
+            'stock',
+            'clientes',
+            'proveedores',
+            'productos',
+            'pedidos',
+            'usuarios',
+            'finanzas',
+            'colaboradores',
+            'avisos',
+          ];
       let nextModuleId: ConfigModule['id'] | null =
         tab && knownTabs.includes(tab as ConfigModule['id']) ? (tab as ConfigModule['id']) : null;
       if (nextModuleId === 'usuarios' && !this.auth.canManageUsers) {
@@ -1818,12 +1921,79 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (!this.config.finanzas?.mediosPago?.length) {
           this.config.finanzas = structuredClone(DEFAULT_APP_CONFIG.finanzas);
         }
+        this.syncSummaryDefaultPaymentFromAuth();
       },
       error: () => {
         if (!this.auth.canManageSettings) return;
         this.dialogService.alert({
           title: 'Error',
           message: 'No se pudo cargar la configuración.',
+        });
+      },
+    });
+  }
+
+  private syncSummaryDefaultPaymentFromAuth() {
+    const profile = this.auth.businessProfile;
+    const fromProfile =
+      profile.defaults?.defaultPaymentMethod ||
+      profile.defaults?.sales?.defaultPaymentMethod ||
+      '';
+    const active = this.summaryActiveMedios;
+    this.summaryDefaultPaymentMethod =
+      (fromProfile && active.some((m) => m.id === fromProfile)
+        ? fromProfile
+        : active[0]?.id) || '';
+  }
+
+  onSummaryDefaultPaymentChange(medioId: string) {
+    const businessId = this.auth.currentBusiness?.id;
+    if (!businessId || !medioId || this.savingSummaryPayment) return;
+    this.savingSummaryPayment = true;
+    this.summaryDefaultPaymentMethod = medioId;
+    this.businessService
+      .updateProfile(businessId, {
+        defaults: {
+          defaultPaymentMethod: medioId,
+          sales: { defaultPaymentMethod: medioId },
+        },
+      })
+      .subscribe({
+        next: () => {
+          this.savingSummaryPayment = false;
+          this.auth.reloadSession().subscribe({
+            next: () => this.syncSummaryDefaultPaymentFromAuth(),
+            error: () => this.syncSummaryDefaultPaymentFromAuth(),
+          });
+        },
+        error: () => {
+          this.savingSummaryPayment = false;
+          this.dialogService.alert({
+            title: 'Error',
+            message: 'No se pudo guardar el medio predeterminado.',
+          });
+          this.syncSummaryDefaultPaymentFromAuth();
+        },
+      });
+  }
+
+  onSummaryMedioActivo(medioId: string, activo: boolean) {
+    const row = this.config.finanzas.mediosPago.find((m) => m.id === medioId);
+    if (!row || this.savingSummaryMedios) return;
+    row.activo = activo;
+    this.savingSummaryMedios = true;
+    this.catalogConfigService.updateAppConfig(this.config).subscribe({
+      next: (config) => {
+        this.config = config;
+        this.savingSummaryMedios = false;
+        this.syncSummaryDefaultPaymentFromAuth();
+      },
+      error: () => {
+        this.savingSummaryMedios = false;
+        row.activo = !activo;
+        this.dialogService.alert({
+          title: 'Error',
+          message: 'No se pudo actualizar el medio de pago.',
         });
       },
     });
@@ -2365,6 +2535,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       pedidos: 'clipboard-list',
       colaboradores: 'id-card',
       usuarios: 'user-cog',
+      avisos: 'bell',
     };
     return icons[moduleId] ?? 'settings';
   }

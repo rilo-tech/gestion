@@ -24,8 +24,8 @@ describe('V4 UX copy — confirmación', () => {
     );
     plan.summary = { title: 'Ingreso $1.000 · Zulma', lines: [] };
     const card = presentConfirmationPlan(plan);
-    assert.match(card, /¿Confirmo\? Sí \/ No/);
-    assert.equal(V4_CONFIRMATION_PROMPT, '¿Confirmo? Sí / No');
+    assert.match(card, /¿Confirmo\? \*Sí\* \/ \*No\*/);
+    assert.equal(V4_CONFIRMATION_PROMPT, '¿Confirmo? *Sí* / *No*');
   });
 
   it('formatV4Confirmation agrega siempre el cierre', () => {
@@ -33,8 +33,18 @@ describe('V4 UX copy — confirmación', () => {
       title: 'Pedido #00229 → Entregado',
       lines: [],
     });
-    assert.match(card, /Pedido #00229 → Entregado/);
-    assert.match(card, /¿Confirmo\? Sí \/ No$/);
+    assert.match(card, /^\*Pedido #00229 → Entregado\*$/m);
+    assert.match(card, /¿Confirmo\? \*Sí\* \/ \*No\*$/);
+  });
+
+  it('título multilínea no rompe la negrita de WhatsApp', () => {
+    const card = formatV4Confirmation({
+      title: 'Egreso $460 · envío agencia\nCaja: Personal',
+      lines: [],
+    });
+    assert.match(card, /^\*Egreso \$460 · envío agencia\*$/m);
+    assert.match(card, /^Caja: Personal$/m);
+    assert.doesNotMatch(card, /\*[^\n]*\n[^\n]*\*/);
   });
 });
 
@@ -47,39 +57,39 @@ describe('V4 UX copy — selección numerada', () => {
 
   it('B: candidate_selection muestra opciones numeradas', () => {
     const card = presentNumberedCandidateSelection('client', clients);
-    assert.match(card, /^1\. Pizzería Acapella/m);
-    assert.match(card, /\n2\. Acapella Eventos/);
-    assert.match(card, /\n3\. Acapella Salto/);
+    assert.match(card, /^1\. 👤 Pizzería Acapella/m);
+    assert.match(card, /\n2\. 👤 Acapella Eventos/);
+    assert.match(card, /\n3\. 👤 Acapella Salto/);
   });
 
   it('C: candidate_selection contiene el copy obligatorio', () => {
     const card = presentNumberedCandidateSelection('client', clients);
-    assert.match(card, /Respondeme con el número de la opción\./);
-    assert.equal(V4_CANDIDATE_SELECTION_PROMPT, 'Respondeme con el número de la opción.');
+    assert.match(card, /Indicame qué ítem querés usar/);
+    assert.match(V4_CANDIDATE_SELECTION_PROMPT, /qué querés hacer/);
   });
 
   it('títulos por tipo de entidad', () => {
-    assert.match(presentNumberedCandidateSelection('client', clients), /Encontré más de un cliente/);
+    assert.match(presentNumberedCandidateSelection('client', clients), /👥 Clientes encontrados/);
     assert.match(
       presentNumberedCandidateSelection('product', [{ id: 'p1', name: 'Remera' }]),
-      /Encontré varias opciones/
+      /📦 Productos encontrados/
     );
     assert.match(
       presentNumberedCandidateSelection('order', [
         { id: 'o1', number: '00229', statusLabel: 'Listo', total: 900 },
       ]),
-      /Encontré varios pedidos/
+      /📋 Pedidos encontrados/
     );
     assert.match(
       presentNumberedCandidateSelection('supplier', [{ id: 's1', name: 'Textil Norte' }]),
-      /Encontré más de un proveedor/
+      /🚚 Proveedores encontrados/
     );
   });
 
   it('número inválido usa copy estándar', () => {
     assert.equal(
       formatV4InvalidCandidateSelection(3),
-      'Esa opción no está en la lista. Respondeme con un número del 1 al 3.'
+      'Opción inválida. Indicá un número del 1 al 3, o decime qué querés hacer.'
     );
   });
 });

@@ -3,9 +3,10 @@ import { provideRouter, Routes, withInMemoryScrolling } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { apiBaseInterceptor } from './core/interceptors/api-base.interceptor';
-import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, botOnlyHomeGuard, supervisorGuard, requireAnyPermission, requirePermission, requireModule } from './core/guards/auth.guard';
+import { authGuard, loginGuard, platformLoginGuard, platformGuard, companyGuard, trialActiveGuard, erpWebGuard, botOnlyHomeGuard, supervisorGuard, requireAnyPermission, requirePermission, requireModule, businessOnboardingGuard, pendingOnboardingGuard } from './core/guards/auth.guard';
+import { unsavedChangesGuard } from './core/guards/unsaved-changes.guard';
 import { PERMISSIONS } from './core/constants/permissions';
-import { LucideAngularModule, LayoutDashboard, Home, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone, Lock } from 'lucide-angular';
+import { LucideAngularModule, LayoutDashboard, Home, Users, Package, ShoppingCart, ClipboardList, Wallet, BarChart3, Settings, Pencil, Trash2, AlertCircle, ArrowLeft, ArrowDown, ArrowUp, Plus, Minus, Check, CircleCheck, Truck, Menu, X, History, Building2, LogOut, Moon, Sun, Tags, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Printer, Clock, Gift, UserCog, IdCard, Copy, Save, Receipt, FileText, FileMinus, FilePlus, Boxes, CreditCard, LoaderCircle, RefreshCw, ScanBarcode, Eye, EyeOff, Contact, User, Mail, Phone, Lock, Bell, Flashlight, SwitchCamera } from 'lucide-angular';
 import { LayoutComponent } from './shared/components/layout/layout.component';
 import { HomeComponent } from './features/home/home.component';
 import { ClientHomeComponent, HomeRedirectComponent } from './features/home/client-home.component';
@@ -47,6 +48,9 @@ import { LegalDocumentPageComponent } from './features/legal/legal-document-page
 import { RitotechLandingComponent } from './features/public/ritotech-landing.component';
 import { RitotechPlansComponent } from './features/public/ritotech-plans.component';
 import { RitotechProductPageComponent } from './features/public/ritotech-product-page.component';
+import { RitotechCampaignLandingComponent } from './features/public/ritotech-campaign-landing.component';
+import { BusinessOnboardingComponent } from './features/onboarding/business-onboarding.component';
+import { AvisosCenterComponent } from './features/avisos/avisos-center.component';
 
 const companyRoutes: Routes = [
   {
@@ -60,12 +64,18 @@ const companyRoutes: Routes = [
     canActivate: [botOnlyHomeGuard, trialActiveGuard],
   },
   {
+    path: 'avisos',
+    component: AvisosCenterComponent,
+    canActivate: [trialActiveGuard],
+  },
+  {
     path: 'dashboard',
     component: HomeComponent,
   },
   {
     path: 'clients/new',
     component: ClientFormComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'clients/:id/historial',
@@ -74,6 +84,7 @@ const companyRoutes: Routes = [
   {
     path: 'clients/:id/edit',
     component: ClientFormComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'clients',
@@ -82,10 +93,12 @@ const companyRoutes: Routes = [
   {
     path: 'suppliers/new',
     component: SupplierFormComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'suppliers/:id/edit',
     component: SupplierFormComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'suppliers',
@@ -98,10 +111,12 @@ const companyRoutes: Routes = [
   {
     path: 'stock/new',
     component: NewProductComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'stock/:id/edit',
     component: NewProductComponent,
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'stock',
@@ -111,16 +126,19 @@ const companyRoutes: Routes = [
     path: 'purchases/new',
     component: NewPurchaseComponent,
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'purchases/:id/edit',
     component: NewPurchaseComponent,
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'purchases/:id',
     component: NewPurchaseComponent,
     canActivate: [requirePermission(PERMISSIONS.PURCHASES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'purchases',
@@ -131,11 +149,13 @@ const companyRoutes: Routes = [
     path: 'orders/new',
     component: NewOrderComponent,
     canActivate: [requireModule('pedidos')],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'orders/:id/edit',
     component: NewOrderComponent,
     canActivate: [requireModule('pedidos')],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'orders',
@@ -148,6 +168,7 @@ const companyRoutes: Routes = [
     canActivate: [
       requireAnyPermission(PERMISSIONS.SALES_CREATE, PERMISSIONS.SALES_VIEW_HISTORY),
     ],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'sales/:id/edit',
@@ -155,6 +176,7 @@ const companyRoutes: Routes = [
     canActivate: [
       requireAnyPermission(PERMISSIONS.SALES_CREATE, PERMISSIONS.SALES_VIEW_HISTORY),
     ],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'sales',
@@ -167,11 +189,13 @@ const companyRoutes: Routes = [
     path: 'price-catalog/new',
     component: PriceCatalogFormComponent,
     canActivate: [requireModule('price_catalog'), requirePermission(PERMISSIONS.PRICES_VIEW)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'price-catalog/:id/edit',
     component: PriceCatalogFormComponent,
     canActivate: [requireModule('price_catalog'), requirePermission(PERMISSIONS.PRICES_VIEW)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'price-catalog',
@@ -187,16 +211,19 @@ const companyRoutes: Routes = [
     path: 'payables/obligations/:id/edit',
     component: NewPayableObligationComponent,
     canActivate: [requireModule('payables'), requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'payables/new',
     component: NewPayableObligationComponent,
     canActivate: [requireModule('payables'), requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'payables/loans/new',
     component: NewPayableLoanComponent,
     canActivate: [requireModule('payables'), requirePermission(PERMISSIONS.PAYABLES_ACCESS)],
+    canDeactivate: [unsavedChangesGuard],
   },
   {
     path: 'payables',
@@ -236,12 +263,23 @@ const companyRoutes: Routes = [
 function withCompanyPanelGuards(routes: Routes): Routes {
   return routes.map((route) => {
     const path = route.path ?? '';
-    if (route.redirectTo || path === '' || path === 'inicio' || path === 'mi-cuenta' || path === 'apariencia' || path === 'plan' || path === '**') {
+    if (
+      route.redirectTo ||
+      path === '' ||
+      path === 'inicio' ||
+      path === 'avisos' ||
+      path === 'mi-cuenta' ||
+      path === 'apariencia' ||
+      path === 'plan' ||
+      path === 'onboarding' ||
+      path === 'settings' ||
+      path === '**'
+    ) {
       return route;
     }
     return {
       ...route,
-      canActivate: [...(route.canActivate ?? []), trialActiveGuard, erpWebGuard],
+      canActivate: [...(route.canActivate ?? []), pendingOnboardingGuard, trialActiveGuard, erpWebGuard],
     };
   });
 }
@@ -296,6 +334,18 @@ const routes: Routes = [
     data: { product: 'whatsapp' },
   },
   {
+    path: 'ventas-whatsapp',
+    component: RitotechCampaignLandingComponent,
+  },
+  {
+    path: 'pedidos-whatsapp',
+    component: RitotechCampaignLandingComponent,
+  },
+  {
+    path: 'saldos-clientes',
+    component: RitotechCampaignLandingComponent,
+  },
+  {
     path: 'verificar-email',
     component: TrialVerifyEmailComponent,
   },
@@ -337,6 +387,11 @@ const routes: Routes = [
     canActivate: [authGuard, companyGuard],
   },
   {
+    path: 'onboarding',
+    component: BusinessOnboardingComponent,
+    canActivate: [authGuard, companyGuard, businessOnboardingGuard],
+  },
+  {
     path: '',
     component: LayoutComponent,
     canActivate: [authGuard, companyGuard],
@@ -373,6 +428,7 @@ export const appConfig: ApplicationConfig = {
         Wallet,
         BarChart3,
         Settings,
+        Bell,
         Pencil,
         Trash2,
         AlertCircle,
@@ -413,6 +469,8 @@ export const appConfig: ApplicationConfig = {
         LoaderCircle,
         RefreshCw,
         ScanBarcode,
+        Flashlight,
+        SwitchCamera,
         Eye,
         EyeOff,
         Contact,

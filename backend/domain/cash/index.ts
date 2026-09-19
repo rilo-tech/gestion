@@ -18,6 +18,11 @@ export {
   pickCashErpBusinessFields,
   validateRegisterCashMovement,
 } from './cash-document.ts';
+export {
+  buildCashMovementUpdate,
+  isManualCashMovement,
+  resolveCashUpdateAmbito,
+} from './cash-update.ts';
 export { loadCajaConfig, registerCashMovement } from './cash-service.ts';
 export {
   balanceFromSummary,
@@ -28,5 +33,17 @@ export {
   getCashSummary,
   summarizeCashMovements,
 } from './cash-query.ts';
+export {
+  getCashMonthlyIncomeSummary,
+  listTrailingCalendarMonths,
+  summarizeCashMonthlyIncome,
+  type CashMonthlyIncomeRow,
+  type CashMonthlyIncomeSummary,
+} from './cash-monthly-income.ts';
+export {
+  getCashWalletSummaryForPeriod,
+  resolveCashWalletPeriodBounds,
+  type CashWalletPeriodKey,
+} from './cash-wallet-period.ts';
 export { createFirestoreCashRepository } from './cash-firestore.ts';
 export type { CashRepository } from './cash-repository.ts';

@@ -79,6 +79,14 @@ export interface BusinessSubscriptionInfo {
   includedAiOverride?: number | null;
   usageModeOverride?: 'limited' | 'unlimited' | null;
   precioFinalOverride?: number | null;
+  priceSnapshot?: {
+    catalogVersion: string;
+    productId: string;
+    basePrice: number;
+    currency: 'UYU' | 'ARS';
+    monthlyTotal: number;
+    capturedAt: string;
+  } | null;
 }
 
 export interface SubscriptionPayment {
@@ -124,6 +132,9 @@ export interface PublicBusinessInfo {
   trialExpiringSoon?: boolean;
   trialBillingActive?: boolean;
   billingMode?: 'trial' | 'lite' | 'paid' | 'blocked';
+  lifecycleStatus?: 'trial' | 'active' | 'past_due' | 'inactive' | 'archived';
+  autoRenew?: boolean;
+  mpPreapprovalStatus?: string | null;
   liteLimits?: { maxClientes: number; maxProductos: number; maxAccionesIaMes: number; maxOperacionesMes?: number } | null;
   createdAt?: string;
   administradoresActivos: number;
@@ -135,8 +146,11 @@ export interface PublicBusinessInfo {
   contactVerification?: TrialContactVerification | null;
   contactClaims?: { emailBound: boolean; phoneBound: boolean };
   lifecycle?: TrialLifecycle | null;
+  profileIncomplete?: boolean;
   source?: string | null;
   platformAccess?: ClientPlatformAccess;
+  businessProfile?: import('../../../../../shared/business-profile.ts').BusinessProfile;
+  businessProfileStored?: boolean;
   usageQuota?: { extraWhatsapp: number; extraAi: number };
 }
 
@@ -164,6 +178,31 @@ export class BusinessService {
 
   getUsage(businessId: string): Observable<ClientUsageSummary> {
     return this.http.get<ClientUsageSummary>(`/api/business/${businessId}/usage`);
+  }
+
+  getWhatsAppOnboarding(businessId: string): Observable<{
+    status: 'not_started' | 'in_progress' | 'completed' | 'skipped';
+    firstSuccessfulActionAt?: string | null;
+    viewedSections?: string[];
+  }> {
+    return this.http.get(`/api/business/${businessId}/whatsapp-onboarding`);
+  }
+
+  updateProfile(
+    businessId: string,
+    payload: Record<string, unknown>
+  ): Observable<PublicBusinessInfo> {
+    return this.http.patch<PublicBusinessInfo>(`/api/business/${businessId}/profile`, payload);
+  }
+
+  updateLifecycleProfile(
+    businessId: string,
+    payload: { rubro?: string | null; pais?: string | null; ciudad?: string | null }
+  ): Observable<PublicBusinessInfo> {
+    return this.http.patch<PublicBusinessInfo>(
+      `/api/business/${businessId}/lifecycle-profile`,
+      payload
+    );
   }
 
   getBillingPlans(): Observable<BillingPlansResponse> {

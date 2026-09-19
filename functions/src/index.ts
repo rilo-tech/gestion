@@ -2,6 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { createApiApp } from '../../backend/create-app.ts';
 import { purgeOrderPhotos } from './purge-order-photos.ts';
+import { runAutomations } from './run-automations.ts';
 
 const API_REGION = 'southamerica-east1';
 
@@ -51,7 +52,7 @@ function getApiApp() {
   return apiApp;
 }
 
-export { purgeOrderPhotos };
+export { purgeOrderPhotos, runAutomations };
 
 export const api = onRequest(
   {

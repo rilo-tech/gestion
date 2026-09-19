@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Client, ClientService } from '../../core/services/client.service';
 import { StockItem, StockService } from '../../core/services/stock.service';
+import { CashMonthlyIncomeSummary, CashService } from '../../core/services/cash.service';
 import { AuthService } from '../../core/services/auth.service';
 import {
   defaultReportFromDate,
@@ -41,7 +42,7 @@ type PeriodPreset = '7' | '30' | '90' | '365' | 'year' | 'custom';
         <div class="min-w-0">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Reportes</h1>
           <p class="text-sm sm:text-base text-gray-500 desc-lg-only">
-            Ventas, ganancias, stock sugerido y clientes inactivos. Combiná filtros y exportá a impresión.
+            Ventas y ganancias por período. El promedio de ingresos de caja también aparece abajo a la derecha.
           </p>
         </div>
         <div class="flex gap-2 shrink-0">
@@ -274,7 +275,7 @@ type PeriodPreset = '7' | '30' | '90' | '365' | 'year' | 'custom';
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
               <div class="px-4 sm:px-6 py-4 border-b border-gray-100 bg-gray-50">
                 <h2 class="text-sm font-semibold text-gray-900">Promedio mensual</h2>
-                <p class="text-xs text-gray-500 mt-0.5">Basado en los meses del período filtrado</p>
+                <p class="text-xs text-gray-500 mt-0.5">Facturación de ventas en el período filtrado</p>
               </div>
               <div class="p-4 sm:p-6 space-y-3 text-sm">
                 <div class="flex justify-between gap-3">
@@ -292,6 +293,33 @@ type PeriodPreset = '7' | '30' | '90' | '365' | 'year' | 'custom';
                 <p class="text-xs text-gray-400 pt-2 border-t border-gray-100">
                   {{ report.promedioMensual.mesesConDatos }} mes(es) con ventas en el rango.
                 </p>
+              </div>
+            </div>
+
+            <div
+              *ngIf="auth.canViewEconomics && cashMonthlyIncome"
+              class="bg-white rounded-xl shadow-sm border border-teal-100 overflow-hidden">
+              <div class="px-4 sm:px-6 py-4 border-b border-teal-50 bg-teal-50/60">
+                <h2 class="text-sm font-semibold text-gray-900">Ingresos de caja</h2>
+                <p class="text-xs text-gray-500 mt-0.5">Últimos {{ cashMonthlyIncome.monthsRequested }} meses · plata que entró</p>
+              </div>
+              <div class="p-4 sm:p-6 space-y-3 text-sm">
+                <div class="flex justify-between gap-3">
+                  <span class="text-gray-500">Promedio mensual</span>
+                  <strong class="tabular-nums text-teal-700">{{ formatMoney(cashMonthlyIncome.promedioMensualIngresos) }}</strong>
+                </div>
+                <div class="flex justify-between gap-3">
+                  <span class="text-gray-500">Total período</span>
+                  <strong class="tabular-nums text-gray-900">{{ formatMoney(cashMonthlyIncome.totalIngresos) }}</strong>
+                </div>
+                <div class="divide-y divide-gray-50 -mx-1 pt-2 border-t border-gray-100">
+                  <div
+                    *ngFor="let row of cashMonthlyIncome.months"
+                    class="px-1 py-2 flex justify-between gap-3 text-xs sm:text-sm">
+                    <span class="text-gray-600">{{ row.label }}</span>
+                    <span class="tabular-nums font-medium text-gray-900">{{ formatMoney(row.ingreso) }}</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -481,6 +509,7 @@ export class ReportsComponent implements OnInit {
   private printService = inject(ReportsPrintService);
   private clientService = inject(ClientService);
   private stockService = inject(StockService);
+  private cashService = inject(CashService);
 
   readonly pageShellClass = PAGE_SHELL_CLASS;
   readonly tableScrollClass = TABLE_SCROLL_CLASS;
@@ -506,6 +535,7 @@ export class ReportsComponent implements OnInit {
   loading = false;
   error = '';
   report: ReportResult | null = null;
+  cashMonthlyIncome: CashMonthlyIncomeSummary | null = null;
   inactiveMinDays: number | null = null;
 
   clients: Client[] = [];
@@ -597,6 +627,7 @@ export class ReportsComponent implements OnInit {
   loadReport(): void {
     this.loading = true;
     this.error = '';
+    this.loadCashMonthlyIncome();
     this.reportsService.getReport(this.query).subscribe({
       next: (report) => {
         this.report = report;
@@ -612,6 +643,21 @@ export class ReportsComponent implements OnInit {
   printReport(): void {
     if (!this.report) return;
     this.printService.print(this.report, this.query.groupBy ?? 'product');
+  }
+
+  private loadCashMonthlyIncome(): void {
+    if (!this.auth.canViewEconomics) {
+      this.cashMonthlyIncome = null;
+      return;
+    }
+    this.cashService.getMonthlyIncome(6).subscribe({
+      next: (summary) => {
+        this.cashMonthlyIncome = summary;
+      },
+      error: () => {
+        this.cashMonthlyIncome = null;
+      },
+    });
   }
 
   formatMoney(value: number | null | undefined): string {

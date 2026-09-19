@@ -39,12 +39,23 @@ import {
   TRIAL_PRODUCT_LABELS,
   type ClientPlatformAccess,
   type TrialProductId,
+  resolveWebExperience,
+  isWhatsappOperational,
+  isErpWebOperational,
 } from '../../../../../shared/platform-access.ts';
 import { USAGE_TOOL_LABELS, type UsageToolId } from '../../../../../shared/usage-cost.ts';
 import {
   DEFAULT_EXTRA_USER_MONTHLY,
   getBillingProduct,
 } from '../../../../../shared/billing-catalog.ts';
+import {
+  EFFECTIVE_FEATURE_ROWS,
+  RILO_STANDARD_CONFIG_VERSION,
+  capabilityEnabledForProduct,
+} from '../../../../../shared/product-capability-contract.ts';
+import { canUseBusinessFeature } from '../../../../../shared/business-capability.ts';
+import { resolveBusinessProfile, type BusinessFeatureId } from '../../../../../shared/business-profile.ts';
+import { emptyModulesMap } from '../../../../../shared/subscription-modules.ts';
 
 @Component({
   selector: 'app-platform-business-detail',
@@ -91,10 +102,11 @@ import {
       </div>
 
       <div *ngIf="business" class="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
           <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Cuota mensual</p>
             <p class="text-xl font-bold text-gray-900 tabular-nums mt-1">{{ formatMoney(business.montoMensualEsperado) }}</p>
+            <p *ngIf="priceSnapshotLabel" class="text-[11px] text-violet-700 mt-1 leading-snug">{{ priceSnapshotLabel }}</p>
             <div *ngIf="business.cuotaDesglose?.lineas?.length" class="mt-3 space-y-1 border-t border-gray-100 pt-2">
               <div
                 *ngFor="let line of business.cuotaDesglose!.lineas"
@@ -134,6 +146,17 @@ import {
             <span class="inline-flex mt-2 px-2.5 py-1 rounded-full text-xs font-semibold" [ngClass]="subscriptionStatusClass">
               {{ statusLabels[business.estadoSuscripcion] }}
             </span>
+            <p *ngIf="business.billingMode" class="text-xs text-gray-500 mt-1">Modo: {{ billingModeLabel }}</p>
+          </div>
+          <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Mercado Pago</p>
+            <p class="text-sm font-semibold text-gray-900 mt-2">{{ mpStatusLabel }}</p>
+            <p class="text-xs text-gray-500 mt-1">
+              {{ business.autoRenew ? 'Renovación automática' : 'Sin renovación automática' }}
+            </p>
+            <p *ngIf="business.paidUntil" class="text-xs text-emerald-700 mt-1">
+              Cobertura hasta {{ formatDateTime(business.paidUntil) }}
+            </p>
           </div>
         </div>
 
@@ -267,10 +290,10 @@ import {
             <p class="text-sm text-gray-600">Último ingreso: <span class="font-medium text-gray-900">{{ formatDateTime(lastLoginAt) }}</span></p>
             <p class="text-sm text-gray-600">Origen: <span class="font-medium text-gray-900">{{ sourceLabel }}</span></p>
             <div class="grid grid-cols-2 gap-2 text-center text-xs">
-              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.ordersCount }}</span>Pedidos</div>
-              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.salesCount }}</span>Ventas</div>
-              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.productsCount }}</span>Productos</div>
-              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ usage.cashMovementsCount }}</span>Caja</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ activitySummary.ordersCount }}</span>Pedidos</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ activitySummary.salesCount }}</span>Ventas</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ activitySummary.productsCount }}</span>Productos</div>
+              <div class="rounded-lg bg-gray-50 py-2"><span class="block font-bold text-gray-900">{{ activitySummary.cashMovementsCount }}</span>Caja</div>
             </div>
           </section>
         </div>
@@ -437,6 +460,39 @@ import {
                 · ahora: {{ productLabel(selectedProductId) }}
               </span>
             </p>
+
+            <div class="rounded-xl border border-teal-100 bg-teal-50/50 p-4 space-y-4">
+              <div>
+                <h3 class="text-sm font-bold text-teal-950">Producto</h3>
+                <p class="text-sm text-teal-900 mt-1">{{ effectiveProductLabel }}</p>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-teal-950">Acceso</h3>
+                <ul class="mt-1 space-y-1 text-sm text-teal-900">
+                  <li>WhatsApp {{ accessWhatsappOk ? '✅' : '❌' }}</li>
+                  <li>Resumen RILO {{ accessSummaryOk ? '✅' : '❌' }}</li>
+                  <li>Gestión completa {{ accessFullOk ? '✅' : '❌' }}</li>
+                </ul>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-teal-950">Funciones efectivas</h3>
+                <ul class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1 text-sm text-teal-900">
+                  <li *ngFor="let row of effectiveFeatureRows">
+                    {{ row.label }} {{ row.enabled ? '✅' : '❌' }}
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-teal-950">Estado</h3>
+                <p class="text-sm text-teal-900 mt-1">
+                  {{ standardConfigLabel }}
+                  <span *ngIf="capabilityAuditLoading" class="text-xs text-teal-700"> · auditando…</span>
+                </p>
+                <p *ngIf="capabilityAudit && !capabilityAudit.ok" class="text-xs text-amber-800 mt-1">
+                  Audit: {{ capabilityAudit.issues.length }} issue(s)
+                </p>
+              </div>
+            </div>
           </section>
 
           <section *ngIf="usage" class="rounded-xl border border-gray-100 bg-white p-5 shadow-sm space-y-4">
@@ -460,6 +516,27 @@ import {
                 <p class="text-xs text-gray-500">Gemini</p>
                 <p class="text-lg font-bold text-gray-900">US$ {{ usage.geminiUsd | number:'1.2-2' }}</p>
                 <p class="text-[11px] text-gray-400">{{ usage.ai.used }} / {{ usage.ai.max || '—' }} acciones</p>
+              </div>
+            </div>
+            <div *ngIf="usage.automations" class="border-t border-gray-100 pt-3 space-y-2">
+              <p class="text-xs font-semibold text-gray-500 uppercase">Automatizaciones</p>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <p class="text-xs text-gray-500">Activas</p>
+                  <p class="text-base font-bold text-gray-900">{{ usage.automations.active }}</p>
+                </div>
+                <div>
+                  <p class="text-xs text-gray-500">Ejecuciones del mes</p>
+                  <p class="text-base font-bold text-gray-900">{{ usage.automations.runsThisMonth }}</p>
+                </div>
+                <div>
+                  <p class="text-xs text-gray-500">Msgs automáticos</p>
+                  <p class="text-base font-bold text-gray-900">{{ usage.automations.messagesSentThisMonth }}</p>
+                </div>
+                <div>
+                  <p class="text-xs text-gray-500">Errores</p>
+                  <p class="text-base font-bold text-gray-900">{{ usage.automations.errorsThisMonth }}</p>
+                </div>
               </div>
             </div>
             <div class="space-y-2" *ngIf="usageToolRows.length">
@@ -558,8 +635,8 @@ import {
             <div>
               <h2 class="text-base font-semibold text-violet-950">WhatsApp autorizados</h2>
               <p class="text-sm text-violet-800 mt-1">
-                1 número incluido en el plan. Cada WhatsApp extra se asocia a un admin u operador y se cobra aparte
-                (mismo precio que usuario extra).
+                1 número incluido en el plan. Cada WhatsApp extra es otra línea de Bot y se cobra aparte
+                (no es un usuario de RILO Gestión).
               </p>
             </div>
 
@@ -1076,6 +1153,12 @@ export class PlatformBusinessDetailComponent implements OnInit {
   botSimMessage = '';
   botSimulating = false;
   botSimResult: { reply: string; intent: string; executed: boolean } | null = null;
+  capabilityAudit: {
+    ok: boolean;
+    issues: Array<{ code: string; severity: string; message: string }>;
+    standardConfigVersion: string | null;
+  } | null = null;
+  capabilityAuditLoading = false;
 
   whatsappUsers: PlatformWhatsappUser[] = [];
   whatsappEnabledCount = 0;
@@ -1208,6 +1291,32 @@ export class PlatformBusinessDetailComponent implements OnInit {
     return this.business.enPrueba ? 'Prueba activa' : 'Sin prueba';
   }
 
+  get billingModeLabel(): string {
+    switch (this.business?.billingMode) {
+      case 'trial':
+        return 'Prueba';
+      case 'lite':
+        return 'Prueba vencida (bloqueado/limitado)';
+      case 'paid':
+        return 'Pago';
+      case 'blocked':
+        return 'Bloqueado';
+      default:
+        return '—';
+    }
+  }
+
+  get mpStatusLabel(): string {
+    const status = String(this.business?.mpPreapprovalStatus ?? '').trim().toLowerCase();
+    if (!status) return this.business?.autoRenew ? 'Sin estado MP' : 'Sin preapproval';
+    if (status === 'authorized' || status === 'approved') return 'Autorizado';
+    if (status === 'pending') return 'Pendiente';
+    if (status === 'paused') return 'Pausado';
+    if (status === 'cancelled' || status === 'canceled') return 'Cancelado';
+    if (status === 'rejected') return 'Rechazado';
+    return status;
+  }
+
   get trialStatusClass(): string {
     switch (this.business?.trialStatus) {
       case 'expired':
@@ -1263,6 +1372,70 @@ export class PlatformBusinessDetailComponent implements OnInit {
     return product ? TRIAL_PRODUCT_LABELS[product] : '—';
   }
 
+  get effectiveProductLabel(): string {
+    return this.productLabel(this.selectedProductId);
+  }
+
+  get accessWhatsappOk(): boolean {
+    return isWhatsappOperational(this.platformAccessDraft);
+  }
+
+  get accessSummaryOk(): boolean {
+    return resolveWebExperience(this.platformAccessDraft, this.selectedProductId) === 'summary';
+  }
+
+  get accessFullOk(): boolean {
+    return (
+      isErpWebOperational(this.platformAccessDraft) &&
+      resolveWebExperience(this.platformAccessDraft, this.selectedProductId) === 'full'
+    );
+  }
+
+  get effectiveFeatureRows(): Array<{ id: string; label: string; enabled: boolean }> {
+    const productId = this.selectedProductId;
+    const entitlements = this.business?.entitlements ?? emptyModulesMap(true);
+    const profile = resolveBusinessProfile(this.business?.businessProfile);
+    const featureByRow: Record<string, BusinessFeatureId | null> = {
+      sales: 'sales',
+      orders: 'orders',
+      collections: 'clients',
+      cash: 'cash',
+      purchases: 'purchases',
+      stock: 'stock',
+      payables: 'payables',
+      automations: null,
+    };
+    return EFFECTIVE_FEATURE_ROWS.map((row) => {
+      const contractOk = row.capabilityIds.some((id) => capabilityEnabledForProduct(id, productId));
+      if (row.id === 'automations') {
+        return {
+          id: row.id,
+          label: row.label,
+          enabled: contractOk && entitlements.automations === true,
+        };
+      }
+      const feature = featureByRow[row.id];
+      const featureOk =
+        !feature ||
+        canUseBusinessFeature({
+          productId,
+          entitlements,
+          profile,
+          feature,
+          permission: true,
+        });
+      return { id: row.id, label: row.label, enabled: contractOk && featureOk };
+    });
+  }
+
+  get standardConfigLabel(): string {
+    const version = this.capabilityAudit?.standardConfigVersion;
+    if (version === RILO_STANDARD_CONFIG_VERSION) return RILO_STANDARD_CONFIG_VERSION;
+    if (version) return `${version} (no standard_v1)`;
+    if (this.capabilityAuditLoading) return '…';
+    return 'legacy / sin standardConfigVersion';
+  }
+
   get showsErpPacks(): boolean {
     return this.selectedProductId === 'erp' || this.selectedProductId === 'completo';
   }
@@ -1271,7 +1444,7 @@ export class PlatformBusinessDetailComponent implements OnInit {
     return Math.max(0, this.whatsappEnabledCount - 1);
   }
 
-  get usage() {
+  get activitySummary() {
     return (
       this.business?.lifecycle?.usageSummary ?? {
         ordersCount: 0,
@@ -1402,10 +1575,26 @@ export class PlatformBusinessDetailComponent implements OnInit {
         this.loadWhatsappUsers(businessId);
         this.loadErpUsers(businessId);
         this.loadUsage(businessId);
+        this.loadCapabilityAudit(businessId);
       },
       error: () => {
         this.business = null;
         this.loading = false;
+      },
+    });
+  }
+
+  private loadCapabilityAudit(businessId: string) {
+    this.capabilityAuditLoading = true;
+    this.capabilityAudit = null;
+    this.platformService.getBusinessCapabilityAudit(businessId).subscribe({
+      next: (audit) => {
+        this.capabilityAudit = audit;
+        this.capabilityAuditLoading = false;
+      },
+      error: () => {
+        this.capabilityAudit = null;
+        this.capabilityAuditLoading = false;
       },
     });
   }
@@ -2216,6 +2405,16 @@ export class PlatformBusinessDetailComponent implements OnInit {
 
   private currentPeriodo(date = new Date()): string {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  get priceSnapshotLabel(): string | null {
+    const snap = this.business?.suscripcion?.priceSnapshot;
+    if (!snap?.monthlyTotal) return null;
+    const live = this.business?.montoMensualEsperado;
+    if (live != null && Math.round(live) === Math.round(snap.monthlyTotal)) {
+      return `Snapshot ${snap.capturedAt?.slice(0, 10) ?? ''}: ${snap.currency} ${snap.monthlyTotal}`;
+    }
+    return `Grandfathering: ${snap.currency} ${snap.monthlyTotal} (catálogo ${live ?? '—'}) · v${snap.catalogVersion}`;
   }
 
   formatMoney(value: number | undefined): string {

@@ -16,6 +16,7 @@ import {
 import { PasswordInputComponent } from '../../shared/components/password-input/password-input.component';
 import { RitotechPublicShellComponent } from '../public/ritotech-public-shell.component';
 import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
+import { CommercialCatalogService } from '../../core/services/commercial-catalog.service.ts';
 import {
   createAuthenticatedLoginPipeline,
   isLoginNavigationFailure,
@@ -26,6 +27,7 @@ import {
   selector: 'app-login',
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink, PasswordInputComponent, RitotechPublicShellComponent],
+  host: { style: 'display: contents' },
   styles: [
     `
       .login-field:-webkit-autofill,
@@ -139,7 +141,7 @@ import {
 
         <p class="mt-8 pt-6 border-t border-gray-800 text-center text-sm text-gray-400">
           ¿Todavía no tenés cuenta?
-          <a routerLink="/registro" [queryParams]="{ producto: 'completo' }" class="text-teal-400 font-semibold hover:underline">Probar {{ trialDays }} días</a>
+          <a routerLink="/registro" [queryParams]="{ producto: 'whatsapp' }" class="text-teal-400 font-semibold hover:underline">Probar {{ trialDays }} días</a>
         </p>
       </div>
     </section>
@@ -151,11 +153,12 @@ export class LoginComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private cdr = inject(ChangeDetectorRef);
+  private commercial = inject(CommercialCatalogService);
 
   readonly isAuthEmulatorEnabled = isAuthEmulatorEnabled;
   readonly isFirebaseClientConfigured = isFirebaseClientConfigured;
   readonly googleLoginUiEnabled = GOOGLE_LOGIN_UI_ENABLED;
-  readonly trialDays = DEFAULT_TRIAL_DAYS;
+  trialDays = DEFAULT_TRIAL_DAYS;
 
   businessCode = '';
   username = '';
@@ -173,6 +176,11 @@ export class LoginComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.submitting = false;
     this.googleRedirectPending = false;
+    this.commercial.load('UY').subscribe({
+      next: (row) => {
+        this.trialDays = row.catalog.trialDays || DEFAULT_TRIAL_DAYS;
+      },
+    });
 
     if (this.route.snapshot.queryParamMap.get('session') === 'expired') {
       this.sessionExpiredMessage =

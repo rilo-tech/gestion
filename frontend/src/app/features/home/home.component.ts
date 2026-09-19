@@ -24,6 +24,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
 import { Router, RouterLink } from '@angular/router';
 import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.component';
+import { AutomationsService } from '../../core/services/automations.service';
 
 @Component({
   selector: 'app-home',
@@ -45,6 +46,28 @@ import { RitotechVisualGuideComponent } from '../public/ritotech-visual-guide.co
           </app-ritotech-visual-guide>
         </div>
       </div>
+
+      <section
+        class="mb-6 sm:mb-8 rounded-2xl border border-amber-200/80 bg-amber-50/50 shadow-sm p-4 sm:p-5 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-sm font-bold text-amber-950">Necesita tu atención</h2>
+          <a routerLink="/avisos" class="text-xs font-semibold text-teal-700 hover:underline">
+            Ver avisos
+          </a>
+        </div>
+        <p *ngIf="attentionLoading" class="text-xs text-gray-500">Revisando…</p>
+        <ng-container *ngIf="!attentionLoading">
+          <p *ngIf="attentionCount === 0" class="text-sm text-gray-600">Todo al día</p>
+          <ul *ngIf="attentionCount > 0" class="space-y-1.5">
+            <li *ngFor="let line of attentionLines" class="text-sm text-gray-800 leading-snug">
+              {{ line }}
+            </li>
+          </ul>
+          <p *ngIf="attentionCount > 0" class="text-xs text-amber-800/80">
+            {{ attentionCount }} situación{{ attentionCount === 1 ? '' : 'es' }} abierta{{ attentionCount === 1 ? '' : 's' }}
+          </p>
+        </ng-container>
+      </section>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-10">
         <a
@@ -318,6 +341,7 @@ export class HomeComponent implements OnInit {
   private stockService = inject(StockService);
   private salesService = inject(SalesService);
   private catalogConfigService = inject(CatalogConfigService);
+  private automationsApi = inject(AutomationsService);
   private router = inject(Router);
   private readonly ordersLoadSession = new ProgressiveListSession();
   private ordersForPendingCount: Order[] = [];
@@ -337,6 +361,9 @@ export class HomeComponent implements OnInit {
   currentMonthLabel = '';
   recentOrders: Order[] = [];
   totalRecentOrders = 0;
+  attentionLoading = false;
+  attentionCount = 0;
+  attentionLines: string[] = [];
 
   get hasMoreRecentOrders(): boolean {
     return this.totalRecentOrders > this.recentActivityLimit;
@@ -351,6 +378,18 @@ export class HomeComponent implements OnInit {
   }
 
   ngOnInit() {
+    this.attentionLoading = true;
+    this.automationsApi.attentionSummary().subscribe({
+      next: (res) => {
+        this.attentionCount = res.count ?? 0;
+        this.attentionLines = res.lines ?? [];
+        this.attentionLoading = false;
+      },
+      error: () => {
+        this.attentionLoading = false;
+      },
+    });
+
     this.catalogConfigService.getAppConfig().subscribe((config) => {
       this.appConfig = config;
       this.refreshPendingOrderCounts();

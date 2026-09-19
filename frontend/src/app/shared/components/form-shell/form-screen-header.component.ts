@@ -45,7 +45,7 @@ import { FormBackButtonComponent } from './form-back-button.component';
 
       <p
         *ngIf="subtitle"
-        class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1 sm:mt-1 leading-snug pl-[calc(2.5rem+0.5rem)] sm:pl-[calc(2.75rem+0.75rem)]"
+        class="text-sm text-gray-500 dark:text-gray-400 mt-1 sm:mt-1.5 leading-snug pl-[calc(2.5rem+0.5rem)] sm:pl-[calc(2.75rem+0.75rem)]"
         [class.desc-lg-only]="hideSubtitleOnMobile">
         {{ subtitle }}
       </p>

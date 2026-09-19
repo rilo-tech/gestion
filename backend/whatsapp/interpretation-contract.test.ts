@@ -97,17 +97,17 @@ describe('Interpretación general (JSON estructural, sin frases en el prompt)', 
   });
 
   it('capability unwired no se degrada a create_order', () => {
-    const mapped = mapLinguisticIntent('create_product');
+    const mapped = mapLinguisticIntent('remove_order_item');
     assert.equal(mapped.unwired, true);
     assert.equal(mapped.intent, 'unknown');
-    assert.equal(isUnwiredCapability('create_product'), true);
+    assert.equal(isUnwiredCapability('remove_order_item'), true);
     const { interpretation, planIntent } = run(
-      { intent: 'create_product', conversationAction: 'new_task' },
-      'dame de alta una remera premium'
+      { intent: 'remove_order_item', conversationAction: 'new_task' },
+      'sacale ese ítem al pedido'
     );
     assert.equal(planIntent, 'unknown');
     assert.equal(interpretation.capabilityUnwired, true);
-    assert.equal(interpretation.requestedCapability, 'create_product');
+    assert.equal(interpretation.requestedCapability, 'remove_order_item');
   });
 
   it('caja: expense vs query', () => {

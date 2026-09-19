@@ -122,7 +122,7 @@ export class PayablesService {
 
   getInstallments(options?: {
     mes?: string;
-    scope?: 'month' | 'all' | 'account';
+    scope?: 'month' | 'all' | 'account' | 'obligation';
     reconcile?: boolean;
     displayEstado?: PayableDisplayEstado;
     ambito?: string;
@@ -256,9 +256,17 @@ export class PayablesService {
     );
   }
 
-  deleteObligation(obligacionId: string): Observable<{ ok: boolean }> {
-    return this.http.delete<{ ok: boolean }>(
-      `/api/payables/${this.businessId}/obligations/${obligacionId}`
+  deleteObligation(
+    obligacionId: string,
+    options?: { allowPaidCuotas?: boolean }
+  ): Observable<{ ok: boolean; deletedCuotas?: number; paidCuotas?: number }> {
+    const params: Record<string, string> = {};
+    if (options?.allowPaidCuotas) {
+      params.allowPaid = '1';
+    }
+    return this.http.delete<{ ok: boolean; deletedCuotas?: number; paidCuotas?: number }>(
+      `/api/payables/${this.businessId}/obligations/${obligacionId}`,
+      { params }
     );
   }
 }

@@ -12,6 +12,8 @@ import {
   type SubscriptionModulesMap,
 } from '../../shared/subscription-modules.ts';
 import type { FrozenPlanSnapshot } from './plan-snapshot.ts';
+import type { CommercialPriceSnapshot } from '../../shared/commercial-pricing.ts';
+import { isTrialProductId, type TrialProductId } from '../../shared/platform-access.ts';
 
 export type BusinessSubscriptionRecord = {
   limiteAdministradores?: number | null;
@@ -30,6 +32,8 @@ export type BusinessSubscriptionRecord = {
   notasComerciales?: string;
   /** Congela plantilla del plan para esta empresa (cambios al plan no aplican). */
   planFrozen?: FrozenPlanSnapshot;
+  /** Snapshot comercial al contratar (precio grandfathered). */
+  priceSnapshot?: CommercialPriceSnapshot | null;
   includedErpUsersOverride?: number | null;
   extraErpUserPriceOverride?: number | null;
   includedWhatsappNumbersOverride?: number | null;
@@ -38,6 +42,10 @@ export type BusinessSubscriptionRecord = {
   usageModeOverride?: 'limited' | 'unlimited' | null;
   maxWhatsappNumbersOverride?: number | null;
   precioFinalOverride?: number | null;
+  /** Tope de automatizaciones activas; null = sin límite. */
+  maxActiveAutomations?: number | null;
+  /** Si false, no permite condition_watch. */
+  conditionWatchesAllowed?: boolean;
 };
 
 export type EffectiveSubscriptionLimits = {
@@ -73,6 +81,32 @@ function optionalNum(value: unknown): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+function parsePriceSnapshot(raw: unknown): CommercialPriceSnapshot | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const productId = isTrialProductId(row.productId) ? row.productId : null;
+  if (!productId) return null;
+  const currency = row.currency === 'ARS' ? 'ARS' : 'UYU';
+  return {
+    catalogVersion: String(row.catalogVersion ?? 'unknown').trim() || 'unknown',
+    productId,
+    basePrice: Math.max(0, Number(row.basePrice) || 0),
+    currency,
+    includedUsers: Math.max(0, Math.round(Number(row.includedUsers) || 0)),
+    extraUserPrice: Math.max(0, Number(row.extraUserPrice) || 0),
+    includedAiActions: Math.max(0, Math.round(Number(row.includedAiActions) || 0)),
+    includedWhatsappNumbers: Math.max(0, Math.round(Number(row.includedWhatsappNumbers) || 0)),
+    extraWhatsappNumberPrice: Math.max(0, Number(row.extraWhatsappNumberPrice) || 0),
+    monthlyTotal: Math.max(0, Number(row.monthlyTotal) || 0),
+    capturedAt:
+      typeof row.capturedAt === 'string' && row.capturedAt.trim()
+        ? row.capturedAt.trim()
+        : new Date().toISOString(),
+  };
+}
+
 export function parseBusinessSubscription(
   data: Record<string, unknown> | undefined
 ): BusinessSubscriptionRecord {
@@ -96,6 +130,8 @@ export function parseBusinessSubscription(
     descuentoMensual: numOr(raw.descuentoMensual, 0),
     notasComerciales:
       typeof raw.notasComerciales === 'string' ? raw.notasComerciales.trim() : undefined,
+    planFrozen: raw.planFrozen as FrozenPlanSnapshot | undefined,
+    priceSnapshot: parsePriceSnapshot(raw.priceSnapshot),
     includedErpUsersOverride: optionalNum(raw.includedErpUsersOverride),
     extraErpUserPriceOverride: optionalNum(raw.extraErpUserPriceOverride),
     includedWhatsappNumbersOverride: optionalNum(raw.includedWhatsappNumbersOverride),
@@ -107,6 +143,13 @@ export function parseBusinessSubscription(
         : null,
     maxWhatsappNumbersOverride: optionalNum(raw.maxWhatsappNumbersOverride),
     precioFinalOverride: optionalNum(raw.precioFinalOverride),
+    maxActiveAutomations: optionalNum(raw.maxActiveAutomations),
+    conditionWatchesAllowed:
+      raw.conditionWatchesAllowed === false
+        ? false
+        : raw.conditionWatchesAllowed === true
+          ? true
+          : undefined,
   };
 }
 
@@ -312,6 +355,9 @@ export function sanitizeBusinessSubscriptionPayload(
   }
   if (raw.precioFinalOverride !== undefined) {
     next.precioFinalOverride = optionalNum(raw.precioFinalOverride);
+  }
+  if (raw.priceSnapshot !== undefined) {
+    next.priceSnapshot = parsePriceSnapshot(raw.priceSnapshot) ?? null;
   }
 
   return next;

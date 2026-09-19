@@ -224,7 +224,8 @@ router.post('/checkout', requireAuth, async (req, res) => {
     });
 
     const useSandbox =
-      process.env.MERCADOPAGO_USE_SANDBOX === 'true' && preference.sandboxInitPoint;
+      (await import('../../shared/rilo-environment.ts')).shouldUseMercadoPagoSandbox() &&
+      preference.sandboxInitPoint;
 
     res.json({
       preferenceId: preference.id,
@@ -312,7 +313,8 @@ router.post('/checkout-pack', requireAuth, requireSupervisor, async (req, res) =
     });
 
     const useSandbox =
-      process.env.MERCADOPAGO_USE_SANDBOX === 'true' && preference.sandboxInitPoint;
+      (await import('../../shared/rilo-environment.ts')).shouldUseMercadoPagoSandbox() &&
+      preference.sandboxInitPoint;
 
     res.json({
       preferenceId: preference.id,

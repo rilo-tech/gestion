@@ -11,8 +11,10 @@ export type LinguisticCapability = {
 };
 
 /**
- * Capacidades lingüísticas. Gemini las ve como ids; el ERP solo ejecuta las wired/partial.
- * No son frases. No se usan para ruteo por texto.
+ * Capacidades lingüísticas (legacy Gemini + menú help).
+ * El Agent V4 NO usa esto para exponer tools: la fuente de verdad es
+ * WRITE_TOOLS / READ_TOOLS + handlers (`agent/tool-registry.ts`).
+ * Mantener alineado para no marcar como unwired acciones ya implementadas.
  */
 export const LINGUISTIC_CAPABILITIES: LinguisticCapability[] = [
   { id: 'create_order', mapsTo: 'create_order', erp: 'wired', notes: 'erp-writes createOrderFromWhatsapp' },
@@ -28,27 +30,46 @@ export const LINGUISTIC_CAPABILITIES: LinguisticCapability[] = [
   { id: 'query_order_balance', mapsTo: 'query_status', erp: 'wired', notes: 'query.metric=balance' },
   { id: 'query_client_balance', mapsTo: 'query_balance', erp: 'wired', notes: '' },
   { id: 'create_client', mapsTo: 'create_client', erp: 'wired', notes: 'nombre + teléfono opcional' },
-  { id: 'query_client', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'no hay listado/ficha de cliente por WA' },
-  { id: 'update_client', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'no hay PATCH cliente por WA' },
-  { id: 'create_product', mapsTo: 'unknown', erp: 'partial', notes: 'alta embebida en pedido (confirm_create_product), no catálogo suelto' },
-  { id: 'query_product', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'catálogo no se lista como query_product' },
+  { id: 'query_client', mapsTo: 'unknown', erp: 'wired', notes: 'find/list/get client V4' },
+  { id: 'update_client', mapsTo: 'unknown', erp: 'wired', notes: 'update_client write tool' },
+  { id: 'create_product', mapsTo: 'unknown', erp: 'wired', notes: 'create_product write tool' },
+  { id: 'query_product', mapsTo: 'unknown', erp: 'wired', notes: 'find/list product V4' },
+  { id: 'rename_products', mapsTo: 'unknown', erp: 'wired', notes: 'rename_products + preview_rename_product' },
   { id: 'update_product_cost', mapsTo: 'update_product_cost', erp: 'wired', notes: '' },
-  { id: 'update_product_price', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'precio de venta no expuesto' },
+  { id: 'update_product_price', mapsTo: 'unknown', erp: 'wired', notes: 'update_product_price write tool' },
   { id: 'query_stock', mapsTo: 'query_stock', erp: 'wired', notes: '' },
-  { id: 'adjust_stock', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'ajustes de stock no por WA' },
-  { id: 'set_stock', mapsTo: 'unknown', erp: 'requires_adapter', notes: '' },
+  { id: 'adjust_stock', mapsTo: 'unknown', erp: 'wired', notes: 'adjust_stock write tool' },
+  { id: 'set_stock', mapsTo: 'unknown', erp: 'wired', notes: 'set_stock write tool' },
   { id: 'register_cash', mapsTo: 'register_cash', erp: 'wired', notes: 'ingreso|egreso domain/cash' },
-  { id: 'query_cash', mapsTo: 'query_cash', erp: 'wired', notes: 'saldo / día / movimientos según query' },
+  { id: 'query_cash', mapsTo: 'query_cash', erp: 'wired', notes: 'saldo / día / movimientos / ingresos mensuales + promedio' },
   { id: 'create_sale', mapsTo: 'create_sale', erp: 'wired', notes: '' },
   { id: 'query_sales', mapsTo: 'query_status', erp: 'partial', notes: 'entity=sales; listado pedidos/ventas mixto' },
-  { id: 'aggregate_sales', mapsTo: 'query_status', erp: 'requires_adapter', notes: 'no hay SUM ventas por WA' },
+  { id: 'aggregate_sales', mapsTo: 'query_status', erp: 'partial', notes: 'promedio/ingresos mensuales vía get_cash_income_summary' },
   { id: 'create_purchase', mapsTo: 'create_purchase', erp: 'wired', notes: 'stock in, sin caja' },
-  { id: 'query_purchases', mapsTo: 'unknown', erp: 'requires_adapter', notes: '' },
-  { id: 'create_supplier', mapsTo: 'unknown', erp: 'partial', notes: 'confirm_create_supplier en compra' },
-  { id: 'query_supplier', mapsTo: 'unknown', erp: 'requires_adapter', notes: '' },
+  { id: 'query_purchases', mapsTo: 'unknown', erp: 'requires_adapter', notes: 'list_purchases aún requiresDomainAdapter' },
+  { id: 'create_supplier', mapsTo: 'unknown', erp: 'wired', notes: 'create_supplier write tool' },
+  { id: 'update_supplier', mapsTo: 'unknown', erp: 'wired', notes: 'update_supplier write tool' },
+  { id: 'query_supplier', mapsTo: 'unknown', erp: 'wired', notes: 'find/list/get supplier V4' },
   { id: 'query_supplier_balance', mapsTo: 'unknown', erp: 'requires_adapter', notes: '' },
   { id: 'register_supplier_payment', mapsTo: 'unknown', erp: 'requires_adapter', notes: '' },
+  { id: 'create_payable', mapsTo: 'unknown', erp: 'wired', notes: 'create_recurring_payable + create_one_time_payable → createPayable' },
+  { id: 'query_payables', mapsTo: 'unknown', erp: 'wired', notes: 'query_payables read tool' },
+  { id: 'pay_payable', mapsTo: 'unknown', erp: 'wired', notes: 'pay_payable → payPayable / setPayableInstallmentPaid' },
+  { id: 'create_visual_document', mapsTo: 'create_purchase', erp: 'partial', notes: 'prepare_visual_draft_write' },
   { id: 'add_order_extra_cost', mapsTo: 'register_cost', erp: 'wired', notes: '' },
+  { id: 'query_collaborators', mapsTo: 'unknown', erp: 'wired', notes: 'list/find/get colaboradores ERP' },
+  { id: 'query_collaborator_hours', mapsTo: 'unknown', erp: 'wired', notes: 'horas por período / resumen' },
+  { id: 'query_collaborator_balance', mapsTo: 'unknown', erp: 'wired', notes: 'saldo acumulado ERP' },
+  { id: 'query_collaborator_account', mapsTo: 'unknown', erp: 'wired', notes: 'cuenta + movimientos ERP' },
+  { id: 'register_collaborator_hours', mapsTo: 'unknown', erp: 'wired', notes: 'movimiento tipo horas' },
+  { id: 'register_collaborator_extra', mapsTo: 'unknown', erp: 'wired', notes: 'movimiento tipo extra' },
+  { id: 'register_collaborator_payment', mapsTo: 'unknown', erp: 'wired', notes: 'movimiento tipo pago + caja ERP' },
+  { id: 'update_collaborator_movement', mapsTo: 'unknown', erp: 'wired', notes: 'PATCH movimiento colaborador' },
+  { id: 'create_collaborator', mapsTo: 'unknown', erp: 'wired', notes: 'alta colaborador; requiere módulo + permiso' },
+  { id: 'update_collaborator', mapsTo: 'unknown', erp: 'wired', notes: 'PATCH colaborador; activo=false desactiva' },
+  { id: 'automations', mapsTo: 'unknown', erp: 'wired', notes: 'módulo automations' },
+  { id: 'recent_operation', mapsTo: 'unknown', erp: 'wired', notes: 'get_recent_operation_records' },
+  { id: 'show_guide', mapsTo: 'help', erp: 'wired', notes: '' },
   { id: 'how_to', mapsTo: 'how_to', erp: 'wired', notes: '' },
   { id: 'capability_question', mapsTo: 'capability_question', erp: 'wired', notes: '' },
 ];
@@ -71,6 +92,8 @@ const ALIAS_TO_INTENT: Record<string, WhatsappIntent> = {
   set_order_status: 'update_order_status',
   add_order_extra_cost: 'register_cost',
   query_client_balance: 'query_balance',
+  rename_products: 'unknown',
+  update_supplier: 'unknown',
 };
 
 const KNOWN_UNWIRED = new Set(
@@ -108,9 +131,8 @@ export function isUnwiredCapability(id: string | undefined): boolean {
 }
 
 export function capabilityNotEnabledReply(capabilityId: string): string {
-  const cap = LINGUISTIC_CAPABILITIES.find((row) => row.id === capabilityId);
-  const label = cap?.id.replace(/_/g, ' ') || capabilityId.replace(/_/g, ' ');
-  return `Entendí que querés *${label}*, pero esa acción todavía no está disponible en WhatsApp.\nEl ERP la resuelve en el panel, o todavía no tiene adaptador.`;
+  void capabilityId;
+  return 'Entendí lo que pedís, pero esa acción todavía no está disponible por WhatsApp.';
 }
 
 /** Resumen para el intérprete: ids, no ejemplos de usuarios. */

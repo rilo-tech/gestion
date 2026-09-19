@@ -14,6 +14,11 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import {
+  FormDirtyTracker,
+  PersistWaiter,
+  UnsavedChangesRegistry,
+} from '../../core/utils/unsaved-changes';
+import {
   clearPurchaseFormDraft,
   PurchaseFormDraftSnapshot,
   readPurchaseFormDraft,
@@ -153,7 +158,7 @@ interface PurchaseDraftLine {
         </button>
         <p
           *ngIf="comprobanteHintExpanded"
-          class="m-0 border-t border-amber-200/80 px-3 py-2 text-[11px] leading-snug text-amber-700 dark:border-amber-800/80 dark:text-amber-100/90">
+          class="m-0 border-t border-amber-200/80 px-3 py-2 text-xs leading-snug text-amber-700 dark:border-amber-800/80 dark:text-amber-100/90">
           {{ comprobanteTipoHintText }}
         </p>
       </div>
@@ -205,7 +210,7 @@ interface PurchaseDraftLine {
           placeholder="Opcional — ej. 0001-00045678"
           autocomplete="off"
           maxlength="80" />
-        <p *ngIf="!readOnly" class="hidden sm:block text-[11px] text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
+        <p *ngIf="!readOnly" class="hidden sm:block text-xs text-gray-500 dark:text-gray-400 mt-1 m-0 leading-snug">
           Comprobante de la factura del proveedor. El n° de compra del sistema se asigna al registrar.
         </p>
       </div>
@@ -226,6 +231,8 @@ interface PurchaseDraftLine {
           [addedProductIds]="addedStockProductIds"
           addedLabel="En la compra"
           inputName="purchaseProductSearch"
+          scanMode="manualQuantity"
+          createProductReturnTo="/purchases/new"
           (productSelected)="addProductFromSearch($event)"
           (productQuantitySelected)="addProductFromSearchWithQuantity($event)">
         </app-transaction-product-search>
@@ -247,18 +254,18 @@ interface PurchaseDraftLine {
                 type="button"
                 (click)="selectLineAmbito(draftLines[stockLineIndices[index]], ambito.id)"
                 [attr.aria-pressed]="isLineAmbitoSelected(draftLines[stockLineIndices[index]], ambito.id)"
-                class="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-[10px] sm:text-xs font-medium touch-manipulation select-none"
+                class="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs sm:text-xs font-medium touch-manipulation select-none"
                 [ngClass]="
                   isLineAmbitoSelected(draftLines[stockLineIndices[index]], ambito.id)
                     ? 'border-teal-500 bg-teal-50 text-teal-800 font-semibold'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300 bg-white'
+                    : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-900'
                 ">
                 {{ ambito.label }}
               </button>
             </div>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
               <label
-                class="inline-flex items-center gap-1.5 text-[10px] sm:text-xs font-medium text-gray-600 select-none cursor-pointer">
+                class="inline-flex items-center gap-1.5 text-xs sm:text-xs font-medium text-gray-600 select-none cursor-pointer">
                 <input
                   type="checkbox"
                   [ngModel]="draftLines[stockLineIndices[index]].enOferta"
@@ -271,14 +278,14 @@ interface PurchaseDraftLine {
               <ng-container *ngIf="draftLines[stockLineIndices[index]].enOferta">
                 <span
                   *ngIf="lineIsRealOferta(draftLines[stockLineIndices[index]])"
-                  class="text-[10px] sm:text-xs font-semibold text-amber-700">
+                  class="text-xs sm:text-xs font-semibold text-amber-700">
                   {{ lineOfertaPct(draftLines[stockLineIndices[index]]) }}% menos que tu costo
                   ({{ formatMoney(lineOfertaCostoGuardado(draftLines[stockLineIndices[index]])) }}/u)
                   · ahorro {{ formatMoney(lineOfertaAhorro(draftLines[stockLineIndices[index]])) }}
                 </span>
                 <span
                   *ngIf="!lineIsRealOferta(draftLines[stockLineIndices[index]])"
-                  class="text-[10px] sm:text-xs text-gray-400">
+                  class="text-xs sm:text-xs text-gray-400">
                   Poné un costo menor a tu costo guardado para que cuente como oferta
                 </span>
               </ng-container>
@@ -307,22 +314,22 @@ interface PurchaseDraftLine {
             class="px-3 sm:px-4 py-2.5 sm:py-3">
             <div class="space-y-2">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-semibold uppercase text-gray-400">Gasto / servicio</span>
-                <span class="text-[10px] font-semibold uppercase text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">No mueve stock</span>
+                <span class="text-xs font-semibold uppercase text-gray-400">Gasto / servicio</span>
+                <span class="text-xs font-semibold uppercase text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">No mueve stock</span>
               </div>
               <div class="grid grid-cols-2 sm:grid-cols-12 gap-2 sm:gap-3 items-end">
                 <div class="col-span-1 sm:col-span-4">
-                  <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Concepto</label>
+                  <label class="block text-xs sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">Concepto</label>
                   <select
                     [(ngModel)]="line.categoriaId"
                     (ngModelChange)="onLineCategoriaChange(line)"
                     [name]="'cat_' + i"
-                    [class]="lineInputClass + ' bg-white'">
+                    [class]="lineInputClass + ' bg-white dark:bg-gray-900'">
                     <option *ngFor="let cat of categoriasGasto" [ngValue]="cat.id">{{ cat.label }}</option>
                   </select>
                 </div>
                 <div class="col-span-1 sm:col-span-3">
-                  <label class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
+                  <label class="block text-xs sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
                     Importe
                     <span class="font-normal text-gray-400">(− crédito)</span>
                   </label>
@@ -369,7 +376,7 @@ interface PurchaseDraftLine {
                 </button>
               </div>
               <div *ngIf="usesAmbitoSeparation">
-                  <span class="block text-[11px] sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
+                  <span class="block text-xs sm:text-xs font-medium text-gray-500 mb-0.5 sm:mb-1">
                     Ámbito <span class="text-red-500">*</span>
                   </span>
                   <div
@@ -429,7 +436,7 @@ interface PurchaseDraftLine {
             </select>
             <p
               *ngIf="cuentasPagoList.length === 0"
-              class="text-[10px] sm:text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 sm:mt-1 leading-snug">
+              class="text-xs sm:text-xs text-amber-600 dark:text-amber-400 mt-0.5 sm:mt-1 leading-snug">
               Agregá cuentas en Finanzas → Configurar cuentas (medio «{{ pagoMedioLabel }}»).
             </p>
           </div>
@@ -462,7 +469,7 @@ interface PurchaseDraftLine {
         </div>
         <p
           *ngIf="pagoResumenHintText"
-          class="text-[11px] text-gray-500 dark:text-gray-400 leading-snug m-0">
+          class="text-xs text-gray-500 dark:text-gray-400 leading-snug m-0">
           {{ pagoResumenHintText }}
         </p>
       </div>
@@ -548,6 +555,9 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   private stockService = inject(StockService);
   private router = inject(Router);
   private cdr = inject(ChangeDetectorRef);
+  private unsavedChanges = inject(UnsavedChangesRegistry);
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   appConfig: AppConfig = DEFAULT_APP_CONFIG;
 
@@ -633,7 +643,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   readonly paymentInlineLabelClass = TRANSACTION_COMPACT_LABEL_INLINE_CLASS;
 
   readonly lineInputClass =
-    'w-full px-2 py-1 sm:px-3 sm:py-2 rounded-lg border border-gray-200 text-[11px] sm:text-sm leading-tight outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
+    'w-full min-h-10 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm leading-normal outline-none focus:ring-2 focus:ring-teal-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none';
 
   readonly fieldClass = TRANSACTION_COMPACT_FIELD_CLASS;
   readonly fieldLabelClass = TRANSACTION_COMPACT_LABEL_CLASS;
@@ -641,7 +651,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   readonly paymentPairGridClass = TRANSACTION_PAYMENT_PAIR_GRID_CLASS;
 
   readonly lineAmbitoBtnClass =
-    'inline-flex items-center justify-center rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[34px] sm:min-h-[40px] truncate bg-white touch-manipulation select-none';
+    'inline-flex items-center justify-center rounded-lg border-2 px-2 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-medium min-h-[40px] truncate bg-white dark:bg-gray-900 touch-manipulation select-none';
 
   get defaultAmbito(): string {
     return this.cajaAmbitos[0]?.id ?? 'negocio';
@@ -939,6 +949,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.lineCounter = 0;
     this.syncAddedStockProductIds();
     this.syncPurchaseStockTableLines();
+    this.dirty.capture(this.purchaseDirtySnapshot());
   }
 
   private loadFromPurchase(purchase: Purchase) {
@@ -988,6 +999,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.lineCounter = this.draftLines.length;
     this.syncAddedStockProductIds();
     this.syncPurchaseStockTableLines();
+    this.dirty.capture(this.purchaseDirtySnapshot());
     this.cdr.markForCheck();
   }
 
@@ -1251,7 +1263,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
   }
 
   submitPurchase() {
-    if (this.readOnly || this.savingPurchase || this.savingDraft) return;
+    if (this.readOnly || this.savingPurchase || this.savingDraft) {
+      this.persistWaiter.finish(false);
+      return;
+    }
     this.saveFeedback.clearSuccess();
 
     if (this.isDraftMode && this.editingDraftId) {
@@ -1297,7 +1312,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         cancelLabel: 'Cancelar',
       })
       .subscribe((choice) => {
-        if (!choice) return;
+        if (!choice) {
+          this.persistWaiter.finish(false);
+          return;
+        }
         const asGanancia = choice === 'ganancia';
         diffLines.forEach((line) => (line.enOferta = asGanancia));
         proceed();
@@ -1372,6 +1390,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
           this.refreshStockCostsAfterPurchase();
           this.ensurePayablesAfterSave(result.id);
           this.saveFeedback.showSuccessWithDetail('Compra registrada', result.compraLabel);
+          this.completePersistSuccess();
           this.saved.emit({ id: result.id, label: result.compraLabel, freshSave: true });
         },
         error: (err) => {
@@ -1409,10 +1428,12 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
           'Lo encontrás en Compras, arriba de la lista (marcado como Borrador).'
         );
         this.saved.emit({ id: result.id, label: 'Borrador', draft: true });
+        this.completePersistSuccess();
       },
-      error: (err) => {
-        this.savingDraft = false;
-        this.savingChange.emit(false);
+        error: (err) => {
+          this.savingDraft = false;
+          this.savingChange.emit(false);
+          this.persistWaiter.finish(false);
         this.dialogService.alert({
           title: 'Error',
           message:
@@ -1448,7 +1469,10 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         confirmLabel: 'Guardar cambios',
       })
       .subscribe((confirmed) => {
-        if (!confirmed) return;
+        if (!confirmed) {
+          this.persistWaiter.finish(false);
+          return;
+        }
 
         this.setSavingPurchase(true);
         this.purchaseService
@@ -1460,9 +1484,11 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
               this.ensurePayablesAfterSave(result.id);
               this.saveFeedback.showSuccessWithDetail('Compra actualizada', result.compraLabel);
               this.reloadConfirmedPurchase();
+              this.completePersistSuccess();
               this.saved.emit({ id: result.id, label: result.compraLabel });
             },
             error: (err) => {
+              this.persistWaiter.finish(false);
               this.dialogService.alert({
                 title: 'Error',
                 message:
@@ -1498,6 +1524,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
               this.refreshStockCostsAfterPurchase();
               this.ensurePayablesAfterSave(result.id);
               this.saveFeedback.showSuccessWithDetail('Compra registrada', result.compraLabel);
+              this.completePersistSuccess();
               this.saved.emit({ id: result.id, label: result.compraLabel, freshSave: true });
             },
             error: (err) => {
@@ -1505,6 +1532,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
                 typeof err.error?.error === 'string'
                   ? err.error.error
                   : 'No se pudo confirmar la compra.';
+              this.persistWaiter.finish(false);
               this.dialogService.alert({ title: 'Error', message });
             },
           });
@@ -1566,6 +1594,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         message:
           'Agregá al menos una línea con concepto e importe distinto de cero (usá importe negativo para un crédito o devolución en cuotas).',
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1575,6 +1604,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
         title: 'Ámbito requerido',
         message: `Seleccioná el ámbito (${this.formatAmbitoOptionsHint()}) en cada línea de la compra antes de guardar.`,
       });
+      this.persistWaiter.finish(false);
       return null;
     }
 
@@ -1621,12 +1651,15 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
       })
       .subscribe((confirmed) => {
         if (confirmed) this.saveDraft();
+        else this.persistWaiter.finish(false);
       });
   }
 
   openNewSupplierModal() {
     const nombre = this.pendingSupplierName.trim();
     if (prefersInlineFormPage()) {
+      this.savePurchaseFormDraftForReturn();
+      this.unsavedChanges.allowNextNavigation();
       this.router.navigate(['/suppliers/new'], {
         queryParams: {
           returnTo: 'purchases',
@@ -1721,6 +1754,7 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     const productId = String(line.productoId ?? '').trim();
     if (!productId) return;
     this.savePurchaseFormDraftForReturn();
+    this.unsavedChanges.allowNextNavigation();
     this.router.navigate(['/stock', productId, 'edit'], {
       queryParams: {
         returnTo: 'purchases',
@@ -1757,6 +1791,38 @@ export class PurchaseFormPanelComponent implements OnInit, OnChanges, OnDestroy 
     this.lineCounter = this.draftLines.length;
     this.syncAddedStockProductIds();
     this.syncPurchaseStockTableLines();
+  }
+
+  hasUnsavedChanges(): boolean {
+    if (this.readOnly) return false;
+    return this.dirty.isDirty(this.purchaseDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.submitPurchase();
+    return result;
+  }
+
+  private completePersistSuccess(): void {
+    this.dirty.capture(this.purchaseDirtySnapshot());
+    this.persistWaiter.finish(true);
+  }
+
+  private purchaseDirtySnapshot() {
+    return {
+      purchaseProveedorId: this.purchaseProveedorId,
+      purchaseNotas: this.purchaseNotas,
+      purchaseNumeroComprobante: this.purchaseNumeroComprobante,
+      purchaseFecha: this.purchaseFecha,
+      tipoComprobante: this.tipoComprobante,
+      draftLines: this.draftLines,
+      pagoMedioId: this.pagoMedioId,
+      pagoTarjetaId: this.pagoTarjetaId,
+      pagoCuotas: this.pagoCuotas,
+      pagoFechaPrimerVencimiento: this.pagoFechaPrimerVencimiento,
+    };
   }
 
   private savePurchaseFormDraftForReturn(): void {

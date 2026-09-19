@@ -1,23 +1,87 @@
 /** Formato WhatsApp: títulos en negrita, viñetas, burbujas cortas (sin «Leer más»). */
 
-export const WA_BUBBLE_MAX = 520;
+import { numberedOptionLines, WA_INSTRUCTION } from './whatsapp-visual.ts';
+
+export const WA_BUBBLE_MAX = 1040;
 
 export const WA_PRESENT = {
-  maxChars: 700,
-  maxLines: 12,
+  maxChars: 1400,
+  maxLines: 24,
   explorePageSize: 6,
   transactionItemsPerPage: 8,
   transactionAutoPages: 2,
   compactItemPreview: 6,
 } as const;
 
-export const WA_FORBIDDEN_PAGER_PHRASES = ['leer más', 'ver más'] as const;
+export const WA_FORBIDDEN_PAGER_PHRASES = ['leer más'] as const;
 
 export const WA_CHOICE_PAGE_SIZE = 3;
 
 export function waBold(value: string): string {
-  const clean = String(value ?? '').replace(/\*/g, '').trim();
+  // WhatsApp bold cannot span newlines; collapse so asterisks never render literally.
+  const clean = String(value ?? '')
+    .replace(/\*/g, '')
+    .replace(/\s*\n\s*/g, ' ')
+    .trim();
   return clean ? `*${clean}*` : '';
+}
+
+/**
+ * Normaliza cualquier texto saliente de RiloBot antes de enviarlo a Meta.
+ * Convierte variantes markdown/HTML a *negrita* nativa de WhatsApp y deshace
+ * escapes accidentales (\\*). Idempotente sobre texto ya formateado.
+ */
+export function formatWhatsappOutbound(text: string): string {
+  let out = sanitizeWhatsappUtf8(String(text ?? ''));
+  if (!out.trim()) return '';
+
+  out = out.replace(/\\\*/g, '*');
+  out = out.replace(/<br\s*\/?>/gi, '\n');
+  out = out.replace(/&nbsp;/gi, ' ');
+
+  let prev = '';
+  while (prev !== out) {
+    prev = out;
+    out = out.replace(/\*\*([^*\n]+?)\*\*/g, '*$1*');
+    out = out.replace(/__([^_\n]+?)__/g, '*$1*');
+  }
+
+  out = out.replace(/<(strong|b)>([\s\S]*?)<\/\1>/gi, '*$2*');
+  out = out.replace(/<(em|i)>([\s\S]*?)<\/\1>/gi, '$2');
+  out = out.replace(/<[^>\n]+>/g, '');
+
+  return compactWhatsappText(out);
+}
+
+/**
+ * Limpia basura de encoding típica antes de Meta:
+ * - replacement chars
+ * - zero-width / BOM
+ * - mojibake UTF-8 leído como Latin-1 (Ã¡, Â¿, etc.)
+ */
+export function sanitizeWhatsappUtf8(text: string): string {
+  let out = String(text ?? '');
+  if (!out) return '';
+  out = out.replace(/\uFFFD/g, '');
+  out = out.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  if (/Ã.|Â[¿¡]/.test(out)) {
+    try {
+      const bytes = new Uint8Array(out.length);
+      for (let i = 0; i < out.length; i += 1) bytes[i] = out.charCodeAt(i) & 0xff;
+      const repaired = new TextDecoder('utf-8').decode(bytes);
+      if (repaired && !repaired.includes('\uFFFD') && repaired !== out) {
+        out = repaired;
+      }
+    } catch {
+      /* keep original */
+    }
+  }
+  return out;
+}
+
+/** @deprecated Alias histórico — preferir formatWhatsappOutbound en salida a Meta. */
+export function presentWhatsappMessage(text: string): string {
+  return formatWhatsappOutbound(text);
 }
 
 /** Quita espacios de cola y líneas vacías extra: nunca dos seguidas, nunca entre opciones/viñetas. */
@@ -37,15 +101,25 @@ export function formatWhatsappMessage(input: {
   ask?: string;
 }): string {
   const parts: string[] = [];
-  const title = input.title ? waBold(String(input.title).replace(/^\*|\*$/g, '').trim()) : '';
-  if (title) parts.push(title);
-  for (const line of input.lines ?? []) {
-    const clean = String(line ?? '').trim();
-    if (clean) parts.push(clean);
+  const titleSegments = String(input.title ?? '')
+    .replace(/^\*|\*$/g, '')
+    .split(/\n+/)
+    .map((row) => row.trim())
+    .filter(Boolean);
+  if (titleSegments.length) {
+    parts.push(waBold(titleSegments[0]!));
+    for (const extra of titleSegments.slice(1)) parts.push(extra);
   }
+  for (const line of input.lines ?? []) {
+    for (const segment of String(line ?? '').split(/\n+/)) {
+      const clean = segment.trim();
+      if (clean) parts.push(clean);
+    }
+  }
+  const body = compactWhatsappText(parts.join('\n'));
   const ask = String(input.ask ?? '').trim();
-  if (ask) parts.push(ask);
-  return compactWhatsappText(parts.join('\n'));
+  if (!ask) return body;
+  return body ? `${body}\n\n${ask}` : ask;
 }
 
 export function formatChoiceMessage(input: {
@@ -55,14 +129,14 @@ export function formatChoiceMessage(input: {
   ask?: string;
 }): string {
   const options = (input.options ?? []).map((option) => String(option ?? '').trim()).filter(Boolean);
-  const lines = options.map((option, index) => `${index + 1}. ${option}`);
+  const lines = numberedOptionLines(options);
   if (input.noneLabel) {
     lines.push(`${options.length + 1}. ${input.noneLabel}`);
   }
   return formatWhatsappMessage({
     title: input.title,
     lines,
-    ask: input.ask ?? '¿Cuál querés?',
+    ask: input.ask ?? WA_INSTRUCTION,
   });
 }
 

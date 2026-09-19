@@ -130,31 +130,31 @@ import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search
 
       <div *ngIf="auth.canViewEconomics" class="module-summary-kpis grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full items-start">
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Compras confirmadas</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Compras confirmadas</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ confirmedPurchaseCount }}</p>
           <p *ngIf="draftCount > 0" class="text-xs font-semibold text-amber-600 mt-1">
             + {{ draftCount }} borrador{{ draftCount === 1 ? '' : 'es' }}
           </p>
         </div>
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Total comprado</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Total comprado</p>
           <p class="text-xl sm:text-2xl font-bold text-teal-600 tabular-nums leading-tight">{{ formatMoney(totalComprado) }}</p>
         </div>
         <div class="bg-white dark:bg-gray-900 p-4 sm:p-5 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm min-w-0 col-span-2 lg:col-span-1">
-          <p class="text-[11px] font-semibold text-gray-400 uppercase mb-1">Este mes</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase mb-1">Este mes</p>
           <p class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums leading-tight">{{ formatMoney(totalMes) }}</p>
         </div>
         <div
           *ngIf="ahorroOfertasMes > 0"
           class="bg-amber-50 dark:bg-amber-950/30 p-4 sm:p-5 rounded-xl border border-amber-100 dark:border-amber-900/50 shadow-sm min-w-0 col-span-2 lg:col-span-1">
-          <p class="text-[11px] font-semibold text-amber-600 uppercase mb-1">Ahorro por ofertas (mes)</p>
+          <p class="text-xs font-semibold text-amber-600 uppercase mb-1">Ahorro por ofertas (mes)</p>
           <p class="text-xl sm:text-2xl font-bold text-amber-700 tabular-nums leading-tight">{{ formatMoney(ahorroOfertasMes) }}</p>
         </div>
       </div>
 
       <div
         *ngIf="draftCount > 0"
-        class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        class="mb-4 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
         Tenés <span class="font-semibold">{{ draftCount }} borrador{{ draftCount === 1 ? '' : 'es' }}</span>
         sin confirmar. Aparecen primero en la lista marcados como <span class="font-semibold">Borrador</span>
         (no mueven stock ni caja hasta que confirmes).
@@ -187,7 +187,7 @@ import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search
               {{ formatDate(purchase.fecha) }}
               <span *ngIf="purchase.numeroComprobante?.trim()"> · Fact. {{ purchase.numeroComprobante }}</span>
             </div>
-            <span compactTrailing class="text-[11px] font-bold tabular-nums shrink-0 text-gray-900">
+            <span compactTrailing class="text-xs font-bold tabular-nums shrink-0 text-gray-900 dark:text-gray-100">
               {{ formatMoney(purchase.total || 0) }}
             </span>
           </app-compact-list-row>
@@ -202,7 +202,7 @@ import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search
         <div listDesktop class="hidden sm:block" [class]="tableScrollClass">
         <table [class]="nativeCompactTableClass + ' sm:table-fixed max-w-full'">
           <thead>
-            <tr class="bg-gray-50 border-b border-gray-100">
+            <tr class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
               <th class="hidden sm:table-cell px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Fecha</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Compra</th>
               <th class="px-4 sm:px-6 py-3 sm:py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Proveedor</th>
@@ -219,7 +219,7 @@ import { LIST_TOOLBAR_CONTROL_HEIGHT } from '../../shared/components/list-search
               <td class="hidden sm:table-cell px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
                 {{ formatDate(purchase.fecha) }}
               </td>
-              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700">
+              <td class="px-4 sm:px-6 py-3 sm:py-4 text-sm font-semibold text-teal-700 dark:text-teal-400">
                 <span *ngIf="purchase.estado === 'borrador'" class="text-amber-700">Borrador</span>
                 <span *ngIf="purchase.estado !== 'borrador'">#{{ formatPurchaseLabel(purchase) }}</span>
                 <div class="text-xs font-normal text-gray-400 sm:hidden">{{ formatDate(purchase.fecha) }}</div>

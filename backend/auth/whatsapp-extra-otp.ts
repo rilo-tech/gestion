@@ -62,8 +62,8 @@ export async function sendExtraWhatsappLineCode(params: {
     whatsappSent = sent.ok;
   }
 
-  const exposeDev =
-    process.env.NODE_ENV !== 'production' && process.env.TRIAL_OTP_DEV_MODE !== 'false';
+  const { allowDevOtpExposure } = await import('../../shared/rilo-environment.ts');
+  const exposeDev = allowDevOtpExposure();
   return { phone, whatsappSent, ...(exposeDev ? { devCode: code } : {}) };
 }
 

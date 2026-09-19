@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, ViewChild, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
@@ -8,6 +8,10 @@ import {
 } from './supplier-form-panel.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-supplier-form',
@@ -26,6 +30,7 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
 
       <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 max-w-4xl">
         <app-supplier-form-panel
+          #formPanel
           [supplierId]="supplierId"
           [prefillNombre]="prefillNombre"
           (saved)="onSaved($event)"
@@ -36,12 +41,16 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
     </div>
   `,
 })
-export class SupplierFormComponent implements OnInit {
+export class SupplierFormComponent implements OnInit, UnsavedChangesHost {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+
+  @ViewChild('formPanel') formPanel?: SupplierFormPanelComponent;
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   supplierId: string | null = null;
   prefillNombre = '';
@@ -62,7 +71,19 @@ export class SupplierFormComponent implements OnInit {
     if (returnTo === 'purchases') this.returnTo = 'purchases';
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.formPanel?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.formPanel?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event: SupplierFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
     if (this.returnTo === 'purchases') {
       this.router.navigate(['/purchases/new'], {
         queryParams: { proveedorId: event.id },

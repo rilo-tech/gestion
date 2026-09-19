@@ -190,8 +190,10 @@ export type StockBarcodeMode = 'oneByOne' | 'manualQuantity';
         <div *ngIf="mode !== 'manualQuantity' || !selectedItem" class="space-y-3">
           <div class="flex flex-col items-center gap-2 py-1">
             <app-barcode-scan-button
-              label="Escanear"
+              [label]="mode === 'oneByOne' ? 'Escanear continuo' : 'Escanear'"
               modalTitle="Escanear producto"
+              [mode]="mode === 'oneByOne' ? 'continuous' : 'single'"
+              [continuousFeedback]="lastOneByOneSuccess ? lastOneByOneMessage : ''"
               variant="primary"
               (scanned)="onBarcodeRead($event)">
             </app-barcode-scan-button>
@@ -204,8 +206,10 @@ export type StockBarcodeMode = 'oneByOne' | 'manualQuantity';
               name="barcodeInput"
               placeholder="Código de barras"
               autocomplete="off"
-              inputmode="numeric"
-              class="form-control flex-1 min-w-0 text-sm tabular-nums"
+              inputmode="text"
+              autocapitalize="off"
+              spellcheck="false"
+              class="form-control flex-1 min-w-0 text-sm"
               [disabled]="resolving || applying"
               (keydown.enter)="onBarcodeRead(barcodeInput)">
             <button
@@ -350,12 +354,12 @@ export class StockBarcodeAdjustPanelComponent implements OnChanges {
           onSuccess: (updated) => {
             const sign = delta > 0 ? '+' : '−';
             this.lastOneByOneSuccess = true;
-            this.lastOneByOneMessage = `${sign}1 · ${updated.nombre} (dep. ${getStockEnDeposito(updated)} u.)`;
+            this.lastOneByOneMessage = `${sign}1 · ${updated.nombre} · Stock: ${getStockEnDeposito(updated)}`;
             this.focusBarcodeInput();
           },
-          onError: () => {
+          onError: (message) => {
             this.lastOneByOneSuccess = false;
-            this.lastOneByOneMessage = `No se pudo ajustar ${item.nombre}.`;
+            this.lastOneByOneMessage = message || `No se pudo ajustar ${item.nombre}.`;
             this.focusBarcodeInput();
           },
         });
@@ -364,10 +368,12 @@ export class StockBarcodeAdjustPanelComponent implements OnChanges {
         this.resolving = false;
         this.barcodeInput = '';
         this.lastOneByOneSuccess = false;
+        if (err.status === 404) {
+          this.handleUnknownBarcode(code);
+          return;
+        }
         this.lastOneByOneMessage =
-          err.status === 404
-            ? 'Producto no encontrado con ese código.'
-            : ((err.error as { error?: string })?.error ?? 'Error al buscar el producto.');
+          (err.error as { error?: string })?.error ?? 'Error al buscar el producto.';
         this.focusBarcodeInput();
       },
     });
@@ -393,6 +399,10 @@ export class StockBarcodeAdjustPanelComponent implements OnChanges {
       },
       error: (err: HttpErrorResponse) => {
         this.resolving = false;
+        if (err.status === 404) {
+          this.handleUnknownBarcode(code);
+          return;
+        }
         const message =
           (err.error as { error?: string })?.error ??
           'No se encontró un producto con ese código.';
@@ -402,37 +412,80 @@ export class StockBarcodeAdjustPanelComponent implements OnChanges {
     });
   }
 
+  private handleUnknownBarcode(code: string) {
+    this.dialogService
+      .choose({
+        title: 'Código sin producto',
+        message: `Este código todavía no está asociado a ningún producto.\n\n${code}`,
+        cancelLabel: 'Cancelar',
+        options: [
+          { id: 'create', label: 'Crear producto' },
+          { id: 'associate', label: 'Asociar a producto existente' },
+        ],
+      })
+      .subscribe((choice) => {
+        if (choice === 'create') {
+          if (!this.auth.canEditRecords) {
+            this.dialogService.alert({
+              title: 'Sin permiso',
+              message: 'No tenés permiso para crear productos.',
+            });
+            return;
+          }
+          window.location.assign(
+            `/stock/new?codigoBarras=${encodeURIComponent(code)}&returnTo=${encodeURIComponent('/stock')}`
+          );
+          return;
+        }
+        if (choice === 'associate') {
+          this.lastOneByOneSuccess = false;
+          this.lastOneByOneMessage =
+            'Abrí Productos, editá el ítem y escaneá o pegá el código para asociarlo.';
+          this.focusBarcodeInput();
+        } else {
+          this.focusBarcodeInput();
+        }
+      });
+  }
+
   private applyStockDelta(
     item: StockItem,
     delta: number,
     motivo: string,
-    callbacks: { onSuccess: (updated: StockItem) => void; onError?: () => void }
+    callbacks: {
+      onSuccess: (updated: StockItem) => void;
+      onError?: (message?: string) => void;
+    }
   ) {
     if (!item.id) return;
 
     this.applying = true;
     this.stockService.adjustStock(item.id, delta, motivo).subscribe({
-      next: () => {
+      next: (res) => {
         this.applying = false;
+        const newStock =
+          typeof res?.newStock === 'number'
+            ? res.newStock
+            : (Number(item.stockActual) || 0) + delta;
         const updated: StockItem = {
           ...item,
-          stockActual: (Number(item.stockActual) || 0) + delta,
+          stockActual: newStock,
         };
-        this.stockService.notifyCatalogChanged({ item: updated });
         this.adjusted.emit(updated);
         callbacks.onSuccess(updated);
       },
       error: (err: HttpErrorResponse) => {
         this.applying = false;
+        const message =
+          (err.error as { error?: string })?.error ??
+          'No se pudo registrar el movimiento de stock.';
         if (callbacks.onError) {
-          callbacks.onError();
+          callbacks.onError(message);
           return;
         }
         this.dialogService.alert({
           title: 'Error',
-          message:
-            (err.error as { error?: string })?.error ??
-            'No se pudo registrar el movimiento de stock.',
+          message,
         });
       },
     });

@@ -138,8 +138,16 @@ router.get('/:businessId/addons', async (req: AuthenticatedRequest, res) => {
 
 router.get('/:businessId/addons/quote-user', requireCompanyBillingManager, async (req, res) => {
   try {
-    const quote = await quoteBusinessAddErpUser(req.params.businessId);
     const ctx = await loadCommercialContext(req.params.businessId);
+    const { productSellsErpUserAddons } = await import('../../shared/commercial-seat-policy.ts');
+    if (!productSellsErpUserAddons(ctx.productId)) {
+      return res.status(400).json({
+        code: 'ERP_USER_ADDON_NOT_IN_PLAN',
+        error:
+          'En este plan no hay usuarios adicionales de panel. En RILO Bot sumás números de WhatsApp.',
+      });
+    }
+    const quote = await quoteBusinessAddErpUser(req.params.businessId);
     res.json({
       ...quote,
       policyCopy: addonPolicyCopy(ctx.business.billing?.autoRenew === true),

@@ -30,6 +30,21 @@ type AccountPanel = 'profile' | 'password' | null;
         <app-account-commercial-hub *ngIf="auth.canAccessErpWeb"></app-account-commercial-hub>
 
         <article
+          *ngIf="auth.canManageSettings && auth.businessProfileStored"
+          class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:p-6 mb-4">
+          <h2 class="text-sm font-bold text-gray-900 dark:text-gray-100 mb-1">Perfil operativo</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-300">
+            Modo: <span class="font-medium text-gray-900 dark:text-gray-100">{{ businessModeLabel }}</span>
+          </p>
+          <a
+            routerLink="/onboarding"
+            [queryParams]="{ edit: '1' }"
+            class="inline-flex mt-3 text-sm font-medium text-violet-700 hover:text-violet-900">
+            {{ auth.needsBusinessOnboarding ? 'Completar configuración' : 'Ajustar módulos' }}
+          </a>
+        </article>
+
+        <article
           *ngIf="!auth.isPlatformAdmin && !auth.canAccessErpWeb"
           class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm p-4 sm:p-6 mb-4">
           <h2 class="text-sm font-bold text-gray-900 dark:text-gray-100 mb-1">Tu plan y productos</h2>
@@ -367,6 +382,17 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   get planProductLabel(): string {
     return productLabelForAccess(this.auth.platformAccess);
+  }
+
+  get businessModeLabel(): string {
+    const mode = this.auth.businessProfile.mode;
+    const labels: Record<string, string> = {
+      cash_only: 'Solo caja',
+      services: 'Servicios',
+      products: 'Productos',
+      mixed: 'Mixto',
+    };
+    return labels[mode] ?? mode;
   }
 
   get erpChannelLabel(): string {

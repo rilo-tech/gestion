@@ -53,6 +53,38 @@ export function applyIncludedAi200Migration(
   return { catalog: next, changed: true };
 }
 
+export function needsCashProductSeed(catalog: CommercialCatalog): boolean {
+  if (catalog.migrations?.cashProductSeedAppliedAt) return false;
+  // One-shot: catálogos publicados antes de RILO Caja deben persistir el 4º producto.
+  // clampCommercialCatalog ya mergea defaults en memoria; esta bandera evita reescrituras.
+  return true;
+}
+
+/**
+ * One-shot: agrega producto RILO Caja al catálogo publicado si falta.
+ * No modifica precios de productos existentes.
+ */
+export function applyCashProductSeed(
+  catalog: CommercialCatalog,
+  at = new Date()
+): { catalog: CommercialCatalog; changed: boolean } {
+  if (!needsCashProductSeed(catalog)) {
+    return { catalog, changed: false };
+  }
+  const next = clampCommercialCatalog({
+    ...catalog,
+    products: {
+      ...catalog.products,
+      cash: DEFAULT_COMMERCIAL_CATALOG.products.cash,
+    },
+    migrations: {
+      ...catalog.migrations,
+      cashProductSeedAppliedAt: at.toISOString(),
+    },
+  });
+  return { catalog: next, changed: true };
+}
+
 /** Precios viejos 1490/2490/3490. NO aplicar en lecturas. Solo script explícito. */
 export function isLegacyListPriceCatalog(catalog: CommercialCatalog): boolean {
   return (

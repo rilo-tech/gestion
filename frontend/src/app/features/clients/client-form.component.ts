@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, ViewChild, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { PAGE_SHELL_CLASS } from '../../shared/components/icon-action/icon-action.component';
@@ -12,6 +12,10 @@ import {
 } from './client-form-panel.component';
 import { FormPageHeaderComponent } from '../../shared/components/form-shell';
 import { NavigationBackService } from '../../core/services/navigation-back.service';
+import {
+  bindUnsavedChangesHost,
+  type UnsavedChangesHost,
+} from '../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-client-form',
@@ -28,8 +32,9 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
         (backClick)="goBack()">
       </app-form-page-header>
 
-      <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6 max-w-4xl">
+      <div class="bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm p-4 sm:p-6 max-w-4xl">
         <app-client-form-panel
+          #formPanel
           [clientId]="clientId"
           [prefillNombre]="prefillNombre"
           [wideLayout]="true"
@@ -41,12 +46,16 @@ import { NavigationBackService } from '../../core/services/navigation-back.servi
     </div>
   `,
 })
-export class ClientFormComponent implements OnInit {
+export class ClientFormComponent implements OnInit, UnsavedChangesHost {
   readonly pageShellClass = PAGE_SHELL_CLASS;
+
+  @ViewChild('formPanel') formPanel?: ClientFormPanelComponent;
 
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private navigationBack = inject(NavigationBackService);
+  private readonly unsavedHostBinding = bindUnsavedChangesHost(this);
+  private suppressPostSaveNavigation = false;
 
   clientId: string | null = null;
   prefillNombre = '';
@@ -70,7 +79,20 @@ export class ClientFormComponent implements OnInit {
     this.returnOrderId = this.route.snapshot.queryParamMap.get('orderId');
   }
 
+  hasUnsavedChanges(): boolean {
+    return this.formPanel?.hasUnsavedChanges() === true;
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    this.suppressPostSaveNavigation = true;
+    return (this.formPanel?.persistUnsavedChanges() ?? Promise.resolve(true)).finally(() => {
+      this.suppressPostSaveNavigation = false;
+    });
+  }
+
   onSaved(event: ClientFormSaveEvent) {
+    if (this.suppressPostSaveNavigation) return;
+
     if (this.returnTo !== 'clients') {
       this.navigateBack(event.id);
       return;

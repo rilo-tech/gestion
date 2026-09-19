@@ -17,7 +17,16 @@ function homeUrlTree(router: Router, auth: AuthService): UrlTree {
   return router.parseUrl(auth.homeRoute);
 }
 
-const ERP_WEB_EXEMPT_PATHS = ['/inicio', '/mi-cuenta', '/apariencia', '/activar-suscripcion', '/plan'];
+const ERP_WEB_EXEMPT_PATHS = [
+  '/inicio',
+  '/avisos',
+  '/mi-cuenta',
+  '/apariencia',
+  '/activar-suscripcion',
+  '/plan',
+  '/onboarding',
+  '/settings',
+];
 
 export const authGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
@@ -35,11 +44,11 @@ export const authGuard: CanActivateFn = () => {
   );
 };
 
-/** /inicio es home bot-only: empresas con ERP van al panel. */
+/** /inicio es home de Bot (summary) o bot-only; Gestión full va al dashboard. */
 export const botOnlyHomeGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  if (auth.isPlatformAdmin || !auth.canAccessErpWeb) {
+  if (auth.isPlatformAdmin || !auth.canAccessErpWeb || auth.isSummaryWebTenant) {
     return true;
   }
   return router.parseUrl('/dashboard');
@@ -154,7 +163,26 @@ export function requireModule(...moduleIds: import('../../../../../shared/subscr
   };
 }
 
-/** Bloquea el panel ERP si la empresa solo tiene WhatsApp; permite /inicio, /mi-cuenta y similares. */
+/** Wizard de perfil operativo (FASE 2). */
+export const businessOnboardingGuard: CanActivateFn = (route) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  if (route.queryParamMap.get('edit') === '1' && auth.canManageSettings) return true;
+  if (auth.needsBusinessOnboarding) return true;
+  return homeUrlTree(router, auth);
+};
+
+/** Redirige al wizard si el perfil persistido no completó onboarding. */
+export const pendingOnboardingGuard: CanActivateFn = (_route, state) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  const path = state.url.split('?')[0];
+  if (path === '/onboarding') return true;
+  if (!auth.needsBusinessOnboarding) return true;
+  return router.createUrlTree(['/onboarding']);
+};
+
+/** Bloquea panel full si no hay ERP operativo o si es Resumen RILO (summary). */
 export const erpWebGuard: CanActivateFn = (_route, state) => {
   const auth = inject(AuthService);
   const router = inject(Router);
@@ -162,7 +190,11 @@ export const erpWebGuard: CanActivateFn = (_route, state) => {
   if (ERP_WEB_EXEMPT_PATHS.some((allowed) => path === allowed || path.startsWith(`${allowed}/`))) {
     return true;
   }
-  if (auth.isPlatformAdmin || auth.canAccessErpWeb) return true;
+  if (auth.isPlatformAdmin) return true;
+  if (auth.isSummaryWebTenant) {
+    return router.createUrlTree(['/inicio']);
+  }
+  if (auth.canAccessErpWeb) return true;
   return router.createUrlTree(['/inicio']);
 };
 

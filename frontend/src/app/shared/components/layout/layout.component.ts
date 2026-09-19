@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, HostListener, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet, RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
@@ -9,6 +9,7 @@ import { ProductCoachTipComponent } from '../product-coach-tip/product-coach-tip
 import { LayoutNavService } from '../../../core/services/layout-nav.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { trialBannerDismissStorageKey } from '../../../core/constants/auth-storage';
+import { UnsavedChangesRegistry } from '../../../core/utils/unsaved-changes';
 
 @Component({
   selector: 'app-layout',
@@ -23,6 +24,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
     AppDialogComponent,
     ProductCoachTipComponent,
   ],
+  host: { style: 'display: contents' },
   template: `
     <div class="flex h-screen bg-gray-50 overflow-hidden">
       <button
@@ -95,7 +97,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
             Pagar ahora
           </a>
         </div>
-        <main class="flex-1 overflow-y-auto overflow-x-hidden">
+        <main id="main-content" role="main" class="flex-1 overflow-y-auto overflow-x-hidden">
           <router-outlet></router-outlet>
         </main>
       </div>
@@ -105,6 +107,7 @@ import { trialBannerDismissStorageKey } from '../../../core/constants/auth-stora
 export class LayoutComponent implements OnInit {
   readonly nav = inject(LayoutNavService);
   readonly auth = inject(AuthService);
+  private unsavedChanges = inject(UnsavedChangesRegistry);
 
   /** Días restantes al cerrar el aviso; si bajan, el banner vuelve a mostrarse. */
   private dismissedAtTrialDays: number | null = null;
@@ -112,6 +115,13 @@ export class LayoutComponent implements OnInit {
   ngOnInit() {
     console.info('[layout:init]');
     this.dismissedAtTrialDays = this.readDismissedAtTrialDays();
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(event: BeforeUnloadEvent) {
+    if (!this.unsavedChanges.isDirty()) return;
+    event.preventDefault();
+    event.returnValue = true;
   }
 
   get showTrialExpiringBanner(): boolean {

@@ -4,7 +4,7 @@ import {
   DEFAULT_COMMERCIAL_CATALOG,
   type CommercialCatalog,
 } from '../../shared/commercial-catalog.ts';
-import { applyIncludedAi200Migration } from '../../shared/commercial-migrations.ts';
+import { applyIncludedAi200Migration, applyCashProductSeed } from '../../shared/commercial-migrations.ts';
 
 const DOC_PATH = 'plataforma/comercial';
 const CACHE_MS = 30_000;
@@ -26,12 +26,13 @@ export async function getCommercialCatalog(): Promise<CommercialCatalog> {
     snap.exists ? (snap.data() as Partial<CommercialCatalog>) : DEFAULT_COMMERCIAL_CATALOG
   );
   const migrated = applyIncludedAi200Migration(raw);
-  if (migrated.changed) {
-    await ref().set(migrated.catalog, { merge: false });
+  const withCash = applyCashProductSeed(migrated.catalog);
+  const value = withCash.catalog;
+  if (migrated.changed || withCash.changed) {
+    await ref().set(value, { merge: false });
   } else if (!snap.exists) {
-    await ref().set(raw, { merge: false });
+    await ref().set(value, { merge: false });
   }
-  const value = migrated.catalog;
   cache = { at: Date.now(), value };
   return value;
 }
@@ -45,6 +46,7 @@ export async function saveCommercialCatalog(
     ...payload,
     lite: { ...current.lite, ...payload.lite },
     products: {
+      cash: { ...current.products.cash, ...payload.products?.cash },
       whatsapp: { ...current.products.whatsapp, ...payload.products?.whatsapp },
       erp: { ...current.products.erp, ...payload.products?.erp },
       completo: { ...current.products.completo, ...payload.products?.completo },

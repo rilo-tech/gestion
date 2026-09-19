@@ -54,31 +54,32 @@ export class IconToolbarButtonComponent {
       'inline-flex items-center justify-center transition-all disabled:cursor-not-allowed disabled:opacity-60';
 
     if (this.size === 'row') {
+      const rowTouch = 'min-h-[36px] min-w-[36px] p-2';
       const rowVariants: Record<IconToolbarVariant, string> = {
-        primary: 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        success: 'p-1.5 text-green-600 hover:bg-green-50',
-        outline: 'p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-        danger: 'p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700',
-        'teal-outline': 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        'orange-outline': 'p-1.5 text-orange-600 hover:bg-orange-50 hover:text-orange-800',
-        'ghost-teal': 'p-1.5 text-teal-600 hover:bg-teal-50 hover:text-teal-800',
-        'ghost-gray': 'p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900',
-        'ghost-red': 'p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700',
+        primary: `${rowTouch} text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 hover:text-teal-800`,
+        success: `${rowTouch} text-green-600 hover:bg-green-50 dark:hover:bg-green-950/40`,
+        outline: `${rowTouch} text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900`,
+        danger: `${rowTouch} text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700`,
+        'teal-outline': `${rowTouch} text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 hover:text-teal-800`,
+        'orange-outline': `${rowTouch} text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/40 hover:text-orange-800`,
+        'ghost-teal': `${rowTouch} text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950/40 hover:text-teal-800`,
+        'ghost-gray': `${rowTouch} text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900`,
+        'ghost-red': `${rowTouch} text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700`,
       };
       return `${rowBase} ${rowVariants[this.variant]}`;
     }
 
     const headerVariants: Record<IconToolbarVariant, string> = {
-      primary: 'rounded-xl p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] bg-teal-600 text-white hover:bg-teal-700',
-      success: 'rounded-xl p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] bg-green-600 text-white hover:bg-green-700',
+      primary: 'rounded-xl p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] bg-teal-600 text-white hover:bg-teal-700',
+      success: 'rounded-xl p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] bg-green-600 text-white hover:bg-green-700',
       outline:
-        'rounded-lg border border-gray-200 dark:border-gray-700 p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] text-gray-600 hover:bg-gray-100 hover:text-gray-900 bg-white dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800',
+        'rounded-lg border border-gray-200 dark:border-gray-700 p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] text-gray-600 hover:bg-gray-100 hover:text-gray-900 bg-white dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800',
       danger:
-        'rounded-lg border border-gray-200 dark:border-gray-700 p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] text-red-500 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40 bg-white dark:bg-gray-900',
+        'rounded-lg border border-gray-200 dark:border-gray-700 p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] text-red-500 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40 bg-white dark:bg-gray-900',
       'teal-outline':
-        'rounded-lg border border-teal-300 dark:border-teal-700 p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/40 bg-white dark:bg-gray-900',
+        'rounded-lg border border-teal-300 dark:border-teal-700 p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/40 bg-white dark:bg-gray-900',
       'orange-outline':
-        'rounded-lg border border-orange-200 dark:border-orange-800 p-2 sm:p-2.5 min-h-[36px] min-w-[36px] sm:min-h-[40px] sm:min-w-[40px] text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/40 bg-white dark:bg-gray-900',
+        'rounded-lg border border-orange-200 dark:border-orange-800 p-2 sm:p-2.5 min-h-[40px] min-w-[40px] sm:min-h-[40px] sm:min-w-[40px] text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/40 bg-white dark:bg-gray-900',
       'ghost-teal': 'rounded-lg p-2.5 min-h-[40px] min-w-[40px] text-teal-600 hover:bg-teal-50',
       'ghost-gray': 'rounded-lg p-2.5 min-h-[40px] min-w-[40px] text-gray-600 hover:bg-gray-100',
       'ghost-red': 'rounded-lg p-2.5 min-h-[40px] min-w-[40px] text-red-500 hover:bg-red-50',

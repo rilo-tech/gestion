@@ -27,6 +27,13 @@ import {
   type ComprobanteTipoId,
 } from '../../shared/comprobantes-config.ts';
 import { getBusinessCashAmbitoId } from './caja-ambitos.ts';
+import {
+  payablesTotalsByAmbito,
+  purchaseFinancialGrossTotal,
+  readPurchaseDocumentTotals,
+  roundPurchaseMoney,
+  type PurchaseDocumentTotals,
+} from './purchase-document-totals.ts';
 
 /** Firestore rejects `undefined` anywhere in the document tree. */
 function stripUndefinedDeep<T>(value: T): T {
@@ -77,7 +84,7 @@ export interface ParsedPurchasePayment {
   fechaPrimerVencimiento?: string;
 }
 
-export interface ParsedPurchaseInput {
+export interface ParsedPurchaseInput extends PurchaseDocumentTotals {
   proveedorId?: string;
   proveedor: string;
   notas: string;
@@ -261,7 +268,12 @@ export async function parsePurchaseInput(
     if (line.ambito === 'personal') totalPersonal += line.importe;
     else totalNegocio += line.importe;
   }
-  const total = Math.round((totalNegocio + totalPersonal) * 100) / 100;
+  const netTotal = roundPurchaseMoney(totalNegocio + totalPersonal);
+  const documentTotals = readPurchaseDocumentTotals(body);
+  const total =
+    documentTotals.documentGrossTotal != null && documentTotals.documentGrossTotal > 0
+      ? documentTotals.documentGrossTotal
+      : netTotal;
 
   return {
     input: {
@@ -280,9 +292,13 @@ export async function parsePurchaseInput(
         cuotas,
         fechaPrimerVencimiento,
       },
-      totalNegocio: Math.round(totalNegocio * 100) / 100,
-      totalPersonal: Math.round(totalPersonal * 100) / 100,
+      totalNegocio: roundPurchaseMoney(totalNegocio),
+      totalPersonal: roundPurchaseMoney(totalPersonal),
       total,
+      ...documentTotals,
+      ...(documentTotals.documentNetTotal == null && netTotal > 0
+        ? { documentNetTotal: netTotal }
+        : {}),
     },
   };
 }
@@ -372,11 +388,15 @@ function stockQuantitySignature(items: ParsedPurchaseLine[]): string {
     .join('\n');
 }
 
-/** Actualiza el costo del producto con el precio unitario de la compra (última factura). */
+/** Actualiza el costo del producto según política de compra. */
 async function syncProductCostsFromPurchaseLines(
   businessId: string,
-  lines: ParsedPurchaseLine[]
+  lines: ParsedPurchaseLine[],
+  options?: { policy?: import('../../shared/finance-config.ts').PurchaseCostPolicy }
 ): Promise<void> {
+  const policy = options?.policy ?? 'initialize_if_missing';
+  if (policy === 'never_update_catalog') return;
+
   const costByProduct = new Map<string, number>();
   for (const line of stockLinesFromItems(lines)) {
     if (line.enOferta) continue;
@@ -396,8 +416,19 @@ async function syncProductCostsFromPurchaseLines(
     if (!snap.exists) continue;
     const currentCost = Number(snap.data()?.costo) || 0;
     if (currentCost === costoUnitario) continue;
+    if (currentCost > 0 && policy !== 'update_on_purchase') {
+      console.info(
+        '[purchase:item:catalog-cost-preserved]',
+        JSON.stringify({ productoId, currentCost, purchaseCost: costoUnitario })
+      );
+      continue;
+    }
     batch.update(ref, { costo: costoUnitario, updatedAt: timestamp });
     updates += 1;
+    console.info(
+      '[purchase:item:catalog-cost-initialized]',
+      JSON.stringify({ productoId, catalogCost: costoUnitario, policy })
+    );
   }
 
   if (updates > 0) {
@@ -406,7 +437,8 @@ async function syncProductCostsFromPurchaseLines(
 }
 
 function purchaseTotalsSignature(input: ParsedPurchaseInput): string {
-  const totals = totalsByAmbitoFromItems(input.items);
+  const gross = purchaseFinancialGrossTotal(input);
+  const totals = payablesTotalsByAmbito(input.items, gross);
   return JSON.stringify([...totals.entries()].sort((a, b) => a[0].localeCompare(b[0])));
 }
 
@@ -519,7 +551,18 @@ async function applyPayablesForPurchase(
   const resolvedTarjetaLabel = tarjeta?.label ?? input.pago.tarjetaLabel ?? input.proveedor;
 
   let created = 0;
-  for (const [ambito, montoTotal] of totalsByAmbitoFromItems(input.items)) {
+  const financialGross = purchaseFinancialGrossTotal(input);
+  const lineNet = roundPurchaseMoney(input.items.reduce((s, l) => s + l.importe, 0));
+  console.info(
+    '[purchase:execute:financial-total]',
+    JSON.stringify({
+      compraLabel,
+      financialGross,
+      lineNet,
+      documentGross: input.documentGrossTotal ?? null,
+    })
+  );
+  for (const [ambito, montoTotal] of payablesTotalsByAmbito(input.items, financialGross)) {
     if (montoTotal === 0) continue;
     const ambitoLines = input.items.filter((line) => line.ambito === ambito);
     const result = await syncPurchasePayablesForCompra(
@@ -706,7 +749,12 @@ function buildPurchaseDocumentFields(
     pago: input.pago,
     totalNegocio: input.totalNegocio,
     totalPersonal: input.totalPersonal,
-    total: input.total,
+    total: purchaseFinancialGrossTotal(input),
+    documentNetTotal: input.documentNetTotal,
+    documentTaxTotal: input.documentTaxTotal,
+    documentGrossTotal: input.documentGrossTotal,
+    priceTaxMode: input.priceTaxMode,
+    documentTaxRate: input.documentTaxRate,
     ahorroOfertaTotal:
       Math.round(
         normalizedItems.reduce((acc, line) => acc + (Number(line.ahorroOferta) || 0), 0) * 100
@@ -719,8 +767,10 @@ function buildPurchaseDocumentFields(
 type ApplyPurchaseSideEffectsOptions = {
   /** No bloquear la respuesta HTTP (reserva de pedidos en segundo plano). */
   deferAutoReserve?: boolean;
-  /** No pisar el costo de catálogo (compras por WhatsApp: solo stock). */
+  /** No pisar el costo de catálogo (legacy WhatsApp: solo stock). */
   skipProductCostUpdate?: boolean;
+  /** Política de costo cuando skipProductCostUpdate es false. */
+  purchaseCostPolicy?: import('../../shared/finance-config.ts').PurchaseCostPolicy;
   /** Compra por WhatsApp: el pago se corrige en el panel, no sale de caja. */
   skipCash?: boolean;
 };
@@ -750,7 +800,10 @@ async function applyPurchaseStockEntries(
   compraLabel: string,
   lines: Array<ParsedPurchaseLine & { subtotal?: number; productoNombre?: string }>,
   tipoComprobante: ComprobanteTipoId = 'factura',
-  options?: { skipProductCostUpdate?: boolean }
+  options?: {
+    skipProductCostUpdate?: boolean;
+    purchaseCostPolicy?: import('../../shared/finance-config.ts').PurchaseCostPolicy;
+  }
 ): Promise<void> {
   const stockLines = stockLinesFromItems(lines);
   if (stockLines.length === 0) return;
@@ -770,21 +823,25 @@ async function applyPurchaseStockEntries(
   const stockBatch = db.batch();
   const movementBatch = db.batch();
 
+  const policy = options?.purchaseCostPolicy ?? 'initialize_if_missing';
+  const skipCost = options?.skipProductCostUpdate === true || policy === 'never_update_catalog';
+
   stockLines.forEach((line, index) => {
     const snap = snaps[index];
     if (!snap.exists) return;
     const currentStock = Number(snap.data()?.stockActual) || 0;
+    const currentCost = Number(snap.data()?.costo) || 0;
+    const shouldWriteCost =
+      esEntrada &&
+      line.costoUnitario > 0 &&
+      !line.enOferta &&
+      !skipCost &&
+      (policy === 'update_on_purchase' || currentCost <= 0);
     stockBatch.update(snap.ref, {
       stockActual: esEntrada
         ? currentStock + line.cantidad
         : Math.max(0, currentStock - line.cantidad),
-      // El costo del catálogo se actualiza con ingresos reales, salvo que se pida no tocarlo.
-      ...(esEntrada &&
-      line.costoUnitario > 0 &&
-      !line.enOferta &&
-      !options?.skipProductCostUpdate
-        ? { costo: line.costoUnitario }
-        : {}),
+      ...(shouldWriteCost ? { costo: line.costoUnitario } : {}),
       updatedAt: timestamp,
     });
     const movementRef = db.collection(`negocios/${businessId}/movimientos_stock`).doc();
@@ -869,7 +926,10 @@ async function applyPurchaseSideEffects(
     compraLabel,
     normalizedItems,
     input.tipoComprobante,
-    { skipProductCostUpdate: options?.skipProductCostUpdate }
+    {
+      skipProductCostUpdate: options?.skipProductCostUpdate,
+      purchaseCostPolicy: options?.purchaseCostPolicy,
+    }
   );
   scheduleStockMetricsRefresh(businessId);
 
@@ -1006,7 +1066,11 @@ export async function confirmPurchaseDraft(
 export async function persistPurchase(
   businessId: string,
   input: ParsedPurchaseInput,
-  options?: { skipProductCostUpdate?: boolean; skipCash?: boolean }
+  options?: {
+    skipProductCostUpdate?: boolean;
+    skipCash?: boolean;
+    purchaseCostPolicy?: import('../../shared/finance-config.ts').PurchaseCostPolicy;
+  }
 ): Promise<{ id: string; compraLabel: string; numeroCompra: number }> {
   const { numero: numeroCompra, label: compraLabel } = await allocatePurchaseNumber(businessId);
   const normalizedItems = await normalizePurchaseItems(businessId, input);
@@ -1025,6 +1089,7 @@ export async function persistPurchase(
     finanzas,
     skipProductCostUpdate: options?.skipProductCostUpdate,
     skipCash: options?.skipCash,
+    purchaseCostPolicy: options?.purchaseCostPolicy ?? finanzas.purchase?.purchaseCostPolicy,
   });
   await ensurePurchasePayablesFromDocument(
     businessId,

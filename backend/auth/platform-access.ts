@@ -3,6 +3,7 @@ import {
   isTrialProductId,
   normalizePlatformAccess,
   platformAccessForTrialProduct,
+  resolveTrialProductId,
 } from '../../shared/platform-access.ts';
 
 export function resolvePlatformAccessForBusiness(
@@ -33,8 +34,7 @@ export function platformAccessFromTrialProduct(product: TrialProductId): ClientP
 
 export function parseTrialProductFromBody(body: Record<string, unknown>): TrialProductId {
   const raw = body.trialProduct ?? body.producto ?? body.product;
-  if (isTrialProductId(raw)) return raw;
-  return 'completo';
+  return resolveTrialProductId(raw) ?? 'whatsapp';
 }
 
 export function sanitizePlatformAccessPatch(

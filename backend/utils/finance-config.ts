@@ -7,9 +7,11 @@ import {
   findTarjetaInConfig,
   medioPagoRequiereCuentaHija,
   normalizeConceptosIngreso,
+  normalizeFinanzasPurchaseConfig,
   syncMedioPagoFlags,
   type CategoriaGastoConfig,
   type ConceptoIngresoConfig,
+  type FinanzasPurchaseConfig,
   type MedioPagoComportamiento,
   type MedioPagoConfig,
   type TarjetaConfig,
@@ -18,6 +20,7 @@ import {
 export type {
   CategoriaGastoConfig,
   ConceptoIngresoConfig,
+  FinanzasPurchaseConfig,
   MedioPagoComportamiento,
   MedioPagoConfig,
   PurchaseLineTipo,
@@ -26,6 +29,7 @@ export type {
 
 export {
   DEFAULT_CATEGORIAS_GASTO,
+  DEFAULT_INSTALLMENT_OPTIONS,
   DEFAULT_MEDIOS_PAGO,
   enrichPurchasePago,
   findMedioPagoInConfig,
@@ -34,6 +38,7 @@ export {
   medioPagoGeneratesPayables,
   medioPagoRequiereCuentaHija,
   mediosPagoIdsEquivalent,
+  normalizeFinanzasPurchaseConfig,
   normalizeMedioPagoLookupId,
   purchaseLineAffectsStock,
   resolvePurchasePagoDisplayLabel,
@@ -185,6 +190,7 @@ export function normalizeFinanzasConfig(raw: Record<string, unknown> = {}) {
     tarjetas: normalizeTarjetas(raw.tarjetas, mediosPago),
     categoriasGasto: normalizeCategoriasGasto(raw.categoriasGasto),
     conceptosIngreso: normalizeConceptosIngreso(raw.conceptosIngreso),
+    purchase: normalizeFinanzasPurchaseConfig(raw.purchase),
   };
 }
 

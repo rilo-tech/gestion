@@ -28,9 +28,20 @@ import {
   isErpWebOperational,
   isWhatsappOperational,
   normalizePlatformAccess,
+  productIdFromAccess,
+  resolveWebExperience,
   type ClientPlatformAccess,
   type TrialProductId,
 } from '../../../../../shared/platform-access.ts';
+import {
+  canUseBusinessFeature,
+} from '../../../../../shared/business-capability.ts';
+import {
+  resolveBusinessProfile,
+  type BusinessFeatureId,
+  type BusinessProfile,
+} from '../../../../../shared/business-profile.ts';
+import { emptyModulesMap } from '../../../../../shared/subscription-modules.ts';
 import {
   AUTH_BUSINESS_STORAGE_KEY,
   AUTH_TOKEN_STORAGE_KEY,
@@ -154,6 +165,52 @@ export class AuthService {
       canAccessErpWeb: this.canAccessErpWeb,
       canAccessWhatsapp: this.canAccessWhatsapp,
       billingMode: this.currentBusiness?.billingMode ?? null,
+      cashOnlyHome: this.isCashOnlyTenant,
+      summaryWebHome: this.isSummaryWebTenant,
+    });
+  }
+
+  get isSummaryWebTenant(): boolean {
+    return resolveWebExperience(this.platformAccess, this.trialProductId) === 'summary';
+  }
+
+  get isFullWebTenant(): boolean {
+    return resolveWebExperience(this.platformAccess, this.trialProductId) === 'full';
+  }
+
+  get businessProfile(): BusinessProfile {
+    return resolveBusinessProfile(this.currentBusiness?.businessProfile);
+  }
+
+  get businessProfileStored(): boolean {
+    return this.currentBusiness?.businessProfileStored === true;
+  }
+
+  get needsBusinessOnboarding(): boolean {
+    return (
+      this.businessProfileStored &&
+      !this.businessProfile.onboarding.completed &&
+      this.canManageSettings
+    );
+  }
+
+  get trialProductId(): TrialProductId | null {
+    return productIdFromAccess(this.platformAccess);
+  }
+
+  get isCashOnlyTenant(): boolean {
+    return this.trialProductId === 'cash' || this.businessProfile.mode === 'cash_only';
+  }
+
+  canUseFeature(feature: BusinessFeatureId, permission = true): boolean {
+    if (this.isPlatformAdmin) return true;
+    const entitlements = this.currentBusiness?.entitlements ?? emptyModulesMap(true);
+    return canUseBusinessFeature({
+      productId: this.trialProductId,
+      entitlements,
+      profile: this.businessProfile,
+      feature,
+      permission,
     });
   }
 
@@ -191,6 +248,7 @@ export class AuthService {
   }
 
   get settingsRoute(): string {
+    if (this.isSummaryWebTenant) return '/settings';
     return this.canAccessErpWeb ? '/settings' : '/mi-cuenta';
   }
 
@@ -244,7 +302,19 @@ export class AuthService {
   }
 
   get canAccessCash(): boolean {
-    return this.hasModule('caja') && this.hasPermission(PERMISSIONS.CASH_ACCESS);
+    return this.canUseFeature('cash', this.hasPermission(PERMISSIONS.CASH_ACCESS));
+  }
+
+  get canAccessClientsModule(): boolean {
+    return this.canUseFeature('clients', true);
+  }
+
+  get canAccessSuppliersModule(): boolean {
+    return this.canUseFeature('suppliers', true);
+  }
+
+  get canAccessStockModule(): boolean {
+    return this.canUseFeature('stock', true);
   }
 
   get canViewAccountBalance(): boolean {
@@ -294,19 +364,25 @@ export class AuthService {
   }
 
   get canAccessSales(): boolean {
-    return this.hasModule('core') && (this.canCreateSales || this.canViewSalesHistory);
+    return this.canUseFeature(
+      'sales',
+      this.canCreateSales || this.canViewSalesHistory
+    );
   }
 
   get canAccessPurchases(): boolean {
-    return this.hasModule('core') && this.hasPermission(PERMISSIONS.PURCHASES_ACCESS);
+    return this.canUseFeature('purchases', this.hasPermission(PERMISSIONS.PURCHASES_ACCESS));
   }
 
   get canAccessPayables(): boolean {
-    return this.hasModule('payables') && this.hasPermission(PERMISSIONS.PAYABLES_ACCESS);
+    return this.canUseFeature('payables', this.hasPermission(PERMISSIONS.PAYABLES_ACCESS));
   }
 
   get canAccessCollaborators(): boolean {
-    return this.hasModule('collaborators') && this.hasPermission(PERMISSIONS.COLLABORATORS_ACCESS);
+    return this.canUseFeature(
+      'collaborators',
+      this.hasPermission(PERMISSIONS.COLLABORATORS_ACCESS)
+    );
   }
 
   /** Colaborador vinculado al operador (configurado por el administrador). */
@@ -330,7 +406,7 @@ export class AuthService {
   }
 
   get canAccessOrders(): boolean {
-    return this.hasModule('pedidos');
+    return this.canUseFeature('orders', true);
   }
 
   canViewOrder(estado?: string): boolean {
@@ -861,6 +937,10 @@ export class AuthService {
 
     this.currentUserSubject.next(user);
     this.businessSubject.next(business ?? null);
+  }
+
+  updateCurrentBusiness(business: PublicBusinessInfo): void {
+    this.businessSubject.next(business);
   }
 
   private clearSession() {

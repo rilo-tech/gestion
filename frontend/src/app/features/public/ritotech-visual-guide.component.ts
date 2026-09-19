@@ -1,15 +1,36 @@
-import { Component, HostListener, Input } from '@angular/core';
+import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { DEFAULT_TRIAL_DAYS } from '../../../../../shared/trial-state.ts';
 
 type GuideTab = 'whatsapp' | 'erp';
 
+type WaStep = {
+  n: number;
+  title: string;
+  tone: string;
+  body: string;
+  footer: string;
+  kind: 'scene' | 'user' | 'bot' | 'done';
+};
+
+type ErpStep = {
+  n: number;
+  title: string;
+  emoji: string;
+  body: string;
+};
+
 @Component({
   selector: 'app-ritotech-visual-guide',
   standalone: true,
   imports: [CommonModule, RouterLink],
-  host: { class: 'inline-flex max-w-full' },
+  host: {
+    class: 'inline-flex max-w-full',
+    '(document:keydown.escape)': 'onEsc()',
+    '(document:keydown.arrowleft)': 'onLeft()',
+    '(document:keydown.arrowright)': 'onRight()',
+  },
   template: `
     <button
       *ngIf="showTrigger"
@@ -34,7 +55,7 @@ type GuideTab = 'whatsapp' | 'erp';
       </button>
 
       <div
-        class="relative z-10 flex flex-col w-full max-w-3xl max-h-[min(92dvh,900px)] overflow-hidden rounded-2xl sm:rounded-3xl border border-teal-900/60 bg-gray-950 shadow-2xl">
+        class="relative z-10 flex flex-col w-full max-w-xl max-h-[min(92dvh,720px)] overflow-hidden rounded-2xl sm:rounded-3xl border border-teal-900/60 bg-gray-950 shadow-2xl">
         <div
           class="shrink-0 border-b border-teal-900/40 bg-gradient-to-r from-teal-950 via-gray-950 to-violet-950 px-4 sm:px-6 py-3 sm:py-4 flex items-start justify-between gap-3">
           <div class="min-w-0">
@@ -42,173 +63,164 @@ type GuideTab = 'whatsapp' | 'erp';
             <h2 id="visual-guide-title" class="text-xl sm:text-2xl font-black text-white leading-tight mt-0.5">
               Dejá el cuaderno. Rilo se acuerda por vos.
             </h2>
-            <p class="text-sm text-gray-400 mt-1.5 leading-snug">
-              Para quien vende, entrega y cobra… y no tiene tiempo de “cargar el sistema”.
-            </p>
           </div>
           <button
             type="button"
             class="shrink-0 rounded-lg px-2 py-1 text-gray-400 hover:text-white hover:bg-white/10 text-2xl leading-none"
             aria-label="Cerrar"
             (click)="close()">
-            ×
+            &times;
           </button>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <!-- Dolor → alivio -->
-        <div class="px-4 sm:px-6 pt-4">
-          <div class="grid grid-cols-3 gap-2 text-center">
-            <div class="rounded-2xl border border-red-900/40 bg-red-950/20 px-2 py-3">
-              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">😵‍💫</p>
-              <p class="mt-2 text-[11px] sm:text-xs text-red-200/90 leading-snug font-medium">
-                “¿Quién me debía?”
-              </p>
-            </div>
-            <div class="rounded-2xl border border-amber-900/40 bg-amber-950/20 px-2 py-3">
-              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">📓</p>
-              <p class="mt-2 text-[11px] sm:text-xs text-amber-100/90 leading-snug font-medium">
-                Anotás y se pierde
-              </p>
-            </div>
-            <div class="rounded-2xl border border-teal-800/50 bg-teal-950/40 px-2 py-3">
-              <p class="text-3xl sm:text-4xl leading-none" aria-hidden="true">🥳</p>
-              <p class="mt-2 text-[11px] sm:text-xs text-teal-200 leading-snug font-medium">
-                WhatsApp y listo
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div class="px-4 sm:px-6 pt-4 flex gap-2">
+        <div class="shrink-0 px-4 sm:px-6 pt-3 flex gap-2">
           <button
             type="button"
-            (click)="tab = 'whatsapp'"
-            class="flex-1 rounded-xl px-3 py-2.5 text-sm font-bold border transition"
+            (click)="setTab('whatsapp')"
+            class="flex-1 rounded-xl px-3 py-2 text-sm font-bold border transition"
             [class.bg-teal-600]="tab === 'whatsapp'"
             [class.border-teal-500]="tab === 'whatsapp'"
             [class.text-white]="tab === 'whatsapp'"
             [class.bg-gray-900]="tab !== 'whatsapp'"
             [class.border-gray-800]="tab !== 'whatsapp'"
             [class.text-gray-400]="tab !== 'whatsapp'">
-            💬 Cargá por WhatsApp
+            Cargá por WhatsApp
           </button>
           <button
             type="button"
-            (click)="tab = 'erp'"
-            class="flex-1 rounded-xl px-3 py-2.5 text-sm font-bold border transition"
+            (click)="setTab('erp')"
+            class="flex-1 rounded-xl px-3 py-2 text-sm font-bold border transition"
             [class.bg-teal-600]="tab === 'erp'"
             [class.border-teal-500]="tab === 'erp'"
             [class.text-white]="tab === 'erp'"
             [class.bg-gray-900]="tab !== 'erp'"
             [class.border-gray-800]="tab !== 'erp'"
             [class.text-gray-400]="tab !== 'erp'">
-            🖥️ Controlá en el panel
+            Controlá en el panel
           </button>
         </div>
 
-        <!-- WhatsApp comic -->
-        <div *ngIf="tab === 'whatsapp'" class="p-4 sm:p-6 space-y-4">
-          <p class="text-center text-sm text-gray-300 font-semibold">
-            Así te simplifica el día, en 4 viñetas
-          </p>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
-              <p class="text-[10px] font-black uppercase tracking-wide text-violet-400">1 · En la feria o el taller</p>
-              <div class="mt-2 flex items-end gap-2">
-                <span class="text-5xl leading-none shrink-0" aria-hidden="true">👩‍🎨</span>
-                <div class="rounded-2xl rounded-bl-md bg-gray-800 px-3 py-2 text-sm text-gray-100 leading-snug">
-                  Vendí 2 remeras a María… ¿anoto después?
-                </div>
-              </div>
-              <p class="mt-auto pt-3 text-xs text-gray-500">Sin planilla. Sin esperar a “cuando llegue a casa”.</p>
-            </article>
-
-            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
-              <p class="text-[10px] font-black uppercase tracking-wide text-teal-400">2 · Lo escribís como hablás</p>
-              <div class="mt-2 ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-teal-800/80 px-3 py-2 text-sm text-white leading-snug">
-                Venta a María, 2 remeras, cobró 800
-              </div>
-              <p class="mt-auto pt-3 text-xs text-gray-500">Tu agente con IA entiende cliente, producto y plata.</p>
-            </article>
-
-            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 min-h-[9.5rem] flex flex-col">
-              <p class="text-[10px] font-black uppercase tracking-wide text-amber-400">3 · Te pide el OK</p>
-              <div class="mt-2 flex items-start gap-2">
-                <span class="text-4xl leading-none shrink-0" aria-hidden="true">🤖</span>
-                <div class="rounded-2xl rounded-tl-md bg-gray-800 px-3 py-2 text-xs text-gray-200 leading-relaxed font-mono">
-                  Resumen VENTA<br />• María · 2 remeras · $800<br />¿Confirmás? <strong class="text-teal-300">SÍ</strong> o NO
-                </div>
-              </div>
-              <p class="mt-auto pt-3 text-xs text-gray-500">Nada se guarda si no decís que sí. Cero sustos.</p>
-            </article>
-
-            <article class="rounded-2xl border border-teal-800/70 bg-teal-950/40 p-4 min-h-[9.5rem] flex flex-col">
-              <p class="text-[10px] font-black uppercase tracking-wide text-teal-300">4 · Ya está en tu negocio</p>
-              <div class="mt-2 flex items-center justify-between gap-2">
-                <span class="text-5xl leading-none" aria-hidden="true">✅</span>
-                <div class="text-right">
-                  <p class="text-sm font-bold text-white">Pedido, cobro y saldo</p>
-                  <p class="text-xs text-teal-200/80">quedan anotados. Preguntá “¿cuánto debe María?” cuando quieras.</p>
-                </div>
-              </div>
-              <p class="mt-auto pt-3 text-xs text-teal-300/90 font-medium">Vos seguís vendiendo. Rilo lleva la cuenta.</p>
-            </article>
-          </div>
-
-          <div class="rounded-2xl border border-violet-900/50 bg-violet-950/20 px-4 py-3 flex items-start gap-3">
-            <span class="text-3xl leading-none" aria-hidden="true">🧠</span>
-            <p class="text-sm text-gray-300 leading-relaxed">
-              <span class="font-bold text-white">La magia:</span>
-              también podés mandar la foto de una factura de compra. Rilo registra la compra, suma stock y te pide confirmación. El egreso de caja y el costo del producto van en otros mensajes.
+        <div
+          class="relative min-h-0 flex-1 overflow-hidden px-4 sm:px-6 py-4"
+          (touchstart)="onTouchStart($event)"
+          (touchend)="onTouchEnd($event)">
+          <div *ngIf="tab === 'whatsapp'" class="h-full flex flex-col">
+            <p class="text-center text-xs text-gray-400 mb-3">
+              {{ waStepIndex + 1 }} / {{ waSteps.length }}
             </p>
-          </div>
-        </div>
-
-        <!-- Panel comic -->
-        <div *ngIf="tab === 'erp'" class="p-4 sm:p-6 space-y-4">
-          <p class="text-center text-sm text-gray-300 font-semibold">
-            Cuando querés ver el negocio entero, no un chat
-          </p>
-
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 text-center">
-              <p class="text-5xl leading-none" aria-hidden="true">🧑‍💻</p>
-              <h3 class="mt-2 text-sm font-bold text-white">Entras al panel</h3>
-              <p class="mt-1 text-xs text-gray-400 leading-relaxed">
-                Celular o compu. Mismos datos que cargaste por WhatsApp.
-              </p>
-            </article>
-            <article class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 text-center">
-              <p class="text-5xl leading-none" aria-hidden="true">📒</p>
-              <h3 class="mt-2 text-sm font-bold text-white">Caja, stock, deudas</h3>
-              <p class="mt-1 text-xs text-gray-400 leading-relaxed">
-                Quién te debe, qué compraste, qué hay en el depósito. Sin Excel eterno.
-              </p>
-            </article>
-            <article class="rounded-2xl border border-teal-800/70 bg-teal-950/40 p-4 text-center">
-              <p class="text-5xl leading-none" aria-hidden="true">📈</p>
-              <h3 class="mt-2 text-sm font-bold text-white">Cerrás el día en 2 min</h3>
-              <p class="mt-1 text-xs text-teal-200/80 leading-relaxed">
-                Vendiste, cobraste, te falta cobrar. Todo junto, listo para decidir.
-              </p>
-            </article>
-          </div>
-
-          <div class="rounded-2xl border border-gray-800 bg-gray-900/50 px-4 py-3">
-            <p class="text-xs font-bold text-gray-300 mb-2 text-center">El recorrido de tu plata</p>
-            <div class="flex flex-wrap items-center justify-center gap-1.5 text-[11px] sm:text-xs">
-              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">🙋 Cliente</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">📦 Pedido / venta</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-full bg-gray-950 border border-gray-700 px-2.5 py-1">💵 Caja</span>
-              <span class="text-teal-500" aria-hidden="true">→</span>
-              <span class="rounded-full bg-teal-950 border border-teal-700 px-2.5 py-1 text-teal-200">📊 Reporte</span>
+            <div class="flex-1 flex items-stretch gap-2">
+              <button
+                type="button"
+                class="shrink-0 self-center rounded-full h-10 w-10 border border-gray-700 text-gray-300 hover:bg-white/5"
+                aria-label="Anterior"
+                (click)="prevWa()"
+                [disabled]="waStepIndex === 0"
+                [class.opacity-30]="waStepIndex === 0">
+                &lsaquo;
+              </button>
+              <article
+                class="flex-1 rounded-2xl border p-5 flex flex-col transition-opacity duration-200"
+                [ngClass]="
+                  currentWa.kind === 'done'
+                    ? 'border-teal-800 bg-teal-950/40'
+                    : 'border-gray-800 bg-gray-900/70'
+                ">
+                <p class="text-[10px] font-black uppercase tracking-wide" [ngClass]="currentWa.tone">
+                  {{ currentWa.n }} · {{ currentWa.title }}
+                </p>
+                <div class="mt-4 flex-1 flex flex-col justify-center">
+                  <ng-container [ngSwitch]="currentWa.kind">
+                    <div *ngSwitchCase="'scene'" class="flex items-end gap-2">
+                      <span class="text-5xl leading-none shrink-0" aria-hidden="true">👩‍🎨</span>
+                      <div class="rounded-2xl rounded-bl-md bg-gray-800 px-3 py-2 text-sm text-gray-100 leading-snug">
+                        {{ currentWa.body }}
+                      </div>
+                    </div>
+                    <div *ngSwitchCase="'user'" class="ml-auto max-w-[92%] rounded-2xl rounded-br-md bg-teal-800/80 px-3 py-2 text-sm text-white leading-snug">
+                      {{ currentWa.body }}
+                    </div>
+                    <div *ngSwitchCase="'bot'" class="flex items-start gap-2">
+                      <span class="text-4xl leading-none shrink-0" aria-hidden="true">🤖</span>
+                      <div class="rounded-2xl rounded-tl-md bg-gray-800 px-3 py-2 text-sm text-gray-200 leading-relaxed whitespace-pre-line">
+                        {{ currentWa.body }}
+                      </div>
+                    </div>
+                    <div *ngSwitchCase="'done'" class="flex items-center justify-between gap-2">
+                      <span class="text-5xl leading-none" aria-hidden="true">✅</span>
+                      <div class="text-right">
+                        <p class="text-sm font-bold text-white">{{ currentWa.body }}</p>
+                      </div>
+                    </div>
+                  </ng-container>
+                </div>
+                <p class="mt-4 text-xs" [class.text-teal-300]="currentWa.kind === 'done'" [class.text-gray-500]="currentWa.kind !== 'done'">
+                  {{ currentWa.footer }}
+                </p>
+              </article>
+              <button
+                type="button"
+                class="shrink-0 self-center rounded-full h-10 w-10 border border-gray-700 text-gray-300 hover:bg-white/5"
+                aria-label="Siguiente"
+                (click)="nextWa()"
+                [disabled]="waStepIndex >= waSteps.length - 1"
+                [class.opacity-30]="waStepIndex >= waSteps.length - 1">
+                &rsaquo;
+              </button>
+            </div>
+            <div class="mt-4 flex justify-center gap-2">
+              <button
+                *ngFor="let step of waSteps; let i = index"
+                type="button"
+                class="h-2.5 w-2.5 rounded-full transition"
+                [class.bg-teal-400]="i === waStepIndex"
+                [class.bg-gray-700]="i !== waStepIndex"
+                [attr.aria-label]="'Paso ' + (i + 1)"
+                (click)="goWa(i)">
+              </button>
             </div>
           </div>
-        </div>
+
+          <div *ngIf="tab === 'erp'" class="h-full flex flex-col">
+            <p class="text-center text-xs text-gray-400 mb-3">
+              {{ erpStepIndex + 1 }} / {{ erpSteps.length }}
+            </p>
+            <div class="flex-1 flex items-stretch gap-2">
+              <button
+                type="button"
+                class="shrink-0 self-center rounded-full h-10 w-10 border border-gray-700 text-gray-300 hover:bg-white/5"
+                aria-label="Anterior"
+                (click)="prevErp()"
+                [disabled]="erpStepIndex === 0"
+                [class.opacity-30]="erpStepIndex === 0">
+                &lsaquo;
+              </button>
+              <article class="flex-1 rounded-2xl border border-gray-800 bg-gray-900/70 p-5 flex flex-col text-center justify-center">
+                <p class="text-5xl leading-none" aria-hidden="true">{{ currentErp.emoji }}</p>
+                <h3 class="mt-3 text-base font-bold text-white">{{ currentErp.title }}</h3>
+                <p class="mt-2 text-sm text-gray-400 leading-relaxed">{{ currentErp.body }}</p>
+              </article>
+              <button
+                type="button"
+                class="shrink-0 self-center rounded-full h-10 w-10 border border-gray-700 text-gray-300 hover:bg-white/5"
+                aria-label="Siguiente"
+                (click)="nextErp()"
+                [disabled]="erpStepIndex >= erpSteps.length - 1"
+                [class.opacity-30]="erpStepIndex >= erpSteps.length - 1">
+                &rsaquo;
+              </button>
+            </div>
+            <div class="mt-4 flex justify-center gap-2">
+              <button
+                *ngFor="let step of erpSteps; let i = index"
+                type="button"
+                class="h-2.5 w-2.5 rounded-full transition"
+                [class.bg-teal-400]="i === erpStepIndex"
+                [class.bg-gray-700]="i !== erpStepIndex"
+                [attr.aria-label]="'Paso ' + (i + 1)"
+                (click)="goErp(i)">
+              </button>
+            </div>
+          </div>
         </div>
 
         <div
@@ -225,7 +237,12 @@ type GuideTab = 'whatsapp' | 'erp';
               [routerLink]="['/registro']"
               [queryParams]="{ producto: tab === 'erp' ? 'erp' : 'whatsapp' }"
               (click)="close()"
-              class="inline-flex justify-center rounded-xl bg-teal-500 px-5 py-3 text-sm font-black text-gray-950 hover:bg-teal-400">
+              class="inline-flex justify-center rounded-xl px-5 py-3 text-sm font-black text-gray-950 transition"
+              [ngClass]="
+                highlightCta
+                  ? 'bg-teal-400 ring-2 ring-teal-200 scale-[1.02]'
+                  : 'bg-teal-500'
+              ">
               {{ tab === 'erp' ? 'Probar el panel →' : 'Probar RILO Bot →' }}
             </a>
             <button
@@ -246,13 +263,88 @@ export class RitotechVisualGuideComponent {
   @Input() triggerLabel = 'Mirá cómo te ordena el día';
   @Input() defaultTab: GuideTab = 'whatsapp';
   @Input() showSignupCta = true;
-  readonly trialDays = DEFAULT_TRIAL_DAYS;
+  @Input() trialDays = DEFAULT_TRIAL_DAYS;
 
   isOpen = false;
   tab: GuideTab = 'whatsapp';
+  waStepIndex = 0;
+  erpStepIndex = 0;
+  private touchStartX: number | null = null;
+
+  readonly waSteps: WaStep[] = [
+    {
+      n: 1,
+      title: 'En la feria o el taller',
+      tone: 'text-violet-400',
+      body: 'Vendí 2 remeras a María… ¿anoto después?',
+      footer: 'Sin planilla. Sin esperar a “cuando llegue a casa”.',
+      kind: 'scene',
+    },
+    {
+      n: 2,
+      title: 'Lo escribís como hablás',
+      tone: 'text-teal-400',
+      body: 'Venta a María, 2 remeras, cobró 800',
+      footer: 'Tu agente con IA entiende cliente, producto y plata.',
+      kind: 'user',
+    },
+    {
+      n: 3,
+      title: 'Si hace falta, RILO pregunta',
+      tone: 'text-amber-400',
+      body: 'Si está claro, lo registra.\nSi falta un dato, pregunta.\nEn acciones sensibles pide confirmación.',
+      footer: 'Vos seguís al mando. Sin sorpresas.',
+      kind: 'bot',
+    },
+    {
+      n: 4,
+      title: 'Ya está en tu negocio',
+      tone: 'text-teal-300',
+      body: 'Pedido, cobro y saldo quedan anotados.',
+      footer: 'Vos seguís vendiendo. Rilo lleva la cuenta.',
+      kind: 'done',
+    },
+  ];
+
+  readonly erpSteps: ErpStep[] = [
+    {
+      n: 1,
+      title: 'Entras al panel',
+      emoji: '🧑‍💻',
+      body: 'Celular o compu. Mismos datos que cargaste por WhatsApp.',
+    },
+    {
+      n: 2,
+      title: 'Caja, stock, deudas',
+      emoji: '📒',
+      body: 'Quién te debe, qué compraste, qué hay en el depósito. Sin Excel eterno.',
+    },
+    {
+      n: 3,
+      title: 'Cerrás el día en 2 min',
+      emoji: '📈',
+      body: 'Vendiste, cobraste, te falta cobrar. Todo junto, listo para decidir.',
+    },
+  ];
+
+  get currentWa(): WaStep {
+    return this.waSteps[this.waStepIndex] ?? this.waSteps[0]!;
+  }
+
+  get currentErp(): ErpStep {
+    return this.erpSteps[this.erpStepIndex] ?? this.erpSteps[0]!;
+  }
+
+  get highlightCta(): boolean {
+    return this.tab === 'whatsapp'
+      ? this.waStepIndex === this.waSteps.length - 1
+      : this.erpStepIndex === this.erpSteps.length - 1;
+  }
 
   open(tab: GuideTab = this.defaultTab) {
     this.tab = tab;
+    this.waStepIndex = 0;
+    this.erpStepIndex = 0;
     this.isOpen = true;
     document.body.style.overflow = 'hidden';
   }
@@ -262,8 +354,66 @@ export class RitotechVisualGuideComponent {
     document.body.style.overflow = '';
   }
 
-  @HostListener('document:keydown.escape')
+  setTab(tab: GuideTab) {
+    this.tab = tab;
+  }
+
+  goWa(index: number) {
+    this.waStepIndex = index;
+  }
+
+  goErp(index: number) {
+    this.erpStepIndex = index;
+  }
+
+  prevWa() {
+    this.waStepIndex = Math.max(0, this.waStepIndex - 1);
+  }
+
+  nextWa() {
+    this.waStepIndex = Math.min(this.waSteps.length - 1, this.waStepIndex + 1);
+  }
+
+  prevErp() {
+    this.erpStepIndex = Math.max(0, this.erpStepIndex - 1);
+  }
+
+  nextErp() {
+    this.erpStepIndex = Math.min(this.erpSteps.length - 1, this.erpStepIndex + 1);
+  }
+
+  onTouchStart(event: TouchEvent) {
+    this.touchStartX = event.changedTouches[0]?.clientX ?? null;
+  }
+
+  onTouchEnd(event: TouchEvent) {
+    if (this.touchStartX == null) return;
+    const endX = event.changedTouches[0]?.clientX ?? this.touchStartX;
+    const delta = endX - this.touchStartX;
+    this.touchStartX = null;
+    if (Math.abs(delta) < 40) return;
+    if (this.tab === 'whatsapp') {
+      if (delta < 0) this.nextWa();
+      else this.prevWa();
+    } else {
+      if (delta < 0) this.nextErp();
+      else this.prevErp();
+    }
+  }
+
   onEsc() {
     if (this.isOpen) this.close();
+  }
+
+  onLeft() {
+    if (!this.isOpen) return;
+    if (this.tab === 'whatsapp') this.prevWa();
+    else this.prevErp();
+  }
+
+  onRight() {
+    if (!this.isOpen) return;
+    if (this.tab === 'whatsapp') this.nextWa();
+    else this.nextErp();
   }
 }

@@ -188,7 +188,7 @@ export function parseChoiceFromText(text: string): {
   return {};
 }
 
-export type ConfirmReplyKind = 'confirm' | 'cancel' | 'correct';
+export type ConfirmReplyKind = 'confirm' | 'cancel' | 'correct' | 'confirm_amend';
 
 function requestedStatusFromText(
   text: string
@@ -204,22 +204,41 @@ function requestedStatusFromText(
   return 'listo';
 }
 
+/**
+ * Intención de confirmar/cancelar un pendingPlan sensible.
+ * Frases naturales cortas → confirm|cancel; con enmienda → confirm_amend;
+ * ambiguo / corrección → correct (NO ejecutar).
+ * Backend sigue siendo la autoridad: solo se ejecuta si pendingIntent + confirm.
+ */
 export function classifyConfirmReply(text: string): ConfirmReplyKind {
-  const t = String(text ?? '').trim();
+  const t = String(text ?? '').trim().replace(/\s+/g, ' ');
   if (!t) return 'correct';
+
+  // Cancel primero: «mejor no» no debe caer en reinterpretación.
   if (
-    /^(si|sí|ok|dale|confirmo|confirmar|yes|y|guardalo|gu[aá]rdalo|hacelo|hacele|guarda|anotalo)\s*[.!]*$/i.test(
+    /^(no+|n[oó]|nop|n|cancelar|cancel[áa]|cancela|dejalo|d[eé]jalo|dej[áa]|mejor\s+no|no\s+gracias|nah|olvidalo|olv[ií]dalo|no\s+lo\s+guardes|no\s+lo\s+hagas|no\s+lo\s+anotes)\s*[.!]*$/i.test(
+      t
+    )
+  ) {
+    return 'cancel';
+  }
+
+  if (
+    /^(si|sí|ok|okay|dale|confirmo|confirmar|yes|y|guardalo|gu[aá]rdalo|hacelo|hacele|guarda|anotalo|correcto|perfecto|mandale|de\s+una|listo|afirmativo|esta\s+bien|est[aá]\s+bien|todo\s+bien)\s*[.!]*$/i.test(
       t
     )
   ) {
     return 'confirm';
   }
-  if (
-    /^(no+|n[oó]|nop|n|cancelar|cancel[áa]|dejalo|d[eé]jalo|no lo guardes|no lo hagas|no lo anotes)\s*[.!]*$/i.test(
-      t
-    )
-  ) {
-    return 'cancel';
+
+  {
+    const amend = t.match(
+      /^(si|sí|ok|okay|dale|confirmo|confirmar|yes|correcto|perfecto|mandale|listo|est[aá]\s+bien|esta\s+bien)([\s\S]*)$/i
+    );
+    const rest = String(amend?.[2] ?? '')
+      .replace(/^[\s,.!…]+/u, '')
+      .trim();
+    if (amend && rest) return 'confirm_amend';
   }
   return 'correct';
 }

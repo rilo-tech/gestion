@@ -1,4 +1,12 @@
 import type { TrialProductId } from './platform-access.ts';
+import { TRIAL_PRODUCT_DESCRIPTIONS, TRIAL_PRODUCT_LABELS } from './platform-access.ts';
+import {
+  DEFAULT_COMMERCIAL_CATALOG,
+  amountMonthlyFor,
+  erpPlanPricesFromCatalog,
+  extraErpUserPriceFor,
+  formatCatalogPriceLabel,
+} from './commercial-catalog.ts';
 
 export type BillingCountryCode = 'UY' | 'AR';
 export type BillingCurrency = 'UYU' | 'ARS';
@@ -29,14 +37,17 @@ export function formatMoneyLabel(currency: BillingCurrency, amount: number, suff
   return `${currency} ${formatted} ${suffix}`;
 }
 
-export interface BillingProduct {
+export interface BillingProductMeta {
   id: TrialProductId;
   name: string;
   description: string;
   /** Plan ERP interno al convertir. */
   erpPlanId: string;
-  prices: BillingProductPrice[];
   featured?: boolean;
+}
+
+export interface BillingProduct extends BillingProductMeta {
+  prices: BillingProductPrice[];
 }
 
 /** Precio sugerido por usuario extra ERP (UY / AR) cuando el plan no define override. */
@@ -45,85 +56,47 @@ export const DEFAULT_EXTRA_USER_MONTHLY: Record<BillingCountryCode, number> = {
   AR: 4900,
 };
 
-/** Catálogo comercial público (checkout). Montos enteros en moneda local. */
-export const BILLING_PRODUCTS: BillingProduct[] = [
+/**
+ * Metadatos de producto (sin montos).
+ * Los precios salen siempre de DEFAULT_COMMERCIAL_CATALOG / Firestore vía commercial-catalog.
+ */
+export const BILLING_PRODUCT_META: BillingProductMeta[] = [
+  {
+    id: 'cash',
+    name: TRIAL_PRODUCT_LABELS.cash,
+    description: TRIAL_PRODUCT_DESCRIPTIONS.cash,
+    erpPlanId: 'plan_caja',
+  },
   {
     id: 'whatsapp',
-    name: 'RILO Bot',
-    description: 'Gestión rápida desde WhatsApp, con confirmación SÍ/NO.',
+    name: TRIAL_PRODUCT_LABELS.whatsapp,
+    description: TRIAL_PRODUCT_DESCRIPTIONS.whatsapp,
     erpPlanId: 'plan_basico',
-    prices: [
-      {
-        country: 'UY',
-        currency: 'UYU',
-        amountMonthly: 690,
-        label: 'UYU 690 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
-      },
-      {
-        country: 'AR',
-        currency: 'ARS',
-        amountMonthly: 16900,
-        label: 'ARS 16.900 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
-      },
-    ],
   },
   {
     id: 'erp',
-    name: 'RILO Gestión',
-    description: 'Panel web: clientes, productos, proveedores, pedidos, ventas, compras y caja.',
+    name: TRIAL_PRODUCT_LABELS.erp,
+    description: TRIAL_PRODUCT_DESCRIPTIONS.erp,
     erpPlanId: 'plan_intermedio',
-    prices: [
-      {
-        country: 'UY',
-        currency: 'UYU',
-        amountMonthly: 590,
-        label: 'UYU 590 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
-      },
-      {
-        country: 'AR',
-        currency: 'ARS',
-        amountMonthly: 14900,
-        label: 'ARS 14.900 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
-      },
-    ],
   },
   {
     id: 'completo',
-    name: 'RILO Completo',
-    description: 'Bot + Gestión: WhatsApp para cargar y panel web para controlar.',
+    name: TRIAL_PRODUCT_LABELS.completo,
+    description: TRIAL_PRODUCT_DESCRIPTIONS.completo,
     erpPlanId: 'plan_profesional',
     featured: true,
-    prices: [
-      {
-        country: 'UY',
-        currency: 'UYU',
-        amountMonthly: 990,
-        label: 'UYU 990 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.UY,
-      },
-      {
-        country: 'AR',
-        currency: 'ARS',
-        amountMonthly: 24900,
-        label: 'ARS 24.900 / mes',
-        extraUserMonthly: DEFAULT_EXTRA_USER_MONTHLY.AR,
-      },
-    ],
   },
 ];
 
-/** Mapeo plantilla ERP ← producto landing (precio base UY por defecto en plataforma). */
+/** Mapeo plantilla ERP ← producto landing. */
 export const ERP_PLAN_BILLING_DEFAULTS: Record<
   string,
   { productId: TrialProductId; nombre: string }
 > = {
-  plan_basico: { productId: 'whatsapp', nombre: 'RILO Bot' },
-  plan_intermedio: { productId: 'erp', nombre: 'RILO Gestión' },
-  plan_profesional: { productId: 'completo', nombre: 'RILO Completo' },
+  plan_caja: { productId: 'cash', nombre: TRIAL_PRODUCT_LABELS.cash },
+  plan_basico: { productId: 'whatsapp', nombre: TRIAL_PRODUCT_LABELS.whatsapp },
+  plan_intermedio: { productId: 'erp', nombre: TRIAL_PRODUCT_LABELS.erp },
+  plan_profesional: { productId: 'completo', nombre: TRIAL_PRODUCT_LABELS.completo },
 };
 
 export function resolveBillingCountry(pais: string | null | undefined): BillingCountryCode {
@@ -136,33 +109,89 @@ export function resolveBillingCountry(pais: string | null | undefined): BillingC
     .toLowerCase();
 
   if (!raw) return 'UY';
-  if (
-    raw === 'ar' ||
-    raw === 'arg' ||
-    raw.includes('argentina') ||
-    raw === '54'
-  ) {
+  if (raw === 'ar' || raw === 'arg' || raw.includes('argentina') || raw === '54') {
     return 'AR';
   }
   return 'UY';
 }
 
-export function getBillingProduct(productId: string): BillingProduct | null {
-  return BILLING_PRODUCTS.find((p) => p.id === productId) ?? null;
+export function resolveCheckoutAmount(
+  amountMonthly: number,
+  interval: BillingInterval
+): { amount: number; coverageMonths: number; titleSuffix: string } {
+  if (interval === 'year') {
+    return {
+      amount: yearlyAmountFromMonthly(amountMonthly),
+      coverageMonths: YEARLY_COVERAGE_MONTHS,
+      titleSuffix: '12 meses',
+    };
+  }
+  return { amount: amountMonthly, coverageMonths: 1, titleSuffix: '1 mes' };
+}
+
+function currencyFor(country: BillingCountryCode): BillingCurrency {
+  return country === 'AR' ? 'ARS' : 'UYU';
+}
+
+export function getBillingProductMeta(productId: string): BillingProductMeta | null {
+  return BILLING_PRODUCT_META.find((p) => p.id === productId) ?? null;
 }
 
 export function getProductPriceForCountry(
   productId: string,
   country: BillingCountryCode
 ): BillingProductPrice | null {
-  const product = getBillingProduct(productId);
-  if (!product) return null;
-  return product.prices.find((p) => p.country === country) ?? null;
+  if (!getBillingProductMeta(productId)) return null;
+  const id = productId as TrialProductId;
+  const amountMonthly = amountMonthlyFor(DEFAULT_COMMERCIAL_CATALOG, id, country);
+  const extraUserMonthly = extraErpUserPriceFor(DEFAULT_COMMERCIAL_CATALOG, id, country);
+  const currency = currencyFor(country);
+  return {
+    country,
+    currency,
+    amountMonthly,
+    label: formatCatalogPriceLabel(country, amountMonthly),
+    extraUserMonthly,
+  };
+}
+
+export function getBillingProducts(): BillingProduct[] {
+  return BILLING_PRODUCT_META.map((meta) => ({
+    ...meta,
+    prices: [
+      getProductPriceForCountry(meta.id, 'UY')!,
+      getProductPriceForCountry(meta.id, 'AR')!,
+    ],
+  }));
+}
+
+/** Compat: mismos datos que getBillingProducts(), precios desde commercial-catalog. */
+export const BILLING_PRODUCTS: BillingProduct[] = new Proxy([] as BillingProduct[], {
+  get(_target, prop, receiver) {
+    const products = getBillingProducts();
+    if (prop === 'length') return products.length;
+    if (prop === Symbol.iterator) return products[Symbol.iterator].bind(products);
+    if (typeof prop === 'string' && /^\d+$/.test(prop)) return products[Number(prop)];
+    const value = Reflect.get(products, prop, receiver);
+    return typeof value === 'function' ? value.bind(products) : value;
+  },
+});
+
+export function getBillingProduct(productId: string): BillingProduct | null {
+  const meta = getBillingProductMeta(productId);
+  if (!meta) return null;
+  return {
+    ...meta,
+    prices: [
+      getProductPriceForCountry(meta.id, 'UY')!,
+      getProductPriceForCountry(meta.id, 'AR')!,
+    ],
+  };
 }
 
 export function listProductsForCountry(country: BillingCountryCode) {
-  return BILLING_PRODUCTS.map((product) => {
-    const price = product.prices.find((p) => p.country === country)!;
+  return BILLING_PRODUCT_META.map((product) => {
+    const price = getProductPriceForCountry(product.id, country)!;
     const amountYearly = yearlyAmountFromMonthly(price.amountMonthly);
     return {
       id: product.id,
@@ -181,21 +210,7 @@ export function listProductsForCountry(country: BillingCountryCode) {
   });
 }
 
-export function resolveCheckoutAmount(
-  amountMonthly: number,
-  interval: BillingInterval
-): { amount: number; coverageMonths: number; titleSuffix: string } {
-  if (interval === 'year') {
-    return {
-      amount: yearlyAmountFromMonthly(amountMonthly),
-      coverageMonths: YEARLY_COVERAGE_MONTHS,
-      titleSuffix: '12 meses',
-    };
-  }
-  return { amount: amountMonthly, coverageMonths: 1, titleSuffix: '1 mes' };
-}
-
-/** Precios de plantilla ERP alineados al catálogo de la landing (país de referencia). */
+/** Precios de plantilla ERP alineados al catálogo comercial (país de referencia). */
 export function getErpPlanTemplatePrices(
   planId: string,
   country: BillingCountryCode = 'UY'
@@ -207,16 +222,5 @@ export function getErpPlanTemplatePrices(
   productId: TrialProductId | null;
   productName: string | null;
 } | null {
-  const mapping = ERP_PLAN_BILLING_DEFAULTS[planId];
-  if (!mapping) return null;
-  const price = getProductPriceForCountry(mapping.productId, country);
-  if (!price) return null;
-  return {
-    precioBaseMensual: price.amountMonthly,
-    precioPorOperador: price.extraUserMonthly,
-    precioPorAdministrador: 0,
-    currency: price.currency,
-    productId: mapping.productId,
-    productName: mapping.nombre,
-  };
+  return erpPlanPricesFromCatalog(DEFAULT_COMMERCIAL_CATALOG, planId, country);
 }

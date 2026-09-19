@@ -1,14 +1,31 @@
 import type { ConversationState } from './conversation-state.ts';
 import { V4_CANDIDATE_SELECTION_PROMPT } from './v4-ui-copy.ts';
+import { normalizeCandidateResult } from './entity-candidate-result.ts';
+
+import type { PendingWriteCall } from './v4-order-operation.ts';
 
 /** Protocolo de UI conversacional — no interpreta negocio, solo resuelve opciones numeradas. */
-export type CandidateSelectionEntityType = 'client' | 'product' | 'supplier' | 'order';
+export type CandidateSelectionEntityType =
+  | 'client'
+  | 'product'
+  | 'supplier'
+  | 'order'
+  | 'cash_account'
+  | 'collaborator'
+  | 'payment'
+  | 'work_log';
 
 export type CandidateSelectionOption = {
   index: number;
   entityId: string;
   label: string;
   meta?: Record<string, unknown>;
+};
+
+export type CandidateSelectionContinuation = {
+  pendingWrites?: PendingWriteCall[];
+  /** Read tools del mismo turno que quedaron sin ejecutar tras la ambigüedad. */
+  pendingReads?: Array<{ tool: string; arguments?: Record<string, unknown> }>;
 };
 
 export type CandidateSelectionResume = {
@@ -18,6 +35,21 @@ export type CandidateSelectionResume = {
   blockedTool?: string;
   blockedArgs?: Record<string, unknown>;
   sourceTool?: string;
+  draftId?: string;
+  itemIndex?: number;
+  party?:
+    | 'item'
+    | 'client'
+    | 'supplier'
+    | 'payment'
+    | 'payment_card'
+    | 'payment_installments'
+    | 'payment_card_config'
+    | 'cash_account'
+    | 'purchase_total'
+    | 'review'
+    | 'edit_item';
+  continuation?: CandidateSelectionContinuation;
 };
 
 export type CandidateSelectionAwaiting = {
@@ -58,6 +90,17 @@ export function parseNumericSelectionTurn(text: string): { index?: number; remai
   return {};
 }
 
+/** Opción 0 en un menú numerado activo (Volver, Cancelar compra, etc.) — no es cancel global del workflow. */
+export function isCandidateMenuZeroOptionTurn(
+  text: string,
+  awaiting: CandidateSelectionAwaiting | null | undefined
+): boolean {
+  if (!awaiting) return false;
+  const parsed = parseNumericSelectionTurn(text);
+  if (parsed.index !== 0) return false;
+  return awaiting.options.some((row) => row.index === 0);
+}
+
 export function getCandidateSelectionAwaiting(
   state: ConversationState | null | undefined
 ): CandidateSelectionAwaiting | null {
@@ -65,7 +108,7 @@ export function getCandidateSelectionAwaiting(
   const payload = state.pendingPayload?.candidateSelection;
   if (!payload || typeof payload !== 'object') return null;
   const row = payload as CandidateSelectionAwaiting;
-  if (row.type !== 'candidate_selection' || !Array.isArray(row.options) || !row.options.length) {
+  if (row.type !== 'candidate_selection' || !Array.isArray(row.options) || row.options.length < 2) {
     return null;
   }
   return row;
@@ -74,14 +117,18 @@ export function getCandidateSelectionAwaiting(
 export function normalizeCandidateRows(
   entityType: CandidateSelectionEntityType,
   rows: unknown[],
-  max = 5
+  max?: number
 ): CandidateSelectionOption[] {
+  const cap = Math.max(1, max ?? (entityType === 'order' ? 10 : 5));
   const options: CandidateSelectionOption[] = [];
-  for (const [idx, row] of rows.slice(0, max).entries()) {
+  for (const [idx, row] of rows.slice(0, cap).entries()) {
     const item = row as Record<string, unknown>;
     const entityId = String(item.id ?? item.entityId ?? item.clientId ?? item.productId ?? '').trim();
     if (!entityId) continue;
-    const label = formatCandidateLabel(entityType, item);
+    const label =
+      entityType === 'cash_account'
+        ? String(item.name ?? item.label ?? entityId).trim()
+        : formatCandidateLabel(entityType, item);
     options.push({ index: idx + 1, entityId, label, meta: item });
   }
   return options;
@@ -91,9 +138,10 @@ function formatCandidateLabel(entityType: CandidateSelectionEntityType, item: Re
   if (entityType === 'order') {
     const bits = [
       `#${String(item.number ?? item.label ?? item.id ?? '')}`,
-      String(item.deliveryDate ?? item.createdAt ?? '').slice(0, 10) || undefined,
       String(item.statusLabel ?? item.status ?? '').trim() || undefined,
-      item.total != null ? `$${Number(item.total).toLocaleString('es-AR')}` : undefined,
+      item.balance != null && Number(item.balance) > 0
+        ? `Saldo $${Number(item.balance).toLocaleString('es-AR')}`
+        : undefined,
     ].filter(Boolean);
     return bits.join(' · ');
   }
@@ -105,11 +153,16 @@ function formatCandidateLabel(entityType: CandidateSelectionEntityType, item: Re
     ].filter(Boolean);
     return bits.join(' · ');
   }
+  if (entityType === 'work_log') {
+    return String(item.label ?? item.name ?? 'Registro').trim();
+  }
   const name = String(item.name ?? item.nombre ?? 'Opción').trim();
   const phone = String(item.telefono ?? item.phone ?? '').trim();
   const hint = String(item.local ?? item.ciudad ?? item.empresa ?? item.rubro ?? '').trim();
   const extras = [phone, hint].filter(Boolean);
-  return extras.length ? `${name} · ${extras.join(' · ')}` : name;
+  const label = extras.length ? `${name} · ${extras.join(' · ')}` : name;
+  if (entityType === 'client') return `👤 ${label}`;
+  return label;
 }
 
 export function buildCandidateSelectionState(input: {
@@ -175,11 +228,17 @@ export function focusPatchFromCandidate(
       status: String(meta.status ?? ''),
       locked: true,
     };
+  } else if (entityType === 'cash_account') {
+    base.cash = { id: option.entityId, name: option.label, locked: true };
+  } else if (entityType === 'collaborator') {
+    base.collaborator = { id: option.entityId, name: option.label.split(' · ')[0], locked: true };
   }
   return base;
 }
 
 export function inferEntityTypeFromTool(toolName: string): CandidateSelectionEntityType {
+  if (toolName.includes('cash')) return 'cash_account';
+  if (toolName.includes('collaborator')) return 'collaborator';
   if (toolName.includes('client')) return 'client';
   if (toolName.includes('product') || toolName.includes('stock')) return 'product';
   if (toolName.includes('supplier')) return 'supplier';
@@ -190,14 +249,19 @@ export function inferEntityTypeFromTool(toolName: string): CandidateSelectionEnt
 export function ambiguousPayloadFromToolOutput(
   toolName: string,
   output: Record<string, unknown>,
-  ctx: { originalUserText: string; blockedArgs?: Record<string, unknown> }
+  ctx: {
+    originalUserText: string;
+    blockedArgs?: Record<string, unknown>;
+    continuation?: import('./v4-candidate-selection.ts').CandidateSelectionContinuation;
+  }
 ): CandidateSelectionAwaiting | null {
   const candidates = Array.isArray(output.candidates) ? output.candidates : [];
-  if (!candidates.length) return null;
+  const normalized = normalizeCandidateResult(candidates);
+  if (normalized.status !== 'ambiguous') return null;
 
   const entityType = inferEntityTypeFromToolOutput(toolName, output);
-  const options = normalizeCandidateRows(entityType, candidates);
-  if (!options.length) return null;
+  const options = normalizeCandidateRows(entityType, normalized.candidates);
+  if (options.length < 2) return null;
 
   return {
     type: 'candidate_selection',
@@ -208,6 +272,13 @@ export function ambiguousPayloadFromToolOutput(
       blockedTool: toolName,
       blockedArgs: ctx.blockedArgs,
       sourceTool: toolName,
+      draftId: String(output.draftId ?? '').trim() || undefined,
+      itemIndex: output.itemIndex != null ? Number(output.itemIndex) : undefined,
+      party:
+        output.party === 'client' || output.party === 'supplier' || output.party === 'item'
+          ? output.party
+          : undefined,
+      continuation: ctx.continuation,
     },
   };
 }
@@ -216,9 +287,21 @@ function inferEntityTypeFromToolOutput(
   toolName: string,
   output: Record<string, unknown>
 ): CandidateSelectionEntityType {
+  const declared = String(output.entityType ?? '');
+  if (
+    declared === 'client' ||
+    declared === 'product' ||
+    declared === 'supplier' ||
+    declared === 'order' ||
+    declared === 'cash_account' ||
+    declared === 'collaborator'
+  ) {
+    return declared;
+  }
   const filter = (output.filter ?? {}) as Record<string, unknown>;
+  if (toolName.includes('cash')) return 'cash_account';
   if (filter.clientQuery || toolName.includes('client')) return 'client';
-  if (filter.productQuery || toolName.includes('product')) return 'product';
+  if (filter.productQuery || toolName.includes('product') || toolName.includes('visual')) return 'product';
   if (filter.supplierQuery || toolName.includes('supplier')) return 'supplier';
   if (toolName.includes('order')) return 'order';
   return inferEntityTypeFromTool(toolName);

@@ -79,8 +79,24 @@ export function resolveCashAmbito(
   const businessId = getBusinessCashAmbitoId();
   if (ambitos.length <= 1) return businessId;
 
-  const raw = String(movement?.ambito ?? '').trim().toLowerCase();
-  if (raw && ambitos.some((entry) => entry.id === raw)) return raw;
+  const raw = String(movement?.ambito ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return businessId;
+  if (ambitos.some((entry) => entry.id === raw)) return raw;
+  const byLabel = ambitos.find(
+    (entry) =>
+      entry.label
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim() === raw
+  );
+  if (byLabel) return byLabel.id;
+  if (LEGACY_BUSINESS_AMBITO_IDS.has(raw)) return businessId;
   return businessId;
 }
 

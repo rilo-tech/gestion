@@ -16,6 +16,7 @@ import {
 } from '../utils/stock-product.ts';
 import { createCompanyRouter } from './create-company-router.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
+import { requireBusinessFeature } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 import {
   listStockReservations,
@@ -39,8 +40,12 @@ import {
   findStockItemByBarcode,
   findStockItemByCodigoBarras,
   normalizeBarcodeKey,
+  claimBarcodeLock,
+  releaseBarcodeLock,
   loadProductosCodigoConfig,
 } from '../utils/product-code.ts';
+import { adjustStock } from '../domain/stock/index.ts';
+import { barcodeFieldsForWrite } from '../../shared/barcode.ts';
 import { findPrefijoOwnerForCodigo } from '../../shared/product-code-config.ts';
 import {
   filterStockSearchEntries,
@@ -48,6 +53,7 @@ import {
 } from '../../shared/stock-search.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('stock'));
 
 function normalizeProductNameKey(nombre: unknown): string {
   return String(nombre ?? '')
@@ -156,7 +162,8 @@ router.post('/:businessId', async (req, res) => {
       return res.status(codigoResult.status).json({ error: codigoResult.error });
     }
 
-    const codigoBarras = normalizeBarcodeKey(itemData.codigoBarras);
+    const barcodeFields = barcodeFieldsForWrite(itemData.codigoBarras);
+    const codigoBarras = barcodeFields.codigoBarras ?? '';
     if (codigoBarras) {
       const duplicateBarcode = await findStockItemByCodigoBarras(businessId, codigoBarras);
       if (duplicateBarcode) {
@@ -166,20 +173,36 @@ router.post('/:businessId', async (req, res) => {
       }
     }
 
-    const docRef = await db.collection(`negocios/${businessId}/stock`).add({
-      ...itemData,
-      ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : {}),
-      ...(codigoBarras ? { codigoBarras } : {}),
-      stockActual,
-      stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
-      stockReservado: 0,
-      controlaStock: controlsStock,
-      permitirStockNegativo: controlsStock ? itemData.permitirStockNegativo !== false : false,
-      costo: Number(itemData.costo) || 0,
-      precioSugerido: Number(itemData.precioSugerido) || 0,
-      negocioId: businessId,
-      createdAt: new Date().toISOString(),
-    });
+    const authUser = (req as AuthenticatedRequest).user;
+    const actorId = String(authUser?.userId ?? authUser?.id ?? '').trim() || 'system';
+
+    let docRef;
+    try {
+      docRef = await db.collection(`negocios/${businessId}/stock`).add({
+        ...itemData,
+        ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : {}),
+        ...barcodeFields,
+        stockActual,
+        stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
+        stockReservado: 0,
+        controlaStock: controlsStock,
+        permitirStockNegativo: controlsStock ? itemData.permitirStockNegativo !== false : false,
+        costo: Number(itemData.costo) || 0,
+        precioSugerido: Number(itemData.precioSugerido) || 0,
+        negocioId: businessId,
+        createdAt: new Date().toISOString(),
+      });
+      if (codigoBarras) {
+        await claimBarcodeLock(businessId, codigoBarras, docRef.id);
+      }
+    } catch (error) {
+      if (error && typeof error === 'object' && (error as { code?: string }).code === 'BARCODE_TAKEN') {
+        return res.status(409).json({
+          error: `Ya existe un producto con el código de barras «${codigoBarras}».`,
+        });
+      }
+      throw error;
+    }
 
     if (controlsStock && stockActual > 0) {
       await db.collection(`negocios/${businessId}/movimientos_stock`).add({
@@ -190,7 +213,7 @@ router.post('/:businessId', async (req, res) => {
         motivo: 'Carga inicial',
         origenGrupo: 'carga_inicial',
         origenTipo: 'carga_inicial',
-        usuarioId: 'admin',
+        usuarioId: actorId,
         negocioId: businessId,
       });
       await syncPendingOrdersAfterStockChange(businessId, [docRef.id]);
@@ -647,7 +670,11 @@ router.get('/:businessId/by-barcode', async (req, res) => {
 
     const found = await findStockItemByBarcode(businessId, code);
     if (!found) {
-      return res.status(404).json({ error: 'No se encontró un producto con ese código.' });
+      return res.status(404).json({
+        error: 'Este código todavía no está asociado a ningún producto.',
+        code: 'BARCODE_UNKNOWN',
+        codigoBarras: normalizeBarcodeKey(code),
+      });
     }
 
     res.json({ id: found.id, ...found.data });
@@ -730,7 +757,8 @@ router.put('/:businessId/:itemId', async (req, res) => {
       return res.status(codigoResult.status).json({ error: codigoResult.error });
     }
 
-    const codigoBarras = normalizeBarcodeKey(itemData.codigoBarras);
+    const barcodeFields = barcodeFieldsForWrite(itemData.codigoBarras);
+    const codigoBarras = barcodeFields.codigoBarras ?? '';
     if (codigoBarras) {
       const duplicateBarcode = await findStockItemByCodigoBarras(
         businessId,
@@ -744,6 +772,24 @@ router.put('/:businessId/:itemId', async (req, res) => {
       }
     }
 
+    const previousCodigoBarras = normalizeBarcodeKey(existingData.codigoBarras);
+    const barcodeChanging = codigoBarras !== previousCodigoBarras;
+    try {
+      if (barcodeChanging && codigoBarras) {
+        await claimBarcodeLock(businessId, codigoBarras, itemId);
+      }
+    } catch (error) {
+      if (error && typeof error === 'object' && (error as { code?: string }).code === 'BARCODE_TAKEN') {
+        return res.status(409).json({
+          error: `Ya existe otro producto con el código de barras «${codigoBarras}».`,
+        });
+      }
+      throw error;
+    }
+
+    const authUser = (req as AuthenticatedRequest).user;
+    const actorId = String(authUser?.userId ?? authUser?.id ?? '').trim() || 'system';
+
     const previousStock = Number(existingData.stockActual) || 0;
     const controlsStock = productControlsStock(itemData);
     const requestedStock = controlsStock ? Math.max(0, Number(itemData.stockActual) || 0) : 0;
@@ -753,7 +799,9 @@ router.put('/:businessId/:itemId', async (req, res) => {
     await itemRef.update({
       ...itemData,
       ...(codigoResult.codigo ? { codigo: codigoResult.codigo } : { codigo: '' }),
-      codigoBarras: codigoBarras || '',
+      ...(codigoBarras
+        ? barcodeFields
+        : { codigoBarras: '', codigoBarrasKey: '' }),
       stockActual: nextStock,
       stockMinimo: controlsStock ? Number(itemData.stockMinimo) || 0 : 0,
       stockReservado: controlsStock ? Number(itemData.stockReservado) || 0 : 0,
@@ -763,6 +811,10 @@ router.put('/:businessId/:itemId', async (req, res) => {
       precioSugerido: Number(itemData.precioSugerido) || 0,
       updatedAt: new Date().toISOString(),
     });
+
+    if (barcodeChanging && previousCodigoBarras) {
+      await releaseBarcodeLock(businessId, previousCodigoBarras, itemId).catch(() => undefined);
+    }
 
     if (codigoResult.regenerateOldCategoria) {
       await regenerateProductCodesForCategory(
@@ -780,7 +832,7 @@ router.put('/:businessId/:itemId', async (req, res) => {
         motivo: 'Ajuste por edición de producto',
         origenGrupo: 'ajuste',
         origenTipo: 'edicion_producto',
-        usuarioId: 'admin',
+        usuarioId: actorId,
         negocioId: businessId,
       });
     }
@@ -806,52 +858,65 @@ router.put('/:businessId/:itemId', async (req, res) => {
   }
 });
 
-// Update stock (adjustment)
+// Update stock (ajuste atómico + idempotencia por scanOperationId)
 router.patch('/:businessId/:itemId', async (req, res) => {
   try {
     const { businessId, itemId } = req.params;
-    const { quantity, motivo, usuarioId } = req.body;
-    
-    const itemRef = db.collection(`negocios/${businessId}/stock`).doc(itemId);
-    const item = await itemRef.get();
-    
-    if (!item.exists) return res.status(404).json({ error: 'Item not found' });
-    
-    const currentStock = item.data()?.stockActual || 0;
-    const newStock = currentStock + quantity;
-    
-    await itemRef.update({ stockActual: newStock });
-    
-    // Record movement
-    await db.collection(`negocios/${businessId}/movimientos_stock`).add({
-      productoId: itemId,
-      tipo: quantity > 0 ? 'entrada' : 'salida',
-      cantidad: Math.abs(quantity),
-      fecha: new Date().toISOString(),
-      motivo,
-      origenGrupo: 'ajuste',
-      origenTipo: 'ajuste_manual',
-      usuarioId,
-      negocioId: businessId,
-    });
-    if (quantity > 0) {
-      await syncPendingOrdersAfterStockChange(businessId, [itemId]);
+    const { quantity, motivo, tipo, origenTipo, scanOperationId } = req.body ?? {};
+    const authUser = (req as AuthenticatedRequest).user;
+    const actorId = String(authUser?.userId ?? authUser?.id ?? '').trim() || 'system';
+
+    if (quantity === undefined || quantity === null || Number(quantity) === 0) {
+      return res.status(400).json({ error: 'Quantity is required' });
     }
 
-    await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
-      module: 'stock',
-      action: 'update',
-      entityType: 'producto',
-      entityId: itemId,
-      entityLabel: String(item.data()?.nombre ?? itemId),
-      summary: `Ajustó stock de ${String(item.data()?.nombre ?? itemId)} (${quantity > 0 ? '+' : ''}${quantity})`,
+    let signedQty = Number(quantity);
+    if (!Number.isFinite(signedQty) || signedQty === 0) {
+      return res.status(400).json({ error: 'Quantity is required' });
+    }
+    // Compat: clientes antiguos pueden enviar quantity positiva + tipo
+    if (tipo === 'salida' && signedQty > 0) signedQty = -signedQty;
+    if (tipo === 'entrada' && signedQty < 0) signedQty = Math.abs(signedQty);
+
+    const result = await adjustStock({
+      businessId,
+      productId: itemId,
+      quantity: signedQty,
+      reason: String(motivo || origenTipo || 'Ajuste manual').trim() || 'Ajuste manual',
+      actorId,
+      scanOperationId: typeof scanOperationId === 'string' ? scanOperationId : undefined,
     });
 
-    await recomputeStockMetrics(businessId);
+    if (result.applied) {
+      await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
+        module: 'stock',
+        action: 'update',
+        entityType: 'producto',
+        entityId: itemId,
+        summary: `Ajustó stock (${signedQty > 0 ? '+' : ''}${signedQty})`,
+      });
+    }
 
-    res.json({ success: true, newStock });
+    res.json({
+      success: true,
+      newStock: result.stock,
+      stockActual: result.stock,
+      applied: result.applied,
+      duplicate: Boolean(result.duplicate),
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Error updating stock' });
+    console.error('Error updating stock:', error);
+    const message = error instanceof Error ? error.message : 'Error updating stock';
+    if (message.includes('no controla stock')) {
+      return res.status(400).json({ error: message });
+    }
+    if (message.includes('No hay stock disponible')) {
+      return res.status(400).json({ error: message });
+    }
+    if (message.includes('No encontré')) {
+      return res.status(404).json({ error: message });
+    }
+    res.status(500).json({ error: message });
   }
 });
 
@@ -864,7 +929,11 @@ router.delete('/:businessId/:itemId', async (req, res) => {
     if (!existing.exists) return res.status(404).json({ error: 'Item not found' });
 
     const productName = String(existing.data()?.nombre ?? itemId);
+    const previousBarcode = normalizeBarcodeKey(existing.data()?.codigoBarras);
     await itemRef.delete();
+    if (previousBarcode) {
+      await releaseBarcodeLock(businessId, previousBarcode, itemId).catch(() => undefined);
+    }
     await logActivityFromRequest(req as AuthenticatedRequest, businessId, {
       module: 'stock',
       action: 'delete',

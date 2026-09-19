@@ -36,6 +36,10 @@ function clientAliasRef(businessId: string, spoken: string) {
   return db.doc(`negocios/${businessId}/whatsapp_client_aliases/${productAliasKey(spoken)}`);
 }
 
+function supplierAliasRef(businessId: string, spoken: string) {
+  return db.doc(`negocios/${businessId}/whatsapp_supplier_aliases/${productAliasKey(spoken)}`);
+}
+
 function asAliasList(raw: unknown): AliasEntry[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -162,6 +166,47 @@ export async function saveClientAlias(
       aliasRaw: raw,
       clientId: client.id,
       clientName: client.nombre,
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+}
+
+export async function findSupplierAlias(
+  businessId: string,
+  spoken: string
+): Promise<{ supplierId: string; supplierName: string } | null> {
+  const raw = spoken.trim();
+  if (raw.length < 2) return null;
+  const snap = await supplierAliasRef(businessId, raw).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as { supplierId?: string; supplierName?: string };
+  const supplierId = String(data.supplierId ?? '').trim();
+  if (!supplierId) return null;
+
+  const supplierSnap = await db.doc(`negocios/${businessId}/proveedores/${supplierId}`).get();
+  if (!supplierSnap.exists || supplierSnap.data()?.activo === false) {
+    await snap.ref.delete().catch(() => undefined);
+    return null;
+  }
+  const nombre = String(supplierSnap.data()?.nombre ?? data.supplierName ?? '').trim();
+  return { supplierId, supplierName: nombre || raw };
+}
+
+export async function saveSupplierAlias(
+  businessId: string,
+  spoken: string,
+  supplier: { id: string; nombre: string }
+): Promise<void> {
+  const raw = spoken.trim();
+  if (raw.length < 2 || !supplier.id) return;
+  if (normalizeAlias(raw) === normalizeAlias(supplier.nombre)) return;
+  await supplierAliasRef(businessId, raw).set(
+    {
+      aliasKey: productAliasKey(raw),
+      aliasRaw: raw,
+      supplierId: supplier.id,
+      supplierName: supplier.nombre,
       updatedAt: new Date().toISOString(),
     },
     { merge: true }

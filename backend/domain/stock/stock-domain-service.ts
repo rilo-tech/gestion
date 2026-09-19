@@ -1,8 +1,12 @@
 import { db } from '../../firebase.ts';
 import { assertCanCreateProduct } from '../../auth/usage-gates.ts';
-import { productControlsStock } from '../../utils/stock-product.ts';
+import {
+  productControlsStock,
+  productPermitsNegativeStock,
+} from '../../utils/stock-product.ts';
 import { syncPendingOrdersAfterStockChange } from '../../utils/order-stock-reservations.ts';
 import { recomputeStockMetrics } from '../../utils/stock-metrics.ts';
+import { assertCanApplyStockDelta } from './stock-adjust-logic.ts';
 
 export type CreateProductInput = {
   businessId: string;
@@ -28,6 +32,15 @@ export type AdjustStockInput = {
   quantity: number;
   reason?: string;
   actorId?: string;
+  /** Idempotencia técnica por escaneo (UUID). Escaneos reales distintos = IDs distintos. */
+  scanOperationId?: string;
+};
+
+export type AdjustStockResult = {
+  productId: string;
+  stock: number;
+  applied: boolean;
+  duplicate?: boolean;
 };
 
 export type SetStockInput = {
@@ -100,32 +113,82 @@ export async function updateProduct(input: UpdateProductInput): Promise<{ id: st
   return { id: productId, name: String(next.data()?.nombre ?? input.name ?? '') };
 }
 
-export async function adjustStock(input: AdjustStockInput): Promise<{ productId: string; stock: number }> {
+export async function adjustStock(input: AdjustStockInput): Promise<AdjustStockResult> {
   const productId = String(input.productId ?? '').trim();
   const quantity = Number(input.quantity) || 0;
   if (!productId || !quantity) throw new Error('Indicá producto y cantidad.');
-  const ref = db.doc(`negocios/${input.businessId}/stock/${productId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error('No encontré ese producto.');
-  const data = snap.data() as Record<string, unknown>;
-  if (!productControlsStock(data)) throw new Error('Ese producto no controla stock.');
-  const current = Number(data.stockActual) || 0;
-  const next = current + quantity;
-  await ref.update({ stockActual: next, updatedAt: new Date().toISOString() });
-  await db.collection(`negocios/${input.businessId}/movimientos_stock`).add({
-    productoId: productId,
-    tipo: quantity > 0 ? 'entrada' : 'salida',
-    cantidad: Math.abs(quantity),
-    fecha: new Date().toISOString(),
-    motivo: String(input.reason ?? 'Ajuste').trim() || 'Ajuste',
-    origenGrupo: 'ajuste',
-    origenTipo: 'ajuste_manual',
-    usuarioId: input.actorId ?? 'whatsapp',
-    negocioId: input.businessId,
+  const actorId = String(input.actorId ?? '').trim() || 'system';
+  const reason = String(input.reason ?? 'Ajuste').trim() || 'Ajuste';
+  const scanOperationId = String(input.scanOperationId ?? '').trim();
+
+  const productRef = db.doc(`negocios/${input.businessId}/stock/${productId}`);
+  const idemRef = scanOperationId
+    ? db.doc(`negocios/${input.businessId}/scan_ops/${scanOperationId}`)
+    : null;
+
+  const result = await db.runTransaction(async (tx) => {
+    if (idemRef) {
+      const idemSnap = await tx.get(idemRef);
+      if (idemSnap.exists) {
+        const prevStock = Number(idemSnap.data()?.newStock);
+        return {
+          productId,
+          stock: Number.isFinite(prevStock) ? prevStock : 0,
+          applied: false,
+          duplicate: true,
+        };
+      }
+    }
+
+    const snap = await tx.get(productRef);
+    if (!snap.exists) throw new Error('No encontré ese producto.');
+    const data = snap.data() as Record<string, unknown>;
+    const current = Number(data.stockActual) || 0;
+    const next = assertCanApplyStockDelta({
+      exists: true,
+      controlsStock: productControlsStock(data),
+      currentStock: current,
+      quantity,
+      permitsNegative: productPermitsNegativeStock(data),
+    });
+
+    const now = new Date().toISOString();
+    tx.update(productRef, { stockActual: next, updatedAt: now });
+
+    const movRef = db.collection(`negocios/${input.businessId}/movimientos_stock`).doc();
+    tx.set(movRef, {
+      productoId: productId,
+      tipo: quantity > 0 ? 'entrada' : 'salida',
+      cantidad: Math.abs(quantity),
+      fecha: now,
+      motivo: reason,
+      origenGrupo: 'ajuste',
+      origenTipo: 'ajuste_manual',
+      usuarioId: actorId,
+      negocioId: input.businessId,
+      ...(scanOperationId ? { scanOperationId } : {}),
+    });
+
+    if (idemRef) {
+      tx.set(idemRef, {
+        productId,
+        quantity,
+        newStock: next,
+        movementId: movRef.id,
+        createdAt: now,
+      });
+    }
+
+    return { productId, stock: next, applied: true, duplicate: false };
   });
-  if (quantity > 0) await syncPendingOrdersAfterStockChange(input.businessId, [productId]);
-  await recomputeStockMetrics(input.businessId);
-  return { productId, stock: next };
+
+  if (result.applied && quantity > 0) {
+    await syncPendingOrdersAfterStockChange(input.businessId, [productId]);
+  }
+  if (result.applied) {
+    await recomputeStockMetrics(input.businessId);
+  }
+  return result;
 }
 
 export async function setStock(input: SetStockInput): Promise<{ productId: string; stock: number }> {
@@ -146,5 +209,5 @@ export async function setStock(input: SetStockInput): Promise<{ productId: strin
     quantity: delta,
     reason: input.reason ?? 'Ajuste de stock',
     actorId: input.actorId,
-  });
+  }).then((row) => ({ productId: row.productId, stock: row.stock }));
 }

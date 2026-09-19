@@ -20,7 +20,12 @@ export interface TrialRegisterPayload {
   website?: string;
   trialProduct?: string;
   utmSource?: string;
+  utmMedium?: string;
   utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  fbclid?: string;
+  gclid?: string;
   campaignSource?: string;
 }
 

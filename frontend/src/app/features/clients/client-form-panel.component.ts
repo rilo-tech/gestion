@@ -39,6 +39,7 @@ import { switchMap, catchError } from 'rxjs/operators';
 import { of } from 'rxjs';
 import { SelectOnFocusDirective } from '../../shared/directives/select-on-focus.directive';
 import { FormPanelFooterComponent } from '../../shared/components/form-panel-footer/form-panel-footer.component';
+import { FormDirtyTracker, PersistWaiter } from '../../core/utils/unsaved-changes';
 
 export interface ClientFormSaveEvent {
   id: string;
@@ -116,7 +117,7 @@ export interface ClientFormSaveEvent {
             <a
               *ngIf="isEditing && clientId && showHistorialLink"
               [routerLink]="['/clients', clientId, 'historial']"
-              class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs sm:text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline shrink-0">
+              class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs sm:text-sm font-semibold text-teal-700 dark:text-teal-400 dark:text-teal-400 hover:underline shrink-0">
               <i-lucide name="history" class="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0"></i-lucide>
               <span>Historial</span>
               <span class="hidden sm:inline font-normal text-gray-500 dark:text-gray-400">· pedidos, ventas y cobros</span>
@@ -182,7 +183,7 @@ export interface ClientFormSaveEvent {
           <button
             *ngIf="auth.canEditRecords"
             type="button"
-            class="mt-2 text-sm font-semibold text-teal-700 hover:underline dark:text-teal-300"
+            class="mt-2 text-sm font-semibold text-teal-700 dark:text-teal-400 hover:underline dark:text-teal-300"
             (click)="reactivateClient()">
             Reactivar cliente
           </button>
@@ -244,6 +245,8 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
   private readonly emptyEtiquetas: string[] = [];
   etiquetaSelectOptionsCache: SearchableSelectOption[] = [];
   private etiquetaSelectOptionsKey = '';
+  private readonly dirty = new FormDirtyTracker();
+  private readonly persistWaiter = new PersistWaiter();
 
   get isEditing(): boolean {
     return !!this.clientId;
@@ -318,11 +321,12 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
 
     this.loadingClient = false;
     this.clientForm = this.emptyClientForm();
+    this.etiquetasText = '';
+    this.etiquetaPicker = '';
+    this.dirty.capture(this.clientDirtySnapshot());
     if (this.prefillNombre.trim()) {
       this.clientForm.nombre = this.prefillNombre.trim();
     }
-    this.etiquetasText = '';
-    this.etiquetaPicker = '';
   }
 
   private loadClient(id: string) {
@@ -366,7 +370,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
     this.loadingClient = true;
     this.clientService.getClient(id).subscribe({
       next: (client) => {
-        this.applyLoadedClient(client);
+        this.applyLoadedClient(client, { asBaseline: false });
         this.clientSaldo = 0;
       },
       error: () => {
@@ -380,7 +384,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
-  private applyLoadedClient(client: Client) {
+  private applyLoadedClient(client: Client, options?: { asBaseline?: boolean }) {
     this.clientForm = {
       nombre: client.nombre ?? '',
       telefono: client.telefono ?? '',
@@ -396,6 +400,9 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
     this.etiquetasText = (client.etiquetas ?? []).join(', ');
     this.etiquetaPicker = '';
     this.loadingClient = false;
+    if (options?.asBaseline !== false) {
+      this.dirty.capture(this.clientDirtySnapshot());
+    }
   }
 
   onEtiquetaSelected(value: string) {
@@ -442,12 +449,39 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
       .filter(Boolean);
   }
 
+  hasUnsavedChanges(): boolean {
+    if (this.formReadOnly) return false;
+    return this.dirty.isDirty(this.clientDirtySnapshot());
+  }
+
+  persistUnsavedChanges(): Promise<boolean> {
+    if (!this.hasUnsavedChanges()) return Promise.resolve(true);
+    const result = this.persistWaiter.start();
+    this.saveClient();
+    if (!this.savingClient && this.persistWaiter.isPending) {
+      this.persistWaiter.finish(false);
+    }
+    return result;
+  }
+
+  private clientDirtySnapshot() {
+    return {
+      nombre: this.clientForm.nombre ?? '',
+      telefono: this.clientForm.telefono ?? '',
+      email: this.clientForm.email ?? '',
+      direccion: this.clientForm.direccion ?? '',
+      igWeb: this.clientForm.redes?.igWeb ?? '',
+      etiquetas: this.resolveEtiquetas(),
+    };
+  }
+
   saveClient() {
     if (!this.clientForm.nombre?.trim()) {
       this.dialogService.alert({
         title: 'Campo requerido',
         message: 'Ingresá el nombre del cliente.',
       });
+      this.persistWaiter.finish(false);
       return;
     }
 
@@ -482,8 +516,13 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
         next: (response) => {
           this.savingClient = false;
           const id = this.clientId ?? response.id;
-          if (!id) return;
+          if (!id) {
+            this.persistWaiter.finish(false);
+            return;
+          }
 
+          this.dirty.capture(this.clientDirtySnapshot());
+          this.persistWaiter.finish(true);
           this.saved.emit({
             id,
             client: { ...payload, id },
@@ -491,6 +530,7 @@ export class ClientFormPanelComponent implements OnInit, OnChanges, OnDestroy {
         },
         error: () => {
           this.savingClient = false;
+          this.persistWaiter.finish(false);
           this.dialogService.alert({
             title: 'Error',
             message: this.clientId

@@ -6,9 +6,11 @@ import {
   type MedioPagoConfig,
   type TarjetaConfig,
 } from '../utils/finance-config.ts';
+import { DEFAULT_INSTALLMENT_OPTIONS } from '../../shared/finance-config.ts';
 import { todayDateOnly } from './lookups.ts';
 import type { WhatsappCommandEntities } from './ai-command-parser.ts';
-import { formatChoiceMessage } from '../../shared/whatsapp-format.ts';
+import { formatChoiceMessage, formatWhatsappMessage } from '../../shared/whatsapp-format.ts';
+import { V4_CANDIDATE_SELECTION_PROMPT } from './v4-ui-copy.ts';
 
 export const SELECT_PAYMENT_INTENT = 'select_purchase_payment';
 export const SELECT_CARD_INTENT = 'select_purchase_card';
@@ -41,6 +43,36 @@ export function extractPaymentCuotas(text: string): number | undefined {
   const n = Number(match[1]);
   if (!Number.isInteger(n) || n < 1) return undefined;
   return Math.min(120, n);
+}
+
+export function installmentOptionsForTenant(
+  finanzas: Awaited<ReturnType<typeof loadFinanzasConfig>>
+): number[] {
+  const configured = finanzas.purchase?.installmentOptions;
+  if (configured?.length) return [...new Set(configured)].sort((a, b) => a - b);
+  return [...DEFAULT_INSTALLMENT_OPTIONS];
+}
+
+export function formatInstallmentChoices(options: number[]): string {
+  const lines = options.map((count, idx) => `${idx + 1}. ${count} cuota${count === 1 ? '' : 's'}`);
+  return formatWhatsappMessage({
+    title: '¿En cuántas cuotas?',
+    lines,
+    ask: V4_CANDIDATE_SELECTION_PROMPT,
+  });
+}
+
+export function resolveInstallmentFromSelection(
+  text: string,
+  options: number[]
+): number | undefined {
+  const cuotas = extractPaymentCuotas(text);
+  if (cuotas && options.includes(cuotas)) return cuotas;
+  if (/^\d{1,2}$/.test(String(text ?? '').trim())) {
+    const index = Number(text) - 1;
+    if (index >= 0 && index < options.length) return options[index];
+  }
+  return undefined;
 }
 
 function normalize(text: string): string {

@@ -4,8 +4,8 @@ description: >-
   Guides changes to the RILO WhatsApp operator (backend/whatsapp). Use when
   editing WhatsApp parsing, catalog matching, conversation state, delivery
   dates, client/product confirmation, or when the bot loses chat context.
-  For RILO Bot V4 follow docs/rilobot-v4-conversation-contract.md — never
-  add phrase-regex rules; use Agent + tools + ERP.
+  For RILO Bot V4 follow docs/rilobot-v4-conversation-contract.md (regla maestra) — never
+  add phrase-regex rules; use Agent + tools + ERP. Include mandatory delivery checklist.
 ---
 
 # WhatsApp operator
@@ -14,7 +14,7 @@ The bot is a stateful operator in Firebase, not a Cursor MCP agent. Do not add M
 
 ## RILO Bot V4 (contrato definitivo)
 
-**Canonical spec:** `docs/rilobot-v4-conversation-contract.md`  
+**Canonical spec:** `docs/rilobot-v4-conversation-contract.md` (regla maestra + checklist de entrega)  
 **Cursor rule:** `.cursor/rules/rilobot-v4-conversation.mdc`
 
 ```
@@ -27,6 +27,7 @@ Natural message → OpenAI Agent → structured tool call → validate/resolve �
 - **No new phrase regex** (`includes`, semantic regex, synonym lists, test phrases as prod rules).
 - **Current turn > context > defaults** — explicit entity in this message wins over `focusEntities`.
 - **Filter preservation** — unresolved filter → `ENTITY_NOT_FOUND` / `ENTITY_AMBIGUOUS`, never open global query.
+- **Contextual entity resolution** — every entity lookup considers the requested operation; backend filters with domain rules; 0 → explain, 1 → auto-resolve, 2+ → relevant options only (`docs/rilobot-v4-conversation-contract.md` §Resolución contextual).
 - **Deterministic UI only** when state is explicit:
   - `operationPlan` + exact sí/no → `v4-confirm.ts`
   - `awaiting:candidate_selection` + exact number → `v4-candidate-selection.ts`
@@ -40,7 +41,11 @@ Natural message → OpenAI Agent → structured tool call → validate/resolve �
 | `v4-confirm.ts` | Frozen plan sí/no |
 | `v4-candidate-selection.ts` | Numbered disambiguation state |
 | `v4-resume-blocked-tool.ts` | Continue blocked read tool after pick |
-| `agent/openai-agent.ts` | LLM + tool loop |
+| `v4-order-operation.ts` | Eligibility + evaluate actions for contextual resolution |
+| `v4-compound-order-continuation.ts` | Auto-resolve find_order + writes same turn |
+| `resolve-order-reference.ts` | Client→order resolution with `operationContext` |
+| `v4-visual-draft.ts` | Temporary PurchaseDraft / OrderDraft from images |
+| `agent/openai-agent.ts` | LLM + tool loop + Responses API `input_image` |
 | `agent/agent-context.ts` | System + developer context |
 | `agent/tools/read-tools.ts` | ERP reads + filter_blocked |
 | `agent/tools/write-tools.ts` | Write → frozen OperationPlan |

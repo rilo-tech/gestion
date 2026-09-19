@@ -21,11 +21,12 @@ import {
   payCardStatement,
 } from '../utils/card-statements.ts';
 import { createCompanyRouter } from './create-company-router.ts';
-import { requireBusinessModule } from '../auth/middleware.ts';
+import { requireBusinessModule, requireBusinessFeature } from '../auth/middleware.ts';
 import type { AuthenticatedRequest } from '../auth/middleware.ts';
 import { logActivityFromRequest } from '../utils/activity-log.ts';
 
 const router = createCompanyRouter();
+router.use(requireBusinessFeature('payables'));
 router.use(requireBusinessModule('payables'));
 router.use('/:businessId', requirePermission('payables.access'));
 
@@ -46,11 +47,13 @@ router.get('/:businessId/installments', async (req, res) => {
     const scope =
       scopeRaw === 'account'
         ? 'account'
-        : scopeRaw === 'all'
-          ? 'all'
-          : mes
-            ? 'month'
-            : 'all';
+        : scopeRaw === 'obligation'
+          ? 'obligation'
+          : scopeRaw === 'all'
+            ? 'all'
+            : mes
+              ? 'month'
+              : 'all';
     const estadoRaw = String(req.query.estado ?? '').trim().toLowerCase();
     const displayEstado =
       estadoRaw === 'pendiente' || estadoRaw === 'pagada' || estadoRaw === 'vencida'
@@ -241,14 +244,33 @@ router.patch('/:businessId/installments/:cuotaId/paid', async (req, res) => {
     const montoPago = Number.isFinite(montoPagoRaw) && montoPagoRaw > 0 ? montoPagoRaw : undefined;
     const concepto =
       req.body.concepto !== undefined ? String(req.body.concepto).trim() : undefined;
-    const cuota = await setPayableInstallmentPaid(
-      req.params.businessId,
-      req.params.cuotaId,
-      paid,
-      paid ? { medioPagoId, montoPago, concepto } : undefined
-    );
+
+    let cuota;
+    if (paid) {
+      const { payPayable } = await import('../domain/payables/payables-application-service.ts');
+      cuota = await payPayable({
+        businessId: req.params.businessId,
+        source: 'erp',
+        cuotaId: req.params.cuotaId,
+        medioPagoId,
+        montoPago,
+      });
+    } else {
+      cuota = await setPayableInstallmentPaid(
+        req.params.businessId,
+        req.params.cuotaId,
+        false,
+        concepto !== undefined ? { concepto } : undefined
+      );
+    }
+
     invalidatePayablesReconcileCache(req.params.businessId);
     schedulePayablesDataRepair(req.params.businessId);
+    if (paid) {
+      void import('../automation/attention-sync.ts')
+        .then((m) => m.syncAttentionNotices(req.params.businessId))
+        .catch(() => undefined);
+    }
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
       action: paid ? 'payment' : 'update',
@@ -302,23 +324,34 @@ router.patch('/:businessId/obligations/:obligacionId/active', async (req, res) =
 
 router.delete('/:businessId/obligations/:obligacionId', async (req, res) => {
   try {
-    await deletePayableObligation(req.params.businessId, req.params.obligacionId);
+    const allowPaidCuotas =
+      req.query.allowPaid === '1' ||
+      req.query.force === '1' ||
+      req.body?.allowPaidCuotas === true;
+    const result = await deletePayableObligation(req.params.businessId, req.params.obligacionId, {
+      allowPaidCuotas,
+    });
     await logActivityFromRequest(req as AuthenticatedRequest, req.params.businessId, {
       module: 'payables',
       action: 'delete',
       entityType: 'obligacion',
       entityId: req.params.obligacionId,
-      summary: `Eliminó una obligación a pagar`,
+      summary:
+        result.paidCuotas > 0
+          ? `Eliminó una obligación a pagar (${result.paidCuotas} cuota(s) pagada(s); caja sin cambios)`
+          : `Eliminó una obligación a pagar`,
     });
-    res.json({ ok: true });
+    res.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === 'OBLIGATION_NOT_FOUND') {
         return res.status(404).json({ error: 'Obligación no encontrada.' });
       }
       if (error.message === 'OBLIGATION_HAS_PAID_CUOTAS') {
-        return res.status(400).json({
-          error: 'No se puede eliminar: hay cuotas ya pagadas.',
+        return res.status(409).json({
+          error:
+            'Hay cuotas ya pagadas. Confirmá la eliminación: los vencimientos se borran, pero los movimientos de caja no se eliminan.',
+          code: 'OBLIGATION_HAS_PAID_CUOTAS',
         });
       }
     }
